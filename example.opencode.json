@@ -1,0 +1,26 @@
+{
+  "plugin": [".opencode/plugin/loom/index.ts"],
+
+  "loom": {
+    "model_tiers": {
+      "junior": {
+        "model": "anthropic/claude-3-5-haiku-20241022",
+        "temperature": 0.9
+      },
+      "mid": {
+        "model": "anthropic/claude-3-5-sonnet-20241022",
+        "temperature": 0.5
+      },
+      "senior": {
+        "model": "anthropic/claude-3-opus-20240229",
+        "temperature": 0.3
+      },
+      "principal": {
+        "model": "anthropic/claude-3-opus-20240229",
+        "temperature": 0.2
+      }
+    },
+    "max_rounds_default": 5,
+    "convergence": "moderator_forces"
+  }
+}

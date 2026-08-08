@@ -1,0 +1,31 @@
+{
+  "name": "loom",
+  "version": "0.1.0",
+  "description": "Multi-agent deliberation protocol for opencode — a knitting machine for AI agents",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "agents",
+    "skills",
+    "commands"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": "*",
+    "@opencode-ai/sdk": "*",
+    "zod": "*"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.18.14",
+    "@opencode-ai/sdk": "^1.18.14",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0",
+    "zod": "^3.23.0"
+  }
+}
