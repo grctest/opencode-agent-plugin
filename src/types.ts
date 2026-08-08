@@ -1,4 +1,4 @@
-export type Tier = "junior" | "mid" | "senior" | "principal";
+export type Tier = string;
 
 export type ProviderID = string;
 export type ModelID = string;
@@ -34,12 +34,19 @@ export interface TierConfig extends TierModelConfig {
   rights: TierRights;
 }
 
+export interface ModelAssignment {
+  providerID: string;
+  modelID: string;
+  modelName?: string;
+}
+
 export interface ParticipantConfig {
   id: string;
   name: string;
   persona: string;
   agenda: string;
   tier: Tier;
+  model?: ModelAssignment;
 }
 
 export interface Contribution {
@@ -85,6 +92,7 @@ export interface Artifact {
 
 export type LoomStatus =
   | "initializing"
+  | "waiting_for_user"
   | "weaving"
   | "converged"
   | "deadlocked"
@@ -94,6 +102,7 @@ export type LoomStatus =
 export interface ParticipantState {
   config: ParticipantConfig;
   tier_config: TierConfig;
+  session_id: string;
   status: "listening" | "speaking" | "interjecting" | "passed";
   reflection: string;
   contributions_count: number;
@@ -121,4 +130,24 @@ export interface RoomRecommendation {
   participants: ParticipantConfig[];
   estimated_rounds: number;
   reasoning: string;
+}
+
+export interface AgentResponse {
+  participant_id: string;
+  content: string;
+  type: ContributionType;
+  interjection: {
+    priority: number;
+    reason: string;
+  } | null;
+}
+
+export interface SharedMeetingState {
+  meeting_id: string;
+  round: number;
+  warp: string;
+  question: string;
+  contributions: Contribution[];
+  interjections: Interjection[];
+  status: LoomStatus;
 }

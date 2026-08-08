@@ -1,4 +1,4 @@
-import type { Interjection, ParticipantState, Round, Contribution, Client, PromptFn } from "./types.js";
+import type { Interjection, ParticipantState, Round, Contribution, PromptFn, Client } from "./types.js";
 import { can, splitModel } from "./tiers.js";
 import { buildInterjectionCheckPrompt, buildPushbackPrompt, buildSpeakerSystemPrompt } from "./prompts.js";
 

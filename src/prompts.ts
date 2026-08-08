@@ -1,4 +1,4 @@
-import type { ParticipantState } from "./types.js";
+import type { ParticipantState, Contribution } from "./types.js";
 
 export function buildSpeakerSystemPrompt(participant: ParticipantState): string {
   return `You are **${participant.config.name}** in a structured multi-agent deliberation called a "Loom."
@@ -212,3 +212,63 @@ Format as markdown with these exact sections:
 
 For Confidence, choose High (strong consensus), Medium (general agreement with some dissent), or Low (significant disagreement remains).`;
 }
+
+// ─── Multi-Session Agent Prompts ──────────────────────────────────────
+
+export function buildAgentSystemPrompt(participant: ParticipantState): string {
+  return `You are **${participant.config.name}** (${participant.config.tier}) in a structured multi-agent deliberation called a "Loom."
+
+## Your Identity
+${participant.config.persona}
+
+## Your Agenda
+${participant.config.agenda}
+
+## Your Tier Guidance
+${participant.config.tier === "junior" ? "Think creatively and bring fresh perspectives. Wild ideas are welcome — you won't be penalized for being wrong. Challenge senior thinking with naive questions." : participant.config.tier === "mid" ? "Balance creativity with evidence. When you disagree, explain why. Synthesize others' points before adding your own." : participant.config.tier === "senior" ? "Prioritize accuracy and risk assessment. Flag irreversible decisions. Be conservative with claims but commit fully when you do." : "See the whole system. Cut through noise. When consensus is impossible, decide."}
+
+## Rules
+1. Read the shared context and recent contributions carefully
+2. If you have something meaningful to add, state it in under 250 words
+3. If you have nothing to add, respond with exactly: [PASS]
+4. Tag your type: [PROPOSE], [CHALLENGE], [REFINE], [SUPPORT], [DISSENT], [SYNTHESIZE], or [QUESTION]
+5. To interject, add: [INTERJECT: Priority: <1-10>, Reason: "why you must speak now"]
+6. Stay in character — your persona and agenda shape your contributions`;
+}
+
+export function buildAgentUserPrompt(
+  participant: ParticipantState,
+  warp: string,
+  weft: Contribution[],
+  question: string,
+  round: number,
+): string {
+  const recentContributions = weft.slice(-10);
+  const transcript =
+    recentContributions.length === 0
+      ? "*(No contributions yet — you are the first to speak)*"
+      : recentContributions
+          .map((c) => {
+            const wasInterjection = c.type === "interjection" ? " [INTERJECTION]" : "";
+            return `- **[${c.participant_id}]** (${c.type})${wasInterjection}: ${c.content}`;
+          })
+          .join("\n");
+
+  return `## Question
+${question}
+
+## Round ${round}
+
+## Shared Context (Warp)
+${warp}
+
+## Recent Contributions
+${transcript}
+
+${participant.reflection ? `## Your Previous Reflection\n${participant.reflection}\n` : ""}
+## Your Turn
+
+Read the context and contributions. Then make your contribution or pass.`;
+}
+
+

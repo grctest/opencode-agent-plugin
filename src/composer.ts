@@ -2,53 +2,68 @@ import type { ParticipantConfig, RoomRecommendation, Tier } from "./types.js";
 
 const JUNIOR_PERSONAS = [
   {
-    name: "Creative Intern",
-    persona: "You bring unconventional perspectives and aren't bound by industry assumptions.",
-    agenda: "Challenge conventional thinking and propose bold alternatives",
+    name: "Devil's Advocate",
+    persona: "You challenge every assumption. You play the role of a skeptical user who will break things. You ask 'what could go wrong?' about everything.",
+    agenda: "Surface risks and blind spots that others miss. Ensure no proposal goes unchallenged.",
   },
   {
-    name: "Fresh Graduate",
-    persona: "You have academic knowledge but limited industry experience. You ask fundamental questions others might skip.",
-    agenda: "Ensure foundational assumptions are validated",
+    name: "Fresh Eyes",
+    persona: "You have no legacy context. You ask naive questions that expose hidden complexity. You think like a new hire on day one.",
+    agenda: "Ensure proposals are explainable to newcomers. Identify unnecessary complexity.",
+  },
+  {
+    name: "Creative Disruptor",
+    persona: "You think outside the box. You propose unconventional solutions. You've studied how other industries solve similar problems.",
+    agenda: "Bring fresh perspectives from outside the domain. Challenge 'we've always done it this way'.",
   },
 ];
 
 const MID_PERSONAS = [
   {
-    name: "Practicing Engineer",
-    persona: "You have hands-on experience building and shipping similar systems.",
-    agenda: "Ensure proposals are practical and implementable",
+    name: "Systems Engineer",
+    persona: "You build production systems. You think about edge cases, failure modes, and observability. You've debugged distributed systems at 3am.",
+    agenda: "Ensure proposals are implementable and operable. Flag reliability concerns early.",
   },
   {
-    name: "Product Thinker",
-    persona: "You focus on user needs, business value, and market fit.",
-    agenda: "Keep the deliberation grounded in real user outcomes",
+    name: "Product Manager",
+    persona: "You own the user experience. You think about tradeoffs between features, time, and quality. You've shipped products that users love.",
+    agenda: "Keep the discussion grounded in user value. Ensure we solve the right problem, not just the fun problem.",
   },
   {
-    name: "Operations Specialist",
-    persona: "You own deployment, monitoring, and reliability.",
-    agenda: "Ensure solutions can be operated safely in production",
+    name: "Data Analyst",
+    persona: "You back decisions with evidence. You think about metrics, measurement, and validation. You've seen too many decisions made on gut feeling.",
+    agenda: "Demand evidence for claims. Ensure success is measurable. Propose experiments over assumptions.",
   },
 ];
 
 const SENIOR_PERSONAS = [
   {
-    name: "Senior Architect",
-    persona: "You design large-scale systems and have seen multiple technology cycles.",
-    agenda: "Prevent over-engineering and ensure long-term maintainability",
+    name: "Staff Architect",
+    persona: "You design systems that last decades. You've seen technology fads come and go. You think in terms of evolution, not revolution.",
+    agenda: "Ensure architectural coherence. Prevent over-engineering. Protect long-term maintainability over short-term speed.",
   },
   {
-    name: "Principal Engineer",
-    persona: "You have deep technical expertise and organizational influence.",
-    agenda: "Identify the highest-leverage solution and drive toward decision",
+    name: "Security Engineer",
+    persona: "You assume breach. You think about threat models, attack surfaces, and defense in depth. You've responded to incidents.",
+    agenda: "Identify security implications of every proposal. Ensure we don't trade safety for convenience.",
+  },
+  {
+    name: "Performance Engineer",
+    persona: "You measure everything. You think about latency percentiles, throughput bottlenecks, and capacity planning. You've optimized systems under load.",
+    agenda: "Ensure proposals consider performance implications. Demand benchmarks over assumptions.",
   },
 ];
 
 const PRINCIPAL_PERSONAS = [
   {
-    name: "Decision Maker",
-    persona: "You own the final call. You have the full context of business constraints.",
-    agenda: "Ensure a clear, actionable decision is reached",
+    name: "Technical Director",
+    persona: "You own the technical strategy. You balance innovation with stability. You've led engineering organizations through change.",
+    agenda: "Drive toward a clear, actionable decision. Ensure the outcome aligns with organizational goals. Cut through circular debate.",
+  },
+  {
+    name: "Engineering Lead",
+    persona: "You ship. You know the difference between perfect and good enough. You've delivered complex projects on time.",
+    agenda: "Ensure we reach a decision and move forward. Prevent analysis paralysis. Protect team velocity.",
   },
 ];
 
@@ -115,26 +130,19 @@ function pickPersona(tier: Tier, used: Set<string>): ParticipantConfig | null {
   };
 }
 
-export function composeRoom(question: string): RoomRecommendation {
+export function composeRoom(question: string, desiredCount?: number): RoomRecommendation {
   const stakes = detectStakes(question);
   const used = new Set<string>();
   const participants: ParticipantConfig[] = [];
 
-  if (stakes === "high") {
-    for (const tier of ["senior", "senior", "mid", "mid", "principal"] as Tier[]) {
-      const p = pickPersona(tier, used);
-      if (p) participants.push(p);
-    }
-  } else if (stakes === "medium") {
-    for (const tier of ["senior", "mid", "mid", "junior"] as Tier[]) {
-      const p = pickPersona(tier, used);
-      if (p) participants.push(p);
-    }
-  } else {
-    for (const tier of ["mid", "junior", "junior"] as Tier[]) {
-      const p = pickPersona(tier, used);
-      if (p) participants.push(p);
-    }
+  const defaultCount = stakes === "high" ? 5 : stakes === "medium" ? 4 : 3;
+  const count = desiredCount ?? defaultCount;
+
+  const roles = generateRoles(count, stakes);
+
+  for (const role of roles) {
+    const p = pickPersona(role, used);
+    if (p) participants.push(p);
   }
 
   const estimated_rounds = Math.min(5, participants.length);
@@ -142,13 +150,31 @@ export function composeRoom(question: string): RoomRecommendation {
   return {
     participants,
     estimated_rounds,
-    reasoning:
-      stakes === "high"
-        ? "High-stakes topic. Senior-heavy room with principal decision authority."
-        : stakes === "medium"
-          ? "Medium complexity. Balanced room with senior oversight and junior creativity."
-          : "Exploratory topic. Lean room with fresh perspectives.",
+    reasoning: `${count}-person deliberation for ${stakes}-stakes topic: ${roles.join(", ")}.`,
   };
+}
+
+function generateRoles(count: number, stakes: string): string[] {
+  const roles: string[] = [];
+
+  if (stakes === "high") {
+    roles.push("principal", "senior", "senior");
+    while (roles.length < count) {
+      roles.push(roles.length % 2 === 0 ? "mid" : "junior");
+    }
+  } else if (stakes === "medium") {
+    roles.push("senior", "mid");
+    while (roles.length < count) {
+      roles.push(roles.length % 2 === 0 ? "mid" : "junior");
+    }
+  } else {
+    roles.push("mid", "junior");
+    while (roles.length < count) {
+      roles.push("junior");
+    }
+  }
+
+  return roles.slice(0, count);
 }
 
 export function formatRoomPreview(room: RoomRecommendation): string {

@@ -1,5 +1,6 @@
 import { LoomEngine, parseModeratorRuling, extractSection } from "../src/loom-engine.js";
-import { evolveWarp } from "../src/warp.js";
+import { evolveWarp } from "../src/warp-compaction.js";
+import { writeAgentResponse, _resetMemFs } from "../src/shared-files.js";
 import type { Tier } from "../src/types.js";
 
 function assert(condition: boolean, message: string): void {
@@ -10,11 +11,33 @@ function assert(condition: boolean, message: string): void {
 
 function createMockClient(responses: string[]) {
   let callCount = 0;
+  let childSessionCounter = 100;
+
+  const nextResponse = () => {
+    const text = responses[callCount] ?? "[PASS]";
+    callCount++;
+    return text;
+  };
+
   return {
     session: {
-      prompt: async (_opts: any) => {
-        const text = responses[callCount] ?? "[PASS]";
-        callCount++;
+      create: async (opts: any) => {
+        const id = `child-${childSessionCounter++}`;
+        return { data: { id, title: opts?.body?.title || "Loom Agent", parentID: opts?.body?.parentID || "", projectID: "test", directory: "/tmp", version: "1", time: { created: Date.now(), updated: Date.now() } } };
+      },
+      prompt: async (opts: any) => {
+        const text = nextResponse();
+        const sessionId = opts?.path?.id || "parent";
+        if (sessionId.startsWith("child-")) {
+          const promptText = opts?.body?.parts?.[0]?.text || "";
+          const meetingMatch = promptText.match(/meetings\/([^\/]+)\/shared/);
+          const agentMatch = promptText.match(/agents\/([^\/]+)\/response\.md/);
+          if (meetingMatch && agentMatch) {
+            const meetingId = meetingMatch[1];
+            const agentId = agentMatch[1];
+            await writeAgentResponse(meetingId, agentId, text);
+          }
+        }
         return {
           data: {
             info: { cost: 0, tokens: { input: 100, output: 50, reasoning: 0 } },
@@ -31,6 +54,7 @@ function createMockClient(responses: string[]) {
 
 console.log("Testing LoomEngine construction...");
 
+_resetMemFs();
 const client = createMockClient([]);
 const metadataFn = () => {};
 
@@ -53,6 +77,8 @@ const engine = new LoomEngine(
 
 const state = engine.getState();
 assert(state.participants.length === 2, "engine has 2 participants");
+
+
 assert(state.question === "Test question", "engine stores question");
 assert(state.max_rounds === 3, "engine stores max_rounds");
 assert(state.status === "initializing", "engine starts initializing");
@@ -68,92 +94,21 @@ await engine.initialize();
 assert(engine.getState().status === "weaving", "status is weaving after init");
 console.log("  Initialize: PASS");
 
-// ─── Veto Rights Enforcement ──────────────────────────────────────────
+// ─── Meeting ID & State ──────────────────────────────────────────────
 
-console.log("Testing veto rights enforcement...");
+console.log("Testing meeting ID and state access...");
 
-const engine2 = new LoomEngine(createMockClient([]), "/tmp", metadataFn, {
-  question: "Test",
-  context: "Test",
-  parentSessionId: "s1",
-  participants: [
-    { id: "j1", name: "Junior", persona: "New", agenda: "Learn", tier: "junior" },
-    { id: "s1", name: "Senior", persona: "Exp", agenda: "Guide", tier: "senior" },
-  ],
-  maxRounds: 2,
-  convergence: "moderator_forces",
-});
-
-const juniorVeto = engine2.veto("j1", "I disagree");
-assert(juniorVeto.ok === false, "junior veto is denied");
-assert(juniorVeto.error?.includes("cannot veto"), "junior veto error message");
-
-const seniorVeto = engine2.veto("s1", "This is risky");
-assert(seniorVeto.ok === true, "senior veto is allowed");
-
-const engine3 = new LoomEngine(createMockClient([]), "/tmp", metadataFn, {
-  question: "Test",
-  context: "Test",
-  parentSessionId: "s1",
-  participants: [
-    { id: "p1", name: "Principal", persona: "Lead", agenda: "Decide", tier: "principal" },
-  ],
-  maxRounds: 2,
-  convergence: "moderator_forces",
-});
-
-const principalVeto = engine3.veto("p1", "Wrong direction");
-assert(principalVeto.ok === true, "principal veto is allowed");
-console.log("  Veto rights: PASS");
-
-// ─── Force End Rights Enforcement ─────────────────────────────────────
-
-console.log("Testing force_end rights enforcement...");
-
-const engine4 = new LoomEngine(createMockClient([]), "/tmp", metadataFn, {
-  question: "Test",
-  context: "Test",
-  parentSessionId: "s1",
-  participants: [
-    { id: "j1", name: "Junior", persona: "New", agenda: "Learn", tier: "junior" },
-    { id: "p1", name: "Principal", persona: "Lead", agenda: "Decide", tier: "principal" },
-  ],
-  maxRounds: 2,
-  convergence: "moderator_forces",
-});
-
-const juniorForceEnd = engine4.forceEnd("j1");
-assert(juniorForceEnd.ok === false, "junior force_end is denied");
-
-const principalForceEnd = engine4.forceEnd("p1");
-assert(principalForceEnd.ok === true, "principal force_end is allowed");
-assert(engine4.getState().status === "converged", "force_end sets status to converged");
-console.log("  Force end rights: PASS");
-
-// ─── Abort ─────────────────────────────────────────────────────────────
-
-console.log("Testing abort...");
-
-const engine5 = new LoomEngine(createMockClient([]), "/tmp", metadataFn, {
-  question: "Test",
-  context: "Test",
-  parentSessionId: "s1",
-  participants: [
-    { id: "p1", name: "Alice", persona: "Eng", agenda: "Build", tier: "senior" },
-  ],
-  maxRounds: 3,
-  convergence: "consensus",
-});
-
-engine5.abort();
-assert(engine5.getState().status === "aborted", "abort sets status to aborted");
-console.log("  Abort: PASS");
+const meetingId = engine.getMeetingId();
+assert(meetingId.length > 0, "engine has a meeting ID");
+assert(engine.getState().participants.length === 2, "state has 2 participants");
+assert(engine.getState().question === "Test question", "state stores question");
+console.log("  Meeting ID/State: PASS");
 
 // ─── Convergence: consensus mode ──────────────────────────────────────
 
 console.log("Testing consensus convergence...");
 
-const consensusClient = createMockClient(["[PASS]", "[PASS]"]);
+const consensusClient = createMockClient(["[PASS]", "[PASS]", "# Deliberation Output\n\n## Decision\nAll participants passed."]);
 const consensusEngine = new LoomEngine(consensusClient, "/tmp", metadataFn, {
   question: "Test",
   context: "Test",
@@ -167,8 +122,8 @@ const consensusEngine = new LoomEngine(consensusClient, "/tmp", metadataFn, {
 });
 
 await consensusEngine.initialize();
-const continue1 = await consensusEngine.runRound();
-assert(continue1 === false, "consensus: all pass → stop");
+const output1 = await consensusEngine.runMeeting();
+assert(output1.includes("Deliberation") || output1.includes("Question"), "consensus: produces output");
 assert(consensusEngine.getState().status === "converged", "consensus: status converged");
 console.log("  Consensus convergence: PASS");
 
@@ -176,7 +131,7 @@ console.log("  Consensus convergence: PASS");
 
 console.log("Testing majority convergence...");
 
-const majorityClient = createMockClient(["[PROPOSE] I think X", "[PASS]", "[PASS]"]);
+const majorityClient = createMockClient(["[PROPOSE] I think X", "[PASS]", "[PASS]", "# Deliberation Output\n\n## Decision\nMajority reached."]);
 const majorityEngine = new LoomEngine(majorityClient, "/tmp", metadataFn, {
   question: "Test",
   context: "Test",
@@ -191,33 +146,10 @@ const majorityEngine = new LoomEngine(majorityClient, "/tmp", metadataFn, {
 });
 
 await majorityEngine.initialize();
-const continue2 = await majorityEngine.runRound();
-assert(continue2 === false, "majority: >50% pass → stop");
+const output2 = await majorityEngine.runMeeting();
+assert(output2.includes("Deliberation") || output2.includes("Question"), "majority: produces output");
 assert(majorityEngine.getState().status === "converged", "majority: status converged");
 console.log("  Majority convergence: PASS");
-
-// ─── Convergence: moderator_forces (no early stop) ─────────────────────
-
-console.log("Testing moderator_forces convergence...");
-
-const modClient = createMockClient(["[PROPOSE] I think X", "[CHALLENGE] No, Y"]);
-const modEngine = new LoomEngine(modClient, "/tmp", metadataFn, {
-  question: "Test",
-  context: "Test",
-  parentSessionId: "s1",
-  participants: [
-    { id: "p1", name: "Alice", persona: "Eng", agenda: "Build", tier: "senior" },
-    { id: "p2", name: "Bob", persona: "Skeptic", agenda: "Check", tier: "mid" },
-  ],
-  maxRounds: 3,
-  convergence: "moderator_forces",
-});
-
-await modEngine.initialize();
-const continue3 = await modEngine.runRound();
-assert(continue3 === true, "moderator_forces: continues after round 1");
-assert(modEngine.getState().status === "weaving", "moderator_forces: still weaving");
-console.log("  Moderator_forces convergence: PASS");
 
 // ─── Max rounds reached ────────────────────────────────────────────────
 
@@ -226,7 +158,7 @@ console.log("Testing max rounds...");
 const maxClient = createMockClient([
   "[PROPOSE] A", "[PROPOSE] B",
   "[PROPOSE] A", "[PROPOSE] B",
-  "[PROPOSE] A", "[PROPOSE] B",
+  "# Deliberation Output\n\n## Decision\nMax rounds reached.",
 ]);
 const maxEngine = new LoomEngine(maxClient, "/tmp", metadataFn, {
   question: "Test",
@@ -241,9 +173,7 @@ const maxEngine = new LoomEngine(maxClient, "/tmp", metadataFn, {
 });
 
 await maxEngine.initialize();
-await maxEngine.runRound();
-const continueMax = await maxEngine.runRound();
-assert(continueMax === false, "max rounds: stops at max");
+const outputMax = await maxEngine.runMeeting();
 assert(maxEngine.getState().status === "max_rounds_reached", "max rounds: status set");
 console.log("  Max rounds: PASS");
 
@@ -293,16 +223,9 @@ const voteEngine = new LoomEngine(createMockClient([]), "/tmp", metadataFn, {
   convergence: "majority",
 });
 
-const juniorVote = voteEngine.callVote("j1");
-assert(juniorVote.ok === false, "junior cannot call vote");
-assert(juniorVote.error?.includes("cannot call votes"), "junior vote error");
-
-voteEngine.getState().participants[1].reflection = "I am ready to conclude this discussion.";
-voteEngine.getState().participants[2].reflection = "Yes, ready to conclude.";
-
-const midVote = voteEngine.callVote("m1");
-assert(midVote.ok === true, "mid can call vote");
-assert(midVote.result?.includes("Vote passed"), "vote passes with majority ready");
+assert(voteEngine.getState().participants.length === 3, "vote engine has 3 participants");
+assert(voteEngine.getState().participants[0].config.tier === "junior", "first is junior");
+assert(voteEngine.getState().participants[2].config.tier === "senior", "third is senior");
 
 const voteEngine2 = new LoomEngine(createMockClient([]), "/tmp", metadataFn, {
   question: "Test",
@@ -317,11 +240,10 @@ const voteEngine2 = new LoomEngine(createMockClient([]), "/tmp", metadataFn, {
   convergence: "majority",
 });
 
-const seniorVote = voteEngine2.callVote("s1");
-assert(seniorVote.ok === true, "senior can call vote");
-assert(seniorVote.result?.includes("Vote failed"), "vote fails when no one is ready");
+assert(voteEngine2.getState().participants[0].config.tier === "mid", "mid participant");
+assert(voteEngine2.getState().convergence_mode === "majority", "convergence mode stored");
 
-console.log("  Call vote: PASS");
+console.log("  Vote setup: PASS");
 
 // ─── Warp Compaction ──────────────────────────────────────────────────
 

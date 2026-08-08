@@ -3,11 +3,15 @@ import type { PluginInput } from "@opencode-ai/plugin";
 import { z } from "zod";
 import { LoomEngine } from "./loom-engine.js";
 import { composeRoom, formatRoomPreview } from "./composer.js";
+import type { AgentSessionClient } from "./client-types.js";
 import type { ParticipantConfig, Tier } from "./types.js";
+import { createModelPlan, formatModelPlan, getStoredModelPlan, storeModelPlan } from "./model-discovery.js";
+import type { AvailableModel, ModelAssignment } from "./model-discovery.js";
 
 export default function loomPlugin(input: PluginInput) {
   const { client, directory } = input;
   const activeLooms = new Map<string, LoomEngine>();
+  let pendingModels: ModelAssignment[] | null = null;
 
   return {
     tool: {
@@ -74,12 +78,36 @@ export default function loomPlugin(input: PluginInput) {
             .describe(
               "How the deliberation decides to end. Default: moderator_forces",
             ),
+          models: z
+            .array(
+              z.object({
+                tier: z.enum(["junior", "mid", "senior", "principal"]),
+                provider_id: z.string().describe("Provider ID for this tier"),
+                model_id: z.string().describe("Model ID for this tier"),
+              }),
+            )
+            .optional()
+            .describe(
+              "Model assignments per tier. Use knit_models to discover available options.",
+            ),
         },
         execute: async (args, context) => {
           const sessionID = context.sessionID;
           const loomId = crypto.randomUUID();
 
           let participants: ParticipantConfig[];
+
+          const modelMap = new Map<string, { providerID: string; modelID: string }>();
+          const modelsToUse = args.models ?? pendingModels;
+          if (modelsToUse) {
+            for (const m of modelsToUse) {
+              const tier = m.tier;
+              const providerId = "provider_id" in m ? m.provider_id : (m as any).providerID;
+              const modelId = "model_id" in m ? m.model_id : (m as any).modelID;
+              modelMap.set(tier, { providerID: providerId, modelID: modelId });
+            }
+            pendingModels = null;
+          }
 
           if (args.participants && args.participants.length > 0) {
             participants = args.participants.map((p, i) => ({
@@ -88,6 +116,7 @@ export default function loomPlugin(input: PluginInput) {
               persona: p.persona,
               agenda: p.agenda,
               tier: p.tier as Tier,
+              model: modelMap.get(p.tier),
             }));
           } else if (args.auto_compose !== false) {
             const recommendation = composeRoom(args.question);
@@ -121,7 +150,7 @@ export default function loomPlugin(input: PluginInput) {
           const maxRounds = args.max_rounds ?? participants.length;
 
           const engine = new LoomEngine(
-            client,
+            client as unknown as AgentSessionClient,
             directory,
             context.metadata,
             {
@@ -134,31 +163,24 @@ export default function loomPlugin(input: PluginInput) {
             },
           );
 
-          if (context.abort) {
-            engine.setSignal(context.abort);
-          }
-
           activeLooms.set(loomId, engine);
 
           try {
             await engine.initialize();
 
-            let continueDeliberation = true;
-            while (continueDeliberation) {
-              continueDeliberation = await engine.runRound();
-            }
-
-            const artifact = await engine.generateArtifact();
+            const artifact = await engine.runMeeting();
 
             activeLooms.delete(loomId);
 
+            const state = engine.getState();
             return {
-              title: `Loom Complete — ${engine.getState().current_round} rounds`,
-              output: `# Loom Deliberation Output\n\n**Question:** ${args.question}\n\n**Participants:** ${participants.map((p) => `${p.name} (${p.tier})`).join(", ")}\n\n**Rounds:** ${engine.getState().current_round}\n\n---\n\n${artifact}`,
+              title: `Loom Complete — ${state.current_round} rounds`,
+              output: `# Loom Deliberation Output\n\n**Question:** ${args.question}\n\n**Participants:** ${participants.map((p) => `${p.name} (${p.tier})`).join(", ")}\n\n**Rounds:** ${state.current_round}\n\n**Meeting ID:** ${engine.getMeetingId()}\n\n---\n\n${artifact}`,
               metadata: {
                 loom_id: loomId,
-                loom_status: engine.getState().status,
-                loom_rounds: engine.getState().current_round,
+                meeting_id: engine.getMeetingId(),
+                loom_status: state.status,
+                loom_rounds: state.current_round,
                 loom_participants: participants
                   .map((p) => `${p.name} (${p.tier})`)
                   .join(", "),
@@ -192,82 +214,60 @@ export default function loomPlugin(input: PluginInput) {
             return "No active Loom found with that ID.";
           }
           const state = engine.getState();
-          const speaker =
-            state.participants[state.current_speaker_idx]?.config.name ?? "none";
-          return `**Loom Status:** ${state.status}\n**Round:** ${state.current_round}/${state.max_rounds}\n**Contributions:** ${state.weft.length}\n**Current speaker:** ${speaker}`;
+          return `**Loom Status:** ${state.status}\n**Round:** ${state.current_round}/${state.max_rounds}\n**Contributions:** ${state.weft.length}\n**Meeting ID:** ${engine.getMeetingId()}`;
         },
       }),
 
-      loom_abort: tool({
-        description: "Abort a running Loom deliberation session",
-        args: {
-          loom_id: z.string().describe("The ID of the Loom session to abort"),
-        },
-        execute: async (args, _context): Promise<string> => {
-          const engine = activeLooms.get(args.loom_id);
-          if (!engine) {
-            return "No active Loom found with that ID.";
+      knit_models: tool({
+        description: "Discover available models and propose assignments for the Loom's knitting needles",
+        args: {},
+        execute: async (_args, _ctx): Promise<string> => {
+          try {
+            const client = (_ctx as any).client ?? (_ctx as any).input?.client;
+            if (!client?.provider?.list) {
+              return "Model discovery not available. Ensure providers are configured.";
+            }
+
+            const result = await client.provider.list({ query: { directory: (_ctx as any).directory ?? "" } });
+            if (!result?.all && !result?.data?.all) {
+              return "No providers found. Configure at least one API provider.";
+            }
+
+            const providers = result.all || result.data.all;
+            const connected = result.connected || result.data.connected || [];
+            const available: AvailableModel[] = [];
+
+            for (const provider of providers) {
+              const isConnected = connected.includes(provider.id);
+              if (!isConnected) continue;
+
+              for (const [key, model] of Object.entries(provider.models || {})) {
+                const m = model as any;
+                if (m.status === "deprecated") continue;
+                available.push({
+                  providerID: provider.id,
+                  modelID: m.id || key,
+                  name: m.name || key,
+                  status: m.status || "active",
+                  cost: m.cost || { input: 0, output: 0 },
+                  limit: m.limit || { context: 128000, output: 4096 },
+                  reasoning: m.reasoning || false,
+                  temperature: m.temperature || false,
+                });
+              }
+            }
+
+            if (available.length === 0) {
+              return "No active models found. Connect a provider (e.g. run `opencode auth login`).";
+            }
+
+             const plan = createModelPlan(available);
+             pendingModels = plan.participants;
+             return formatModelPlan(plan);
+          } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            return `Model discovery failed: ${message}`;
           }
-          engine.abort();
-          activeLooms.delete(args.loom_id);
-          return "Loom aborted successfully.";
-        },
-      }),
-
-      loom_veto: tool({
-        description:
-          "Veto a conclusion or direction in the deliberation. Only available to senior and principal tiers.",
-        args: {
-          loom_id: z.string().describe("The ID of the Loom session"),
-          participant_id: z
-            .string()
-            .describe("The participant ID of the vetoing agent"),
-          reason: z.string().describe("Why this veto is being issued"),
-        },
-        execute: async (args, _context): Promise<string> => {
-          const engine = activeLooms.get(args.loom_id);
-          if (!engine) return "No active Loom found with that ID.";
-          const result = engine.veto(args.participant_id, args.reason);
-          return result.ok
-            ? `Veto recorded: ${args.reason}`
-            : `Veto denied: ${result.error}`;
-        },
-      }),
-
-      loom_force_end: tool({
-        description:
-          "Force the deliberation to end and produce a final synthesis. Only available to principal tier.",
-        args: {
-          loom_id: z.string().describe("The ID of the Loom session"),
-          participant_id: z
-            .string()
-            .describe("The participant ID of the agent forcing end"),
-        },
-        execute: async (args, _context): Promise<string> => {
-          const engine = activeLooms.get(args.loom_id);
-          if (!engine) return "No active Loom found with that ID.";
-          const result = engine.forceEnd(args.participant_id);
-          return result.ok
-            ? "Deliberation ended by force."
-            : `Force-end denied: ${result.error}`;
-        },
-      }),
-
-      loom_vote: tool({
-        description:
-          "Call a vote on whether to conclude the deliberation. Available to mid, senior, and principal tiers. Requires majority of active participants to be ready.",
-        args: {
-          loom_id: z.string().describe("The ID of the Loom session"),
-          participant_id: z
-            .string()
-            .describe("The participant ID of the agent calling the vote"),
-        },
-        execute: async (args, _context): Promise<string> => {
-          const engine = activeLooms.get(args.loom_id);
-          if (!engine) return "No active Loom found with that ID.";
-          const result = engine.callVote(args.participant_id);
-          if (!result.ok) return `Vote denied: ${result.error}`;
-          return result.result ?? "Vote recorded.";
         },
       }),
     },

@@ -1,6 +1,6 @@
 import type { Artifact, Objection, ParticipantState, Contribution, Round, PromptFn } from "./types.js";
 import { buildSynthesisPrompt } from "./prompts.js";
-import { formatTranscript } from "./warp.js";
+import { formatTranscript } from "./warp-compaction.js";
 import { splitModel } from "./tiers.js";
 
 export async function generateArtifact(
