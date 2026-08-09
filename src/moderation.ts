@@ -14,6 +14,7 @@ export interface ModeratorDecision {
 
 type PromptFn = (system: string, model: { providerID: string; modelID: string }, message: string) => Promise<string>;
 
+/** Parses a moderator's free-text ruling into structured fields (decision, next_speaker, reason). */
 export function parseModeratorRuling(text: string): ModeratorRuling {
   const lines = text.split("\n");
   let decision = "";
@@ -42,6 +43,10 @@ export function parseModeratorRuling(text: string): ModeratorRuling {
   return { decision, next_speaker, reason };
 }
 
+/**
+ * Checks if moderator intervention is needed (circular arguments) and obtains a ruling.
+ * Returns an action: continue, break (redirect to specific speaker), or converge (end meeting).
+ */
 export async function checkModeratorIntervention(
   round: Round,
   participants: ParticipantState[],

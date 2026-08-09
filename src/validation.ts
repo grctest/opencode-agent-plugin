@@ -41,6 +41,7 @@ const TYPE_PREFIXES: Record<string, ContributionType> = {
   "[QUESTION]": "question",
 };
 
+/** Parses an agent's text response into a structured AgentResponse with type and optional interjection. */
 export function parseAgentResponse(participantId: string, response: string): ValidatedAgentResponse {
   const text = response.trim();
 

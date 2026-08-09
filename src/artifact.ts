@@ -1,8 +1,9 @@
 import type { Artifact, Objection, ParticipantState, Contribution, Round, PromptFn } from "./types.js";
 import { buildSynthesisPrompt } from "./prompts.js";
-import { formatTranscript } from "./warp-compaction.js";
+import { formatTranscript } from "./warp-manager.js";
 import { splitModel } from "./tiers.js";
 
+/** Generates the final deliberation artifact by prompting the synthesizer agent. */
 export async function generateArtifact(
   question: string,
   rounds: Round[],
@@ -48,6 +49,7 @@ ${synthesizer.tier_config.system_prompt_addendum}`;
   return { artifact, output: finalOutput };
 }
 
+/** Derives a confidence level (high/medium/low) based on dissent count and challenge ratio. */
 export function deriveConfidence(
   weft: Contribution[],
   dissentCount: number,
@@ -62,6 +64,7 @@ export function deriveConfidence(
   return "low";
 }
 
+/** Extracts list items from a named section of a markdown document. */
 export function extractSection(text: string, sectionName: string): string[] {
   const lines = text.split("\n");
   const results: string[] = [];

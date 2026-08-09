@@ -12,10 +12,13 @@ import type {
 import type { AgentSessionClient } from "./client-types.js";
 import { getTierConfig, splitModel } from "./tiers.js";
 import { buildAgentSystemPrompt, buildAgentUserPrompt } from "./prompts.js";
-import { deriveConfidence, extractSection } from "./artifact.js";
 import { checkModeratorIntervention } from "./moderation.js";
 import { parseAgentResponse } from "./validation.js";
 import { withConcurrency } from "./concurrency.js";
+import { resolveInterjections, formatInterjectionNotes } from "./interjection-resolver.js";
+import { evolveWarp } from "./warp-manager.js";
+import { synthesize } from "./synthesizer.js";
+import { checkConvergence } from "./convergence-checker.js";
 import {
   initMeetingFiles,
   writeSharedState,
@@ -85,14 +88,17 @@ export class MeetingOrchestrator {
     };
   }
 
+  /** Returns the unique meeting ID. */
   getMeetingId(): string {
     return this.meetingId;
   }
 
+  /** Returns an immutable snapshot of the current meeting state. */
   getState(): Readonly<LoomState> {
     return Object.freeze({ ...this.state });
   }
 
+  /** Finds the highest-tier model among participants (for moderator/synthesis tasks). */
   private getHighestTierModel(): { providerID: string; modelID: string } {
     for (const tier of ["principal", "senior", "mid", "junior"] as Tier[]) {
       const p = this.state.participants.find((pp) => pp.config.tier === tier);
@@ -101,13 +107,15 @@ export class MeetingOrchestrator {
     return splitModel(this.state.participants[0].tier_config.model);
   }
 
+  /** Gets the model assignment for a participant, throwing if none is configured. */
   private getParticipantModel(participant: ParticipantState): { providerID: string; modelID: string } {
     if (participant.config.model) {
       return { providerID: participant.config.model.providerID, modelID: participant.config.model.modelID };
     }
-    return splitModel(participant.tier_config.model);
+    throw new Error(`No model assigned for participant ${participant.config.name} (${participant.config.tier}). Run knit_models first.`);
   }
 
+  /** Creates child sessions and initializes meeting files. Idempotent. */
   async initialize(): Promise<void> {
     if (this.state.status !== "initializing") {
       return;
@@ -125,6 +133,7 @@ export class MeetingOrchestrator {
     this.state.status = "weaving";
   }
 
+  /** Creates a child session for a participant with its own model and isolated context. */
   private async createChildSession(participant: ParticipantState): Promise<string> {
     const result = await this.client.session.create({
       body: {
@@ -141,6 +150,7 @@ export class MeetingOrchestrator {
     return result.data.id;
   }
 
+  /** Runs the full deliberation: initializes, runs rounds, and synthesizes the final output. */
   async runMeeting(): Promise<string> {
     await this.initialize();
 
@@ -169,6 +179,7 @@ export class MeetingOrchestrator {
     return output;
   }
 
+  /** Runs a single deliberation round. Returns true if the meeting should continue. */
   async runRound(): Promise<boolean> {
     this.state.current_round++;
     const round = {
@@ -246,20 +257,17 @@ export class MeetingOrchestrator {
     }
 
     if (round.interjections.length > 0) {
-      await this.resolveInterjections(round);
+      await resolveInterjections(round, (ij) => this.moderateInterjection(ij));
     }
 
     round.summary = await this.summarizeRound(round);
 
-    const granted = round.interjections.filter((ij) => ij.granted);
-    if (granted.length > 0) {
-      const ijNotes = granted
-        .map((ij) => `- ${ij.participant_id}: "${ij.reason}"`)
-        .join("\n");
-      this.state.warp += `\n\n### Interjections (Granted)\n${ijNotes}`;
+    const ijNotes = formatInterjectionNotes(round);
+    if (ijNotes) {
+      this.state.warp += ijNotes;
     }
 
-    this.state.warp = await this.evolveWarpAsync(this.state.warp, round);
+    this.state.warp = evolveWarp(this.state.warp, round);
     await writeWarp(this.meetingId, this.state.warp);
 
     const modDecision = await checkModeratorIntervention(
@@ -293,6 +301,7 @@ export class MeetingOrchestrator {
     return true;
   }
 
+  /** Sends a prompt to a participant's child session with retry and timeout. */
   private async promptChildSession(participant: ParticipantState): Promise<AgentResponse | null> {
     participant.status = "speaking";
 
@@ -300,48 +309,71 @@ export class MeetingOrchestrator {
       return null;
     }
 
-    const model = this.getParticipantModel(participant);
-    const systemPrompt = buildAgentSystemPrompt(participant);
-    const userPrompt = buildAgentUserPrompt(
-      participant,
-      this.state.warp,
-      this.state.weft,
-      this.state.question,
-      this.state.current_round,
-    );
+    const maxRetries = 2;
+    const timeoutMs = 120000;
 
-    try {
-      const result = await this.client.session.prompt({
-        path: { id: participant.session_id },
-        body: {
-          system: systemPrompt,
-          model,
-          parts: [{ type: "text", text: userPrompt }],
-        },
-        query: { directory: this.directory },
-      });
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const result = await this.withTimeout(
+          this.client.session.prompt({
+            path: { id: participant.session_id },
+            body: {
+              system: buildAgentSystemPrompt(participant),
+              model: this.getParticipantModel(participant),
+              parts: [{ type: "text", text: buildAgentUserPrompt(
+                participant,
+                this.state.warp,
+                this.state.weft,
+                this.state.question,
+                this.state.current_round,
+              ) }],
+            },
+            query: { directory: this.directory },
+          }),
+          timeoutMs,
+        );
 
-      if (result.error) {
-        throw new Error(result.error.message || JSON.stringify(result.error));
+        if (result.error) {
+          throw new Error(result.error.message || JSON.stringify(result.error));
+        }
+
+        const content = this.extractText(result.data);
+        if (!content) {
+          return null;
+        }
+
+        const response = parseAgentResponse(participant.config.id, content);
+
+        if (this.options.onAgentComplete) {
+          this.options.onAgentComplete(participant.config.id, response.content);
+        }
+
+        return response;
+      } catch (err) {
+        if (attempt === maxRetries) {
+          this.state.objections.push({
+            participant_id: participant.config.id,
+            content: `Failed after ${maxRetries + 1} attempts: ${err instanceof Error ? err.message : "unknown"}`,
+            unresolved: false,
+          });
+          return null;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
       }
-
-      const content = this.extractText(result.data);
-      if (!content) {
-        return null;
-      }
-
-      const response = parseAgentResponse(participant.config.id, content);
-
-      if (this.options.onAgentComplete) {
-        this.options.onAgentComplete(participant.config.id, response.content);
-      }
-
-      return response;
-    } catch {
-      return null;
     }
+
+    return null;
   }
 
+  /** Wraps a promise with a timeout. */
+  private withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`Timed out after ${ms}ms`)), ms);
+      promise.then(resolve, reject).finally(() => clearTimeout(timer));
+    });
+  }
+
+  /** Extracts text content from a session prompt response. */
   private extractText(data: any): string | null {
     if (!data?.parts) return null;
     const parts: any[] = data.parts;
@@ -368,44 +400,8 @@ export class MeetingOrchestrator {
     return Promise.all(promises);
   }
 
-  private async resolveInterjections(round: Round): Promise<void> {
-    round.interjections.sort((a, b) => b.priority - a.priority);
-
-    for (const ij of round.interjections) {
-      if (ij.priority >= 9) {
-        ij.granted = true;
-        ij.resolved = "granted";
-      } else if (ij.priority >= 7) {
-        const contested = round.interjections.some(
-          (other) =>
-            other.participant_id !== ij.participant_id
-            && other.priority === ij.priority
-            && other.resolved === "pending",
-        );
-
-        if (contested) {
-          const ruling = await this.moderateInterjection(ij, round);
-          ij.granted = ruling;
-          ij.resolved = ruling ? "granted" : "contested";
-          if (!ruling) {
-            ij.pushback = "Moderator ruled against interjection";
-          }
-        } else {
-          ij.granted = true;
-          ij.resolved = "granted";
-        }
-      } else {
-        ij.resolved = "denied";
-      }
-
-      await addInterjection(this.meetingId, ij);
-    }
-  }
-
-  private async moderateInterjection(
-    ij: Interjection,
-    round: Round,
-  ): Promise<boolean> {
+  /** Asks the moderator to rule on a contested interjection. Returns true if granted. */
+  private async moderateInterjection(ij: Interjection): Promise<boolean> {
     const situation = `Two participants claim equal priority (${ij.priority}) for interjection:
 - ${ij.participant_id}: "${ij.reason}"
 Who should be granted the floor?`;
@@ -438,14 +434,7 @@ Respond with: "grant" or "deny". One word only.`;
     };
   }
 
-  private async evolveWarpAsync(warp: string, round: Round): Promise<string> {
-    const { compactWarpWithLLM } = await import("./warp-compaction.js");
-    const model = this.getHighestTierModel();
-    const promptFn = async (system: string, m: { providerID: string; modelID: string }, msg: string) => {
-      return this.promptParent(system, m, msg);
-    };
-    return compactWarpWithLLM(warp, round, promptFn, model);
-  }
+
 
   private async summarizeRound(round: { contributions: Contribution[]; interjections: Interjection[] }): Promise<string> {
     const contribCount = round.contributions.length;
@@ -479,28 +468,20 @@ Respond with: "grant" or "deny". One word only.`;
     const activeCount = this.state.participants.filter((p) => p.status !== "passed").length;
     const passedCount = this.state.participants.filter((p) => p.status === "passed").length;
 
-    if (activeCount === 0) {
-      this.state.status = "converged";
-      return true;
-    }
+    const result = checkConvergence(
+      passedCount,
+      activeCount,
+      this.state.participants.length,
+      this.state.current_round,
+      this.state.max_rounds,
+      this.state.convergence_mode,
+    );
 
-    switch (this.state.convergence_mode) {
-      case "consensus":
-        if (passedCount === this.state.participants.length) {
-          this.state.status = "converged";
-          return true;
-        }
-        break;
-      case "majority":
-        if (passedCount > this.state.participants.length / 2) {
-          this.state.status = "converged";
-          return true;
-        }
-        break;
-    }
-    return false;
+    this.state.status = result.status;
+    return result.shouldStop;
   }
 
+  /** Produces the final deliberation artifact by prompting the synthesizer agent. */
   private async synthesize(): Promise<string> {
     const synthesizer = this.state.participants.find((p) => p.config.tier === "principal")
       ?? this.state.participants.find((p) => p.config.tier === "senior")
@@ -508,45 +489,22 @@ Respond with: "grant" or "deny". One word only.`;
 
     if (!synthesizer) return "No participants available for synthesis.";
 
-    const { formatTranscript } = await import("./warp-compaction.js");
-    const transcript = formatTranscript(this.state.rounds, this.state.participants);
-    const model = this.getParticipantModel(synthesizer);
+    const result = await synthesize(
+      this.state.question,
+      this.state.rounds,
+      this.state.weft,
+      this.state.participants,
+      this.state.objections,
+      synthesizer,
+      (system, model, message) => this.promptParent(system, model, message),
+      (p) => this.getParticipantModel(p),
+    );
 
-    const { buildSynthesisPrompt } = await import("./prompts.js");
-    const userPrompt = buildSynthesisPrompt(this.state.question, transcript, this.state.participants);
-
-    let artifactText: string;
-    try {
-      artifactText = await this.promptParent(
-        `You are ${synthesizer.config.name} (${synthesizer.config.tier}). Synthesize the final output.\n\n${synthesizer.tier_config.system_prompt_addendum}`,
-        model,
-        userPrompt,
-      );
-    } catch {
-      artifactText = `# Deliberation Output\n\n${this.state.weft.map((c) => `- ${c.content}`).join("\n")}`;
-    }
-
-    const unresolvedObjections = this.state.objections.filter((o) => o.unresolved);
-    const objectionsText = unresolvedObjections.map((o) => `- ${o.content}`).join("\n");
-    const finalOutput = objectionsText
-      ? `${artifactText}\n\n## Unresolved Objections\n${objectionsText}`
-      : artifactText;
-
-    const confidence = deriveConfidence(this.state.weft, unresolvedObjections.length);
-
-    this.state.artifact = {
-      content: finalOutput,
-      format: "markdown",
-      decisions: extractSection(finalOutput, "Decision"),
-      action_items: extractSection(finalOutput, "Action Items"),
-      dissent: unresolvedObjections,
-      open_questions: extractSection(finalOutput, "Open Questions"),
-      confidence,
-    };
-
-    return finalOutput;
+    this.state.artifact = result.artifact;
+    return result.output;
   }
 
+  /** Persists the current meeting state to shared files. */
   private async persistState(): Promise<void> {
     await writeSharedState(this.buildSharedState());
     await writeWarp(this.meetingId, this.state.warp);

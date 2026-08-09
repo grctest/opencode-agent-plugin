@@ -1,3 +1,4 @@
+/** A semaphore for limiting concurrent async operations. */
 export class Semaphore {
   private permits: number;
   private queue: Array<() => void> = [];
@@ -6,6 +7,7 @@ export class Semaphore {
     this.permits = permits;
   }
 
+  /** Acquires a permit, waiting if none are available. */
   async acquire(): Promise<void> {
     if (this.permits > 0) {
       this.permits--;
@@ -14,6 +16,7 @@ export class Semaphore {
     return new Promise((resolve) => this.queue.push(resolve));
   }
 
+  /** Releases a permit, waking up the next waiter if any. */
   release(): void {
     this.permits++;
     const next = this.queue.shift();
@@ -24,6 +27,7 @@ export class Semaphore {
   }
 }
 
+/** Runs tasks with a concurrency limit, returning settled results in order. */
 export async function withConcurrency<T>(
   tasks: Array<() => Promise<T>>,
   limit: number,

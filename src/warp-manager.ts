@@ -1,11 +1,8 @@
-import type { Round, Contribution } from "./types.js";
+import type { Round } from "./types.js";
 
 const MAX_WARP_CHARS = 12000;
 
-export function estimateChars(text: string): number {
-  return text.length;
-}
-
+/** Appends a round summary to the warp context, compacting if it exceeds MAX_WARP_CHARS. */
 export function evolveWarp(warp: string, round: Round): string {
   if (!round.summary) return warp;
 
@@ -13,20 +10,21 @@ export function evolveWarp(warp: string, round: Round): string {
   const projectedLength = warp.length + summaryText.length;
 
   if (projectedLength > MAX_WARP_CHARS) {
-    return compactWarp(warp, summaryText, round.contributions);
+    return compactWarp(warp, summaryText, round);
   }
 
   return warp + summaryText;
 }
 
-function compactWarp(currentWarp: string, newSummary: string, contributions: Contribution[]): string {
-  const keyPoints = contributions
+/** Rule-based fallback compaction: extracts key points from contributions. */
+function compactWarp(currentWarp: string, newSummary: string, round: Round): string {
+  const keyPoints = round.contributions
     .filter((c) => c.type === "propose" || c.type === "refine" || c.type === "support")
     .slice(0, 3)
     .map((c) => c.content.slice(0, 100))
     .join("; ");
 
-  const compacted = `(Context compacted — earlier rounds summarized)
+  let compacted = `(Context compacted — earlier rounds summarized)
 
 ## Established Facts
 ${keyPoints || "Key decisions and agreements from previous rounds preserved."}
@@ -34,12 +32,13 @@ ${keyPoints || "Key decisions and agreements from previous rounds preserved."}
 ${newSummary}`;
 
   if (compacted.length > MAX_WARP_CHARS) {
-    return newSummary;
+    compacted = newSummary;
   }
 
   return compacted;
 }
 
+/** LLM-based compaction: compresses warp context into key facts, falling back to rule-based. */
 export async function compactWarpWithLLM(
   warp: string,
   round: Round,
@@ -73,9 +72,15 @@ Compressed context:`;
   } catch {
   }
 
-  return compactWarp(warp, summaryText, round.contributions);
+  return compactWarp(warp, summaryText, round);
 }
 
+/** Estimates character count (proxy for token count). */
+export function estimateChars(text: string): number {
+  return text.length;
+}
+
+/** Formats the full deliberation transcript for synthesis. */
 export function formatTranscript(
   rounds: Round[],
   participants: Array<{ config: { id: string; name: string; tier: string } }>,
@@ -112,3 +117,5 @@ export function formatTranscript(
 
   return lines.join("\n");
 }
+
+export { MAX_WARP_CHARS };

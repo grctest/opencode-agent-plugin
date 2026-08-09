@@ -1,5 +1,6 @@
 import type { ParticipantState, Contribution } from "./types.js";
 
+/** Builds the system prompt that establishes a participant's identity, agenda, and deliberation rules. */
 export function buildSpeakerSystemPrompt(participant: ParticipantState): string {
   return `You are **${participant.config.name}** in a structured multi-agent deliberation called a "Loom."
 
@@ -21,6 +22,7 @@ ${participant.tier_config.system_prompt_addendum}
 6. Build on others' points, don't just repeat them`;
 }
 
+/** Builds the user prompt containing the topic, shared context (warp), and recent contributions for a participant's turn. */
 export function buildSpeakerUserPrompt(
   participant: ParticipantState,
   question: string,
@@ -55,6 +57,7 @@ ${participant.reflection ? `## Your Private Reflection\n${participant.reflection
 Read the topic, context, and recent contributions. Then make your contribution or pass.`;
 }
 
+/** Builds a prompt asking a listener to privately reflect on a speaker's contribution. */
 export function buildReflectionPrompt(
   listener: ParticipantState,
   speakerName: string,
@@ -75,6 +78,7 @@ What is your honest reaction? Write 2-3 sentences:
 This is private — only you will see it.`;
 }
 
+/** Builds a prompt asking a neutral coordinator which listeners (if any) should interject. */
 export function buildInterjectionCheckPrompt(
   currentSpeakerId: string,
   lastContribution: string,
@@ -120,6 +124,7 @@ Respond with one line per listener:
 Be conservative — most of the time, listeners should wait.`;
 }
 
+/** Builds a prompt asking the current speaker to yield or contest an interjection attempt. */
 export function buildPushbackPrompt(
   participant: ParticipantState,
   interjectorName: string,
@@ -141,6 +146,7 @@ b) **[CONTEST Priority: N (must be higher than ${interjectorPriority}), Reason: 
 Choose carefully — only contest if your point genuinely cannot wait.`;
 }
 
+/** Builds a prompt for the moderator to rule on deadlocks, circular arguments, or force convergence. */
 export function buildModeratorPrompt(
   situation: string,
   currentRound: number,
@@ -178,6 +184,7 @@ next_speaker: <participant_id or "synthesize" or "continue">
 reason: <brief justification>`;
 }
 
+/** Builds a prompt for synthesizing the final deliberation artifact from all contributions. */
 export function buildSynthesisPrompt(
   question: string,
   transcript: string,
@@ -215,6 +222,7 @@ For Confidence, choose High (strong consensus), Medium (general agreement with s
 
 // ─── Multi-Session Agent Prompts ──────────────────────────────────────
 
+/** Builds the system prompt for an agent in the multi-session architecture (identity + rules). */
 export function buildAgentSystemPrompt(participant: ParticipantState): string {
   return `You are **${participant.config.name}** (${participant.config.tier}) in a structured multi-agent deliberation called a "Loom."
 
@@ -236,6 +244,7 @@ ${participant.config.tier === "junior" ? "Think creatively and bring fresh persp
 6. Stay in character — your persona and agenda shape your contributions`;
 }
 
+/** Builds the user prompt for an agent's turn: warp context + recent contributions + interjection notes. */
 export function buildAgentUserPrompt(
   participant: ParticipantState,
   warp: string,

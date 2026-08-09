@@ -7,14 +7,16 @@
   "types": "dist/index.d.ts",
   "files": [
     "dist",
-    "agents",
     "skills",
     "commands"
   ],
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "npx tsx test/engine.test.ts && npx tsx test/tiers.test.ts && npx tsx test/composer.test.ts && npx tsx test/shared-files.test.ts && npx tsx test/validation.test.ts && npx tsx test/integration.test.ts",
+    "install:plugin": "node scripts/install.mjs",
+    "update:plugin": "node scripts/update.mjs"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": "*",

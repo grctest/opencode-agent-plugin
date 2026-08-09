@@ -98,6 +98,7 @@ const MEDIUM_STAKES_KEYWORDS = [
   "deployment",
 ];
 
+/** Classifies the stakes of a question based on keywords (e.g., "migration", "security"). */
 function detectStakes(question: string): "high" | "medium" | "low" {
   const q = question.toLowerCase();
   if (HIGH_STAKES_KEYWORDS.some((k) => q.includes(k))) return "high";
@@ -105,6 +106,7 @@ function detectStakes(question: string): "high" | "medium" | "low" {
   return "low";
 }
 
+/** Picks a random unused persona for a given tier. Returns null if all personas are used. */
 function pickPersona(tier: Tier, used: Set<string>): ParticipantConfig | null {
   const pool =
     tier === "junior"
@@ -116,9 +118,10 @@ function pickPersona(tier: Tier, used: Set<string>): ParticipantConfig | null {
           : PRINCIPAL_PERSONAS;
 
   const available = pool.filter((p) => !used.has(p.name));
-  if (available.length === 0) return null;
+  const choice = available.length > 0
+    ? available[Math.floor(Math.random() * available.length)]
+    : pool[Math.floor(Math.random() * pool.length)];
 
-  const choice = available[Math.floor(Math.random() * available.length)];
   used.add(choice.name);
 
   return {
@@ -130,6 +133,7 @@ function pickPersona(tier: Tier, used: Set<string>): ParticipantConfig | null {
   };
 }
 
+/** Composes a deliberation room by analyzing the question and generating appropriate participants. */
 export function composeRoom(question: string, desiredCount?: number): RoomRecommendation {
   const stakes = detectStakes(question);
   const used = new Set<string>();
@@ -154,6 +158,7 @@ export function composeRoom(question: string, desiredCount?: number): RoomRecomm
   };
 }
 
+/** Generates a list of role names for the deliberation based on participant count and stakes. */
 function generateRoles(count: number, stakes: string): string[] {
   const roles: string[] = [];
 
@@ -177,6 +182,7 @@ function generateRoles(count: number, stakes: string): string[] {
   return roles.slice(0, count);
 }
 
+/** Formats the room composition as a markdown preview for user approval. */
 export function formatRoomPreview(room: RoomRecommendation): string {
   const lines = [
     "## Proposed Deliberation Room",

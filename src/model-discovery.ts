@@ -22,6 +22,7 @@ export interface ModelPlan {
   available: AvailableModel[];
 }
 
+/** Scores a model for auto-selection: prefers free, active, high-context, reasoning-capable models. */
 function scoreModel(model: AvailableModel): number {
   let score = 0;
 
@@ -42,10 +43,12 @@ function scoreModel(model: AvailableModel): number {
   return score;
 }
 
+/** Sorts models by quality score (highest first). */
 function sortModelsByQuality(models: AvailableModel[]): AvailableModel[] {
   return [...models].sort((a, b) => scoreModel(b) - scoreModel(a));
 }
 
+/** Assigns the best available models to each role, prioritizing principal > senior > mid > junior. */
 export function selectModelsForRoles(available: AvailableModel[], roles: string[]): ModelAssignment[] {
   const sorted = sortModelsByQuality(available);
   const free = sorted.filter((m) => m.cost.input === 0 && m.cost.output === 0);
@@ -77,6 +80,7 @@ export function selectModelsForRoles(available: AvailableModel[], roles: string[
   return assignments;
 }
 
+/** Formats the model assignment plan as a markdown table for user review. */
 export function formatModelPlan(plan: ModelPlan): string {
   const lines = [
     "## Proposed Model Assignment",
@@ -103,6 +107,7 @@ export function formatModelPlan(plan: ModelPlan): string {
   return lines.join("\n");
 }
 
+/** Formats the cost of a model assignment for display. */
 function formatCost(assignment: ModelAssignment, available: AvailableModel[]): string {
   const model = available.find(
     (m) => m.providerID === assignment.providerID && m.modelID === assignment.modelID,
@@ -112,6 +117,7 @@ function formatCost(assignment: ModelAssignment, available: AvailableModel[]): s
   return `$${model.cost.input}/$${model.cost.output}`;
 }
 
+/** Creates a complete model plan: selects models for each role and designates the orchestrator. */
 export function createModelPlan(available: AvailableModel[], roles?: string[]): ModelPlan {
   const defaultRoles = ["junior", "mid", "senior", "principal"];
   const participants = selectModelsForRoles(available, roles ?? defaultRoles);
@@ -121,14 +127,17 @@ export function createModelPlan(available: AvailableModel[], roles?: string[]): 
 
 let storedPlan: ModelAssignment[] | null = null;
 
+/** Stores a model plan for auto-application in the next `knit` invocation. */
 export function storeModelPlan(plan: ModelAssignment[]): void {
   storedPlan = plan;
 }
 
+/** Retrieves the previously stored model plan (if any). */
 export function getStoredModelPlan(): ModelAssignment[] | null {
   return storedPlan;
 }
 
+/** Clears the stored model plan. */
 export function clearStoredModelPlan(): void {
   storedPlan = null;
 }

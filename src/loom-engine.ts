@@ -4,6 +4,7 @@ import { MeetingOrchestrator } from "./orchestrator.js";
 import { parseModeratorRuling } from "./moderation.js";
 import { deriveConfidence, extractSection } from "./artifact.js";
 
+/** Thin wrapper that creates and runs a MeetingOrchestrator. This is the main entry point for the plugin. */
 export class LoomEngine {
   private orchestrator: MeetingOrchestrator;
 

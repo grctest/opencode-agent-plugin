@@ -1,8 +1,11 @@
+/** Participant tier — determines behavior, rights, and model selection. Any string is valid. */
 export type Tier = string;
 
 export type ProviderID = string;
 export type ModelID = string;
 export type Client = any;
+
+/** Signature for sending a prompt to an LLM and receiving a text response. */
 export type PromptFn = (system: string, model: { providerID: ProviderID; modelID: ModelID }, message: string) => Promise<string>;
 
 export type ContributionType =
@@ -15,6 +18,7 @@ export type ContributionType =
   | "question"
   | "interjection";
 
+/** Deliberation rights granted to a participant based on their tier. */
 export interface TierRights {
   contribute: boolean;
   interject: boolean;
@@ -23,23 +27,27 @@ export interface TierRights {
   force_end: boolean;
 }
 
+/** Model configuration for a participant tier. */
 export interface TierModelConfig {
   model: string;
   temperature: number;
   reasoning_effort?: "low" | "medium" | "high";
 }
 
+/** Complete tier config combining model settings, behavioral guidance, and rights. */
 export interface TierConfig extends TierModelConfig {
   system_prompt_addendum: string;
   rights: TierRights;
 }
 
+/** Maps a provider/model pair to a specific tier. */
 export interface ModelAssignment {
   providerID: string;
   modelID: string;
   modelName?: string;
 }
 
+/** Static configuration for a meeting participant. */
 export interface ParticipantConfig {
   id: string;
   name: string;
@@ -49,6 +57,7 @@ export interface ParticipantConfig {
   model?: ModelAssignment;
 }
 
+/** A single contribution from a participant during deliberation. */
 export interface Contribution {
   participant_id: string;
   content: string;
@@ -57,6 +66,7 @@ export interface Contribution {
   timestamp: number;
 }
 
+/** A request from a participant to interrupt the normal speaking order. */
 export interface Interjection {
   participant_id: string;
   priority: number;
@@ -66,6 +76,7 @@ export interface Interjection {
   resolved: "pending" | "granted" | "denied" | "contested";
 }
 
+/** Record of a single deliberation round. */
 export interface Round {
   number: number;
   contributions: Contribution[];
@@ -74,12 +85,14 @@ export interface Round {
   summary: string;
 }
 
+/** An unresolved objection raised during deliberation. */
 export interface Objection {
   participant_id: string;
   content: string;
   unresolved: boolean;
 }
 
+/** The synthesized output of a completed deliberation. */
 export interface Artifact {
   content: string;
   format: "markdown" | "json" | "text";
@@ -99,6 +112,7 @@ export type LoomStatus =
   | "max_rounds_reached"
   | "aborted";
 
+/** Runtime state of a participant during deliberation. */
 export interface ParticipantState {
   config: ParticipantConfig;
   tier_config: TierConfig;
@@ -108,6 +122,7 @@ export interface ParticipantState {
   contributions_count: number;
 }
 
+/** Complete runtime state of a Loom deliberation meeting. */
 export interface LoomState {
   id: string;
   parent_session_id: string;
@@ -126,12 +141,14 @@ export interface LoomState {
   convergence_mode: "consensus" | "majority" | "moderator_forces";
 }
 
+/** Output of the room composition process. */
 export interface RoomRecommendation {
   participants: ParticipantConfig[];
   estimated_rounds: number;
   reasoning: string;
 }
 
+/** Parsed response from an agent after a deliberation turn. */
 export interface AgentResponse {
   participant_id: string;
   content: string;
@@ -142,6 +159,7 @@ export interface AgentResponse {
   } | null;
 }
 
+/** Shared state persisted to files for cross-session communication. */
 export interface SharedMeetingState {
   meeting_id: string;
   round: number;

@@ -4,6 +4,7 @@ import { buildInterjectionCheckPrompt, buildPushbackPrompt, buildSpeakerSystemPr
 
 type ParticipantLookup = Array<{ config: { id: string; name: string; tier: string; persona: string }; status: string; canInterject: boolean }>;
 
+/** Handles the full interjection pipeline: check for interjection requests, resolve conflicts, and execute push-back. */
 export async function handleInterjections(
   currentSpeakerId: string,
   round: Round,
@@ -38,6 +39,7 @@ export async function handleInterjections(
   return "continued";
 }
 
+/** Asks a neutral coordinator which listeners want to interject after a speaker's contribution. */
 export async function checkForInterjections(
   currentSpeakerId: string,
   weft: Contribution[],

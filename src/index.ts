@@ -4,12 +4,18 @@ import { z } from "zod";
 import { LoomEngine } from "./loom-engine.js";
 import { composeRoom, formatRoomPreview } from "./composer.js";
 import type { AgentSessionClient } from "./client-types.js";
+import { isAgentSessionClient } from "./client-types.js";
 import type { ParticipantConfig, Tier } from "./types.js";
 import { createModelPlan, formatModelPlan, getStoredModelPlan, storeModelPlan } from "./model-discovery.js";
 import type { AvailableModel, ModelAssignment } from "./model-discovery.js";
 
 export default function loomPlugin(input: PluginInput) {
   const { client, directory } = input;
+
+  if (!isAgentSessionClient(client)) {
+    throw new Error("Loom plugin requires a compatible opencode client with session.create, session.prompt, session.message, and provider.list.");
+  }
+
   const activeLooms = new Map<string, LoomEngine>();
   let pendingModels: ModelAssignment[] | null = null;
 
@@ -17,7 +23,9 @@ export default function loomPlugin(input: PluginInput) {
     tool: {
       knit: tool({
         description:
-          "Start a multi-agent deliberation session (a 'Loom') where multiple AI agents with different expertise and seniority levels collaborate to produce a complex output. Use when the task benefits from multiple perspectives, has no obvious single answer, or requires structured deliberation.",
+          "Start a multi-agent deliberation session (a 'Loom'). " +
+          "ONLY invoke when the user explicitly types /knit followed by a question. " +
+          "Do NOT invoke for general questions, discussions, or information requests.",
         args: {
           question: z
             .string()
@@ -41,9 +49,9 @@ export default function loomPlugin(input: PluginInput) {
                     "What this agent wants to achieve in the deliberation",
                   ),
                 tier: z
-                  .enum(["junior", "mid", "senior", "principal"])
+                  .string()
                   .describe(
-                    "Seniority level — determines model, behavior, and rights",
+                    "Role name (e.g. junior, mid, senior, principal, security-engineer). Determines behavior and rights.",
                   ),
               }),
             )
@@ -150,7 +158,7 @@ export default function loomPlugin(input: PluginInput) {
           const maxRounds = args.max_rounds ?? participants.length;
 
           const engine = new LoomEngine(
-            client as unknown as AgentSessionClient,
+            client,
             directory,
             context.metadata,
             {
@@ -204,7 +212,9 @@ export default function loomPlugin(input: PluginInput) {
       }),
 
       loom_status: tool({
-        description: "Check the status of a running Loom deliberation session",
+        description:
+          "Check the status of a running Loom deliberation session. " +
+          "Internal tool for agents to monitor progress. Not a user command.",
         args: {
           loom_id: z.string().describe("The ID of the Loom session to check"),
         },
@@ -219,7 +229,7 @@ export default function loomPlugin(input: PluginInput) {
       }),
 
       knit_models: tool({
-        description: "Discover available models and propose assignments for the Loom's knitting needles",
+        description: "Discover available models in your opencode session and propose tier assignments. Run this before knit to configure which models act as knitting needles.",
         args: {},
         execute: async (_args, _ctx): Promise<string> => {
           try {
@@ -280,9 +290,8 @@ export {
   getTierConfig,
   splitModel,
   can,
-  DEFAULT_TIER_MODELS,
-  DEFAULT_TIER_PROMPTS,
-  DEFAULT_TIER_RIGHTS,
+  getPromptForTier,
+  getRightsForTier,
 } from "./tiers.js";
 export type {
   Tier,

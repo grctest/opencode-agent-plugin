@@ -1,89 +1,67 @@
 import type { Tier, TierConfig, TierRights } from "./types.js";
 
-export const DEFAULT_TIER_RIGHTS: Record<Tier, TierRights> = {
-  junior: {
-    contribute: true,
-    interject: true,
-    call_vote: false,
-    veto: false,
-    force_end: false,
-  },
-  mid: {
-    contribute: true,
-    interject: true,
-    call_vote: true,
-    veto: false,
-    force_end: false,
-  },
-  senior: {
-    contribute: true,
-    interject: true,
-    call_vote: true,
-    veto: true,
-    force_end: false,
-  },
-  principal: {
-    contribute: true,
-    interject: true,
-    call_vote: true,
-    veto: true,
-    force_end: true,
-  },
+const BASE_RIGHTS: TierRights = {
+  contribute: true,
+  interject: true,
+  call_vote: false,
+  veto: false,
+  force_end: false,
 };
 
-export const DEFAULT_TIER_PROMPTS: Record<Tier, string> = {
-  junior:
-    "You are a junior team member in a structured deliberation. Think creatively and bring fresh perspectives. Wild ideas are welcome — you will not be penalized for being wrong. Challenge senior thinking with naive questions that expose hidden assumptions. Your value is in thinking outside the box that more experienced minds may be trapped in.",
-  mid: "You are a mid-level practitioner in a structured deliberation. Balance creativity with evidence. When you disagree, explain why with specific reasoning. Synthesize others' points before adding your own. Build on good ideas even if you didn't propose them.",
-  senior:
-    "You are a senior leader in a structured deliberation. Prioritize accuracy and risk assessment. Cite patterns from experience. Be conservative with claims — but when you commit to a position, commit fully. Flag irreversible decisions and long-term consequences. Your role is to ensure the group does not overlook critical risks.",
-  principal:
-    "You are the principal decision-maker in a structured deliberation. You see the whole system. Cut through noise and circular argument. When consensus is impossible, decide. Your primary role is to ensure this deliberation produces a clear, actionable answer — not just discussion. You have final authority to end deliberation.",
-};
+/** Returns deliberation rights for a given tier. Custom tiers get base rights with voting enabled. */
+export function getRightsForTier(tier: Tier): TierRights {
+  switch (tier) {
+    case "junior":
+      return { ...BASE_RIGHTS };
+    case "mid":
+      return { ...BASE_RIGHTS, call_vote: true };
+    case "senior":
+      return { ...BASE_RIGHTS, call_vote: true, veto: true };
+    case "principal":
+      return { ...BASE_RIGHTS, call_vote: true, veto: true, force_end: true };
+    default:
+      return { ...BASE_RIGHTS, call_vote: true };
+  }
+}
 
-export const DEFAULT_TIER_MODELS: Record<Tier, { model: string; temperature: number }> = {
-  junior: {
-    model: "anthropic/claude-3-5-haiku-20241022",
-    temperature: 0.9,
-  },
-  mid: {
-    model: "anthropic/claude-3-5-sonnet-20241022",
-    temperature: 0.5,
-  },
-  senior: {
-    model: "anthropic/claude-3-opus-20240229",
-    temperature: 0.3,
-  },
-  principal: {
-    model: "anthropic/claude-3-opus-20240229",
-    temperature: 0.2,
-  },
-};
+/** Returns tier-specific behavioral guidance for agent system prompts. */
+export function getPromptForTier(tier: Tier): string {
+  switch (tier) {
+    case "junior":
+      return "Think creatively and bring fresh perspectives. Wild ideas are welcome — you won't be penalized for being wrong. Challenge senior thinking with naive questions that expose hidden assumptions.";
+    case "mid":
+      return "Balance creativity with evidence. When you disagree, explain why with specific reasoning. Synthesize others' points before adding your own.";
+    case "senior":
+      return "Prioritize accuracy and risk assessment. Cite patterns from experience. Be conservative with claims but commit fully when you do. Flag irreversible decisions.";
+    case "principal":
+      return "See the whole system. Cut through noise and circular argument. When consensus is impossible, decide. Your primary role is to ensure this deliberation produces a clear, actionable answer.";
+    default:
+      return "Contribute your expertise to the deliberation. Challenge assumptions and propose alternatives.";
+  }
+}
 
+/** Splits a "provider/model" string into its components. */
 export function splitModel(model: string): { providerID: string; modelID: string } {
   const idx = model.indexOf("/");
   if (idx === -1) throw new Error(`Invalid model format (expected "provider/model"): ${model}`);
   return { providerID: model.slice(0, idx), modelID: model.slice(idx + 1) };
 }
 
+/** Checks whether a participant's tier grants a specific deliberation right. */
 export function can(participant: { tier_config: TierConfig }, action: keyof TierRights): boolean {
   return participant.tier_config.rights[action];
 }
 
+/** Builds a complete tier config with optional model/temperature overrides. */
 export function getTierConfig(
   tier: Tier,
-  overrides?: Partial<
-    Record<Tier, { model?: string; temperature?: number; reasoning_effort?: "low" | "medium" | "high" }>
-  >,
+  overrides?: { model?: string; temperature?: number; reasoning_effort?: "low" | "medium" | "high" },
 ): TierConfig {
-  const modelDefault = DEFAULT_TIER_MODELS[tier];
-  const override = overrides?.[tier];
-
   return {
-    model: override?.model ?? modelDefault.model,
-    temperature: override?.temperature ?? modelDefault.temperature,
-    reasoning_effort: override?.reasoning_effort,
-    system_prompt_addendum: DEFAULT_TIER_PROMPTS[tier],
-    rights: DEFAULT_TIER_RIGHTS[tier],
+    model: overrides?.model ?? "",
+    temperature: overrides?.temperature ?? 0.5,
+    reasoning_effort: overrides?.reasoning_effort,
+    system_prompt_addendum: getPromptForTier(tier),
+    rights: getRightsForTier(tier),
   };
 }

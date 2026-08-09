@@ -1,4 +1,4 @@
-import { getTierConfig, splitModel, can, DEFAULT_TIER_RIGHTS } from "../src/tiers.js";
+import { getTierConfig, splitModel, can, getRightsForTier, getPromptForTier } from "../src/tiers.js";
 import type { Tier, TierConfig, TierRights } from "../src/types.js";
 
 function assert(condition: boolean, message: string): void {
@@ -34,8 +34,7 @@ console.log("  splitModel: PASS");
 
 console.log("Testing getTierConfig...");
 const juniorConfig = getTierConfig("junior");
-assertEqual(juniorConfig.model, "anthropic/claude-3-5-haiku-20241022", "junior model");
-assertEqual(juniorConfig.temperature, 0.9, "junior temperature");
+assertEqual(juniorConfig.temperature, 0.5, "junior default temperature");
 assert(juniorConfig.system_prompt_addendum.length > 0, "junior has system prompt addendum");
 assert(juniorConfig.rights.contribute === true, "junior can contribute");
 assert(juniorConfig.rights.veto === false, "junior cannot veto");
@@ -47,6 +46,11 @@ assert(principalConfig.rights.call_vote === true, "principal can call vote");
 
 const seniorConfig = getTierConfig("senior");
 assert(seniorConfig.rights.veto === true, "senior can veto");
+
+const overridden = getTierConfig("custom-role", { model: "test/model", temperature: 0.3 });
+assertEqual(overridden.model, "test/model", "override applies model");
+assertEqual(overridden.temperature, 0.3, "override applies temperature");
+assert(overridden.rights.contribute === true, "custom role gets base rights");
 assert(seniorConfig.rights.force_end === false, "senior cannot force end");
 
 const midConfig = getTierConfig("mid");
@@ -54,11 +58,14 @@ assert(midConfig.rights.call_vote === true, "mid can call vote");
 assert(midConfig.rights.veto === false, "mid cannot veto");
 
 // With overrides
-const overridden = getTierConfig("junior", {
-  junior: { model: "custom/model", temperature: 0.1 },
-});
-assertEqual(overridden.model, "custom/model", "override applies model");
-assertEqual(overridden.temperature, 0.1, "override applies temperature");
+const customConfig = getTierConfig("junior", { model: "custom/model", temperature: 0.1 });
+assertEqual(customConfig.model, "custom/model", "override applies model");
+assertEqual(customConfig.temperature, 0.1, "override applies temperature");
+
+// Custom tier with overrides
+const customRoleConfig = getTierConfig("security-engineer", { model: "anthropic/claude-3-opus-20240229" });
+assertEqual(customRoleConfig.model, "anthropic/claude-3-opus-20240229", "custom tier model override");
+assert(customRoleConfig.rights.contribute === true, "custom tier gets base rights");
 console.log("  getTierConfig: PASS");
 
 // ─── can() ─────────────────────────────────────────────────────────────
@@ -79,18 +86,22 @@ assert(can(makeParticipant("mid"), "call_vote") === true, "mid can call vote");
 assert(can(makeParticipant("mid"), "veto") === false, "mid cannot veto");
 console.log("  can(): PASS");
 
-// ─── DEFAULT_TIER_RIGHTS ───────────────────────────────────────────────
+// ─── Tier Rights ───────────────────────────────────────────────────
 
-console.log("Testing DEFAULT_TIER_RIGHTS...");
+console.log("Testing tier rights...");
 const tiers: Tier[] = ["junior", "mid", "senior", "principal"];
 for (const tier of tiers) {
-  const rights = DEFAULT_TIER_RIGHTS[tier];
+  const rights = getRightsForTier(tier);
   assert(typeof rights.contribute === "boolean", `${tier} has contribute`);
   assert(typeof rights.interject === "boolean", `${tier} has interject`);
   assert(typeof rights.call_vote === "boolean", `${tier} has call_vote`);
   assert(typeof rights.veto === "boolean", `${tier} has veto`);
   assert(typeof rights.force_end === "boolean", `${tier} has force_end`);
 }
-console.log("  DEFAULT_TIER_RIGHTS: PASS");
+
+const customRights = getRightsForTier("security-engineer");
+assert(customRights.contribute === true, "custom tier gets default rights");
+assert(customRights.call_vote === true, "custom tier can call votes");
+console.log("  Tier rights: PASS");
 
 console.log("\nAll tier tests passed!");

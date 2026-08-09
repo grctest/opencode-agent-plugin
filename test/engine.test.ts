@@ -1,5 +1,5 @@
 import { LoomEngine, parseModeratorRuling, extractSection } from "../src/loom-engine.js";
-import { evolveWarp } from "../src/warp-compaction.js";
+import { evolveWarp } from "../src/warp-manager.js";
 import { writeAgentResponse, _resetMemFs } from "../src/shared-files.js";
 import type { Tier } from "../src/types.js";
 
@@ -67,8 +67,8 @@ const engine = new LoomEngine(
     context: "Test context",
     parentSessionId: "session-123",
     participants: [
-      { id: "p1", name: "Alice", persona: "Engineer", agenda: "Build things", tier: "senior" },
-      { id: "p2", name: "Bob", persona: "Skeptic", agenda: "Find problems", tier: "mid" },
+      { id: "p1", name: "Alice", persona: "Engineer", agenda: "Build things", tier: "senior", model: { providerID: "test", modelID: "model-senior" } },
+      { id: "p2", name: "Bob", persona: "Skeptic", agenda: "Find problems", tier: "mid", model: { providerID: "test", modelID: "model-mid" } },
     ],
     maxRounds: 3,
     convergence: "consensus",
@@ -114,8 +114,8 @@ const consensusEngine = new LoomEngine(consensusClient, "/tmp", metadataFn, {
   context: "Test",
   parentSessionId: "s1",
   participants: [
-    { id: "p1", name: "Alice", persona: "Eng", agenda: "Build", tier: "senior" },
-    { id: "p2", name: "Bob", persona: "Skeptic", agenda: "Check", tier: "mid" },
+    { id: "p1", name: "Alice", persona: "Eng", agenda: "Build", tier: "senior", model: { providerID: "test", modelID: "model-senior" } },
+    { id: "p2", name: "Bob", persona: "Skeptic", agenda: "Check", tier: "mid", model: { providerID: "test", modelID: "model-mid" } },
   ],
   maxRounds: 3,
   convergence: "consensus",
@@ -137,9 +137,9 @@ const majorityEngine = new LoomEngine(majorityClient, "/tmp", metadataFn, {
   context: "Test",
   parentSessionId: "s1",
   participants: [
-    { id: "p1", name: "Alice", persona: "Eng", agenda: "Build", tier: "senior" },
-    { id: "p2", name: "Bob", persona: "Skeptic", agenda: "Check", tier: "mid" },
-    { id: "p3", name: "Carol", persona: "PM", agenda: "Ship", tier: "junior" },
+    { id: "p1", name: "Alice", persona: "Eng", agenda: "Build", tier: "senior", model: { providerID: "test", modelID: "model-senior" } },
+    { id: "p2", name: "Bob", persona: "Skeptic", agenda: "Check", tier: "mid", model: { providerID: "test", modelID: "model-mid" } },
+    { id: "p3", name: "Carol", persona: "PM", agenda: "Ship", tier: "junior", model: { providerID: "test", modelID: "model-junior" } },
   ],
   maxRounds: 3,
   convergence: "majority",
@@ -165,8 +165,8 @@ const maxEngine = new LoomEngine(maxClient, "/tmp", metadataFn, {
   context: "Test",
   parentSessionId: "s1",
   participants: [
-    { id: "p1", name: "Alice", persona: "Eng", agenda: "Build", tier: "senior" },
-    { id: "p2", name: "Bob", persona: "Skeptic", agenda: "Check", tier: "mid" },
+    { id: "p1", name: "Alice", persona: "Eng", agenda: "Build", tier: "senior", model: { providerID: "test", modelID: "model-senior" } },
+    { id: "p2", name: "Bob", persona: "Skeptic", agenda: "Check", tier: "mid", model: { providerID: "test", modelID: "model-mid" } },
   ],
   maxRounds: 2,
   convergence: "moderator_forces",
@@ -215,9 +215,9 @@ const voteEngine = new LoomEngine(createMockClient([]), "/tmp", metadataFn, {
   context: "Test",
   parentSessionId: "s1",
   participants: [
-    { id: "j1", name: "Junior", persona: "New", agenda: "Learn", tier: "junior" },
-    { id: "m1", name: "Middle", persona: "Balanced", agenda: "Check", tier: "mid" },
-    { id: "s1", name: "Senior", persona: "Exp", agenda: "Guide", tier: "senior" },
+    { id: "j1", name: "Junior", persona: "New", agenda: "Learn", tier: "junior", model: { providerID: "test", modelID: "model-junior" } },
+    { id: "m1", name: "Middle", persona: "Balanced", agenda: "Check", tier: "mid", model: { providerID: "test", modelID: "model-mid" } },
+    { id: "s1", name: "Senior", persona: "Exp", agenda: "Guide", tier: "senior", model: { providerID: "test", modelID: "model-senior" } },
   ],
   maxRounds: 3,
   convergence: "majority",
@@ -232,9 +232,9 @@ const voteEngine2 = new LoomEngine(createMockClient([]), "/tmp", metadataFn, {
   context: "Test",
   parentSessionId: "s1",
   participants: [
-    { id: "m1", name: "Middle", persona: "Balanced", agenda: "Check", tier: "mid" },
-    { id: "s1", name: "Senior", persona: "Exp", agenda: "Guide", tier: "senior" },
-    { id: "p1", name: "Principal", persona: "Lead", agenda: "Decide", tier: "principal" },
+    { id: "m1", name: "Middle", persona: "Balanced", agenda: "Check", tier: "mid", model: { providerID: "test", modelID: "model-mid" } },
+    { id: "s1", name: "Senior", persona: "Exp", agenda: "Guide", tier: "senior", model: { providerID: "test", modelID: "model-senior" } },
+    { id: "p1", name: "Principal", persona: "Lead", agenda: "Decide", tier: "principal", model: { providerID: "test", modelID: "model-principal" } },
   ],
   maxRounds: 3,
   convergence: "majority",
@@ -254,7 +254,7 @@ const warpEngine = new LoomEngine(createMockClient([]), "/tmp", metadataFn, {
   context: "Initial context with substantial background information. ".repeat(800),
   parentSessionId: "s1",
   participants: [
-    { id: "p1", name: "Alice", persona: "Eng", agenda: "Build", tier: "senior" },
+    { id: "p1", name: "Alice", persona: "Eng", agenda: "Build", tier: "senior", model: { providerID: "test", modelID: "model-senior" } },
   ],
   maxRounds: 3,
   convergence: "consensus",

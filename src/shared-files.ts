@@ -74,6 +74,7 @@ async function fs(): Promise<FileOps> {
   return ops;
 }
 
+/** Resets the in-memory filesystem (for testing). */
 export function _resetMemFs(): void {
   memFs.clear();
   ops = null;
@@ -91,12 +92,14 @@ function agentDir(meetingId: string, agentId: string): string {
   return `.opencode/loom/meetings/${meetingId}/agents/${agentId}`;
 }
 
+/** Initializes the directory structure for a new meeting. */
 export async function initMeetingFiles(meetingId: string): Promise<void> {
   const f = await fs();
   await f.mkdir(sharedDir(meetingId), { recursive: true });
   await f.mkdir(`${meetingDir(meetingId)}/agents`, { recursive: true });
 }
 
+/** Writes the shared meeting state to JSON files. */
 export async function writeSharedState(state: SharedMeetingState): Promise<void> {
   const f = await fs();
   const dir = sharedDir(state.meeting_id);
@@ -106,6 +109,7 @@ export async function writeSharedState(state: SharedMeetingState): Promise<void>
   await f.write(`${dir}/warp.md`, state.warp);
 }
 
+/** Reads the shared meeting state from JSON files. Returns null if not found. */
 export async function readSharedState(meetingId: string): Promise<SharedMeetingState | null> {
   try {
     const f = await fs();
@@ -116,6 +120,7 @@ export async function readSharedState(meetingId: string): Promise<SharedMeetingS
   }
 }
 
+/** Reads the shared context (warp) from a markdown file. */
 export async function readWarp(meetingId: string): Promise<string> {
   try {
     const f = await fs();
@@ -125,6 +130,7 @@ export async function readWarp(meetingId: string): Promise<string> {
   }
 }
 
+/** Writes the shared context (warp) to a markdown file. */
 export async function writeWarp(meetingId: string, warp: string): Promise<void> {
   const f = await fs();
   await f.write(`${sharedDir(meetingId)}/warp.md`, warp);
@@ -140,11 +146,13 @@ export async function readRound(meetingId: string): Promise<number> {
   }
 }
 
+/** Writes the current round number to a file. */
 export async function writeRound(meetingId: string, round: number): Promise<void> {
   const f = await fs();
   await f.write(`${sharedDir(meetingId)}/round.txt`, String(round));
 }
 
+/** Reads all contributions from the shared contributions file. */
 export async function readContributions(meetingId: string): Promise<Contribution[]> {
   try {
     const f = await fs();
@@ -160,6 +168,7 @@ export async function writeContributions(meetingId: string, contributions: Contr
   await f.write(`${sharedDir(meetingId)}/contributions.json`, JSON.stringify(contributions, null, 2));
 }
 
+/** Appends a contribution to the shared contributions file. */
 export async function addContribution(meetingId: string, contribution: Contribution): Promise<void> {
   const existing = await readContributions(meetingId);
   existing.push(contribution);
@@ -181,17 +190,20 @@ export async function writeInterjections(meetingId: string, interjections: Inter
   await f.write(`${sharedDir(meetingId)}/interjections.json`, JSON.stringify(interjections, null, 2));
 }
 
+/** Appends an interjection to the shared interjections file. */
 export async function addInterjection(meetingId: string, interjection: Interjection): Promise<void> {
   const existing = await readInterjections(meetingId);
   existing.push(interjection);
   await writeInterjections(meetingId, existing);
 }
 
+/** Initializes the directory for a specific agent's output files. */
 export async function initAgentDir(meetingId: string, agentId: string): Promise<void> {
   const f = await fs();
   await f.mkdir(agentDir(meetingId, agentId), { recursive: true });
 }
 
+/** Writes an agent's response to their designated output file. */
 export async function writeAgentResponse(meetingId: string, agentId: string, response: string): Promise<void> {
   const f = await fs();
   await f.write(`${agentDir(meetingId, agentId)}/response.md`, response);
