@@ -2,22 +2,22 @@
 
 > A multi-agent deliberation protocol for opencode — a knitting machine for AI agents.
 
-The Loom lets you convene a circle of AI agents with different expertise, seniority levels, and agendas. Each agent runs in its own child session with its own model. They pass a talking stick, interject with priority, push back on each other, and collaboratively weave complex artifacts through structured deliberation with governed convergence.
+The Loom lets you convene a circle of AI agents with different expertise, seniority levels, and agendas. Each agent runs in its own child session. They take structured turns, interject with priority, challenge each other, and collaboratively weave complex artifacts through deliberation with governed convergence.
 
 ## What The Loom Does
 
-The Loom is a deliberation system where multiple AI agents with different expertise, seniority levels, and agendas collaborate on complex questions. It is designed for situations where you want genuine multi-perspective analysis — with preserved dissent, governed convergence, and a synthesized output that carries the weight of the deliberation.
+The Loom is a deliberation system where multiple AI agents with different expertise, seniority levels, and agendas collaborate on complex questions. It is designed for situations where you want multi-perspective analysis with preserved dissent and governed convergence.
 
-- Token-passing / talking stick — structured turn-taking between agents
-- Priority interjection — agents can interrupt when they have something urgent
-- Push-back / refusal — agents can challenge or refuse to agree
-- Seniority-based rights — junior to principal tiers with escalating privileges
-- Moderator deadlock resolution — breaks ties when agents disagree
-- Minority report / preserved dissent — disagreements are recorded, not buried
+- Structured turn-taking — participants contribute in sequence with tracked order
+- Priority interjection — agents can interrupt with priority when they have something urgent
+- Challenge and dissent — agents can challenge proposals, express dissent, or pass their turn
+- Tier-based behavioral guidance — junior to principal tiers with escalating expectations
+- Moderator deadlock resolution — detects circular arguments and forces convergence
+- Minority report — unresolved objections are preserved in the output
 - Auto-composed rooms from topic — persona selection based on question domain
 - Domain-aware persona selection — finance questions get finance experts, etc.
 - Dynamic model discovery — finds available models from your opencode providers
-- Per-agent model assignment — different agents can use different models
+- Model assignment per tier — each tier can be assigned a different model when multiple providers are available
 - Real-time HTML progress — watch each agent contribute as it happens
 - SQLite persistence with session lifecycle — deliberation state survives restarts
 - Collapsible content — expand full agent responses inline
@@ -161,14 +161,16 @@ When you ask a question, the Loom analyzes it for domain keywords and selects pe
 | "What's our go-to-market strategy?" | business, marketing |
 | "How do we improve team culture?" | executive, operations |
 
-### Tier Rights
+### Tier Behavioral Guidance
 
-| Tier | Rights |
-|------|--------|
-| junior | Contribute, interject |
-| mid | + call votes |
-| senior | + veto conclusions |
-| principal | + end deliberation |
+| Tier | Guidance |
+|------|----------|
+| junior | Contribute ideas, ask questions, interject |
+| mid | + call for votes, push back on weak arguments |
+| senior | + veto conclusions, demand evidence |
+| principal | + end deliberation when consensus is reached |
+
+These rights are communicated to agents via system prompts, shaping how each tier behaves during deliberation.
 
 ### Customizing Personas
 
@@ -224,7 +226,7 @@ Running `/knit` multiple times in the same session creates separate databases (o
 ## The Deliberation Protocol
 
 1. **Model discovery** — fetches connected providers and available models
-2. **Room composition** — analyzes question domain, selects appropriate personas
+2. **Room composition** — analyzes question domain, selects appropriate personas, assigns models per tier
 3. **Round execution** — sequential per-participant prompting with real-time progress
 4. **Interjection resolution** — priority-based interruptions with moderator tiebreaker
 5. **Convergence** — consensus, majority, or moderator-forced
