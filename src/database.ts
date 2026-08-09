@@ -81,8 +81,14 @@ export class MeetingDatabase {
         max_rounds INTEGER NOT NULL,
         convergence TEXT NOT NULL,
         parent_session_id TEXT,
+        opencode_session_id TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS metadata (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS participants (
@@ -143,12 +149,13 @@ export class MeetingDatabase {
     convergence: "consensus" | "majority" | "moderator_forces";
     parentSessionId: string;
     participants: ParticipantConfig[];
+    opencodeSessionId: string;
   }): void {
     const now = isoNow();
     this.db
       .prepare(
-        `INSERT INTO meetings (id, question, context, status, round, warp, max_rounds, convergence, parent_session_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO meetings (id, question, context, status, round, warp, max_rounds, convergence, parent_session_id, opencode_session_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         this.meetingId,
@@ -159,9 +166,16 @@ export class MeetingDatabase {
         input.maxRounds,
         input.convergence,
         input.parentSessionId,
+        input.opencodeSessionId,
         now,
         now,
       );
+
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)`,
+      )
+      .run("opencode_session_id", input.opencodeSessionId);
 
     const insertParticipant = this.db.prepare(
       `INSERT INTO participants (id, meeting_id, name, persona, agenda, tier, provider_id, model_id, session_id)
@@ -430,5 +444,98 @@ export class MeetingDatabase {
   getDatabasePath(): string {
     const handle = this.db as any;
     return handle.filename ?? handle.name ?? "unknown";
+  }
+
+  getOpencodeSessionId(): string | null {
+    try {
+      const row = this.db
+        .prepare("SELECT value FROM metadata WHERE key = ?")
+        .get("opencode_session_id") as { value: string } | undefined;
+      return row?.value ?? null;
+    } catch {
+      return null;
+    }
+  }
+}
+
+// ─── Static cleanup utilities ─────────────────────────────────────────────────
+
+import { unlinkSync, readdirSync, existsSync } from "node:fs";
+import { join } from "node:path";
+
+export function deleteMeetingFiles(dbPath: string): void {
+  for (const suffix of ["", "-wal", "-shm"]) {
+    try { unlinkSync(`${dbPath}${suffix}`); } catch { /* ignore */ }
+  }
+}
+
+export function listMeetingFiles(directory: string): string[] {
+  const dir = join(directory, ".opencode", "loom", "meetings");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).filter((f) => f.endsWith(".db"));
+}
+
+export async function readSessionIdFromDb(dbPath: string): Promise<string | null> {
+  try {
+    let DBClass: any = null;
+    try {
+      // @ts-expect-error bun:sqlite is a Bun-only module
+      DBClass = (await import("bun:sqlite")).Database;
+    } catch {
+      DBClass = (await import("better-sqlite3")).default;
+    }
+    const db = new DBClass(dbPath, { readonly: true });
+    try {
+      const row = db.prepare("SELECT value FROM metadata WHERE key = ?").get("opencode_session_id") as any;
+      return row?.value ?? null;
+    } finally {
+      db.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
+export function cleanupOrphanDatabases(directory: string, activeSessionIds: Set<string>): number {
+  const meetingsDir = join(directory, ".opencode", "loom", "meetings");
+  if (!existsSync(meetingsDir)) return 0;
+
+  let cleaned = 0;
+  for (const file of readdirSync(meetingsDir)) {
+    if (!file.endsWith(".db")) continue;
+    const dbPath = join(meetingsDir, file);
+    const sessionId = readSessionIdFromDbSync(dbPath);
+    if (sessionId && !activeSessionIds.has(sessionId)) {
+      for (const suffix of ["", "-wal", "-shm"]) {
+        try { unlinkSync(`${dbPath}${suffix}`); } catch { /* ignore */ }
+      }
+      cleaned++;
+    }
+  }
+  return cleaned;
+}
+
+function readSessionIdFromDbSync(dbPath: string): string | null {
+  let DBClass: any = null;
+  try {
+    DBClass = (globalThis as any).Bun ? (require("bun:sqlite") as any).Database : null;
+  } catch {
+    try {
+      DBClass = require("better-sqlite3");
+    } catch {
+      return null;
+    }
+  }
+  if (!DBClass) return null;
+  try {
+    const db = new DBClass(dbPath, { readonly: true });
+    try {
+      const row = db.prepare("SELECT value FROM metadata WHERE key = ?").get("opencode_session_id") as any;
+      return row?.value ?? null;
+    } finally {
+      db.close();
+    }
+  } catch {
+    return null;
   }
 }

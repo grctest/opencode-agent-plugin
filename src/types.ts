@@ -146,6 +146,7 @@ export interface ParticipantState {
   status: "listening" | "speaking" | "interjecting" | "passed";
   reflection: string;
   contributions_count: number;
+  reason?: string;
 }
 
 /** Complete runtime state of a Loom deliberation meeting. */

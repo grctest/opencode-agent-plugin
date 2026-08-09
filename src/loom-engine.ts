@@ -16,6 +16,7 @@ export class LoomEngine {
       question: string;
       context: string;
       parentSessionId: string;
+      opencodeSessionId: string;
       participants: Array<{
         id: string;
         name: string;
@@ -37,6 +38,7 @@ export class LoomEngine {
       client,
       directory,
       parentSessionId: config.parentSessionId,
+      opencodeSessionId: config.opencodeSessionId,
       question: config.question,
       context: config.context,
       participants: config.participants,

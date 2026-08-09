@@ -30,6 +30,7 @@ interface OrchestratorOptions {
   client: AgentSessionClient;
   directory: string;
   parentSessionId: string;
+  opencodeSessionId: string;
   question: string;
   context: string;
   participants: ParticipantConfig[];
@@ -51,6 +52,7 @@ export class MeetingOrchestrator {
   private client: AgentSessionClient;
   private directory: string;
   private parentSessionId: string;
+  private opencodeSessionId: string;
   private database: MeetingDatabase | null = null;
 
   constructor(options: OrchestratorOptions) {
@@ -59,6 +61,7 @@ export class MeetingOrchestrator {
     this.client = options.client;
     this.directory = options.directory;
     this.parentSessionId = options.parentSessionId;
+    this.opencodeSessionId = options.opencodeSessionId;
 
     this.state = {
       id: this.meetingId,
@@ -125,6 +128,7 @@ export class MeetingOrchestrator {
         maxRounds: this.options.maxRounds,
         convergence: this.options.convergence,
         parentSessionId: this.options.parentSessionId,
+        opencodeSessionId: this.opencodeSessionId,
         participants: this.state.participants.map((p) => p.config),
       });
     }
@@ -170,10 +174,12 @@ export class MeetingOrchestrator {
   async runMeeting(): Promise<string> {
     await this.initialize();
 
-    const participantList = this.state.participants
-      .map((p) => `${p.config.name} (${p.config.tier})`)
-      .join(", ");
-    await this.postProgress(`\u{1F3AC} **Loom started** — ${this.state.participants.length} participants: ${participantList}`);
+    const participantItems = this.state.participants
+      .map((p) => `<li><b>${this.escapeHtml(p.config.name)}</b> <span style="color:#888">(${p.config.tier}${p.config.domain ? ", " + p.config.domain : ""})</span></li>`)
+      .join("");
+    await this.postProgress(
+      `&#127916; <b>Loom started</b> — ${this.state.participants.length} participants:<ul style="margin:4px 0 0 16px;padding:0">${participantItems}</ul>`
+    );
 
     let continueWeaving = true;
     while (continueWeaving) {
@@ -237,15 +243,33 @@ export class MeetingOrchestrator {
     const activeParticipants = this.state.participants.filter((p) => p.status !== "passed");
 
     for (const p of activeParticipants) {
-      await this.postProgress(`\u{1F914} **${p.config.name}** (${p.config.tier}) is thinking...`);
+      await this.postProgress(`&#129300; <b>${this.escapeHtml(p.config.name)}</b> <span style="color:#888">(${p.config.tier})</span> is thinking...`);
 
-      const result = await this.promptChildSession(p);
+      let result = await this.promptChildSession(p);
+      let retryError: string | null = null;
 
       if (!result) {
-        await this.postProgress(`\u{274C} **${p.config.name}** (${p.config.tier}) — no response`);
-        if (this.options.onContribution) {
-          this.options.onContribution(p.config.name, this.state.current_round, "no_response");
+        retryError = "Empty response on first attempt";
+        result = await this.promptChildSession(p);
+      }
+
+      if (!result) {
+        const errorDetail = `${retryError}\nEmpty response after retry. Participant may have timed out or returned empty.`;
+        await this.postProgress(
+          `&#9197; <b>${this.escapeHtml(p.config.name)}</b> <span style="color:#888">(${p.config.tier})</span> &mdash; no response, passing` +
+          `<details><summary style="color:#888;font-size:0.85em">error details</summary><pre style="margin:4px 0 0;padding:8px;background:#f5f5f5;border-radius:4px;font-size:0.8em;white-space:pre-wrap">${this.escapeHtml(errorDetail)}</pre></details>`
+        );
+        const participant = this.state.participants.find(
+          (pp) => pp.config.id === p.config.id,
+        );
+        if (participant) {
+          participant.status = "passed";
         }
+        round.token_path.push(p.config.id);
+        if (this.options.onContribution) {
+          this.options.onContribution(p.config.name, this.state.current_round, "passed_no_response");
+        }
+        this.notifyUpdate();
         continue;
       }
 
@@ -257,7 +281,7 @@ export class MeetingOrchestrator {
       if (result.content === "[PASS]") {
         participant.status = "passed";
         round.token_path.push(participant.config.id);
-        await this.postProgress(`\u{23ED} **${p.config.name}** (${p.config.tier}) passed`);
+        await this.postProgress(`&#9197; <b>${this.escapeHtml(participant.config.name)}</b> <span style="color:#888">(${participant.config.tier})</span> &mdash; chose to pass`);
         if (this.options.onContribution) {
           this.options.onContribution(p.config.name, this.state.current_round, "pass");
         }
@@ -298,7 +322,10 @@ export class MeetingOrchestrator {
       }
 
       const truncated = this.truncate(result.content, 80);
-      await this.postProgress(`\u{2705} **${p.config.name}** (${p.config.tier}): _${result.type}_ — "${truncated}"`);
+      await this.postProgress(
+        `&#9989; <b>${this.escapeHtml(p.config.name)}</b> <span style="color:#888">(${p.config.tier})</span> &mdash; <i>${result.type}</i>: ` +
+        this.collapsible(`"${truncated}"`, result.content)
+      );
 
       if (this.options.onAgentComplete) {
         this.options.onAgentComplete(result.participant_id, result.content);
@@ -321,7 +348,12 @@ export class MeetingOrchestrator {
     this.state.warp = evolveWarp(this.state.warp, round);
     (await this.getDb()).setWarp(this.state.warp);
 
-    await this.postProgress(`\u{1F4CB} **Round ${this.state.current_round} complete** — ${round.contributions.length} contribution${round.contributions.length !== 1 ? "s" : ""}, ${round.interjections.length} interjection${round.interjections.length !== 1 ? "s" : ""}. ${this.truncate(round.summary, 120)}`);
+    const contribCount = round.contributions.length;
+    const ijCount = round.interjections.length;
+    await this.postProgress(
+      `&#128203; <b>Round ${this.state.current_round} complete</b> &mdash; ${contribCount} contribution${contribCount !== 1 ? "s" : ""}, ${ijCount} interjection${ijCount !== 1 ? "s" : ""}` +
+      (round.summary ? this.collapsible("Summary", round.summary) : "")
+    );
 
     if (this.options.onRoundComplete) {
       this.options.onRoundComplete(this.state.current_round, round.summary);
@@ -401,6 +433,9 @@ export class MeetingOrchestrator {
         }
 
         const response = parseAgentResponse(participant.config.id, content);
+        if (!response) {
+          return null;
+        }
 
         if (this.options.onAgentComplete) {
           this.options.onAgentComplete(participant.config.id, response.content);
@@ -459,8 +494,21 @@ export class MeetingOrchestrator {
   }
 
   private truncate(text: string, max: number): string {
-    if (text.length <= max) return text;
-    return text.slice(0, max - 3) + "...";
+    const cleaned = text.replace(/\n/g, " ").trim();
+    if (cleaned.length <= max) return cleaned;
+    return cleaned.slice(0, max - 3) + "...";
+  }
+
+  private escapeHtml(text: string): string {
+    return text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  private collapsible(summary: string, content: string): string {
+    return `<details><summary>${summary}</summary><div style="margin-top:8px;white-space:pre-wrap">${this.escapeHtml(content)}</div></details>`;
   }
 
   private async postProgress(message: string): Promise<void> {
@@ -572,7 +620,7 @@ Respond with: "grant" or "deny". One word only.`;
     if (this.options.onSynthesisStart) {
       this.options.onSynthesisStart();
     }
-    await this.postProgress(`\u{1F504} Synthesizing final output...`);
+    await this.postProgress(`&#128260; Synthesizing final output...`);
 
     const db = await this.getDb();
     const transcriptData = db.getTranscriptData(this.meetingId);
@@ -597,7 +645,7 @@ Respond with: "grant" or "deny". One word only.`;
 
     this.state.artifact = result.artifact;
 
-    await this.postProgress(`\u{2705} Synthesis complete`);
+    await this.postProgress(`&#9989; Synthesis complete`);
 
     if (this.options.onSynthesisComplete) {
       this.options.onSynthesisComplete(result.output);

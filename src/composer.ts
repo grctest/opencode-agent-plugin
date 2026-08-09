@@ -1,203 +1,212 @@
-import type { ParticipantConfig, RoomRecommendation, Tier } from "./types.js";
+import { readFileSync, existsSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { ParticipantConfig, RoomRecommendation, Persona, Tier } from "./types.js";
 
-const JUNIOR_PERSONAS = [
-  {
-    name: "Devil's Advocate",
-    persona: "You challenge every assumption. You play the role of a skeptical user who will break things. You ask 'what could go wrong?' about everything.",
-    agenda: "Surface risks and blind spots that others miss. Ensure no proposal goes unchallenged.",
-  },
-  {
-    name: "Fresh Eyes",
-    persona: "You have no legacy context. You ask naive questions that expose hidden complexity. You think like a new hire on day one.",
-    agenda: "Ensure proposals are explainable to newcomers. Identify unnecessary complexity.",
-  },
-  {
-    name: "Creative Disruptor",
-    persona: "You think outside the box. You propose unconventional solutions. You've studied how other industries solve similar problems.",
-    agenda: "Bring fresh perspectives from outside the domain. Challenge 'we've always done it this way'.",
-  },
-];
+const __dirname = dirname(fileURLToPath(new URL(".", import.meta.url)));
 
-const MID_PERSONAS = [
-  {
-    name: "Systems Engineer",
-    persona: "You build production systems. You think about edge cases, failure modes, and observability. You've debugged distributed systems at 3am.",
-    agenda: "Ensure proposals are implementable and operable. Flag reliability concerns early.",
-  },
-  {
-    name: "Product Manager",
-    persona: "You own the user experience. You think about tradeoffs between features, time, and quality. You've shipped products that users love.",
-    agenda: "Keep the discussion grounded in user value. Ensure we solve the right problem, not just the fun problem.",
-  },
-  {
-    name: "Data Analyst",
-    persona: "You back decisions with evidence. You think about metrics, measurement, and validation. You've seen too many decisions made on gut feeling.",
-    agenda: "Demand evidence for claims. Ensure success is measurable. Propose experiments over assumptions.",
-  },
-];
-
-const SENIOR_PERSONAS = [
-  {
-    name: "Staff Architect",
-    persona: "You design systems that last decades. You've seen technology fads come and go. You think in terms of evolution, not revolution.",
-    agenda: "Ensure architectural coherence. Prevent over-engineering. Protect long-term maintainability over short-term speed.",
-  },
-  {
-    name: "Security Engineer",
-    persona: "You assume breach. You think about threat models, attack surfaces, and defense in depth. You've responded to incidents.",
-    agenda: "Identify security implications of every proposal. Ensure we don't trade safety for convenience.",
-  },
-  {
-    name: "Performance Engineer",
-    persona: "You measure everything. You think about latency percentiles, throughput bottlenecks, and capacity planning. You've optimized systems under load.",
-    agenda: "Ensure proposals consider performance implications. Demand benchmarks over assumptions.",
-  },
-];
-
-const PRINCIPAL_PERSONAS = [
-  {
-    name: "Technical Director",
-    persona: "You own the technical strategy. You balance innovation with stability. You've led engineering organizations through change.",
-    agenda: "Drive toward a clear, actionable decision. Ensure the outcome aligns with organizational goals. Cut through circular debate.",
-  },
-  {
-    name: "Engineering Lead",
-    persona: "You ship. You know the difference between perfect and good enough. You've delivered complex projects on time.",
-    agenda: "Ensure we reach a decision and move forward. Prevent analysis paralysis. Protect team velocity.",
-  },
-];
-
-const HIGH_STAKES_KEYWORDS = [
-  "migration",
-  "architecture",
-  "security",
-  "compliance",
-  "data loss",
-  "downtime",
-  "production",
-  "irreversible",
-  "deprecate",
-  "shutdown",
-  "financial",
-  "revenue",
-  "customer data",
-  "gdpr",
-  "hipaa",
-];
-
-const MEDIUM_STAKES_KEYWORDS = [
-  "refactor",
-  "redesign",
-  "framework",
-  "library",
-  "api design",
-  "performance",
-  "optimization",
-  "testing",
-  "ci/cd",
-  "deployment",
-];
-
-/** Classifies the stakes of a question based on keywords (e.g., "migration", "security"). */
-function detectStakes(question: string): "high" | "medium" | "low" {
-  const q = question.toLowerCase();
-  if (HIGH_STAKES_KEYWORDS.some((k) => q.includes(k))) return "high";
-  if (MEDIUM_STAKES_KEYWORDS.some((k) => q.includes(k))) return "medium";
-  return "low";
+function personasBasePath(): string {
+  const candidates = [
+    join(__dirname, "..", "personas", "loom"),
+    join(__dirname, "..", "personas"),
+    join(__dirname, "personas", "loom"),
+    join(__dirname, "personas"),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(join(candidate, "domains.json"))) {
+      return candidate;
+    }
+  }
+  return candidates[0];
 }
 
-/** Picks a random unused persona for a given tier. Returns null if all personas are used. */
-function pickPersona(tier: Tier, used: Set<string>): ParticipantConfig | null {
-  const pool =
-    tier === "junior"
-      ? JUNIOR_PERSONAS
-      : tier === "mid"
-        ? MID_PERSONAS
-        : tier === "senior"
-          ? SENIOR_PERSONAS
-          : PRINCIPAL_PERSONAS;
+function loadPersonas(): Record<string, Persona[]> {
+  const tiers = ["junior", "mid", "senior", "principal"];
+  const result: Record<string, Persona[]> = {};
+  const base = personasBasePath();
 
-  const available = pool.filter((p) => !used.has(p.name));
-  const choice = available.length > 0
-    ? available[Math.floor(Math.random() * available.length)]
-    : pool[Math.floor(Math.random() * pool.length)];
-
-  used.add(choice.name);
-
-  return {
-    id: `${tier}_${choice.name.toLowerCase().replace(/\s+/g, "_")}`,
-    name: choice.name,
-    persona: choice.persona,
-    agenda: choice.agenda,
-    tier,
-  };
-}
-
-/** Composes a deliberation room by analyzing the question and generating appropriate participants. */
-export function composeRoom(question: string, desiredCount?: number): RoomRecommendation {
-  const stakes = detectStakes(question);
-  const used = new Set<string>();
-  const participants: ParticipantConfig[] = [];
-
-  const defaultCount = stakes === "high" ? 5 : stakes === "medium" ? 4 : 3;
-  const count = desiredCount ?? defaultCount;
-
-  const roles = generateRoles(count, stakes);
-
-  for (const role of roles) {
-    const p = pickPersona(role, used);
-    if (p) participants.push(p);
+  for (const tier of tiers) {
+    try {
+      const path = join(base, `${tier}.json`);
+      const data = readFileSync(path, "utf-8");
+      result[tier] = JSON.parse(data) as Persona[];
+    } catch {
+      result[tier] = [];
+    }
   }
 
-  const estimated_rounds = Math.min(5, participants.length);
+  return result;
+}
 
+function loadDomainKeywords(): Record<string, string[]> {
+  try {
+    const path = join(personasBasePath(), "domains.json");
+    const data = readFileSync(path, "utf-8");
+    return JSON.parse(data) as Record<string, string[]>;
+  } catch {
+    return {};
+  }
+}
+
+const ALL_PERSONAS = loadPersonas();
+const DOMAIN_KEYWORDS = loadDomainKeywords();
+
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function detectDomains(question: string): string[] {
+  const q = question.toLowerCase();
+  const domainScores: Array<{ domain: string; score: number }> = [];
+
+  for (const [domain, keywords] of Object.entries(DOMAIN_KEYWORDS)) {
+    let score = 0;
+    for (const keyword of keywords) {
+      const regex = new RegExp(`\\b${escapeRegExp(keyword)}\\b`, "i");
+      const matches = q.match(regex);
+      if (matches) {
+        score += matches.length;
+      }
+    }
+    if (score > 0) {
+      domainScores.push({ domain, score });
+    }
+  }
+
+  domainScores.sort((a, b) => b.score - a.score);
+  return domainScores.map((d) => d.domain);
+}
+
+function pickPersona(tier: Tier, used: Set<string>, domains: string[]): ParticipantConfig | null {
+  const pool = ALL_PERSONAS[tier] ?? [];
+  if (pool.length === 0) return null;
+
+  let candidates = pool.filter((p) => !used.has(p.name));
+  if (candidates.length === 0) {
+    candidates = pool;
+  }
+
+  const weighted = candidates.map((p) => {
+    let weight = 1;
+    if (domains.includes(p.domain)) {
+      weight += 10;
+    }
+    if (p.domain === "general") {
+      weight += 2;
+    }
+    return { persona: p, weight };
+  });
+
+  const totalWeight = weighted.reduce((sum, w) => sum + w.weight, 0);
+  let random = Math.random() * totalWeight;
+
+  for (const { persona, weight } of weighted) {
+    random -= weight;
+    if (random <= 0) {
+      used.add(persona.name);
+      return {
+        id: `${tier}_${persona.name.toLowerCase().replace(/\s+/g, "_")}`,
+        name: persona.name,
+        persona: persona.persona,
+        agenda: persona.agenda,
+        tier,
+        domain: persona.domain,
+      };
+    }
+  }
+
+  const fallback = weighted[weighted.length - 1].persona;
+  used.add(fallback.name);
   return {
-    participants,
-    estimated_rounds,
-    reasoning: `${count}-person deliberation for ${stakes}-stakes topic: ${roles.join(", ")}.`,
+    id: `${tier}_${fallback.name.toLowerCase().replace(/\s+/g, "_")}`,
+    name: fallback.name,
+    persona: fallback.persona,
+    agenda: fallback.agenda,
+    tier,
+    domain: fallback.domain,
   };
 }
 
-/** Generates a list of role names for the deliberation based on participant count and stakes. */
-function generateRoles(count: number, stakes: string): string[] {
+function generateRoles(count: number, domains: string[]): string[] {
   const roles: string[] = [];
+  const isFinancial = domains.includes("finance");
+  const isTechnical = domains.includes("engineering");
+  const isCreative = domains.includes("creative");
+  const isBusiness = domains.includes("business") || domains.includes("executive");
 
-  if (stakes === "high") {
-    roles.push("principal", "senior", "senior");
-    while (roles.length < count) {
-      roles.push(roles.length % 2 === 0 ? "mid" : "junior");
+  if (count <= 3) {
+    if (isFinancial) {
+      roles.push("mid", "mid", "junior");
+    } else if (isTechnical) {
+      roles.push("mid", "junior", "junior");
+    } else if (isBusiness || isCreative) {
+      roles.push("mid", "mid", "junior");
+    } else {
+      roles.push("mid", "junior", "junior");
     }
-  } else if (stakes === "medium") {
-    roles.push("senior", "mid");
-    while (roles.length < count) {
-      roles.push(roles.length % 2 === 0 ? "mid" : "junior");
+  } else if (count <= 5) {
+    if (isFinancial) {
+      roles.push("principal", "senior", "mid", "mid", "junior");
+    } else if (isTechnical) {
+      roles.push("senior", "mid", "mid", "junior", "junior");
+    } else if (isBusiness) {
+      roles.push("senior", "mid", "mid", "junior", "junior");
+    } else {
+      roles.push("senior", "mid", "junior", "junior", "junior");
     }
   } else {
-    roles.push("mid", "junior");
-    while (roles.length < count) {
-      roles.push("junior");
+    if (isFinancial) {
+      roles.push("principal", "senior", "senior", "mid", "mid", "junior", "junior");
+    } else if (isTechnical) {
+      roles.push("senior", "senior", "mid", "mid", "junior", "junior", "junior");
+    } else {
+      roles.push("senior", "mid", "mid", "junior", "junior", "junior", "junior");
     }
   }
 
   return roles.slice(0, count);
 }
 
-/** Formats the room composition as a markdown preview for user approval. */
+export function composeRoom(question: string, desiredCount?: number): RoomRecommendation {
+  const domains = detectDomains(question);
+  const used = new Set<string>();
+  const participants: ParticipantConfig[] = [];
+
+  const defaultCount = desiredCount ?? (domains.length > 0 ? 4 : 3);
+  const count = Math.max(2, Math.min(7, defaultCount));
+
+  const roles = generateRoles(count, domains);
+
+  for (const role of roles) {
+    const p = pickPersona(role, used, domains);
+    if (p) participants.push(p);
+  }
+
+  const estimatedRounds = Math.min(5, Math.max(2, participants.length - 1));
+
+  const domainStr = domains.length > 0 ? domains.join(", ") : "general";
+  return {
+    participants,
+    estimated_rounds: estimatedRounds,
+    reasoning: `${count}-person deliberation for ${domainStr} topic: ${roles.join(", ")}.`,
+  };
+}
+
 export function formatRoomPreview(room: RoomRecommendation): string {
   const lines = [
     "## Proposed Deliberation Room",
     "",
     room.reasoning,
     "",
-    "| # | Name | Tier | Agenda |",
-    "|---|------|------|--------|",
+    "| # | Name | Tier | Domain | Agenda |",
+    "|---|------|------|--------|--------|",
   ];
   room.participants.forEach((p, i) => {
-    lines.push(`| ${i + 1} | ${p.name} | ${p.tier} | ${p.agenda} |`);
+    lines.push(`| ${i + 1} | ${p.name} | ${p.tier} | ${p.domain ?? "general"} | ${p.agenda} |`);
   });
   lines.push("");
   lines.push(`Estimated rounds: ${room.estimated_rounds}`);
   lines.push("");
-  lines.push("To start, confirm this room or specify changes (e.g. 'add a security expert', 'make the architect a principal').");
+  lines.push("To start, confirm this room or specify changes (e.g. 'add a security expert', 'use 6 participants').");
   return lines.join("\n");
 }

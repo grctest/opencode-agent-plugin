@@ -129,6 +129,14 @@ function cleanOldInstallation(opencodeDir) {
     }
   }
 
+  // Remove old personas folder
+  const personasDir = join(opencodeDir, "personas", "loom");
+  if (existsSync(personasDir)) {
+    rmSync(personasDir, { recursive: true });
+    logInfo(`  Removed old personas → ${personasDir}`);
+    cleaned = true;
+  }
+
   // Clean config entries
   if (cleanConfig(opencodeDir)) {
     cleaned = true;

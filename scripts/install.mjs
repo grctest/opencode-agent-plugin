@@ -156,6 +156,21 @@ function installFiles(opencodeDir) {
       logInfo(`  Installed command → ${commandDir}/${file}`);
     }
   }
+
+  // Copy personas folder
+  const personasSrcDir = join(PROJECT_ROOT, "personas");
+  const personasTargetDir = join(opencodeDir, "personas", "loom");
+  if (existsSync(personasSrcDir)) {
+    if (existsSync(personasTargetDir)) {
+      rmSync(personasTargetDir, { recursive: true });
+    }
+    mkdirSync(personasTargetDir, { recursive: true });
+    const personaFiles = readdirSync(personasSrcDir).filter((f) => f.endsWith(".json"));
+    for (const file of personaFiles) {
+      cpSync(join(personasSrcDir, file), join(personasTargetDir, file));
+    }
+    logInfo(`  Installed personas → ${personasTargetDir}`);
+  }
 }
 
 function isLoomCommand(filename) {

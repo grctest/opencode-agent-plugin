@@ -7,6 +7,8 @@ import { isAgentSessionClient } from "./client-types.js";
 import type { ParticipantConfig, Tier } from "./types.js";
 import { createModelPlan, formatModelPlan, getStoredModelPlan, storeModelPlan } from "./model-discovery.js";
 import type { AvailableModel, ModelAssignment } from "./model-discovery.js";
+import { cleanupOrphanDatabases, deleteMeetingFiles, listMeetingFiles, readSessionIdFromDb } from "./database.js";
+import { join } from "node:path";
 
 export const Loom: Plugin = async (input) => {
   const { client, directory } = input;
@@ -16,7 +18,21 @@ export const Loom: Plugin = async (input) => {
   }
 
   const activeLooms = new Map<string, LoomEngine>();
+  const sessionDatabases = new Map<string, Set<string>>();
   let pendingModels: ModelAssignment[] | null = null;
+
+  try {
+    const sessionsRes = await (client as any).session.list({ query: { directory } });
+    const activeIds: Set<string> = new Set(
+      (sessionsRes?.data ?? []).map((s: any) => s.id as string)
+    );
+    const cleaned = cleanupOrphanDatabases(directory, activeIds);
+    if (cleaned > 0) {
+      console.log(`[loom] Cleaned up ${cleaned} orphaned meeting database(s)`);
+    }
+  } catch {
+    // Non-critical: orphan cleanup is best-effort
+  }
 
   async function discoverModels(sessionID: string): Promise<{
     available: AvailableModel[];
@@ -287,6 +303,7 @@ export const Loom: Plugin = async (input) => {
               question: args.question,
               context: args.context ?? "No additional context provided.",
               parentSessionId: sessionID,
+              opencodeSessionId: sessionID,
               participants,
               maxRounds,
               convergence: args.convergence ?? "moderator_forces",
@@ -328,6 +345,12 @@ export const Loom: Plugin = async (input) => {
           );
 
           activeLooms.set(loomId, engine);
+
+          const dbPath = join(directory, ".opencode", "loom", "meetings", `${loomId}.db`);
+          if (!sessionDatabases.has(sessionID)) {
+            sessionDatabases.set(sessionID, new Set());
+          }
+          sessionDatabases.get(sessionID)!.add(dbPath);
 
           try {
             await engine.initialize();
@@ -410,6 +433,18 @@ export const Loom: Plugin = async (input) => {
           }
         },
       }),
+    },
+    event: async ({ event }) => {
+      if (event.type === "session.deleted") {
+        const deletedId = event.properties?.info?.id;
+        if (deletedId && sessionDatabases.has(deletedId)) {
+          const dbPaths = sessionDatabases.get(deletedId)!;
+          for (const dbPath of dbPaths) {
+            deleteMeetingFiles(dbPath);
+          }
+          sessionDatabases.delete(deletedId);
+        }
+      }
     },
   };
 };
