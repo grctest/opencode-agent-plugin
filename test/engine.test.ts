@@ -1,6 +1,5 @@
 import { LoomEngine, parseModeratorRuling, extractSection } from "../src/loom-engine.js";
 import { evolveWarp } from "../src/warp-manager.js";
-import { writeAgentResponse, _resetMemFs } from "../src/shared-files.js";
 import type { Tier } from "../src/types.js";
 
 function assert(condition: boolean, message: string): void {
@@ -27,17 +26,6 @@ function createMockClient(responses: string[]) {
       },
       prompt: async (opts: any) => {
         const text = nextResponse();
-        const sessionId = opts?.path?.id || "parent";
-        if (sessionId.startsWith("child-")) {
-          const promptText = opts?.body?.parts?.[0]?.text || "";
-          const meetingMatch = promptText.match(/meetings\/([^\/]+)\/shared/);
-          const agentMatch = promptText.match(/agents\/([^\/]+)\/response\.md/);
-          if (meetingMatch && agentMatch) {
-            const meetingId = meetingMatch[1];
-            const agentId = agentMatch[1];
-            await writeAgentResponse(meetingId, agentId, text);
-          }
-        }
         return {
           data: {
             info: { cost: 0, tokens: { input: 100, output: 50, reasoning: 0 } },
@@ -54,7 +42,6 @@ function createMockClient(responses: string[]) {
 
 console.log("Testing LoomEngine construction...");
 
-_resetMemFs();
 const client = createMockClient([]);
 const metadataFn = () => {};
 

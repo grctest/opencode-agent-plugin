@@ -1,6 +1,5 @@
 import { tool } from "@opencode-ai/plugin";
-import type { PluginInput } from "@opencode-ai/plugin";
-import { z } from "zod";
+import type { Plugin } from "@opencode-ai/plugin";
 import { LoomEngine } from "./loom-engine.js";
 import { composeRoom, formatRoomPreview } from "./composer.js";
 import type { AgentSessionClient } from "./client-types.js";
@@ -9,7 +8,7 @@ import type { ParticipantConfig, Tier } from "./types.js";
 import { createModelPlan, formatModelPlan, getStoredModelPlan, storeModelPlan } from "./model-discovery.js";
 import type { AvailableModel, ModelAssignment } from "./model-discovery.js";
 
-export default function loomPlugin(input: PluginInput) {
+export const Loom: Plugin = async (input) => {
   const { client, directory } = input;
 
   if (!isAgentSessionClient(client)) {
@@ -27,28 +26,28 @@ export default function loomPlugin(input: PluginInput) {
           "ONLY invoke when the user explicitly types /knit followed by a question. " +
           "Do NOT invoke for general questions, discussions, or information requests.",
         args: {
-          question: z
+          question: tool.schema
             .string()
             .describe("The question or task for the agents to deliberate on"),
-          context: z
+          context: tool.schema
             .string()
             .optional()
             .describe(
               "Additional context, background files, or constraints the agents should consider",
             ),
-          participants: z
+          participants: tool.schema
             .array(
-              z.object({
-                name: z.string().describe("Display name for this participant"),
-                persona: z
+              tool.schema.object({
+                name: tool.schema.string().describe("Display name for this participant"),
+                persona: tool.schema
                   .string()
                   .describe("Who this agent is — their role and personality"),
-                agenda: z
+                agenda: tool.schema
                   .string()
                   .describe(
                     "What this agent wants to achieve in the deliberation",
                   ),
-                tier: z
+                tier: tool.schema
                   .string()
                   .describe(
                     "Role name (e.g. junior, mid, senior, principal, security-engineer). Determines behavior and rights.",
@@ -59,7 +58,7 @@ export default function loomPlugin(input: PluginInput) {
             .describe(
               "Custom participant list. If omitted, auto-composed from the question.",
             ),
-          max_rounds: z
+          max_rounds: tool.schema
             .number()
             .int()
             .min(1)
@@ -68,30 +67,30 @@ export default function loomPlugin(input: PluginInput) {
             .describe(
               "Maximum deliberation rounds (default: number of participants)",
             ),
-          auto_compose: z
+          auto_compose: tool.schema
             .boolean()
             .optional()
             .describe(
               "Auto-select participants based on topic analysis (default: true if no participants given)",
             ),
-          dry_run: z
+          dry_run: tool.schema
             .boolean()
             .optional()
             .describe(
               "If true, return the composed room without running deliberation",
             ),
-          convergence: z
+          convergence: tool.schema
             .enum(["consensus", "majority", "moderator_forces"])
             .optional()
             .describe(
               "How the deliberation decides to end. Default: moderator_forces",
             ),
-          models: z
+          models: tool.schema
             .array(
-              z.object({
-                tier: z.enum(["junior", "mid", "senior", "principal"]),
-                provider_id: z.string().describe("Provider ID for this tier"),
-                model_id: z.string().describe("Model ID for this tier"),
+              tool.schema.object({
+                tier: tool.schema.enum(["junior", "mid", "senior", "principal"]),
+                provider_id: tool.schema.string().describe("Provider ID for this tier"),
+                model_id: tool.schema.string().describe("Model ID for this tier"),
               }),
             )
             .optional()
@@ -216,7 +215,7 @@ export default function loomPlugin(input: PluginInput) {
           "Check the status of a running Loom deliberation session. " +
           "Internal tool for agents to monitor progress. Not a user command.",
         args: {
-          loom_id: z.string().describe("The ID of the Loom session to check"),
+          loom_id: tool.schema.string().describe("The ID of the Loom session to check"),
         },
         execute: async (args, _context): Promise<string> => {
           const engine = activeLooms.get(args.loom_id);
@@ -282,7 +281,7 @@ export default function loomPlugin(input: PluginInput) {
       }),
     },
   };
-}
+};
 
 export { LoomEngine } from "./loom-engine.js";
 export { composeRoom, formatRoomPreview } from "./composer.js";

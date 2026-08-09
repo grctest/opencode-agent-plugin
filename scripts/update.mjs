@@ -83,11 +83,19 @@ function getWSLWindowsHome() {
 function cleanOldInstallation(opencodeDir) {
   let cleaned = false;
 
-  // Remove old plugin files
-  const pluginDir = join(opencodeDir, "plugin", "loom");
-  if (existsSync(pluginDir)) {
-    rmSync(pluginDir, { recursive: true });
-    logInfo(`  Removed old plugin → ${pluginDir}`);
+  // Remove old plugin/loom/ directory (old format)
+  const oldPluginDir = join(opencodeDir, "plugin", "loom");
+  if (existsSync(oldPluginDir)) {
+    rmSync(oldPluginDir, { recursive: true });
+    logInfo(`  Removed old plugin/loom/ → ${oldPluginDir}`);
+    cleaned = true;
+  }
+
+  // Remove stale empty plugin/ directory
+  const oldPluginRoot = join(opencodeDir, "plugin");
+  if (existsSync(oldPluginRoot)) {
+    rmSync(oldPluginRoot, { recursive: true });
+    logInfo(`  Removed old plugin/ dir`);
     cleaned = true;
   }
 
@@ -96,6 +104,15 @@ function cleanOldInstallation(opencodeDir) {
   if (existsSync(skillDir)) {
     rmSync(skillDir, { recursive: true });
     logInfo(`  Removed old skill → ${skillDir}`);
+    cleaned = true;
+  }
+
+  // Remove current loom plugin from plugins/ (will be reinstalled)
+  const pluginsDir = join(opencodeDir, "plugins");
+  const loomTarget = join(pluginsDir, "loom.js");
+  if (existsSync(loomTarget)) {
+    rmSync(loomTarget);
+    logInfo(`  Removed old plugin → ${loomTarget}`);
     cleaned = true;
   }
 
@@ -164,6 +181,12 @@ function cleanConfig(opencodeDir) {
       });
       if (config.plugin.length !== originalLength) {
         logInfo("Removed old plugin entries from config");
+        modified = true;
+      }
+      // If plugin array is now empty, remove it entirely
+      if (config.plugin.length === 0) {
+        delete config.plugin;
+        logInfo("Removed empty plugin array from config");
         modified = true;
       }
     }

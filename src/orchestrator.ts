@@ -19,17 +19,9 @@ import { resolveInterjections, formatInterjectionNotes } from "./interjection-re
 import { evolveWarp } from "./warp-manager.js";
 import { synthesize } from "./synthesizer.js";
 import { checkConvergence } from "./convergence-checker.js";
-import {
-  initMeetingFiles,
-  writeSharedState,
-  writeWarp,
-  writeRound,
-  addContribution,
-  addInterjection,
-  initAgentDir,
-  cleanupMeeting,
-  clearAgentResponse,
-} from "./shared-files.js";
+import { MeetingDatabase } from "./database.js";
+import { join } from "node:path";
+import { unlinkSync } from "node:fs";
 
 declare const crypto: { randomUUID(): string };
 
@@ -54,6 +46,7 @@ export class MeetingOrchestrator {
   private client: AgentSessionClient;
   private directory: string;
   private parentSessionId: string;
+  private database: MeetingDatabase | null = null;
 
   constructor(options: OrchestratorOptions) {
     this.meetingId = crypto.randomUUID();
@@ -115,18 +108,36 @@ export class MeetingOrchestrator {
     throw new Error(`No model assigned for participant ${participant.config.name} (${participant.config.tier}). Run knit_models first.`);
   }
 
+  /** Gets the database instance, creating it lazily on first access. */
+  private async getDb(): Promise<MeetingDatabase> {
+    if (!this.database) {
+      const dbPath = join(this.directory, ".opencode", "loom", "meetings", `${this.meetingId}.db`);
+      const db = await MeetingDatabase.create(dbPath, this.meetingId);
+      this.database = db;
+      db.initializeMeeting({
+        question: this.options.question,
+        context: this.options.context,
+        maxRounds: this.options.maxRounds,
+        convergence: this.options.convergence,
+        parentSessionId: this.options.parentSessionId,
+        participants: this.state.participants.map((p) => p.config),
+      });
+    }
+    return this.database;
+  }
+
   /** Creates child sessions and initializes meeting files. Idempotent. */
   async initialize(): Promise<void> {
     if (this.state.status !== "initializing") {
       return;
     }
 
-    await initMeetingFiles(this.meetingId);
+    const db = await this.getDb();
     for (const p of this.state.participants) {
-      await initAgentDir(this.meetingId, p.config.id);
       if (!p.session_id) {
         const sessionId = await this.createChildSession(p);
         p.session_id = sessionId;
+        db.setParticipantSessionId(p.config.id, sessionId);
       }
     }
     await this.persistState();
@@ -166,7 +177,7 @@ export class MeetingOrchestrator {
           break;
         } else if (userAction !== "continue") {
           this.state.warp += `\n\n**User Input:** ${userAction}`;
-          await writeWarp(this.meetingId, this.state.warp);
+          (await this.getDb()).setWarp(this.state.warp);
         }
       }
 
@@ -175,8 +186,21 @@ export class MeetingOrchestrator {
     }
 
     const output = await this.synthesize();
-    await cleanupMeeting(this.meetingId);
+    this.cleanupDatabase();
     return output;
+  }
+
+  private cleanupDatabase(): void {
+    if (!this.database) return;
+    const dbPath = this.database.getDatabasePath();
+    this.database.close();
+    this.database = null;
+    for (const suffix of ["", "-wal", "-shm"]) {
+      try {
+        unlinkSync(`${dbPath}${suffix}`);
+      } catch {
+      }
+    }
   }
 
   /** Runs a single deliberation round. Returns true if the meeting should continue. */
@@ -191,13 +215,14 @@ export class MeetingOrchestrator {
     };
     this.state.rounds.push(round);
 
-    await writeRound(this.meetingId, this.state.current_round);
+    (await this.getDb()).setRound(this.state.current_round);
     this.notifyUpdate();
 
     await this.clearPreviousResponses();
 
     const sharedState = this.buildSharedState();
-    await writeSharedState(sharedState);
+    (await this.getDb()).setWarp(sharedState.warp);
+    (await this.getDb()).setRound(sharedState.round);
 
     const activeParticipants = this.state.participants.filter((p) => p.status !== "passed");
 
@@ -236,7 +261,10 @@ export class MeetingOrchestrator {
       participant.contributions_count++;
       participant.status = "listening";
 
-      await addContribution(this.meetingId, contribution);
+      (await this.getDb()).addContribution(this.meetingId, {
+        ...contribution,
+        round: this.state.current_round,
+      });
 
       if (result.interjection) {
         const interjection: Interjection = {
@@ -248,7 +276,7 @@ export class MeetingOrchestrator {
           resolved: "pending",
         };
         round.interjections.push(interjection);
-        await addInterjection(this.meetingId, interjection);
+        (await this.getDb()).addInterjection(this.meetingId, interjection);
       }
 
       if (this.options.onAgentComplete) {
@@ -268,7 +296,7 @@ export class MeetingOrchestrator {
     }
 
     this.state.warp = evolveWarp(this.state.warp, round);
-    await writeWarp(this.meetingId, this.state.warp);
+    (await this.getDb()).setWarp(this.state.warp);
 
     const modDecision = await checkModeratorIntervention(
       round,
@@ -393,11 +421,11 @@ export class MeetingOrchestrator {
     return parts.filter((p: any) => p.type === "text").map((p: any) => p.text).join("\n");
   }
 
-  private clearPreviousResponses(): Promise<void[]> {
-    const promises = this.state.participants.map((p) =>
-      clearAgentResponse(this.meetingId, p.config.id),
-    );
-    return Promise.all(promises);
+  private async clearPreviousResponses(): Promise<void> {
+    const db = await this.getDb();
+    for (const p of this.state.participants) {
+      db.clearAgentResponse(this.meetingId, p.config.id);
+    }
   }
 
   /** Asks the moderator to rule on a contested interjection. Returns true if granted. */
@@ -504,11 +532,13 @@ Respond with: "grant" or "deny". One word only.`;
     return result.output;
   }
 
-  /** Persists the current meeting state to shared files. */
+  /** Persists the current meeting state to the database. */
   private async persistState(): Promise<void> {
-    await writeSharedState(this.buildSharedState());
-    await writeWarp(this.meetingId, this.state.warp);
-    await writeRound(this.meetingId, this.state.current_round);
+    const db = await this.getDb();
+    const sharedState = this.buildSharedState();
+    db.setWarp(sharedState.warp);
+    db.setRound(sharedState.round);
+    db.setStatus(sharedState.status);
   }
 
   private notifyUpdate(): void {

@@ -12,22 +12,30 @@
   ],
   "scripts": {
     "build": "tsc",
+    "bundle": "./node_modules/@esbuild/linux-x64/bin/esbuild src/index.ts --bundle --format=esm --platform=node --outfile=dist/loom.js --external:@opencode-ai/plugin --external:@opencode-ai/sdk --external:zod --external:bun:sqlite --external:better-sqlite3",
     "dev": "tsc --watch",
     "typecheck": "tsc --noEmit",
-    "test": "npx tsx test/engine.test.ts && npx tsx test/tiers.test.ts && npx tsx test/composer.test.ts && npx tsx test/shared-files.test.ts && npx tsx test/validation.test.ts && npx tsx test/integration.test.ts",
+    "test": "tsx test/engine.test.ts && tsx test/tiers.test.ts && tsx test/composer.test.ts && tsx test/database.test.ts && tsx test/validation.test.ts && tsx test/integration.test.ts",
     "install:plugin": "node scripts/install.mjs",
     "update:plugin": "node scripts/update.mjs"
   },
   "peerDependencies": {
-    "@opencode-ai/plugin": "*",
-    "@opencode-ai/sdk": "*",
-    "zod": "*"
+    "@opencode-ai/plugin": "^1.18.15",
+    "@opencode-ai/sdk": "^1.18.15",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@opencode-ai/plugin": "^1.18.14",
     "@opencode-ai/sdk": "^1.18.14",
-    "@types/node": "^22.0.0",
-    "typescript": "^5.6.0",
-    "zod": "^3.23.0"
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/node": "^26.2.0",
+    "better-sqlite3": "^11.0.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "zod": "^4.4.3"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "msgpackr-extract@3.0.4": true
   }
 }

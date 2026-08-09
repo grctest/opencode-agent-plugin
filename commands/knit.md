@@ -1,7 +1,5 @@
 ---
 description: Start a multi-agent deliberation session
-agent: loom
-subtask: true
 ---
 
-Call the `knit` tool with the question: $ARGUMENTS
+Use the `knit` tool to start a Loom deliberation about: $ARGUMENTS

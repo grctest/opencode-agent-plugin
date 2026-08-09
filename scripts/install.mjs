@@ -84,28 +84,70 @@ function getWSLWindowsHome() {
 // ─── Install files ────────────────────────────────────────────────────────────
 
 function installFiles(opencodeDir) {
-  const pluginDir = join(opencodeDir, "plugin", "loom");
-  const skillDir = join(opencodeDir, "skills", "loom");
+  const pluginsDir = join(opencodeDir, "plugins");
   const commandDir = join(opencodeDir, "commands");
 
-  // Clean and create directories
-  for (const dir of [pluginDir, skillDir, commandDir]) {
-    if (existsSync(dir)) {
-      rmSync(dir, { recursive: true });
+  // Remove stale plugin/loom/ directory (old format)
+  const oldPluginDir = join(opencodeDir, "plugin", "loom");
+  if (existsSync(oldPluginDir)) {
+    rmSync(oldPluginDir, { recursive: true });
+    logInfo(`  Removed stale plugin/loom/ → ${oldPluginDir}`);
+  }
+
+  // Remove stale skills/loom/ directory
+  const oldSkillDir = join(opencodeDir, "skills", "loom");
+  if (existsSync(oldSkillDir)) {
+    rmSync(oldSkillDir, { recursive: true });
+    logInfo(`  Removed stale skills/loom/ → ${oldSkillDir}`);
+  }
+
+  // Remove stale plugin/ dir if empty
+  const oldPluginRoot = join(opencodeDir, "plugin");
+  if (existsSync(oldPluginRoot) && readdirSync(oldPluginRoot).length === 0) {
+    rmSync(oldPluginRoot);
+    logInfo(`  Removed empty plugin/ dir`);
+  }
+
+  // Only remove and replace loom command files, preserving any other user commands
+  if (existsSync(commandDir)) {
+    const loomCommands = readdirSync(commandDir).filter(
+      (f) => f.endsWith(".md") && isLoomCommand(f)
+    );
+    for (const file of loomCommands) {
+      rmSync(join(commandDir, file));
+      logInfo(`  Replaced command → ${commandDir}/${file}`);
     }
-    mkdirSync(dir, { recursive: true });
+  } else {
+    mkdirSync(commandDir, { recursive: true });
   }
 
-  // Copy compiled output
-  const distDir = join(PROJECT_ROOT, "dist");
-  if (!existsSync(distDir)) {
-    throw new Error("dist/ directory not found. Build may have failed.");
+  // Verify bundled plugin exists
+  const bundledPlugin = join(PROJECT_ROOT, "dist", "loom.js");
+  if (!existsSync(bundledPlugin)) {
+    throw new Error("dist/loom.js not found. Run 'npm run bundle' first.");
   }
 
-  cpSync(distDir, pluginDir, { recursive: true });
-  logInfo(`  Installed plugin → ${pluginDir}`);
+  // Create plugins/ directory (don't delete — other plugins could exist)
+  if (!existsSync(pluginsDir)) {
+    mkdirSync(pluginsDir, { recursive: true });
+  }
 
-  // Copy commands (all .md files from commands directory)
+  // Remove old loom file if present, then copy bundled plugin
+  const loomTarget = join(pluginsDir, "loom.js");
+  if (existsSync(loomTarget)) {
+    rmSync(loomTarget);
+  }
+  cpSync(bundledPlugin, loomTarget);
+  logInfo(`  Installed plugin → ${loomTarget}`);
+
+  // Remove stale better-sqlite3 from opencode config (if present from previous install)
+  const staleBetterSqlite3 = join(opencodeDir, "node_modules", "better-sqlite3");
+  if (existsSync(staleBetterSqlite3)) {
+    rmSync(staleBetterSqlite3, { recursive: true });
+    logInfo("  Removed stale better-sqlite3 (bun:sqlite is built-in)");
+  }
+
+  // Copy loom commands
   const commandsSrcDir = join(PROJECT_ROOT, "commands");
   if (existsSync(commandsSrcDir)) {
     const commandFiles = readdirSync(commandsSrcDir).filter((f) => f.endsWith(".md"));
@@ -114,6 +156,11 @@ function installFiles(opencodeDir) {
       logInfo(`  Installed command → ${commandDir}/${file}`);
     }
   }
+}
+
+function isLoomCommand(filename) {
+  const loomCommands = ["knit.md", "knit_models.md"];
+  return loomCommands.includes(filename);
 }
 
 // ─── Configure opencode.json ──────────────────────────────────────────────────
@@ -133,59 +180,44 @@ function findOpencodeJson(opencodeDir) {
   return null;
 }
 
-function configureOpencodeJson(opencodeDir, pluginPath) {
+function configureOpencodeJson(opencodeDir) {
   const configFile = findOpencodeJson(opencodeDir);
 
   if (!configFile) {
-    logWarn("No opencode.json found. Create one with:");
-    console.log(`  { "plugin": ["${pluginPath}"], "agent": { "loom": {...} } }`);
+    logInfo("No opencode.json found — local plugins are auto-discovered from plugins/ dir");
     return;
   }
 
   try {
     const content = readFileSync(configFile, "utf-8");
     const config = JSON.parse(content);
+    let modified = false;
 
-    // Configure plugin
-    if (!config.plugin) {
-      config.plugin = [];
+    // Remove any stale plugin config entries pointing to the old plugin/loom path
+    if (Array.isArray(config.plugin)) {
+      const originalLength = config.plugin.length;
+      config.plugin = config.plugin.filter((p) => {
+        const normalized = p.replace(/\\/g, "/");
+        return !normalized.includes("plugin/loom") && !normalized.includes("plugin\\loom");
+      });
+      if (config.plugin.length !== originalLength) {
+        logInfo("Removed stale plugin entries from config");
+        modified = true;
+      }
+      // If plugin array is now empty, remove it entirely
+      if (config.plugin.length === 0) {
+        delete config.plugin;
+        logInfo("Removed empty plugin array from config");
+        modified = true;
+      }
     }
 
-    if (!Array.isArray(config.plugin)) {
-      logWarn("opencode.json has 'plugin' as non-array. Skipping auto-config.");
-      return;
-    }
-
-    const pluginAlreadyConfigured = config.plugin.some((p) => {
-      const normalized = p.replace(/\\/g, "/");
-      return normalized.includes("plugin/loom") || normalized.includes("plugin\\loom");
-    });
-
-    if (!pluginAlreadyConfigured) {
-      config.plugin.push(pluginPath);
-      logInfo("Added plugin to opencode.json");
+    if (modified) {
+      writeFileSync(configFile, JSON.stringify(config, null, 2) + "\n");
+      logInfo(`Updated ${configFile}`);
     } else {
-      logInfo("Plugin already configured in opencode.json");
+      logInfo(`Config OK — ${configFile}`);
     }
-
-    // Configure agent
-    if (!config.agent) {
-      config.agent = {};
-    }
-
-    if (!config.agent.loom) {
-      config.agent.loom = {
-        mode: "primary",
-        description: "Loom deliberation orchestrator. Only triggered by /knit command.",
-        prompt: "You are the Loom orchestrator. When invoked via /knit, call the `knit` tool with the user's exact question. When invoked via /knit_models, call the `knit_models` tool. Do not take any other actions.",
-      };
-      logInfo("Added loom agent to opencode.json");
-    } else {
-      logInfo("Loom agent already configured in opencode.json");
-    }
-
-    writeFileSync(configFile, JSON.stringify(config, null, 2) + "\n");
-    logInfo(`Updated ${configFile}`);
   } catch (err) {
     logWarn(`Could not update opencode.json: ${err.message}`);
   }
@@ -224,17 +256,15 @@ if (!opencodeDir) {
 
 logInfo(`Found opencode config: ${opencodeDir}`);
 
-// Verify build exists
-const distDir = join(PROJECT_ROOT, "dist");
-if (!existsSync(distDir)) {
-  logError("dist/ directory not found.");
+// Verify bundled plugin exists
+const bundledPlugin = join(PROJECT_ROOT, "dist", "loom.js");
+if (!existsSync(bundledPlugin)) {
+  logError("dist/loom.js not found.");
   console.log("");
-  console.log("Run 'npm run build' first, then re-run this installer.");
+  console.log("Run 'npm run bundle' first, then re-run this installer.");
   console.log("");
   process.exit(1);
 }
-
-const pluginEntry = join(opencodeDir, "plugin", "loom", "index.js");
 
 // Install
 try {
@@ -242,8 +272,8 @@ try {
   logInfo("Installing plugin files...");
   installFiles(opencodeDir);
   console.log("");
-  logInfo("Configuring opencode.json...");
-  configureOpencodeJson(opencodeDir, pluginEntry);
+  logInfo("Cleaning config...");
+  configureOpencodeJson(opencodeDir);
 } catch (err) {
   logError(err.message || "Installation failed");
   process.exit(1);
