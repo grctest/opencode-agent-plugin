@@ -33,6 +33,7 @@ export interface ApiResult<T> {
 export interface AgentSessionClient {
   session: {
     create(opts: { body?: { parentID?: string; title?: string }; query?: { directory?: string } }): Promise<ApiResult<SessionInfo>>;
+    get(opts: { path: { id: string }; query?: { directory?: string } }): Promise<ApiResult<any>>;
     prompt(opts: {
       path: { id: string };
       body?: {
@@ -59,7 +60,8 @@ export interface AgentSessionClient {
     }): Promise<ApiResult<MessageResponse>>;
   };
   provider: {
-    list(opts?: { query?: { directory?: string } }): Promise<any>;
+    list?(opts?: { query?: { directory?: string } }): Promise<any>;
+    providers?(opts?: { query?: { directory?: string } }): Promise<any>;
   };
 }
 
@@ -71,6 +73,6 @@ export function isAgentSessionClient(client: unknown): client is AgentSessionCli
     typeof c?.session?.create === "function" &&
     typeof c?.session?.prompt === "function" &&
     typeof c?.session?.message === "function" &&
-    typeof c?.provider?.list === "function"
+    (typeof c?.provider?.list === "function" || typeof c?.provider?.providers === "function")
   );
 }

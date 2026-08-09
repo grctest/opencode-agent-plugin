@@ -12,11 +12,128 @@ export const Loom: Plugin = async (input) => {
   const { client, directory } = input;
 
   if (!isAgentSessionClient(client)) {
-    throw new Error("Loom plugin requires a compatible opencode client with session.create, session.prompt, session.message, and provider.list.");
+    throw new Error("Loom plugin requires a compatible opencode client with session.create, session.prompt, session.message, and provider API access.");
   }
 
   const activeLooms = new Map<string, LoomEngine>();
   let pendingModels: ModelAssignment[] | null = null;
+
+  async function discoverModels(sessionID: string): Promise<{
+    available: AvailableModel[];
+    sessionModel: { providerID: string; modelID: string } | null;
+  }> {
+    const available: AvailableModel[] = [];
+    let sessionModel: { providerID: string; modelID: string } | null = null;
+
+    try {
+      const sessionResult = await (client as any).session.get({
+        path: { id: sessionID },
+        query: { directory },
+      });
+      const sessionData = sessionResult?.data ?? sessionResult;
+      if (sessionData?.model) {
+        sessionModel = {
+          providerID: sessionData.model.providerID,
+          modelID: sessionData.model.modelID,
+        };
+      }
+    } catch {
+    }
+
+    try {
+      const fn = (client as any).provider?.providers ?? (client as any).provider?.list;
+      if (typeof fn !== "function") return { available, sessionModel };
+
+      const result = await fn.call((client as any).provider, { query: { directory } });
+      const data = result?.data ?? result ?? {};
+      const providers = data.providers ?? data.all ?? [];
+      const connected: string[] = data.connected ?? [];
+
+      for (const provider of providers) {
+        const isConnected = connected.length === 0 || connected.includes(provider.id);
+        if (!isConnected) continue;
+
+        const models = provider.models || {};
+        for (const [key, model] of Object.entries(models)) {
+          const m = model as any;
+          if (m.status === "deprecated") continue;
+          available.push({
+            providerID: provider.id,
+            modelID: m.id || key,
+            name: m.name || key,
+            status: m.status || "active",
+            cost: m.cost || { input: 0, output: 0 },
+            limit: m.limit || { context: 128000, output: 4096 },
+            reasoning: m.capabilities?.reasoning || m.reasoning || false,
+            temperature: m.capabilities?.temperature || m.temperature || false,
+          });
+        }
+      }
+    } catch {
+    }
+
+    if (available.length === 0 && sessionModel) {
+      available.push({
+        providerID: sessionModel.providerID,
+        modelID: sessionModel.modelID,
+        name: "Session Model",
+        status: "active",
+        cost: { input: 0, output: 0 },
+        limit: { context: 128000, output: 4096 },
+        reasoning: false,
+        temperature: true,
+      });
+    }
+
+    return { available, sessionModel };
+  }
+
+  function assignModelsToParticipants(
+    participants: ParticipantConfig[],
+    available: AvailableModel[],
+    sessionModel: { providerID: string; modelID: string } | null,
+  ): ParticipantConfig[] {
+    if (available.length === 0) return participants;
+
+    const tiers = [...new Set(participants.map((p) => p.tier))];
+    const priorityOrder = ["principal", "senior", "mid", "junior"];
+    const sortedTiers = [...tiers].sort(
+      (a, b) => priorityOrder.indexOf(a) - priorityOrder.indexOf(b),
+    );
+
+    let assignments: ModelAssignment[];
+    if (available.length === 1 || !sessionModel) {
+      assignments = sortedTiers.map((tier) => {
+        const m = available[0];
+        return { tier, providerID: m.providerID, modelID: m.modelID, modelName: m.name };
+      });
+    } else {
+      const sessionIdx = available.findIndex(
+        (m) => m.providerID === sessionModel!.providerID && m.modelID === sessionModel!.modelID,
+      );
+      const topModel = sessionIdx >= 0 ? available[sessionIdx] : available[0];
+      const lowerModels = available.filter((_, i) => i !== sessionIdx);
+
+      assignments = sortedTiers.map((tier, i) => {
+        if (tier === "principal" || tier === "senior") {
+          return { tier, providerID: topModel.providerID, modelID: topModel.modelID, modelName: topModel.name };
+        }
+        const lowerIdx = Math.min(i, lowerModels.length - 1);
+        const m = lowerModels.length > 0 ? lowerModels[Math.max(0, lowerIdx)] : topModel;
+        return { tier, providerID: m.providerID, modelID: m.modelID, modelName: m.name };
+      });
+    }
+
+    const modelMap = new Map<string, { providerID: string; modelID: string }>();
+    for (const a of assignments) {
+      modelMap.set(a.tier, { providerID: a.providerID, modelID: a.modelID });
+    }
+
+    return participants.map((p) => ({
+      ...p,
+      model: modelMap.get(p.tier) || undefined,
+    }));
+  }
 
   return {
     tool: {
@@ -102,12 +219,14 @@ export const Loom: Plugin = async (input) => {
           const sessionID = context.sessionID;
           const loomId = crypto.randomUUID();
 
+          const { available, sessionModel } = await discoverModels(sessionID);
+
           let participants: ParticipantConfig[];
 
           const modelMap = new Map<string, { providerID: string; modelID: string }>();
-          const modelsToUse = args.models ?? pendingModels;
-          if (modelsToUse) {
-            for (const m of modelsToUse) {
+          const explicitModels = args.models ?? pendingModels;
+          if (explicitModels && explicitModels.length > 0) {
+            for (const m of explicitModels) {
               const tier = m.tier;
               const providerId = "provider_id" in m ? m.provider_id : (m as any).providerID;
               const modelId = "model_id" in m ? m.model_id : (m as any).modelID;
@@ -133,6 +252,10 @@ export const Loom: Plugin = async (input) => {
               title: "Loom Error",
               output: "No participants specified and auto_compose is disabled.",
             };
+          }
+
+          if (modelMap.size === 0 && available.length > 0) {
+            participants = assignModelsToParticipants(participants, available, sessionModel);
           }
 
           if (args.dry_run) {
@@ -228,51 +351,25 @@ export const Loom: Plugin = async (input) => {
       }),
 
       knit_models: tool({
-        description: "Discover available models in your opencode session and propose tier assignments. Run this before knit to configure which models act as knitting needles.",
+        description: "Discover available models in your opencode session and propose tier assignments.",
         args: {},
-        execute: async (_args, _ctx): Promise<string> => {
+        execute: async (_args, ctx): Promise<string> => {
           try {
-            const client = (_ctx as any).client ?? (_ctx as any).input?.client;
-            if (!client?.provider?.list) {
-              return "Model discovery not available. Ensure providers are configured.";
-            }
-
-            const result = await client.provider.list({ query: { directory: (_ctx as any).directory ?? "" } });
-            if (!result?.all && !result?.data?.all) {
-              return "No providers found. Configure at least one API provider.";
-            }
-
-            const providers = result.all || result.data.all;
-            const connected = result.connected || result.data.connected || [];
-            const available: AvailableModel[] = [];
-
-            for (const provider of providers) {
-              const isConnected = connected.includes(provider.id);
-              if (!isConnected) continue;
-
-              for (const [key, model] of Object.entries(provider.models || {})) {
-                const m = model as any;
-                if (m.status === "deprecated") continue;
-                available.push({
-                  providerID: provider.id,
-                  modelID: m.id || key,
-                  name: m.name || key,
-                  status: m.status || "active",
-                  cost: m.cost || { input: 0, output: 0 },
-                  limit: m.limit || { context: 128000, output: 4096 },
-                  reasoning: m.reasoning || false,
-                  temperature: m.temperature || false,
-                });
-              }
-            }
+            const sessionID = ctx.sessionID;
+            const { available, sessionModel } = await discoverModels(sessionID);
 
             if (available.length === 0) {
               return "No active models found. Connect a provider (e.g. run `opencode auth login`).";
             }
 
-             const plan = createModelPlan(available);
-             pendingModels = plan.participants;
-             return formatModelPlan(plan);
+            const plan = createModelPlan(available);
+            pendingModels = plan.participants;
+
+            let output = formatModelPlan(plan);
+            if (sessionModel) {
+              output += `\n\n**Session model:** ${sessionModel.providerID}/${sessionModel.modelID} (used as default for top tiers)`;
+            }
+            return output;
           } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             return `Model discovery failed: ${message}`;
