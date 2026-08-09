@@ -54,6 +54,19 @@ export interface AgentSessionClient {
       };
       query?: { directory?: string };
     }): Promise<ApiResult<{ messageID: string }>>;
+    promptAsync(opts: {
+      path: { id: string };
+      body?: {
+        messageID?: string;
+        model?: { providerID: string; modelID: string };
+        agent?: string;
+        noReply?: boolean;
+        system?: string;
+        tools?: Record<string, boolean>;
+        parts: Array<{ type: "text"; text: string }>;
+      };
+      query?: { directory?: string };
+    }): Promise<ApiResult<{ messageID: string }>>;
     message(opts: {
       path: { id: string; messageID: string };
       query?: { directory?: string };
@@ -76,3 +89,5 @@ export function isAgentSessionClient(client: unknown): client is AgentSessionCli
     (typeof c?.provider?.list === "function" || typeof c?.provider?.providers === "function")
   );
 }
+
+export type { ParticipantConfig } from "./types.js";

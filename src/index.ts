@@ -290,6 +290,40 @@ export const Loom: Plugin = async (input) => {
               participants,
               maxRounds,
               convergence: args.convergence ?? "moderator_forces",
+              onContribution: (name, round, type) => {
+                context.metadata({
+                  title: `Loom R${round}: ${name} (${type})`,
+                  metadata: {
+                    loom_last_contributor: name,
+                    loom_last_type: type,
+                    loom_round: round,
+                  },
+                });
+              },
+              onRoundComplete: (round, summary) => {
+                context.metadata({
+                  title: `Loom: Round ${round} complete`,
+                  metadata: {
+                    loom_round: round,
+                    loom_round_summary: summary.slice(0, 200),
+                  },
+                });
+              },
+              onSynthesisStart: () => {
+                context.metadata({
+                  title: "Loom: Synthesizing final output...",
+                  metadata: { loom_status: "synthesizing" },
+                });
+              },
+              onSynthesisComplete: (output) => {
+                context.metadata({
+                  title: "Loom: Synthesis complete",
+                  metadata: {
+                    loom_status: "synthesis_complete",
+                    loom_output_preview: output.slice(0, 200),
+                  },
+                });
+              },
             },
           );
 

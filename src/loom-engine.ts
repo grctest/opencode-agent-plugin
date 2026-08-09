@@ -27,6 +27,10 @@ export class LoomEngine {
       maxRounds: number;
       convergence: "consensus" | "majority" | "moderator_forces";
       modelOverrides?: Partial<Record<Tier, { model?: string; temperature?: number }>>;
+      onContribution?: (name: string, round: number, type: string) => void;
+      onRoundComplete?: (round: number, summary: string) => void;
+      onSynthesisStart?: () => void;
+      onSynthesisComplete?: (output: string) => void;
     },
   ) {
     this.orchestrator = new MeetingOrchestrator({
@@ -52,6 +56,10 @@ export class LoomEngine {
         });
       },
       onAgentComplete: (_participantId: string, _response: string) => {},
+      onContribution: config.onContribution,
+      onRoundComplete: config.onRoundComplete,
+      onSynthesisStart: config.onSynthesisStart,
+      onSynthesisComplete: config.onSynthesisComplete,
     });
   }
 

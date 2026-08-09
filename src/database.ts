@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { Contribution, Interjection, LoomStatus, ParticipantConfig } from "./types.js";
+import type { Contribution, Interjection, LoomStatus, ParticipantConfig, TranscriptData, TranscriptRound } from "./types.js";
 
 interface Statement {
   run(...params: any[]): any;
@@ -305,6 +305,77 @@ export class MeetingDatabase {
     this.db
       .prepare("UPDATE participants SET session_id = ? WHERE id = ? AND meeting_id = ?")
       .run(sessionId, participantId, this.meetingId);
+  }
+
+  getTranscriptData(meetingId: string): TranscriptData {
+    const meeting = this.db
+      .prepare("SELECT question, warp FROM meetings WHERE id = ?")
+      .get(meetingId) as { question: string; warp: string } | null;
+
+    const contributions = this.db
+      .prepare(
+        `SELECT participant_id, round, type, content, created_at
+         FROM contributions WHERE meeting_id = ? ORDER BY created_at ASC`,
+      )
+      .all(meetingId) as Array<{
+      participant_id: string;
+      round: number;
+      type: string;
+      content: string;
+      created_at: string;
+    }>;
+
+    const interjections = this.db
+      .prepare(
+        `SELECT participant_id, content as reason, priority, granted, pushback, resolved, created_at
+         FROM interjections WHERE meeting_id = ? ORDER BY created_at ASC`,
+      )
+      .all(meetingId) as Array<{
+      participant_id: string;
+      reason: string;
+      priority: number;
+      granted: number;
+      pushback: string | null;
+      resolved: string;
+      created_at: string;
+    }>;
+
+    const roundMap = new Map<number, TranscriptRound>();
+    for (const c of contributions) {
+      if (!roundMap.has(c.round)) {
+        roundMap.set(c.round, { number: c.round, contributions: [], interjections: [], summary: "" });
+      }
+      roundMap.get(c.round)!.contributions.push({
+        participant_id: c.participant_id,
+        content: c.content,
+        type: c.type as Contribution["type"],
+        targets_which: null,
+        timestamp: new Date(c.created_at).getTime(),
+      });
+    }
+
+    for (const ij of interjections) {
+      const roundNum = contributions.find((c) => c.participant_id === ij.participant_id)?.round ?? 1;
+      if (!roundMap.has(roundNum)) {
+        roundMap.set(roundNum, { number: roundNum, contributions: [], interjections: [], summary: "" });
+      }
+      roundMap.get(roundNum)!.interjections.push({
+        participant_id: ij.participant_id,
+        priority: ij.priority,
+        reason: ij.reason,
+        granted: ij.granted === 1,
+        pushback: ij.pushback,
+        resolved: ij.resolved as Interjection["resolved"],
+      });
+    }
+
+    const rounds = Array.from(roundMap.values()).sort((a, b) => a.number - b.number);
+
+    return {
+      question: meeting?.question ?? "",
+      warp: meeting?.warp ?? "",
+      rounds,
+    };
   }
 
   writeAgentResponse(meetingId: string, participantId: string, round: number, response: string): void {

@@ -14,14 +14,15 @@ import { getTierConfig, splitModel } from "./tiers.js";
 import { buildAgentSystemPrompt, buildAgentUserPrompt } from "./prompts.js";
 import { checkModeratorIntervention } from "./moderation.js";
 import { parseAgentResponse } from "./validation.js";
-import { withConcurrency } from "./concurrency.js";
 import { resolveInterjections, formatInterjectionNotes } from "./interjection-resolver.js";
-import { evolveWarp } from "./warp-manager.js";
-import { synthesize } from "./synthesizer.js";
+import { evolveWarp, formatTranscriptFromData } from "./warp-manager.js";
+import { synthesize, synthesizeFromData } from "./synthesizer.js";
+import { buildSynthesisPromptForTranscript } from "./prompts.js";
 import { checkConvergence } from "./convergence-checker.js";
 import { MeetingDatabase } from "./database.js";
 import { join } from "node:path";
 import { unlinkSync } from "node:fs";
+import type { TranscriptData } from "./types.js";
 
 declare const crypto: { randomUUID(): string };
 
@@ -36,6 +37,10 @@ interface OrchestratorOptions {
   convergence: "consensus" | "majority" | "moderator_forces";
   onUpdate?: (state: LoomState) => void;
   onAgentComplete?: (participantId: string, response: string) => void;
+  onContribution?: (name: string, round: number, type: string) => void;
+  onRoundComplete?: (round: number, summary: string) => void;
+  onSynthesisStart?: () => void;
+  onSynthesisComplete?: (output: string) => void;
   waitForUserInput?: () => Promise<"continue" | "end" | string>;
 }
 
@@ -165,6 +170,11 @@ export class MeetingOrchestrator {
   async runMeeting(): Promise<string> {
     await this.initialize();
 
+    const participantList = this.state.participants
+      .map((p) => `${p.config.name} (${p.config.tier})`)
+      .join(", ");
+    await this.postProgress(`\u{1F3AC} **Loom started** — ${this.state.participants.length} participants: ${participantList}`);
+
     let continueWeaving = true;
     while (continueWeaving) {
       if (this.state.current_round > 0 && this.options.waitForUserInput) {
@@ -226,24 +236,32 @@ export class MeetingOrchestrator {
 
     const activeParticipants = this.state.participants.filter((p) => p.status !== "passed");
 
-    const tasks = activeParticipants.map((p) => () => this.promptChildSession(p));
-    const settled = await withConcurrency(tasks, 4);
+    for (const p of activeParticipants) {
+      await this.postProgress(`\u{1F914} **${p.config.name}** (${p.config.tier}) is thinking...`);
 
-    const results: (AgentResponse | null)[] = settled.map((r) =>
-      r.status === "fulfilled" ? r.value : null,
-    );
+      const result = await this.promptChildSession(p);
 
-    for (const result of results) {
-      if (!result) continue;
+      if (!result) {
+        await this.postProgress(`\u{274C} **${p.config.name}** (${p.config.tier}) — no response`);
+        if (this.options.onContribution) {
+          this.options.onContribution(p.config.name, this.state.current_round, "no_response");
+        }
+        continue;
+      }
 
       const participant = this.state.participants.find(
-        (p) => p.config.id === result.participant_id,
+        (pp) => pp.config.id === result.participant_id,
       );
       if (!participant) continue;
 
       if (result.content === "[PASS]") {
         participant.status = "passed";
         round.token_path.push(participant.config.id);
+        await this.postProgress(`\u{23ED} **${p.config.name}** (${p.config.tier}) passed`);
+        if (this.options.onContribution) {
+          this.options.onContribution(p.config.name, this.state.current_round, "pass");
+        }
+        this.notifyUpdate();
         continue;
       }
 
@@ -279,9 +297,16 @@ export class MeetingOrchestrator {
         (await this.getDb()).addInterjection(this.meetingId, interjection);
       }
 
+      const truncated = this.truncate(result.content, 80);
+      await this.postProgress(`\u{2705} **${p.config.name}** (${p.config.tier}): _${result.type}_ — "${truncated}"`);
+
       if (this.options.onAgentComplete) {
         this.options.onAgentComplete(result.participant_id, result.content);
       }
+      if (this.options.onContribution) {
+        this.options.onContribution(p.config.name, this.state.current_round, result.type);
+      }
+      this.notifyUpdate();
     }
 
     if (round.interjections.length > 0) {
@@ -289,14 +314,19 @@ export class MeetingOrchestrator {
     }
 
     round.summary = await this.summarizeRound(round);
-
     const ijNotes = formatInterjectionNotes(round);
     if (ijNotes) {
       this.state.warp += ijNotes;
     }
-
     this.state.warp = evolveWarp(this.state.warp, round);
     (await this.getDb()).setWarp(this.state.warp);
+
+    await this.postProgress(`\u{1F4CB} **Round ${this.state.current_round} complete** — ${round.contributions.length} contribution${round.contributions.length !== 1 ? "s" : ""}, ${round.interjections.length} interjection${round.interjections.length !== 1 ? "s" : ""}. ${this.truncate(round.summary, 120)}`);
+
+    if (this.options.onRoundComplete) {
+      this.options.onRoundComplete(this.state.current_round, round.summary);
+    }
+    this.notifyUpdate();
 
     const modDecision = await checkModeratorIntervention(
       round,
@@ -428,6 +458,28 @@ export class MeetingOrchestrator {
     }
   }
 
+  private truncate(text: string, max: number): string {
+    if (text.length <= max) return text;
+    return text.slice(0, max - 3) + "...";
+  }
+
+  private async postProgress(message: string): Promise<void> {
+    try {
+      const session = (this.client as any).session;
+      if (typeof session.promptAsync === "function") {
+        await session.promptAsync({
+          path: { id: this.parentSessionId },
+          body: {
+            noReply: true,
+            parts: [{ type: "text", text: message }],
+          },
+          query: { directory: this.directory },
+        });
+      }
+    } catch {
+    }
+  }
+
   /** Asks the moderator to rule on a contested interjection. Returns true if granted. */
   private async moderateInterjection(ij: Interjection): Promise<boolean> {
     const situation = `Two participants claim equal priority (${ij.priority}) for interjection:
@@ -509,7 +561,7 @@ Respond with: "grant" or "deny". One word only.`;
     return result.shouldStop;
   }
 
-  /** Produces the final deliberation artifact by prompting the synthesizer agent. */
+  /** Produces the final deliberation artifact via a visible synthesizer child session. */
   private async synthesize(): Promise<string> {
     const synthesizer = this.state.participants.find((p) => p.config.tier === "principal")
       ?? this.state.participants.find((p) => p.config.tier === "senior")
@@ -517,19 +569,94 @@ Respond with: "grant" or "deny". One word only.`;
 
     if (!synthesizer) return "No participants available for synthesis.";
 
-    const result = await synthesize(
-      this.state.question,
-      this.state.rounds,
-      this.state.weft,
+    if (this.options.onSynthesisStart) {
+      this.options.onSynthesisStart();
+    }
+    await this.postProgress(`\u{1F504} Synthesizing final output...`);
+
+    const db = await this.getDb();
+    const transcriptData = db.getTranscriptData(this.meetingId);
+
+    const synthSessionId = await this.createSynthesizerSession(synthesizer);
+
+    let artifactText: string;
+    try {
+      artifactText = await this.promptSynthesizerSession(synthSessionId, synthesizer, transcriptData);
+    } catch {
+      artifactText = `# Deliberation Output\n\n${this.state.weft.map((c) => `- ${c.content}`).join("\n")}`;
+    }
+
+    const result = await synthesizeFromData(
+      transcriptData,
       this.state.participants,
       this.state.objections,
       synthesizer,
-      (system, model, message) => this.promptParent(system, model, message),
+      async (_system, _model, _message) => artifactText,
       (p) => this.getParticipantModel(p),
     );
 
     this.state.artifact = result.artifact;
+
+    await this.postProgress(`\u{2705} Synthesis complete`);
+
+    if (this.options.onSynthesisComplete) {
+      this.options.onSynthesisComplete(result.output);
+    }
+    this.notifyUpdate();
+
     return result.output;
+  }
+
+  /** Creates a dedicated child session for the synthesizer (visible in UI). */
+  private async createSynthesizerSession(synthesizer: ParticipantState): Promise<string> {
+    const result = await this.client.session.create({
+      body: {
+        parentID: this.parentSessionId,
+        title: `Loom · Synthesizer (${synthesizer.config.tier})`,
+      },
+      query: { directory: this.directory },
+    });
+
+    if (!result.data || result.error) {
+      throw new Error(`Failed to create synthesizer session: ${result.error?.message || "unknown error"}`);
+    }
+
+    return result.data.id;
+  }
+
+  /** Prompts the synthesizer child session with the full transcript. */
+  private async promptSynthesizerSession(
+    sessionId: string,
+    synthesizer: ParticipantState,
+    transcriptData: TranscriptData,
+  ): Promise<string> {
+    const model = this.getParticipantModel(synthesizer);
+    const transcript = formatTranscriptFromData(transcriptData, this.state.participants);
+
+    const userPrompt = buildSynthesisPromptForTranscript(transcriptData.question, transcript);
+
+    const result = await this.withTimeout(
+      this.client.session.prompt({
+        path: { id: sessionId },
+        body: {
+          system: `You are ${synthesizer.config.name} (${synthesizer.config.tier}). Synthesize the final output.\n\n${synthesizer.tier_config.system_prompt_addendum}`,
+          model,
+          parts: [{ type: "text", text: userPrompt }],
+        },
+        query: { directory: this.directory },
+      }),
+      180000,
+    );
+
+    if (result.error) {
+      throw new Error(result.error.message || JSON.stringify(result.error));
+    }
+
+    const text = this.extractText(result.data);
+    if (!text) {
+      throw new Error("Synthesizer returned empty response");
+    }
+    return text;
   }
 
   /** Persists the current meeting state to the database. */

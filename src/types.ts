@@ -55,6 +55,17 @@ export interface ParticipantConfig {
   agenda: string;
   tier: Tier;
   model?: ModelAssignment;
+  reason?: string;
+  domain?: string;
+}
+
+/** A reusable persona template for composing deliberation rooms. */
+export interface Persona {
+  name: string;
+  persona: string;
+  agenda: string;
+  domain: string;
+  expertise: string[];
 }
 
 /** A single contribution from a participant during deliberation. */
@@ -83,6 +94,21 @@ export interface Round {
   interjections: Interjection[];
   token_path: string[];
   summary: string;
+}
+
+/** Transcript data reconstructed from the database for synthesis. */
+export interface TranscriptRound {
+  number: number;
+  contributions: Contribution[];
+  interjections: Interjection[];
+  summary: string;
+}
+
+/** Full transcript data for the synthesizer. */
+export interface TranscriptData {
+  rounds: TranscriptRound[];
+  warp: string;
+  question: string;
 }
 
 /** An unresolved objection raised during deliberation. */

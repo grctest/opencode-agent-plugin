@@ -1,4 +1,4 @@
-import type { Round } from "./types.js";
+import type { Round, TranscriptData } from "./types.js";
 
 const MAX_WARP_CHARS = 12000;
 
@@ -88,6 +88,44 @@ export function formatTranscript(
   const lines: string[] = [];
 
   for (const round of rounds) {
+    lines.push(`### Round ${round.number}`);
+
+    for (const c of round.contributions) {
+      const participant = participants.find((p) => p.config.id === c.participant_id);
+      const name = participant?.config.name ?? c.participant_id;
+      const tier = participant?.config.tier ?? "mid";
+      lines.push(`**[${name}]** (${tier}, ${c.type}): ${c.content}`);
+    }
+
+    if (round.interjections.length > 0) {
+      lines.push(`  **Interjections:**`);
+      for (const ij of round.interjections) {
+        const name = participants.find((p) => p.config.id === ij.participant_id)?.config.name;
+        lines.push(`  - [${name}] P${ij.priority}: ${ij.reason} → ${ij.resolved}`);
+        if (ij.pushback) {
+          lines.push(`    Pushback: ${ij.pushback}`);
+        }
+      }
+    }
+
+    if (round.summary) {
+      lines.push(`  *Summary:* ${round.summary}`);
+    }
+
+    lines.push("");
+  }
+
+  return lines.join("\n");
+}
+
+/** Formats transcript data from the database into a string for the synthesizer. */
+export function formatTranscriptFromData(
+  data: TranscriptData,
+  participants: Array<{ config: { id: string; name: string; tier: string } }>,
+): string {
+  const lines: string[] = [];
+
+  for (const round of data.rounds) {
     lines.push(`### Round ${round.number}`);
 
     for (const c of round.contributions) {

@@ -220,6 +220,35 @@ Format as markdown with these exact sections:
 For Confidence, choose High (strong consensus), Medium (general agreement with some dissent), or Low (significant disagreement remains).`;
 }
 
+/** Builds a synthesis prompt from pre-formatted transcript data (for child session use). */
+export function buildSynthesisPromptForTranscript(question: string, transcript: string): string {
+  return `You are the synthesizer. The deliberation is complete. Produce the final artifact.
+
+## Original Question
+${question}
+
+## Full Deliberation Transcript
+${transcript}
+
+## Instructions
+Produce a comprehensive, well-structured response that:
+1. Directly answers the original question
+2. Captures the strongest points from all perspectives
+3. Notes any unresolved disagreements
+4. Provides clear, actionable conclusions
+5. Identifies remaining risks or open questions
+
+Format as markdown with these exact sections:
+## Decision
+## Reasoning
+## Action Items
+## Dissenting Views
+## Open Questions
+## Confidence
+
+For Confidence, choose High (strong consensus), Medium (general agreement with some dissent), or Low (significant disagreement remains).`;
+}
+
 // ─── Multi-Session Agent Prompts ──────────────────────────────────────
 
 /** Builds the system prompt for an agent in the multi-session architecture (identity + rules). */
