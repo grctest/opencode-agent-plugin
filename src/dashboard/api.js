@@ -124,6 +124,16 @@ export class DashboardApi {
     return row.maxId ?? 0;
   }
 
+  getAgentContext(meetingId, participantId) {
+    const meeting = this.#db
+      .prepare(`SELECT warp, question FROM meetings WHERE id = ?`)
+      .get(meetingId);
+    const participant = this.#db
+      .prepare(`SELECT name, persona, agenda, tier, provider_id, model_id FROM participants WHERE id = ? AND meeting_id = ?`)
+      .get(participantId, meetingId);
+    return { meeting, participant };
+  }
+
   getRound(round) {
     const contributions = this.#db
       .prepare(

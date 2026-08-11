@@ -1,4 +1,5 @@
-const MAX_WARP_CHARS = 12000;
+import { CONFIG } from "./config.js";
+const MAX_WARP_CHARS = CONFIG.maxWarpChars;
 
 /** Appends a round summary to the warp context, compacting if it exceeds MAX_WARP_CHARS. */
 export function evolveWarp(warp, round) {

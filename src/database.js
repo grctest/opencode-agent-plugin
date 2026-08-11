@@ -3,9 +3,9 @@ import { dirname, join } from "node:path";
 
 /**
  * @typedef {Object} Statement
- * @property {...any[]} run
- * @property {...any[]} get
- * @property {...any[]} all
+ * @property {(params?: any) => { changes: number; lastInsertRowId: number | bigint }} run
+ * @property {(params?: any) => any} get
+ * @property {(params?: any) => any[]} all
  */
 
 /**
@@ -16,7 +16,11 @@ import { dirname, join } from "node:path";
  * @property {string} filename
  */
 
-/** @type {any} */
+/**
+ * @typedef {new (path: string, options?: { readonly?: boolean }) => DBHandle} DatabaseConstructor
+ */
+
+/** @type {DatabaseConstructor | null} */
 let DatabaseClass = null;
 /** @type {Promise<void> | null} */
 let dbReady = null;
@@ -60,9 +64,9 @@ export class MeetingDatabase {
     this.#initSchema();
   }
 
-  #initSchema() {
-    this.#db.exec(`
-      CREATE TABLE IF NOT EXISTS meetings (
+   #initSchema() {
+     this.#db.exec(`
+       CREATE TABLE IF NOT EXISTS meetings (
         id TEXT PRIMARY KEY,
         question TEXT NOT NULL,
         context TEXT,
@@ -83,17 +87,18 @@ export class MeetingDatabase {
       );
 
       CREATE TABLE IF NOT EXISTS participants (
-        id TEXT PRIMARY KEY,
-        meeting_id TEXT NOT NULL REFERENCES meetings(id),
-        name TEXT NOT NULL,
-        persona TEXT NOT NULL,
-        agenda TEXT NOT NULL,
-        tier TEXT NOT NULL,
-        provider_id TEXT,
-        model_id TEXT,
-        session_id TEXT,
-        status TEXT NOT NULL DEFAULT 'listening'
-      );
+         id TEXT PRIMARY KEY,
+         meeting_id TEXT NOT NULL REFERENCES meetings(id),
+         name TEXT NOT NULL,
+         persona TEXT NOT NULL,
+         agenda TEXT NOT NULL,
+         tier TEXT NOT NULL,
+         provider_id TEXT,
+         model_id TEXT,
+         session_id TEXT,
+         status TEXT NOT NULL DEFAULT 'listening',
+         reflection TEXT NOT NULL DEFAULT ''
+       );
 
       CREATE TABLE IF NOT EXISTS contributions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -111,6 +116,7 @@ export class MeetingDatabase {
         meeting_id TEXT NOT NULL REFERENCES meetings(id),
         participant_id TEXT NOT NULL,
         target_participant_id TEXT,
+        round INTEGER,
         content TEXT NOT NULL,
         priority INTEGER NOT NULL DEFAULT 0,
         granted INTEGER NOT NULL DEFAULT 0,
@@ -142,9 +148,27 @@ export class MeetingDatabase {
       CREATE INDEX IF NOT EXISTS idx_contributions_meeting ON contributions(meeting_id);
       CREATE INDEX IF NOT EXISTS idx_interjections_meeting ON interjections(meeting_id);
       CREATE INDEX IF NOT EXISTS idx_agent_responses_meeting ON agent_responses(meeting_id, participant_id);
-      CREATE INDEX IF NOT EXISTS idx_agent_errors_meeting ON agent_errors(meeting_id);
-    `);
-  }
+       CREATE INDEX IF NOT EXISTS idx_agent_errors_meeting ON agent_errors(meeting_id);
+     `);
+
+     try {
+       this.#db.exec(`ALTER TABLE participants ADD COLUMN reflection TEXT NOT NULL DEFAULT ''`);
+     } catch {
+       // Column may already exist from a previous migration
+     }
+
+     try {
+       this.#db.exec(`ALTER TABLE meetings ADD COLUMN opencode_session_id TEXT`);
+     } catch {
+       // Column may already exist from a previous migration
+     }
+
+     try {
+       this.#db.exec(`ALTER TABLE interjections ADD COLUMN round INTEGER`);
+     } catch {
+       // Column may already exist from a previous migration
+     }
+   }
 
   initializeMeeting(input) {
     const now = isoNow();
@@ -264,23 +288,25 @@ export class MeetingDatabase {
     }));
   }
 
-  addInterjection(meetingId, interjection) {
-    this.#db
-      .prepare(
-        `INSERT INTO interjections (meeting_id, participant_id, content, priority, granted, pushback, resolved, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        meetingId,
-        interjection.participant_id,
-        interjection.reason,
-        interjection.priority,
-        interjection.granted ? 1 : 0,
-        interjection.pushback ?? null,
-        interjection.resolved,
-        isoNow(),
-      );
-  }
+   addInterjection(meetingId, interjection) {
+     this.#db
+       .prepare(
+         `INSERT INTO interjections (meeting_id, participant_id, target_participant_id, round, content, priority, granted, pushback, resolved, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       )
+       .run(
+         meetingId,
+         interjection.participant_id,
+         interjection.target_participant_id ?? null,
+         interjection.round ?? null,
+         interjection.reason,
+         interjection.priority,
+         interjection.granted ? 1 : 0,
+         interjection.pushback ?? null,
+         interjection.resolved,
+         isoNow(),
+       );
+   }
 
   getInterjections(meetingId) {
     const rows = this.#db
@@ -305,11 +331,17 @@ export class MeetingDatabase {
       .run(sessionId, participantId, this.#meetingId);
   }
 
-  setParticipantStatus(participantId, status) {
-    this.#db
-      .prepare("UPDATE participants SET status = ? WHERE id = ? AND meeting_id = ?")
-      .run(status, participantId, this.#meetingId);
-  }
+   setParticipantStatus(participantId, status) {
+     this.#db
+       .prepare("UPDATE participants SET status = ? WHERE id = ? AND meeting_id = ?")
+       .run(status, participantId, this.#meetingId);
+   }
+
+   setParticipantReflection(participantId, reflection) {
+     this.#db
+       .prepare("UPDATE participants SET reflection = ? WHERE id = ? AND meeting_id = ?")
+       .run(reflection, participantId, this.#meetingId);
+   }
 
   getParticipantStatus(participantId) {
     const row = this.#db
@@ -398,7 +430,7 @@ export class MeetingDatabase {
     }
 
     for (const ij of interjections) {
-      const roundNum = contributions.find((c) => c.participant_id === ij.participant_id)?.round ?? 1;
+      const roundNum = ij.round ?? 1;
       if (!roundMap.has(roundNum)) {
         roundMap.set(roundNum, { number: roundNum, contributions: [], interjections: [], summary: "" });
       }
@@ -494,13 +526,13 @@ export async function findMeetingBySessionId(directory, sessionId) {
     let conn = null;
     try {
       conn = new DBClass(filePath, { readonly: true });
-      const row = conn
-        .prepare(
-          `SELECT m.id, m.question, m.status, m.round, m.max_rounds FROM meetings m
-           JOIN metadata md ON md.key = 'opencode_session_id' AND md.value = ?
-           LIMIT 1`,
-        )
-        .get(sessionId);
+       const row = conn
+         .prepare(
+           `SELECT id, question, status, round, max_rounds FROM meetings
+            WHERE opencode_session_id = ?
+            LIMIT 1`,
+         )
+         .get(sessionId);
       if (row) {
         conn.close();
         return { meetingId: row.id, question: row.question, status: row.status, round: row.round, max_rounds: row.max_rounds, dbPath: filePath };

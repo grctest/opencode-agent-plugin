@@ -28,8 +28,10 @@
     "msgpackr-extract@3.0.4": true
   },
   "dependencies": {
+    "dompurify": "^3.4.13",
     "purecss": "^3.0.0",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "react-window": "^2.3.0"
   }
 }

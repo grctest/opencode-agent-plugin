@@ -295,15 +295,27 @@ export const Loom = async (input) => {
           }
 
           if (args.participants && args.participants.length > 0) {
-            participants = args.participants.map((p, i) => ({
-              id: p.name.toLowerCase().replace(/\s+/g, "_") + "_" + i,
-              name: p.name,
-              persona: p.persona,
-              agenda: p.agenda,
-              tier: p.tier,
-              model: modelMap.get(p.tier),
-            }));
-          } else if (args.auto_compose !== false) {
+             const invalid = args.participants.findIndex((p, i) => {
+               if (!p.name || !p.persona || !p.agenda || !p.tier) {
+                 return true;
+               }
+               return false;
+             });
+             if (invalid >= 0) {
+               return {
+                 title: "Loom Error",
+                 output: `Participant #${invalid + 1} is missing required fields (name, persona, agenda, tier).`,
+               };
+             }
+             participants = args.participants.map((p, i) => ({
+               id: p.name.toLowerCase().replace(/\s+/g, "_") + "_" + i,
+               name: p.name,
+               persona: p.persona,
+               agenda: p.agenda,
+               tier: p.tier,
+               model: modelMap.get(p.tier),
+             }));
+           } else if (args.auto_compose !== false) {
             const recommendation = composeRoom(args.question);
             participants = recommendation.participants;
           } else {
@@ -336,7 +348,7 @@ export const Loom = async (input) => {
             };
           }
 
-          const maxRounds = args.max_rounds ?? participants.length;
+          const maxRounds = args.max_rounds ?? 3;
 
           const engine = new LoomEngine(
             client,

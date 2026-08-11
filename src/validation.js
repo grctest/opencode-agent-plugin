@@ -1,3 +1,13 @@
+import { CONFIG } from "./config.js";
+
+const MAX_CONTENT_WORDS = CONFIG.maxContributionWords;
+
+function enforceWordLimit(text) {
+  const words = text.split(/\s+/);
+  if (words.length <= MAX_CONTENT_WORDS) return text;
+  return words.slice(0, MAX_CONTENT_WORDS).join(" ") + " [truncated]";
+}
+
 const VALID_TYPES = new Set([
   "propose",
   "challenge",
@@ -87,21 +97,23 @@ export function parseAgentResponse(participantId, response) {
 
   const cleanContent = rawContent.replace(/\[INTERJECT:\s*Priority:\s*\d+,\s*Reason:\s*"[^"]*"\]/i, "").trim();
 
-  const validated = validateResponse({
-    participant_id: participantId,
-    content: cleanContent,
-    type,
-    interjection,
-  });
+   const limitedContent = enforceWordLimit(cleanContent);
 
-  if (validated) {
-    return validated;
-  }
+   const validated = validateResponse({
+     participant_id: participantId,
+     content: limitedContent,
+     type,
+     interjection,
+   });
 
-  return {
-    participant_id: participantId,
-    content: rawContent,
-    type: "propose",
-    interjection: null,
-  };
-}
+   if (validated) {
+     return validated;
+   }
+
+   return {
+     participant_id: participantId,
+     content: enforceWordLimit(rawContent),
+     type: "propose",
+     interjection: null,
+   };
+ }

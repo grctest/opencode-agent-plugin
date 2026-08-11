@@ -1,0 +1,21 @@
+export const CONFIG = {
+  agentTimeoutMs: 120000,
+  synthesisTimeoutMs: 180000,
+  maxWarpChars: 12000,
+  maxContributionWords: 250,
+  maxInterjectionWords: 200,
+  defaultMaxRounds: 3,
+  minRounds: 2,
+  interjectionThresholds: { autoGrant: 9, pushback: 7 },
+  moderatorTrigger: { minContributions: 4, recentChallenges: 2, lookbackWindow: 3 },
+  maxRetryAttempts: 2,
+  retryBaseDelayMs: 1000,
+  retryMaxDelayMs: 8000,
+  maxConcurrentPrompts: 7,
+  reflectionTiers: ["principal", "senior"],
+  convergence: {
+    repetitionWindow: 3,
+    repetitionOverlapThreshold: 0.7,
+    diminishingReturnsWindow: 2,
+  },
+};

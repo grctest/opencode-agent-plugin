@@ -1,6 +1,6 @@
 import { MeetingOrchestrator } from "./orchestrator.js";
 import { parseModeratorRuling } from "./moderation.js";
-import { deriveConfidence, extractSection } from "./artifact.js";
+import { deriveConfidence, extractSection } from "./synthesizer.js";
 
 /** Thin wrapper that creates and runs a MeetingOrchestrator. This is the main entry point for the plugin. */
 export class LoomEngine {
@@ -22,9 +22,9 @@ export class LoomEngine {
    * @param {Partial<Record<import("./types.js").Tier, { model?: string; temperature?: number }>>} [config.modelOverrides]
    * @param {(name: string, round: number, type: string) => void} [config.onContribution]
    * @param {(round: number, summary: string) => void} [config.onRoundComplete]
-   * @param {() => void} [config.onSynthesisStart]
-   * @param {(output: string) => void} [config.onSynthesisComplete]
-   */
+ * @param {() => void} [config.onSynthesisStart]
+ * @param {(output: string) => void} [config.onSynthesisComplete]
+ */
   constructor(client, directory, metadataFn, config) {
     this.#orchestrator = new MeetingOrchestrator({
       client,
@@ -49,12 +49,12 @@ export class LoomEngine {
           },
         });
       },
-      onAgentComplete: (_participantId, _response) => {},
-      onContribution: config.onContribution,
-      onRoundComplete: config.onRoundComplete,
-      onSynthesisStart: config.onSynthesisStart,
-      onSynthesisComplete: config.onSynthesisComplete,
-    });
+       onAgentComplete: (_participantId, _response) => {},
+       onContribution: config.onContribution,
+       onRoundComplete: config.onRoundComplete,
+       onSynthesisStart: config.onSynthesisStart,
+       onSynthesisComplete: config.onSynthesisComplete,
+     });
   }
 
   getState() {
@@ -79,4 +79,4 @@ export class LoomEngine {
 }
 
 export { parseModeratorRuling } from "./moderation.js";
-export { deriveConfidence, extractSection } from "./artifact.js";
+export { deriveConfidence, extractSection } from "./synthesizer.js";

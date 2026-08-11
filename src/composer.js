@@ -19,6 +19,19 @@ function personasBasePath() {
   return candidates[0];
 }
 
+function validatePersona(persona, tier, index) {
+  const errors = [];
+  if (!persona.name || typeof persona.name !== "string") errors.push(`name required`);
+  if (!persona.persona || typeof persona.persona !== "string" || persona.persona.length < 50) errors.push("persona must be >50 chars");
+  if (!persona.agenda || typeof persona.agenda !== "string") errors.push("agenda required");
+  if (!persona.domain || typeof persona.domain !== "string") errors.push("domain required");
+  if (errors.length > 0) {
+    console.warn(`[Loom] Invalid persona at ${tier}[${index}]: ${errors.join(", ")}`);
+    return false;
+  }
+  return true;
+}
+
 function loadPersonas() {
   const tiers = ["junior", "mid", "senior", "principal"];
   const result = {};
@@ -28,7 +41,14 @@ function loadPersonas() {
     try {
       const path = join(base, `${tier}.json`);
       const data = readFileSync(path, "utf-8");
-      result[tier] = JSON.parse(data);
+      const raw = JSON.parse(data);
+      result[tier] = raw
+        .map((p, i) => {
+          if (!validatePersona(p, tier, i)) return null;
+          p.version = p.version || "1.0";
+          return p;
+        })
+        .filter(Boolean);
     } catch {
       result[tier] = [];
     }
@@ -54,20 +74,34 @@ function escapeRegExp(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+const MIN_DOMAIN_SCORE = 2;
+const MIN_WORD_LENGTH = 4;
+
 function detectDomains(question) {
   const q = question.toLowerCase();
   const domainScores = [];
 
   for (const [domain, keywords] of Object.entries(DOMAIN_KEYWORDS)) {
     let score = 0;
-    for (const keyword of keywords) {
+    const matchedPhrases = new Set();
+
+    const sortedKeywords = [...keywords].sort((a, b) => b.length - a.length);
+    let remaining = q;
+
+    for (const keyword of sortedKeywords) {
+      if (keyword.length < MIN_WORD_LENGTH && !/^(roi|ipo|sql|nosql|qa|kpi|okr|sla)$/i.test(keyword)) {
+        continue;
+      }
       const regex = new RegExp(`\\b${escapeRegExp(keyword)}\\b`, "i");
-      const matches = q.match(regex);
+      const matches = remaining.match(regex);
       if (matches) {
         score += matches.length;
+        matchedPhrases.add(keyword);
+        remaining = remaining.replace(regex, " ");
       }
     }
-    if (score > 0) {
+
+    if (score >= MIN_DOMAIN_SCORE) {
       domainScores.push({ domain, score });
     }
   }
@@ -76,7 +110,36 @@ function detectDomains(question) {
   return domainScores.map((d) => d.domain);
 }
 
-function pickPersona(tier, used, domains) {
+function simpleHash(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return Math.abs(hash);
+}
+
+function createSeededRng(seed) {
+  let state = seed;
+  return function next() {
+    state = (state * 1664525 + 1013904223) & 0xffffffff;
+    return (state >>> 0) / 0xffffffff;
+  };
+}
+
+function personaOverlap(a, b) {
+  const wordsA = new Set(a.toLowerCase().split(/\W+/).filter((w) => w.length > 3));
+  const wordsB = new Set(b.toLowerCase().split(/\W+/).filter((w) => w.length > 3));
+  if (wordsA.size === 0 || wordsB.size === 0) return 0;
+  let intersection = 0;
+  for (const w of wordsA) {
+    if (wordsB.has(w)) intersection++;
+  }
+  return intersection / Math.min(wordsA.size, wordsB.size);
+}
+
+function pickPersona(tier, used, domains, rng, existingPersonas) {
   const pool = ALL_PERSONAS[tier] ?? [];
   if (pool.length === 0) return null;
 
@@ -97,11 +160,17 @@ function pickPersona(tier, used, domains) {
   });
 
   const totalWeight = weighted.reduce((sum, w) => sum + w.weight, 0);
-  let random = Math.random() * totalWeight;
+  let random = rng() * totalWeight;
 
   for (const { persona, weight } of weighted) {
     random -= weight;
     if (random <= 0) {
+      if (existingPersonas && existingPersonas.length > 0) {
+        const maxOverlap = Math.max(...existingPersonas.map((ep) => personaOverlap(ep, persona.persona)));
+        if (maxOverlap > 0.6) {
+          continue;
+        }
+      }
       used.add(persona.name);
       return {
         id: `${tier}_${persona.name.toLowerCase().replace(/\s+/g, "_")}`,
@@ -170,18 +239,23 @@ export function composeRoom(question, desiredCount) {
   const domains = detectDomains(question);
   const used = new Set();
   const participants = [];
+  const selectedPersonas = [];
 
   const defaultCount = desiredCount ?? (domains.length > 0 ? 4 : 3);
   const count = Math.max(2, Math.min(7, defaultCount));
 
   const roles = generateRoles(count, domains);
+  const rng = createSeededRng(simpleHash(question));
 
   for (const role of roles) {
-    const p = pickPersona(role, used, domains);
-    if (p) participants.push(p);
+    const p = pickPersona(role, used, domains, rng, selectedPersonas);
+    if (p) {
+      participants.push(p);
+      selectedPersonas.push(p.persona);
+    }
   }
 
-  const estimatedRounds = Math.min(5, Math.max(2, participants.length - 1));
+  const estimatedRounds = 3;
 
   const domainStr = domains.length > 0 ? domains.join(", ") : "general";
   return {

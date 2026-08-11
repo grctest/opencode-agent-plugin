@@ -22,6 +22,25 @@
  */
 
 /**
+ * @typedef {Object} ProviderModel
+ * @property {string} id
+ * @property {string} name
+ * @property {string} status
+ * @property {{ input: number; output: number; cache_read?: number; cache_write?: number }} cost
+ * @property {{ context: number; output: number }} limit
+ * @property {{ reasoning?: boolean; temperature?: boolean }} capabilities
+ * @property {boolean} [reasoning]
+ * @property {boolean} [temperature]
+ */
+
+/**
+ * @typedef {Object} ProviderResult
+ * @property {{ id: string; models: Record<string, ProviderModel> }[]} [providers]
+ * @property {{ id: string; models: Record<string, ProviderModel> }[]} [all]
+ * @property {string[]} [connected]
+ */
+
+/**
  * @typedef {Object} ApiResult
  * @property {T} data
  * @property {{ message: string; [key: string]: any }} [error]
@@ -37,8 +56,8 @@
  * @property {(opts: any) => Promise<ApiResult<{ messageID: string }>>} session.promptAsync
  * @property {(opts: any) => Promise<ApiResult<MessageResponse>>} session.message
  * @property {Object} provider
- * @property {(opts?: any) => Promise<any>} [provider.list]
- * @property {(opts?: any) => Promise<any>} [provider.providers]
+ * @property {(opts?: any) => Promise<ApiResult<ProviderResult>>} [provider.list]
+ * @property {(opts?: any) => Promise<ApiResult<ProviderResult>>} [provider.providers]
  */
 
 /** Type guard to validate that a client conforms to the AgentSessionClient interface at runtime. */

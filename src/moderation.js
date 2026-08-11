@@ -1,4 +1,5 @@
 import { buildModeratorPrompt } from "./prompts.js";
+import { CONFIG } from "./config.js";
 
 /**
  * @typedef {Object} ModeratorRuling
@@ -47,19 +48,34 @@ export function parseModeratorRuling(text) {
  * Returns an action: continue, break (redirect to specific speaker), or converge (end meeting).
  */
 export async function checkModeratorIntervention(round, participants, weft, currentRound, maxRounds, promptFn, getHighestTierModel) {
-  if (round.contributions.length < 6) {
+  const trigger = CONFIG.moderatorTrigger;
+  if (round.contributions.length < trigger.minContributions) {
     return { action: "continue", nextSpeakerIdx: -1 };
   }
 
-  const recentTypes = round.contributions.slice(-4).map((c) => c.type);
+  const recentTypes = round.contributions.slice(-trigger.lookbackWindow).map((c) => c.type);
   const challengeCount = recentTypes.filter(
     (t) => t === "challenge" || t === "dissent",
   ).length;
-  if (challengeCount < 3) {
+  if (challengeCount < trigger.recentChallenges) {
     return { action: "continue", nextSpeakerIdx: -1 };
   }
 
-  const situation = `Circular argument detected: ${challengeCount} challenges/dissents in the last 4 contributions within a single round. The deliberation appears to be going in circles.`;
+  let situation = `Circular argument detected: ${challengeCount} challenges/dissents in the last 3 contributions within a single round. The deliberation appears to be going in circles.`;
+
+  if (weft.length >= 6) {
+    const lastSix = weft.slice(-6);
+    const challengeCounts = {};
+    for (const c of lastSix) {
+      if (c.type === "challenge" || c.type === "dissent") {
+        challengeCounts[c.participant_id] = (challengeCounts[c.participant_id] || 0) + 1;
+      }
+    }
+    const repeatedChallenger = Object.entries(challengeCounts).find(([, n]) => n >= 3);
+    if (repeatedChallenger) {
+      situation = `Participant ${repeatedChallenger[0]} has challenged/dissented 3+ times in the last 6 contributions across rounds. Possible circular argument or deadlock.`;
+    }
+  }
   const prompt = buildModeratorPrompt(
     situation,
     currentRound,

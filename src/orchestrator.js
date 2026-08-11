@@ -1,13 +1,13 @@
 import { getTierConfig, splitModel } from "./tiers.js";
-import { buildAgentSystemPrompt, buildAgentUserPrompt } from "./prompts.js";
+import { buildAgentSystemPrompt, buildAgentUserPrompt, buildSynthesisPrompt } from "./prompts.js";
+import { CONFIG } from "./config.js";
 import { checkModeratorIntervention } from "./moderation.js";
-import { parseAgentResponse } from "./validation.js";
 import { resolveInterjections, formatInterjectionNotes } from "./interjection-resolver.js";
 import { evolveWarp, formatTranscriptFromData } from "./warp-manager.js";
-import { synthesize, synthesizeFromData } from "./synthesizer.js";
-import { buildSynthesisPromptForTranscript } from "./prompts.js";
+import { synthesizeFromData } from "./synthesizer.js";
 import { checkConvergence } from "./convergence-checker.js";
 import { MeetingDatabase } from "./database.js";
+import { RoundExecutor } from "./round-executor.js";
 import { join } from "node:path";
 import { unlinkSync } from "node:fs";
 
@@ -29,6 +29,7 @@ import { unlinkSync } from "node:fs";
  * @property {() => void} [onSynthesisStart]
  * @property {(output: string) => void} [onSynthesisComplete]
  * @property {() => Promise<"continue" | "end" | string>} [waitForUserInput]
+ * @property {boolean} [parallel]
  */
 
 export class MeetingOrchestrator {
@@ -48,6 +49,10 @@ export class MeetingOrchestrator {
   #opencodeSessionId;
   /** @type {MeetingDatabase | null} */
   #database = null;
+  /** @type {boolean} */
+  #parallel = true;
+  /** @type {RoundExecutor | null} */
+  #roundExecutor = null;
 
   constructor(options) {
     this.#meetingId = crypto.randomUUID();
@@ -56,6 +61,7 @@ export class MeetingOrchestrator {
     this.#directory = options.directory;
     this.#parentSessionId = options.parentSessionId;
     this.#opencodeSessionId = options.opencodeSessionId;
+    this.#parallel = options.parallel !== false;
 
     this.#state = {
       id: this.#meetingId,
@@ -143,6 +149,22 @@ export class MeetingOrchestrator {
     }
     await this.#persistState();
     this.#state.status = "weaving";
+
+    this.#roundExecutor = new RoundExecutor({
+      client: this.#client,
+      directory: this.#directory,
+      db,
+      state: this.#state,
+      options: {
+        onAgentComplete: this.#options.onAgentComplete,
+        onContribution: this.#options.onContribution,
+        onProgress: async (message) => this.#postProgress(message),
+      },
+      promptParent: async (system, model, message) => this.#promptParent(system, model, message),
+      getParticipantModel: (participant) => this.#getParticipantModel(participant),
+      getHighestTierModel: () => this.#getHighestTierModel(),
+      logError: (context, error) => this.#logError(context, error),
+    });
   }
 
   async #createChildSession(participant) {
@@ -192,7 +214,6 @@ export class MeetingOrchestrator {
     }
 
     const output = await this.#synthesize();
-    this.#cleanupDatabase();
     return output;
   }
 
@@ -221,21 +242,7 @@ export class MeetingOrchestrator {
       this.#notifyUpdate();
     }
     const output = await this.#synthesize();
-    this.#cleanupDatabase();
     return output;
-  }
-
-  #cleanupDatabase() {
-    if (!this.#database) return;
-    const dbPath = this.#database.getDatabasePath();
-    this.#database.close();
-    this.#database = null;
-    for (const suffix of ["", "-wal", "-shm"]) {
-      try {
-        unlinkSync(`${dbPath}${suffix}`);
-      } catch {
-      }
-    }
   }
 
   async runRound() {
@@ -252,110 +259,19 @@ export class MeetingOrchestrator {
     (await this.#getDb()).setRound(this.#state.current_round);
     this.#notifyUpdate();
 
-    await this.#clearPreviousResponses();
-
     const sharedState = this.#buildSharedState();
     (await this.#getDb()).setWarp(sharedState.warp);
     (await this.#getDb()).setRound(sharedState.round);
 
-    const activeParticipants = this.#state.participants.filter((p) => p.status !== "passed");
+    const activeParticipants = this.#state.participants.filter((p) => p.status !== "passed" && p.status !== "failed");
 
-    for (const p of activeParticipants) {
-      await this.#postProgress(`⏳ ${p.config.name} (${p.config.tier}) is thinking...`);
-      (await this.#getDb()).setParticipantStatus(p.config.id, "speaking");
-
-      let result = await this.#promptChildSession(p);
-
-      if (!result) {
-        result = await this.#promptChildSession(p);
-      }
-
-      if (!result) {
-        await this.#postProgress(
-          `⏭️ ${p.config.name} (${p.config.tier}) — no response after retry, passing`
-        );
-        const participant = this.#state.participants.find(
-          (pp) => pp.config.id === p.config.id,
-        );
-        if (participant) {
-          participant.status = "passed";
-        }
-        (await this.#getDb()).setParticipantStatus(p.config.id, "passed");
-        (await this.#getDb()).recordAgentError(
-          this.#meetingId, p.config.id, this.#state.current_round,
-          "no_response", "Failed to get response after retries", 2,
-        );
-        round.token_path.push(p.config.id);
-        if (this.#options.onContribution) {
-          this.#options.onContribution(p.config.name, this.#state.current_round, "passed_no_response");
-        }
-        this.#notifyUpdate();
-        continue;
-      }
-
-      const participant = this.#state.participants.find(
-        (pp) => pp.config.id === result.participant_id,
-      );
-      if (!participant) continue;
-
-      if (result.content === "[PASS]") {
-        participant.status = "passed";
-        (await this.#getDb()).setParticipantStatus(participant.config.id, "passed");
-        round.token_path.push(participant.config.id);
-        await this.#postProgress(`⏭️ ${participant.config.name} (${participant.config.tier}) — chose to pass`);
-        if (this.#options.onContribution) {
-          this.#options.onContribution(p.config.name, this.#state.current_round, "pass");
-        }
-        this.#notifyUpdate();
-        continue;
-      }
-
-      const contribution = {
-        participant_id: result.participant_id,
-        content: result.content,
-        type: result.type,
-        targets_which: null,
-        timestamp: Date.now(),
-      };
-
-      this.#state.weft.push(contribution);
-      round.contributions.push(contribution);
-      round.token_path.push(participant.config.id);
-      participant.contributions_count++;
-      participant.status = "listening";
-      (await this.#getDb()).setParticipantStatus(participant.config.id, "listening");
-
-      (await this.#getDb()).addContribution(this.#meetingId, {
-        ...contribution,
-        round: this.#state.current_round,
-      });
-
-      if (result.interjection) {
-        const interjection = {
-          participant_id: result.participant_id,
-          priority: result.interjection.priority,
-          reason: result.interjection.reason,
-          granted: false,
-          pushback: null,
-          resolved: "pending",
-        };
-        round.interjections.push(interjection);
-        (await this.#getDb()).addInterjection(this.#meetingId, interjection);
-      }
-
-      const truncated = this.#truncate(result.content, 120);
-      await this.#postProgress(
-        `✅ ${p.config.name} (${p.config.tier}) — ${result.type}: "${truncated}"`
-      );
-
-      if (this.#options.onAgentComplete) {
-        this.#options.onAgentComplete(result.participant_id, result.content);
-      }
-      if (this.#options.onContribution) {
-        this.#options.onContribution(p.config.name, this.#state.current_round, result.type);
-      }
-      this.#notifyUpdate();
+    if (!this.#roundExecutor) {
+      throw new Error("RoundExecutor not initialized — call initialize() first");
     }
+
+    await this.#roundExecutor.runPromptPhase(round, activeParticipants, this.#parallel);
+    await this.#roundExecutor.runReflectionPhase(round, activeParticipants);
+    await this.#roundExecutor.runInterjectionPhase(round, activeParticipants);
 
     if (round.interjections.length > 0) {
       await resolveInterjections(round, (ij) => this.#moderateInterjection(ij));
@@ -412,149 +328,6 @@ export class MeetingOrchestrator {
     return true;
   }
 
-  async #promptChildSession(participant) {
-    participant.status = "speaking";
-
-    if (!participant.session_id) {
-      return null;
-    }
-
-    const maxRetries = 2;
-    const timeoutMs = 120000;
-
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        const result = await this.#withTimeout(
-          this.#client.session.prompt({
-            path: { id: participant.session_id },
-            body: {
-              system: buildAgentSystemPrompt(participant),
-              model: this.#getParticipantModel(participant),
-              parts: [{ type: "text", text: buildAgentUserPrompt(
-                participant,
-                this.#state.warp,
-                this.#state.weft,
-                this.#state.question,
-                this.#state.current_round,
-              ) }],
-            },
-            query: { directory: this.#directory },
-          }),
-          timeoutMs,
-        );
-
-        if (result.error) {
-          throw new Error(result.error.message || JSON.stringify(result.error));
-        }
-
-        const content = this.#extractText(result.data);
-        if (!content) {
-          return null;
-        }
-
-        const response = parseAgentResponse(participant.config.id, content);
-        if (!response) {
-          return null;
-        }
-
-        if (this.#options.onAgentComplete) {
-          this.#options.onAgentComplete(participant.config.id, response.content);
-        }
-
-        return response;
-      } catch (err) {
-        if (attempt === maxRetries) {
-          this.#state.objections.push({
-            participant_id: participant.config.id,
-            content: `Failed after ${maxRetries + 1} attempts: ${err instanceof Error ? err.message : "unknown"}`,
-            unresolved: false,
-          });
-          return null;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
-      }
-    }
-
-    return null;
-  }
-
-  #withTimeout(promise, ms) {
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`Timed out after ${ms}ms`)), ms);
-      promise.then(resolve, reject).finally(() => clearTimeout(timer));
-    });
-  }
-
-  #extractText(data) {
-    if (!data?.parts) return null;
-    const parts = data.parts;
-    const textParts = parts.filter((p) => p.type === "text");
-    const content = textParts.map((p) => p.text).join("\n").trim();
-    return content.length > 0 ? content : null;
-  }
-
-  async #promptParent(system, model, message) {
-    const result = await this.#client.session.prompt({
-      path: { id: this.#parentSessionId },
-      body: { system, model, tools: {}, parts: [{ type: "text", text: message }] },
-      query: { directory: this.#directory },
-    });
-    if (result.error) throw new Error(JSON.stringify(result.error));
-    const parts = result.data.parts;
-    return parts.filter((p) => p.type === "text").map((p) => p.text).join("\n");
-  }
-
-  async #clearPreviousResponses() {
-    const db = await this.#getDb();
-    for (const p of this.#state.participants) {
-      db.clearAgentResponse(this.#meetingId, p.config.id);
-    }
-  }
-
-  #truncate(text, max) {
-    const cleaned = text.replace(/\n/g, " ").trim();
-    if (cleaned.length <= max) return cleaned;
-    return cleaned.slice(0, max - 3) + "...";
-  }
-
-  async #postProgress(message) {
-    try {
-      const session = this.#client.session;
-      if (typeof session.promptAsync === "function") {
-        await session.promptAsync({
-          path: { id: this.#parentSessionId },
-          body: {
-            noReply: true,
-            parts: [{ type: "text", text: message }],
-          },
-          query: { directory: this.#directory },
-        });
-      }
-    } catch {
-    }
-  }
-
-  async #moderateInterjection(ij) {
-    const situation = `Two participants claim equal priority (${ij.priority}) for interjection:
-- ${ij.participant_id}: "${ij.reason}"
-Who should be granted the floor?`;
-
-    try {
-      const model = this.#getHighestTierModel();
-      const prompt = `${situation}
-
-Respond with: "grant" or "deny". One word only.`;
-      const result = await this.#promptParent(
-        "You are the deliberation moderator. Rule on interjection priority disputes.",
-        model,
-        prompt,
-      );
-      return result.toLowerCase().includes("grant");
-    } catch {
-      return false;
-    }
-  }
-
   #buildSharedState() {
     return {
       meeting_id: this.#meetingId,
@@ -589,15 +362,19 @@ Respond with: "grant" or "deny". One word only.`;
         if (semanticSummary.trim().length > 10) {
           summary = semanticSummary.trim();
         }
-      } catch {}
+      } catch (err) {
+        this.#logError("semantic summary generation failed", err);
+      }
     }
 
     return summary;
   }
 
   #checkConvergence(round) {
-    const activeCount = this.#state.participants.filter((p) => p.status !== "passed").length;
+    const activeCount = this.#state.participants.filter((p) => p.status !== "passed" && p.status !== "failed").length;
     const passedCount = this.#state.participants.filter((p) => p.status === "passed").length;
+
+    const recentContributions = this.#state.weft.slice(-12);
 
     const result = checkConvergence(
       passedCount,
@@ -606,6 +383,8 @@ Respond with: "grant" or "deny". One word only.`;
       this.#state.current_round,
       this.#state.max_rounds,
       this.#state.convergence_mode,
+      recentContributions,
+      this.#state.rounds,
     );
 
     this.#state.status = result.status;
@@ -632,8 +411,12 @@ Respond with: "grant" or "deny". One word only.`;
     let artifactText;
     try {
       artifactText = await this.#promptSynthesizerSession(synthSessionId, synthesizer, transcriptData);
-    } catch {
-      artifactText = `# Deliberation Output\n\n${this.#state.weft.map((c) => `- ${c.content}`).join("\n")}`;
+    } catch (err) {
+      this.#logError("synthesizer session failed", err);
+      const contributionSummary = this.#state.weft
+        .map((c) => `- **[${c.participant_id}]** (${c.type}): ${this.#truncate(c.content, 100)}`)
+        .join("\n");
+      artifactText = `## Deliberation Output\n\n### Contributions\n${contributionSummary}\n\n### Status\nSynthesis generation failed. The above represents raw contributions from the deliberation.`;
     }
 
     const result = await synthesizeFromData(
@@ -677,20 +460,17 @@ Respond with: "grant" or "deny". One word only.`;
     const model = this.#getParticipantModel(synthesizer);
     const transcript = formatTranscriptFromData(transcriptData, this.#state.participants);
 
-    const userPrompt = buildSynthesisPromptForTranscript(transcriptData.question, transcript);
+    const userPrompt = buildSynthesisPrompt(transcriptData.question, transcript);
 
-    const result = await this.#withTimeout(
-      this.#client.session.prompt({
-        path: { id: sessionId },
-        body: {
-          system: `You are ${synthesizer.config.name} (${synthesizer.config.tier}). Synthesize the final output.\n\n${synthesizer.tier_config.system_prompt_addendum}`,
-          model,
-          parts: [{ type: "text", text: userPrompt }],
-        },
-        query: { directory: this.#directory },
-      }),
-      180000,
-    );
+    const result = await this.#client.session.prompt({
+      path: { id: sessionId },
+      body: {
+        system: `You are ${synthesizer.config.name} (${synthesizer.config.tier}). Synthesize the final output.\n\n${synthesizer.tier_config.system_prompt_addendum}`,
+        model,
+        parts: [{ type: "text", text: userPrompt }],
+      },
+      query: { directory: this.#directory },
+    });
 
     if (result.error) {
       throw new Error(result.error.message || JSON.stringify(result.error));
@@ -703,12 +483,82 @@ Respond with: "grant" or "deny". One word only.`;
     return text;
   }
 
+  async #promptParent(system, model, message) {
+    const result = await this.#client.session.prompt({
+      path: { id: this.#parentSessionId },
+      body: { system, model, tools: {}, parts: [{ type: "text", text: message }] },
+      query: { directory: this.#directory },
+    });
+    if (result.error) throw new Error(JSON.stringify(result.error));
+    const parts = result.data.parts;
+    return parts.filter((p) => p.type === "text").map((p) => p.text).join("\n");
+  }
+
+  #extractText(data) {
+    if (!data?.parts) return null;
+    const parts = data.parts;
+    const textParts = parts.filter((p) => p.type === "text");
+    const content = textParts.map((p) => p.text).join("\n").trim();
+    return content.length > 0 ? content : null;
+  }
+
+  #truncate(text, max) {
+    const cleaned = text.replace(/\n/g, " ").trim();
+    if (cleaned.length <= max) return cleaned;
+    return cleaned.slice(0, max - 3) + "...";
+  }
+
+  async #postProgress(message) {
+    try {
+      const session = this.#client.session;
+      if (typeof session.promptAsync === "function") {
+        await session.promptAsync({
+          path: { id: this.#parentSessionId },
+          body: {
+            noReply: true,
+            parts: [{ type: "text", text: message }],
+          },
+          query: { directory: this.#directory },
+        });
+      }
+    } catch (err) {
+      this.#logError("progress post failed", err);
+    }
+  }
+
+  async #moderateInterjection(ij) {
+    const situation = `Two participants claim equal priority (${ij.priority}) for interjection:
+- ${ij.participant_id}: "${ij.reason}"
+Who should be granted the floor?`;
+
+    try {
+      const model = this.#getHighestTierModel();
+      const prompt = `${situation}
+
+Respond with: "grant" or "deny". One word only.`;
+      const result = await this.#promptParent(
+        "You are the deliberation moderator. Rule on interjection priority disputes.",
+        model,
+        prompt,
+      );
+      return result.toLowerCase().includes("grant");
+    } catch (err) {
+      this.#logError("moderator tiebreaker", err);
+      return false;
+    }
+  }
+
   async #persistState() {
     const db = await this.#getDb();
     const sharedState = this.#buildSharedState();
     db.setWarp(sharedState.warp);
     db.setRound(sharedState.round);
     db.setStatus(sharedState.status);
+  }
+
+  #logError(context, error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[Loom ${this.#meetingId}] Round ${this.#state.current_round} | ${context}: ${message}`);
   }
 
   #notifyUpdate() {

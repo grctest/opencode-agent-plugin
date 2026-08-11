@@ -1,54 +1,3 @@
-/** Builds the system prompt that establishes a participant's identity, agenda, and deliberation rules. */
-export function buildSpeakerSystemPrompt(participant) {
-  return `You are **${participant.config.name}** in a structured multi-agent deliberation called a "Loom."
-
-## Your Identity
-${participant.config.persona}
-
-## Your Agenda
-${participant.config.agenda}
-
-## Your Tier (${participant.config.tier})
-${participant.tier_config.system_prompt_addendum}
-
-## Deliberation Rules
-1. Read the transcript carefully before contributing
-2. If you have something MEANINGFUL to add that hasn't been said, state it clearly in under 250 words
-3. If you have NOTHING meaningful to add, respond with exactly: [PASS]
-4. Tag your contribution type at the start: [PROPOSE], [CHALLENGE], [REFINE], [SUPPORT], [DISSENT], [SYNTHESIZE], or [QUESTION]
-5. Stay in character — your persona and agenda should shape your contributions
-6. Build on others' points, don't just repeat them`;
-}
-
-/** Builds the user prompt containing the topic, shared context (warp), and recent contributions for a participant's turn. */
-export function buildSpeakerUserPrompt(participant, question, warp, weft, participants) {
-  const recentContributions = weft.slice(-10);
-  const transcript =
-    recentContributions.length === 0
-      ? "*(No contributions yet — you are the first to speak)*"
-      : recentContributions
-          .map((c) => {
-            const p = participants.find((pp) => pp.config.id === c.participant_id);
-            const name = p?.config.name ?? c.participant_id;
-            return `- **[${name}]** (${c.type}): ${c.content}`;
-          })
-          .join("\n");
-
-  return `## Topic
-${question}
-
-## Shared Context (Warp)
-${warp}
-
-## Recent Contributions
-${transcript}
-
-${participant.reflection ? `## Your Private Reflection\n${participant.reflection}\n` : ""}
-## Your Turn
-
-Read the topic, context, and recent contributions. Then make your contribution or pass.`;
-}
-
 /** Builds a prompt asking a listener to privately reflect on a speaker's contribution. */
 export function buildReflectionPrompt(listener, speakerName, contribution) {
   return `## Private Reflection
@@ -158,7 +107,11 @@ reason: <brief justification>`;
 }
 
 /** Builds a prompt for synthesizing the final deliberation artifact from all contributions. */
-export function buildSynthesisPrompt(question, transcript, participants) {
+export function buildSynthesisPrompt(question, transcript, participants = []) {
+  const participantsSection = participants.length > 0
+    ? `\n## Participants\n${participants.map((p) => `- ${p.config.name} (${p.config.tier}): ${p.contributions_count} contributions`).join("\n")}\n`
+    : "";
+
   return `You are the synthesizer. The deliberation is complete. Produce the final artifact.
 
 ## Original Question
@@ -166,39 +119,7 @@ ${question}
 
 ## Full Deliberation Transcript
 ${transcript}
-
-## Participants
-${participants.map((p) => `- ${p.config.name} (${p.config.tier}): ${p.contributions_count} contributions`).join("\n")}
-
-## Instructions
-Produce a comprehensive, well-structured response that:
-1. Directly answers the original question
-2. Captures the strongest points from all perspectives
-3. Notes any unresolved disagreements
-4. Provides clear, actionable conclusions
-5. Identifies remaining risks or open questions
-
-Format as markdown with these exact sections:
-## Decision
-## Reasoning
-## Action Items
-## Dissenting Views
-## Open Questions
-## Confidence
-
-For Confidence, choose High (strong consensus), Medium (general agreement with some dissent), or Low (significant disagreement remains).`;
-}
-
-/** Builds a synthesis prompt from pre-formatted transcript data (for child session use). */
-export function buildSynthesisPromptForTranscript(question, transcript) {
-  return `You are the synthesizer. The deliberation is complete. Produce the final artifact.
-
-## Original Question
-${question}
-
-## Full Deliberation Transcript
-${transcript}
-
+${participantsSection}
 ## Instructions
 Produce a comprehensive, well-structured response that:
 1. Directly answers the original question
@@ -221,8 +142,8 @@ For Confidence, choose High (strong consensus), Medium (general agreement with s
 // ─── Multi-Session Agent Prompts ──────────────────────────────────────
 
 /** Builds the system prompt for an agent in the multi-session architecture (identity + rules). */
-export function buildAgentSystemPrompt(participant) {
-  return `You are **${participant.config.name}** (${participant.config.tier}) in a structured multi-agent deliberation called a "Loom."
+ export function buildAgentSystemPrompt(participant) {
+   return `You are **${participant.config.name}** (${participant.config.tier}) in a structured multi-agent deliberation called "Loom."
 
 ## Your Identity
 ${participant.config.persona}
@@ -239,8 +160,13 @@ ${participant.config.tier === "junior" ? "Think creatively and bring fresh persp
 3. If you have nothing to add, respond with exactly: [PASS]
 4. Tag your type: [PROPOSE], [CHALLENGE], [REFINE], [SUPPORT], [DISSENT], [SYNTHESIZE], or [QUESTION]
 5. To interject, add: [INTERJECT: Priority: <1-10>, Reason: "why you must speak now"]
-6. Stay in character — your persona and agenda shape your contributions`;
-}
+6. Stay in character — your persona and agenda shape your contributions
+
+## Example Response
+[CHALLENGE] The proposed timeline doesn't account for QA. In my experience, testing typically adds 30% to estimates. Have we validated these numbers with the QA team?
+
+To interject on the current point: [INTERJECT: Priority: 8, Reason: "I have critical security context that changes this tradeoff"]`;
+ }
 
 /** Builds the user prompt for an agent's turn: warp context + recent contributions + interjection notes. */
 export function buildAgentUserPrompt(participant, warp, weft, question, round) {

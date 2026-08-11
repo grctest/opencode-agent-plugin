@@ -50,11 +50,22 @@ export function can(participant, action) {
   return participant.tier_config.rights[action];
 }
 
+/** Returns the default temperature for a tier. */
+function getDefaultTemperatureForTier(tier) {
+  switch (tier) {
+    case "junior": return 0.7;
+    case "mid": return 0.5;
+    case "senior": return 0.3;
+    case "principal": return 0.2;
+    default: return 0.5;
+  }
+}
+
 /** Builds a complete tier config with optional model/temperature overrides. */
 export function getTierConfig(tier, overrides) {
   return {
     model: overrides?.model ?? "",
-    temperature: overrides?.temperature ?? 0.5,
+    temperature: overrides?.temperature ?? getDefaultTemperatureForTier(tier),
     reasoning_effort: overrides?.reasoning_effort,
     system_prompt_addendum: getPromptForTier(tier),
     rights: getRightsForTier(tier),

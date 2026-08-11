@@ -227,6 +227,23 @@ export function startDashboard(directory, port) {
           return Response.json(api.getAgentErrors());
         }
 
+        if (url.pathname === "/api/agent_context") {
+          const meetingId = url.searchParams.get("meeting");
+          const participantId = url.searchParams.get("participant");
+          if (!meetingId || !isValidMeetingId(meetingId)) {
+            return Response.json({ error: "valid meeting id required" }, { status: 400 });
+          }
+          if (!participantId) {
+            return Response.json({ error: "participant id required" }, { status: 400 });
+          }
+          const dbPath = getMeetingDbPath(directory, meetingId);
+          if (!dbPath) {
+            return Response.json({ error: "not found" }, { status: 404 });
+          }
+          const api = DashboardApi.get(dbPath);
+          return Response.json(api.getAgentContext(meetingId, participantId));
+        }
+
         if (url.pathname === "/api/stream") {
           const meetingId = url.searchParams.get("meeting");
           if (!meetingId || !isValidMeetingId(meetingId)) {

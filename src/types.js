@@ -145,7 +145,7 @@
  * @property {ParticipantConfig} config
  * @property {TierConfig} tier_config
  * @property {string} session_id
- * @property {"listening" | "speaking" | "interjecting" | "passed"} status
+ * @property {"listening" | "speaking" | "interjecting" | "passed" | "failed"} status
  * @property {string} reflection
  * @property {number} contributions_count
  * @property {string} [reason]
