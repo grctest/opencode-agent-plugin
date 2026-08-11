@@ -88,16 +88,19 @@ export function startDashboard(directory, port) {
         const dbPath = getMeetingDbPath(directory, meetingId);
         if (!dbPath) continue;
         const api = DashboardApi.get(dbPath);
+
         const maxId = api.getMaxContributionId();
         const prevId = lastContributionId.get(meetingId) ?? 0;
         if (maxId > prevId) {
           lastContributionId.set(meetingId, maxId);
+          const newContributions = api.getContributionsSince(prevId);
           broadcast(meetingId, {
-            type: "contribution",
-            data: { newContributions: true, sinceId: prevId },
+            type: "contributions",
+            data: newContributions,
             timestamp: new Date().toISOString(),
           });
         }
+
         const state = api.getState();
         if (state) {
           broadcast(meetingId, {
@@ -106,6 +109,7 @@ export function startDashboard(directory, port) {
             timestamp: new Date().toISOString(),
           });
         }
+
         const participants = api.getParticipants();
         const statusKey = meetingId;
         const prevStatus = participantStatusCache.get(statusKey);
@@ -120,6 +124,7 @@ export function startDashboard(directory, port) {
             });
           }
         }
+
         const maxErrorId = api.getMaxErrorId();
         const prevErrorId = lastErrorId.get(meetingId) ?? 0;
         if (maxErrorId > prevErrorId) {
@@ -227,6 +232,21 @@ export function startDashboard(directory, port) {
           return Response.json(api.getAgentErrors());
         }
 
+        if (url.pathname === "/api/agent_contexts") {
+          const meetingId = url.searchParams.get("meeting");
+          if (!meetingId || !isValidMeetingId(meetingId)) {
+            return Response.json({ error: "valid meeting id required" }, { status: 400 });
+          }
+          const dbPath = getMeetingDbPath(directory, meetingId);
+          if (!dbPath) {
+            return Response.json({ error: "not found" }, { status: 404 });
+          }
+          const api = DashboardApi.get(dbPath);
+          const meeting = api.getState();
+          const participants = api.getParticipants();
+          return Response.json({ meeting, participants });
+        }
+
         if (url.pathname === "/api/agent_context") {
           const meetingId = url.searchParams.get("meeting");
           const participantId = url.searchParams.get("participant");
@@ -242,6 +262,26 @@ export function startDashboard(directory, port) {
           }
           const api = DashboardApi.get(dbPath);
           return Response.json(api.getAgentContext(meetingId, participantId));
+        }
+
+        if (url.pathname === "/api/export") {
+          const meetingId = url.searchParams.get("meeting");
+          if (!meetingId || !isValidMeetingId(meetingId)) {
+            return Response.json({ error: "valid meeting id required" }, { status: 400 });
+          }
+          const dbPath = getMeetingDbPath(directory, meetingId);
+          if (!dbPath) {
+            return Response.json({ error: "not found" }, { status: 404 });
+          }
+          const api = DashboardApi.get(dbPath);
+          const exportMarkdown = api.exportMarkdown(meetingId);
+          const filename = `loom-${meetingId.slice(0, 8)}-${Date.now()}.md`;
+          return new Response(exportMarkdown, {
+            headers: {
+              "Content-Type": "text/markdown; charset=utf-8",
+              "Content-Disposition": `attachment; filename="${filename}"`,
+            },
+          });
         }
 
         if (url.pathname === "/api/stream") {
@@ -261,7 +301,7 @@ export function startDashboard(directory, port) {
               }
               sseClients.get(meetingId).add(controller);
               sendSSE(controller, {
-                type: "state",
+                type: "connected",
                 data: { connected: true },
                 timestamp: new Date().toISOString(),
               });

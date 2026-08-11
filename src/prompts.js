@@ -1,3 +1,5 @@
+import { generateRoundBriefs } from "./warp-manager.js";
+
 /** Builds a prompt asking a listener to privately reflect on a speaker's contribution. */
 export function buildReflectionPrompt(listener, speakerName, contribution) {
   return `## Private Reflection
@@ -13,48 +15,6 @@ What is your honest reaction? Write 2-3 sentences:
 - What are they missing from your perspective?
 
 This is private — only you will see it.`;
-}
-
-/** Builds a prompt asking a neutral coordinator which listeners (if any) should interject. */
-export function buildInterjectionCheckPrompt(currentSpeakerId, lastContribution, participants) {
-  const speaker = participants.find((p) => p.config.id === currentSpeakerId);
-
-  const listeners = participants.filter(
-    (p) =>
-      p.config.id !== currentSpeakerId &&
-      p.status !== "passed" &&
-      p.canInterject,
-  );
-
-  if (listeners.length === 0) {
-    return "No listeners available for interjection check.";
-  }
-
-  const listenerDescriptions = listeners
-    .map((p) => `- **${p.config.name}** (${p.config.tier}): ${p.config.persona}`)
-    .join("\n");
-
-  return `## Interjection Check
-
-**Current speaker:** ${speaker?.config.name} (${speaker?.config.tier})
-
-**Their contribution:**
-"${lastContribution}"
-
-**Listening participants:**
-${listenerDescriptions}
-
-For EACH listener, decide if they want to interject RIGHT NOW.
-An interjection is only appropriate if:
-- They are correcting a critical factual error
-- They are raising an urgent risk that cannot wait
-- They have a game-changing perspective that would be lost if delayed
-
-Respond with one line per listener:
-\`[WAIT: name]\` — if they can wait their turn
-\`[INTERJECT: name, Priority: N (1-10), Reason: "why they must speak now"]\` — if they must interrupt
-
-Be conservative — most of the time, listeners should wait.`;
 }
 
 /** Builds a prompt asking the current speaker to yield or contest an interjection attempt. */
@@ -142,8 +102,31 @@ For Confidence, choose High (strong consensus), Medium (general agreement with s
 // ─── Multi-Session Agent Prompts ──────────────────────────────────────
 
 /** Builds the system prompt for an agent in the multi-session architecture (identity + rules). */
- export function buildAgentSystemPrompt(participant) {
-   return `You are **${participant.config.name}** (${participant.config.tier}) in a structured multi-agent deliberation called "Loom."
+export function buildAgentSystemPrompt(participant) {
+  const tier = participant.config.tier;
+  const isJunior = tier === "junior";
+  const isPrincipal = tier === "principal";
+
+  let tierGuidance;
+  if (isJunior) {
+    tierGuidance = "Think creatively and bring fresh perspectives. Wild ideas are welcome. Challenge senior thinking with naive questions that expose hidden assumptions.";
+  } else if (tier === "mid") {
+    tierGuidance = "Balance creativity with evidence. When you disagree, explain why with specific reasoning. Synthesize others' points before adding your own.";
+  } else if (tier === "senior") {
+    tierGuidance = "Prioritize accuracy and risk assessment. Flag irreversible decisions. Be conservative with claims but commit fully when you do.";
+  } else {
+    tierGuidance = "See the whole system. Cut through noise and circular argument. When consensus is impossible, decide.";
+  }
+
+  const interjectionRule = tier === "junior"
+    ? "5. To interject, add: [INTERJECT: Priority: <1-5>, Reason: \"why you must speak now\"]"
+    : tier === "mid"
+    ? "5. To interject, add: [INTERJECT: Priority: <1-7>, Reason: \"why you must speak now\"]"
+    : tier === "senior"
+    ? "5. To interject, add: [INTERJECT: Priority: <1-9>, Reason: \"why you must speak now\"]"
+    : "5. To interject, add: [INTERJECT: Priority: <1-10>, Reason: \"why you must speak now\"]";
+
+  return `You are **${participant.config.name}** (${participant.config.tier}) in a structured multi-agent deliberation called "Loom."
 
 ## Your Identity
 ${participant.config.persona}
@@ -152,32 +135,36 @@ ${participant.config.persona}
 ${participant.config.agenda}
 
 ## Your Tier Guidance
-${participant.config.tier === "junior" ? "Think creatively and bring fresh perspectives. Wild ideas are welcome — you won't be penalized for being wrong. Challenge senior thinking with naive questions." : participant.config.tier === "mid" ? "Balance creativity with evidence. When you disagree, explain why. Synthesize others' points before adding your own." : participant.config.tier === "senior" ? "Prioritize accuracy and risk assessment. Flag irreversible decisions. Be conservative with claims but commit fully when you do." : "See the whole system. Cut through noise. When consensus is impossible, decide."}
+${tierGuidance}
 
 ## Rules
 1. Read the shared context and recent contributions carefully
-2. If you have something meaningful to add, state it in under 250 words
+2. If you have something meaningful to add, state it concisely (aim for under 200 words)
 3. If you have nothing to add, respond with exactly: [PASS]
 4. Tag your type: [PROPOSE], [CHALLENGE], [REFINE], [SUPPORT], [DISSENT], [SYNTHESIZE], or [QUESTION]
-5. To interject, add: [INTERJECT: Priority: <1-10>, Reason: "why you must speak now"]
+${interjectionRule}
 6. Stay in character — your persona and agenda shape your contributions
+7. Reference prior contributions using their ID: [R2-C3] means Round 2, Contribution 3
 
 ## Example Response
-[CHALLENGE] The proposed timeline doesn't account for QA. In my experience, testing typically adds 30% to estimates. Have we validated these numbers with the QA team?
+[CHALLENGE] The proposed approach doesn't account for backward compatibility. In my experience, breaking changes typically require a migration period. Have we validated this with stakeholders?
 
-To interject on the current point: [INTERJECT: Priority: 8, Reason: "I have critical security context that changes this tradeoff"]`;
- }
+To interject on the current point: [INTERJECT: Priority: 7, Reason: "I have critical information that changes this tradeoff"]`;
+}
 
 /** Builds the user prompt for an agent's turn: warp context + recent contributions + interjection notes. */
 export function buildAgentUserPrompt(participant, warp, weft, question, round) {
-  const recentContributions = weft.slice(-10);
+  const roundBriefs = generateRoundBriefs(warp, round);
+
+  const recentContributions = weft.slice(-3);
   const transcript =
     recentContributions.length === 0
       ? "*(No contributions yet — you are the first to speak)*"
       : recentContributions
-          .map((c) => {
+          .map((c, i) => {
+            const idx = weft.length - recentContributions.length + i;
             const wasInterjection = c.type === "interjection" ? " [INTERJECTION]" : "";
-            return `- **[${c.participant_id}]** (${c.type})${wasInterjection}: ${c.content}`;
+            return `- **[R${round}-C${idx + 1}]** [${c.participant_id}] (${c.type})${wasInterjection}: ${c.content}`;
           })
           .join("\n");
 
@@ -186,10 +173,11 @@ ${question}
 
 ## Round ${round}
 
+${roundBriefs ? `## Prior Deliberation Brief\n${roundBriefs}\n` : ""}
 ## Shared Context (Warp)
 ${warp}
 
-## Recent Contributions
+## Recent Contributions (last 3)
 ${transcript}
 
 ${participant.reflection ? `## Your Previous Reflection\n${participant.reflection}\n` : ""}

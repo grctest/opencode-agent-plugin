@@ -29,7 +29,7 @@ export class Semaphore {
   }
 }
 
-/** Runs tasks with a concurrency limit, returning settled results in order. */
+/** Runs tasks with a concurrency limit, returning results in order. */
 export async function withConcurrency(tasks, limit) {
   const semaphore = new Semaphore(limit);
   const wrapped = tasks.map(async (task) => {
@@ -40,5 +40,5 @@ export async function withConcurrency(tasks, limit) {
       semaphore.release();
     }
   });
-  return Promise.allSettled(wrapped);
+  return Promise.all(wrapped);
 }

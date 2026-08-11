@@ -25,6 +25,8 @@ let DatabaseClass = null;
 /** @type {Promise<void> | null} */
 let dbReady = null;
 
+const SCHEMA_VERSION = 2;
+
 function ensureDb() {
   if (DatabaseClass) return Promise.resolve();
   if (dbReady) return dbReady;
@@ -37,10 +39,6 @@ function ensureDb() {
 
 function isoNow() {
   return new Date().toISOString();
-}
-
-function deserializeStatus(s) {
-  return s;
 }
 
 export class MeetingDatabase {
@@ -62,11 +60,12 @@ export class MeetingDatabase {
     this.#db.exec("PRAGMA journal_mode = WAL");
     this.#db.exec("PRAGMA foreign_keys = ON");
     this.#initSchema();
+    this.#migrate();
   }
 
-   #initSchema() {
-     this.#db.exec(`
-       CREATE TABLE IF NOT EXISTS meetings (
+  #initSchema() {
+    this.#db.exec(`
+      CREATE TABLE IF NOT EXISTS meetings (
         id TEXT PRIMARY KEY,
         question TEXT NOT NULL,
         context TEXT,
@@ -81,39 +80,33 @@ export class MeetingDatabase {
         updated_at TEXT NOT NULL
       );
 
-      CREATE TABLE IF NOT EXISTS metadata (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-      );
-
       CREATE TABLE IF NOT EXISTS participants (
-         id TEXT PRIMARY KEY,
-         meeting_id TEXT NOT NULL REFERENCES meetings(id),
-         name TEXT NOT NULL,
-         persona TEXT NOT NULL,
-         agenda TEXT NOT NULL,
-         tier TEXT NOT NULL,
-         provider_id TEXT,
-         model_id TEXT,
-         session_id TEXT,
-         status TEXT NOT NULL DEFAULT 'listening',
-         reflection TEXT NOT NULL DEFAULT ''
-       );
+        id TEXT PRIMARY KEY,
+        meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        persona TEXT NOT NULL,
+        agenda TEXT NOT NULL,
+        tier TEXT NOT NULL,
+        provider_id TEXT,
+        model_id TEXT,
+        session_id TEXT,
+        status TEXT NOT NULL DEFAULT 'listening',
+        reflection TEXT NOT NULL DEFAULT ''
+      );
 
       CREATE TABLE IF NOT EXISTS contributions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        meeting_id TEXT NOT NULL REFERENCES meetings(id),
+        meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
         participant_id TEXT NOT NULL,
         round INTEGER NOT NULL,
         type TEXT NOT NULL,
         content TEXT NOT NULL,
-        confidence REAL,
         created_at TEXT NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS interjections (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        meeting_id TEXT NOT NULL REFERENCES meetings(id),
+        meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
         participant_id TEXT NOT NULL,
         target_participant_id TEXT,
         round INTEGER,
@@ -125,18 +118,9 @@ export class MeetingDatabase {
         created_at TEXT NOT NULL
       );
 
-      CREATE TABLE IF NOT EXISTS agent_responses (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        meeting_id TEXT NOT NULL REFERENCES meetings(id),
-        participant_id TEXT NOT NULL,
-        round INTEGER NOT NULL,
-        response TEXT NOT NULL,
-        created_at TEXT NOT NULL
-      );
-
       CREATE TABLE IF NOT EXISTS agent_errors (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        meeting_id TEXT NOT NULL REFERENCES meetings(id),
+        meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
         participant_id TEXT NOT NULL,
         round INTEGER NOT NULL,
         error_type TEXT NOT NULL,
@@ -147,28 +131,50 @@ export class MeetingDatabase {
 
       CREATE INDEX IF NOT EXISTS idx_contributions_meeting ON contributions(meeting_id);
       CREATE INDEX IF NOT EXISTS idx_interjections_meeting ON interjections(meeting_id);
-      CREATE INDEX IF NOT EXISTS idx_agent_responses_meeting ON agent_responses(meeting_id, participant_id);
-       CREATE INDEX IF NOT EXISTS idx_agent_errors_meeting ON agent_errors(meeting_id);
-     `);
+      CREATE INDEX IF NOT EXISTS idx_agent_errors_meeting ON agent_errors(meeting_id);
+      CREATE INDEX IF NOT EXISTS idx_participants_meeting ON participants(meeting_id);
+    `);
+  }
 
-     try {
-       this.#db.exec(`ALTER TABLE participants ADD COLUMN reflection TEXT NOT NULL DEFAULT ''`);
-     } catch {
-       // Column may already exist from a previous migration
-     }
+  #migrate() {
+    const currentVersion = this.#getSchemaVersion();
 
-     try {
-       this.#db.exec(`ALTER TABLE meetings ADD COLUMN opencode_session_id TEXT`);
-     } catch {
-       // Column may already exist from a previous migration
-     }
+    if (currentVersion < 1) {
+      this.#db.exec(`CREATE TABLE IF NOT EXISTS _loom_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+      this.#db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '1')`);
 
-     try {
-       this.#db.exec(`ALTER TABLE interjections ADD COLUMN round INTEGER`);
-     } catch {
-       // Column may already exist from a previous migration
-     }
-   }
+      try { this.#db.exec(`ALTER TABLE participants ADD COLUMN reflection TEXT NOT NULL DEFAULT ''`); } catch { /* exists */ }
+      try { this.#db.exec(`ALTER TABLE meetings ADD COLUMN opencode_session_id TEXT`); } catch { /* exists */ }
+      try { this.#db.exec(`ALTER TABLE interjections ADD COLUMN round INTEGER`); } catch { /* exists */ }
+    }
+
+    if (currentVersion < 2) {
+      try {
+        this.#db.exec(`DROP TABLE IF EXISTS agent_responses`);
+      } catch { /* ignore */ }
+
+      try {
+        this.#db.exec(`DROP TABLE IF EXISTS metadata`);
+        this.#db.exec(`CREATE TABLE IF NOT EXISTS _loom_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+      } catch { /* ignore */ }
+
+      this.#db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '2')`);
+    }
+  }
+
+  #getSchemaVersion() {
+    try {
+      const hasMeta = this.#db.prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='_loom_meta'"
+      ).get();
+      if (!hasMeta) return 0;
+
+      const row = this.#db.prepare("SELECT value FROM _loom_meta WHERE key = ?").get("schema_version");
+      return row ? parseInt(row.value, 10) : 0;
+    } catch {
+      return 0;
+    }
+  }
 
   initializeMeeting(input) {
     const now = isoNow();
@@ -193,9 +199,12 @@ export class MeetingDatabase {
 
     this.#db
       .prepare(
-        `INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)`,
+        `INSERT OR REPLACE INTO _loom_meta (key, value) VALUES (?, ?)`,
       )
       .run("opencode_session_id", input.opencodeSessionId);
+
+    const dbPath = this.getDatabasePath();
+    indexMeeting(dbPath, this.#meetingId, input.opencodeSessionId);
 
     const insertParticipant = this.#db.prepare(
       `INSERT INTO participants (id, meeting_id, name, persona, agenda, tier, provider_id, model_id, session_id)
@@ -246,7 +255,7 @@ export class MeetingDatabase {
     const row = this.#db
       .prepare("SELECT status FROM meetings WHERE id = ?")
       .get(this.#meetingId);
-    return row ? deserializeStatus(row.status) : "initializing";
+    return row ? row.status : "initializing";
   }
 
   setStatus(status) {
@@ -258,8 +267,8 @@ export class MeetingDatabase {
   addContribution(meetingId, contribution) {
     this.#db
       .prepare(
-        `INSERT INTO contributions (meeting_id, participant_id, round, type, content, confidence, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO contributions (meeting_id, participant_id, round, type, content, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
       )
       .run(
         meetingId,
@@ -267,7 +276,6 @@ export class MeetingDatabase {
         contribution.round ?? this.getRound(),
         contribution.type,
         contribution.content,
-        contribution.confidence ?? null,
         new Date(contribution.timestamp).toISOString(),
       );
   }
@@ -288,25 +296,25 @@ export class MeetingDatabase {
     }));
   }
 
-   addInterjection(meetingId, interjection) {
-     this.#db
-       .prepare(
-         `INSERT INTO interjections (meeting_id, participant_id, target_participant_id, round, content, priority, granted, pushback, resolved, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-       )
-       .run(
-         meetingId,
-         interjection.participant_id,
-         interjection.target_participant_id ?? null,
-         interjection.round ?? null,
-         interjection.reason,
-         interjection.priority,
-         interjection.granted ? 1 : 0,
-         interjection.pushback ?? null,
-         interjection.resolved,
-         isoNow(),
-       );
-   }
+  addInterjection(meetingId, interjection) {
+    this.#db
+      .prepare(
+        `INSERT INTO interjections (meeting_id, participant_id, target_participant_id, round, content, priority, granted, pushback, resolved, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        meetingId,
+        interjection.participant_id,
+        interjection.target_participant_id ?? null,
+        interjection.round ?? null,
+        interjection.reason,
+        interjection.priority,
+        interjection.granted ? 1 : 0,
+        interjection.pushback ?? null,
+        interjection.resolved,
+        isoNow(),
+      );
+  }
 
   getInterjections(meetingId) {
     const rows = this.#db
@@ -331,17 +339,17 @@ export class MeetingDatabase {
       .run(sessionId, participantId, this.#meetingId);
   }
 
-   setParticipantStatus(participantId, status) {
-     this.#db
-       .prepare("UPDATE participants SET status = ? WHERE id = ? AND meeting_id = ?")
-       .run(status, participantId, this.#meetingId);
-   }
+  setParticipantStatus(participantId, status) {
+    this.#db
+      .prepare("UPDATE participants SET status = ? WHERE id = ? AND meeting_id = ?")
+      .run(status, participantId, this.#meetingId);
+  }
 
-   setParticipantReflection(participantId, reflection) {
-     this.#db
-       .prepare("UPDATE participants SET reflection = ? WHERE id = ? AND meeting_id = ?")
-       .run(reflection, participantId, this.#meetingId);
-   }
+  setParticipantReflection(participantId, reflection) {
+    this.#db
+      .prepare("UPDATE participants SET reflection = ? WHERE id = ? AND meeting_id = ?")
+      .run(reflection, participantId, this.#meetingId);
+  }
 
   getParticipantStatus(participantId) {
     const row = this.#db
@@ -453,40 +461,6 @@ export class MeetingDatabase {
     };
   }
 
-  writeAgentResponse(meetingId, participantId, round, response) {
-    this.clearAgentResponse(meetingId, participantId);
-    this.#db
-      .prepare(
-        `INSERT INTO agent_responses (meeting_id, participant_id, round, response, created_at)
-         VALUES (?, ?, ?, ?, ?)`,
-      )
-      .run(meetingId, participantId, round, response, isoNow());
-  }
-
-  readAgentResponse(meetingId, participantId) {
-    const row = this.#db
-      .prepare(
-        `SELECT response FROM agent_responses WHERE meeting_id = ? AND participant_id = ?`,
-      )
-      .get(meetingId, participantId);
-    return row?.response ?? null;
-  }
-
-  hasAgentResponded(meetingId, participantId) {
-    const row = this.#db
-      .prepare(
-        `SELECT 1 FROM agent_responses WHERE meeting_id = ? AND participant_id = ?`,
-      )
-      .get(meetingId, participantId);
-    return row != null;
-  }
-
-  clearAgentResponse(meetingId, participantId) {
-    this.#db
-      .prepare(`DELETE FROM agent_responses WHERE meeting_id = ? AND participant_id = ?`)
-      .run(meetingId, participantId);
-  }
-
   getParticipantModel(participantId) {
     const row = this.#db
       .prepare(`SELECT provider_id, model_id FROM participants WHERE id = ? AND meeting_id = ?`)
@@ -507,16 +481,69 @@ export class MeetingDatabase {
   getOpencodeSessionId() {
     try {
       const row = this.#db
-        .prepare("SELECT value FROM metadata WHERE key = ?")
+        .prepare("SELECT value FROM _loom_meta WHERE key = ?")
         .get("opencode_session_id");
       return row?.value ?? null;
     } catch {
       return null;
     }
   }
+
+  checkpoint() {
+    try {
+      this.#db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    } catch { /* ignore */ }
+  }
+}
+
+const sessionIndex = new Map();
+
+export function indexMeeting(dbPath, meetingId, sessionId) {
+  if (!sessionId) return;
+  const existing = sessionIndex.get(sessionId);
+  if (!existing) {
+    sessionIndex.set(sessionId, []);
+  }
+  sessionIndex.get(sessionId).push({ meetingId, dbPath });
+}
+
+export function unindexMeeting(dbPath) {
+  for (const [sessionId, entries] of sessionIndex) {
+    const filtered = entries.filter((e) => e.dbPath !== dbPath);
+    if (filtered.length === 0) {
+      sessionIndex.delete(sessionId);
+    } else {
+      sessionIndex.set(sessionId, filtered);
+    }
+  }
 }
 
 export async function findMeetingBySessionId(directory, sessionId) {
+  const indexed = sessionIndex.get(sessionId);
+  if (indexed && indexed.length > 0) {
+    const { meetingId, dbPath } = indexed[indexed.length - 1];
+    if (existsSync(dbPath)) {
+      const { Database: DBClass } = await import("bun:sqlite");
+      let conn = null;
+      try {
+        conn = new DBClass(dbPath, { readonly: true });
+        const row = conn
+          .prepare(
+            `SELECT id, question, status, round, max_rounds FROM meetings
+             WHERE opencode_session_id = ?
+             LIMIT 1`,
+          )
+          .get(sessionId);
+        if (row) {
+          return { meetingId: row.id, question: row.question, status: row.status, round: row.round, max_rounds: row.max_rounds, dbPath };
+        }
+      } catch {
+      } finally {
+        if (conn) conn.close();
+      }
+    }
+  }
+
   const { Database: DBClass } = await import("bun:sqlite");
   const meetingsDir = join(directory, ".opencode", "loom", "meetings");
   if (!existsSync(meetingsDir)) return null;
@@ -526,15 +553,16 @@ export async function findMeetingBySessionId(directory, sessionId) {
     let conn = null;
     try {
       conn = new DBClass(filePath, { readonly: true });
-       const row = conn
-         .prepare(
-           `SELECT id, question, status, round, max_rounds FROM meetings
-            WHERE opencode_session_id = ?
-            LIMIT 1`,
-         )
-         .get(sessionId);
+      const row = conn
+        .prepare(
+          `SELECT id, question, status, round, max_rounds FROM meetings
+           WHERE opencode_session_id = ?
+           LIMIT 1`,
+        )
+        .get(sessionId);
       if (row) {
         conn.close();
+        indexMeeting(filePath, row.id, sessionId);
         return { meetingId: row.id, question: row.question, status: row.status, round: row.round, max_rounds: row.max_rounds, dbPath: filePath };
       }
     } catch {
@@ -553,6 +581,7 @@ export function getDbPathForMeeting(directory, meetingId) {
 // ─── Static cleanup utilities ─────────────────────────────────────────────────
 
 export function deleteMeetingFiles(dbPath) {
+  unindexMeeting(dbPath);
   for (const suffix of ["", "-wal", "-shm"]) {
     try { unlinkSync(`${dbPath}${suffix}`); } catch { /* ignore */ }
   }
@@ -569,7 +598,7 @@ export async function readSessionIdFromDb(dbPath) {
     const { Database: DBClass } = await import("bun:sqlite");
     const db = new DBClass(dbPath, { readonly: true });
     try {
-      const row = db.prepare("SELECT value FROM metadata WHERE key = ?").get("opencode_session_id");
+      const row = db.prepare("SELECT value FROM _loom_meta WHERE key = ?").get("opencode_session_id");
       return row?.value ?? null;
     } finally {
       db.close();
@@ -609,7 +638,7 @@ function readSessionIdFromDbSync(dbPath) {
   try {
     const db = new DBClass(dbPath, { readonly: true });
     try {
-      const row = db.prepare("SELECT value FROM metadata WHERE key = ?").get("opencode_session_id");
+      const row = db.prepare("SELECT value FROM _loom_meta WHERE key = ?").get("opencode_session_id");
       return row?.value ?? null;
     } finally {
       db.close();

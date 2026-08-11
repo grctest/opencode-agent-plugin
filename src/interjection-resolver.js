@@ -1,54 +1,23 @@
-/**
- * Resolves all pending interjections for a round.
- * Priority >= 9: auto-granted. Priority >= 7: granted unless contested (moderator decides).
- * Priority < 7: denied.
- */
-export async function resolveInterjections(round, moderate) {
-  round.interjections.sort((a, b) => b.priority - a.priority);
+/** Formats interjection resolution notes for the warp context. */
+export function formatInterjectionNotes(round) {
+  const granted = round.interjections.filter((ij) => ij.resolved === "granted");
+  const denied = round.interjections.filter((ij) => ij.resolved === "denied" || ij.resolved === "contested");
 
-  const pending = round.interjections.filter((ij) => ij.resolved === "pending");
+  if (granted.length === 0 && denied.length === 0) return "";
 
-  for (const ij of pending) {
-    if (ij.priority >= 9) {
-      ij.granted = true;
-      ij.resolved = "granted";
-    } else if (ij.priority >= 7) {
-      const contested = pending.some(
-        (other) =>
-          other.participant_id !== ij.participant_id
-          && other.priority === ij.priority,
-      );
-
-      if (contested) {
-        const granted = await moderate(ij);
-        ij.granted = granted;
-        ij.resolved = granted ? "granted" : "contested";
-        if (!granted) {
-          ij.pushback = "Moderator ruled against interjection";
-        }
-      } else {
-        ij.granted = true;
-        ij.resolved = "granted";
-      }
-    } else {
-      ij.resolved = "denied";
+  let notes = "\n\n### Interjection Results";
+  if (granted.length > 0) {
+    notes += "\nGranted:";
+    for (const ij of granted) {
+      notes += `\n- ${ij.participant_id}: "${ij.reason}"`;
     }
   }
-}
+  if (denied.length > 0) {
+    notes += "\nDenied:";
+    for (const ij of denied) {
+      notes += `\n- ${ij.participant_id}: "${ij.reason}"${ij.pushback ? ` (${ij.pushback})` : ""}`;
+    }
+  }
 
-/** Returns only the interjections that were granted in a round. */
-export function getGrantedInterjections(round) {
-  return round.interjections.filter((ij) => ij.granted);
-}
-
-/** Formats granted interjection notes for inclusion in the warp context. Returns empty string if none. */
-export function formatInterjectionNotes(round) {
-  const granted = getGrantedInterjections(round);
-  if (granted.length === 0) return "";
-
-  const notes = granted
-    .map((ij) => `- ${ij.participant_id}: "${ij.reason}"`)
-    .join("\n");
-
-  return `\n\n### Interjections (Granted)\n${notes}`;
+  return notes;
 }

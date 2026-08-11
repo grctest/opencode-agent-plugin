@@ -4,6 +4,8 @@ import { existsSync, readdirSync } from "node:fs";
 
 const DB_CACHE_MAX = 10;
 
+const DB_REFRESH_INTERVAL_MS = 2000;
+
 export class DashboardApi {
   /** @type {Database} */
   #db;
@@ -11,6 +13,8 @@ export class DashboardApi {
   #dbPath;
   /** @type {number} */
   #lastModified = 0;
+  /** @type {number} */
+  #openedAt = 0;
 
   /** @type {Map<string, DashboardApi>} */
   static cache = new Map();
@@ -19,6 +23,7 @@ export class DashboardApi {
     const existing = DashboardApi.cache.get(dbPath);
     if (existing) {
       existing.#touch();
+      existing.#maybeRefresh();
       return existing;
     }
     if (DashboardApi.cache.size >= DB_CACHE_MAX) {
@@ -49,10 +54,20 @@ export class DashboardApi {
     this.#dbPath = dbPath;
     this.#db = new Database(dbPath, { readonly: true });
     this.#lastModified = Date.now();
+    this.#openedAt = Date.now();
   }
 
   #touch() {
     this.#lastModified = Date.now();
+  }
+
+  #maybeRefresh() {
+    const now = Date.now();
+    if (now - this.#openedAt > DB_REFRESH_INTERVAL_MS) {
+      this.#db.close();
+      this.#db = new Database(this.#dbPath, { readonly: true });
+      this.#openedAt = now;
+    }
   }
 
   getState() {
@@ -137,11 +152,83 @@ export class DashboardApi {
   getRound(round) {
     const contributions = this.#db
       .prepare(
-        `SELECT id, participant_id, round, type, content, confidence, created_at
+        `SELECT id, participant_id, round, type, content, created_at
          FROM contributions WHERE round = ? ORDER BY id ASC`,
       )
       .all(round);
     return { contributions };
+  }
+
+  exportMarkdown(meetingId) {
+    const meeting = this.getState();
+    const participants = this.getParticipants();
+    const contributions = this.getContributions();
+    const interjections = this.getInterjections();
+    const errors = this.getAgentErrors();
+
+    const lines = [];
+    lines.push(`# Loom Deliberation Output`);
+    lines.push("");
+    lines.push(`**Question:** ${meeting?.question ?? "Unknown"}`);
+    lines.push(`**Status:** ${meeting?.status ?? "Unknown"}`);
+    lines.push(`**Rounds:** ${meeting?.round ?? 0}/${meeting?.max_rounds ?? 0}`);
+    lines.push(`**Convergence:** ${meeting?.convergence ?? "Unknown"}`);
+    lines.push(`**Meeting ID:** ${meetingId}`);
+    lines.push("");
+    lines.push(`## Participants`);
+    lines.push("");
+    for (const p of participants) {
+      lines.push(`- **${p.name}** (${p.tier}) — ${p.provider_id ?? "unknown"}/${p.model_id ?? "unknown"}`);
+    }
+    lines.push("");
+
+    const roundMap = new Map();
+    for (const c of contributions) {
+      if (!roundMap.has(c.round)) roundMap.set(c.round, []);
+      roundMap.get(c.round).push(c);
+    }
+
+    for (const [roundNum, contribs] of [...roundMap.entries()].sort((a, b) => a[0] - b[0])) {
+      lines.push(`## Round ${roundNum}`);
+      lines.push("");
+      for (const c of contribs) {
+        const participant = participants.find((p) => p.id === c.participant_id);
+        const name = participant?.name ?? c.participant_id;
+        lines.push(`- **[${name}]** (${c.type}): ${c.content}`);
+      }
+      lines.push("");
+    }
+
+    if (interjections.length > 0) {
+      lines.push(`## Interjections`);
+      lines.push("");
+      for (const ij of interjections) {
+        const participant = participants.find((p) => p.id === ij.participant_id);
+        const name = participant?.name ?? ij.participant_id;
+        lines.push(`- **[${name}]** P${ij.priority}: ${ij.content} → ${ij.granted ? "granted" : "denied"}`);
+      }
+      lines.push("");
+    }
+
+    if (errors.length > 0) {
+      lines.push(`## Errors`);
+      lines.push("");
+      for (const e of errors) {
+        const participant = participants.find((p) => p.id === e.participant_id);
+        const name = participant?.name ?? e.participant_id;
+        lines.push(`- **[${name}]** Round ${e.round}: ${e.error_type} — ${e.error_message}`);
+      }
+      lines.push("");
+    }
+
+    if (meeting?.warp) {
+      lines.push(`## Final Warp Context`);
+      lines.push("");
+      lines.push(meeting.warp);
+      lines.push("");
+    }
+
+    return lines.join("\n");
   }
 
   close() {

@@ -1,6 +1,5 @@
 import { buildSynthesisPrompt } from "./prompts.js";
-import { formatTranscript, formatTranscriptFromData } from "./warp-manager.js";
-
+import { formatTranscriptFromData } from "./warp-manager.js";
 
 /**
  * @typedef {Object} SynthesisResult
@@ -81,51 +80,6 @@ export function extractSection(text, sectionName) {
   flushParagraph();
 
   return results;
-}
-
-/** Produces the final deliberation artifact by prompting the synthesizer agent. */
-export async function synthesize(question, rounds, weft, participants, objections, synthesizer, promptFn, getModel) {
-  const transcript = formatTranscript(rounds, participants);
-  const model = getModel(synthesizer);
-  const userPrompt = buildSynthesisPrompt(question, transcript, participants);
-
-  let artifactText;
-  try {
-    artifactText = await promptFn(
-      `You are ${synthesizer.config.name} (${synthesizer.config.tier}). Synthesize the final output.\n\n${synthesizer.tier_config.system_prompt_addendum}`,
-      model,
-      userPrompt,
-    );
-  } catch {
-    artifactText = `# Deliberation Output\n\n${weft.map((c) => `- ${c.content}`).join("\n")}`;
-  }
-
-   const unresolvedObjections = objections.filter((o) => o.unresolved);
-   const objectionsText = unresolvedObjections.map((o) => `- ${o.content}`).join("\n");
-   let finalOutput = objectionsText
-     ? `${artifactText}\n\n## Unresolved Objections\n${objectionsText}`
-     : artifactText;
-
-   const missingSections = validateSynthesisSections(finalOutput);
-   if (missingSections.length > 0) {
-     finalOutput += `\n\n> ⚠ Synthesizer did not provide: ${missingSections.join(", ")}. This may indicate incomplete deliberation.`;
-   }
-
-   const parsedConfidence = parseConfidence(finalOutput);
-   const heuristicConfidence = deriveConfidence(weft, unresolvedObjections.length);
-   const confidence = parsedConfidence ?? heuristicConfidence;
-
-   const artifact = {
-     content: finalOutput,
-     format: "markdown",
-     decisions: extractSection(finalOutput, "Decision"),
-     action_items: extractSection(finalOutput, "Action Items"),
-     dissent: unresolvedObjections,
-     open_questions: extractSection(finalOutput, "Open Questions"),
-     confidence,
-   };
-
-   return { artifact, output: finalOutput };
 }
 
 /** Produces the final artifact from database transcript data (for child session synthesis). */

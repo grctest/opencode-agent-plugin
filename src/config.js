@@ -7,6 +7,7 @@ export const CONFIG = {
   defaultMaxRounds: 3,
   minRounds: 2,
   interjectionThresholds: { autoGrant: 9, pushback: 7 },
+  maxInterjectionsPerRound: 3,
   moderatorTrigger: { minContributions: 4, recentChallenges: 2, lookbackWindow: 3 },
   maxRetryAttempts: 2,
   retryBaseDelayMs: 1000,
@@ -14,8 +15,11 @@ export const CONFIG = {
   maxConcurrentPrompts: 7,
   reflectionTiers: ["principal", "senior"],
   convergence: {
-    repetitionWindow: 3,
-    repetitionOverlapThreshold: 0.7,
-    diminishingReturnsWindow: 2,
+    repetitionWindow: 5,
+    repetitionOverlapThreshold: 0.6,
+    diminishingReturnsWindow: 3,
+    minRoundsBeforeConvergence: 2,
+    semanticConvergenceFromRound: 3,
   },
+  defaultMeetingTimeoutMs: 900000,
 };

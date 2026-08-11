@@ -1,12 +1,5 @@
 import { CONFIG } from "./config.js";
-
-const MAX_CONTENT_WORDS = CONFIG.maxContributionWords;
-
-function enforceWordLimit(text) {
-  const words = text.split(/\s+/);
-  if (words.length <= MAX_CONTENT_WORDS) return text;
-  return words.slice(0, MAX_CONTENT_WORDS).join(" ") + " [truncated]";
-}
+import { enforceWordLimit, getPriorityCap } from "./shared.js";
 
 const VALID_TYPES = new Set([
   "propose",
@@ -61,7 +54,7 @@ function validateResponse(data) {
 }
 
 /** Parses an agent's text response into a structured AgentResponse with type and optional interjection. */
-export function parseAgentResponse(participantId, response) {
+export function parseAgentResponse(participantId, response, tier) {
   const text = response.trim();
 
   if (!text || text.length < 3) {
@@ -90,30 +83,32 @@ export function parseAgentResponse(participantId, response) {
     /\[INTERJECT:\s*Priority:\s*(\d+),\s*Reason:\s*"([^"]+)"\]/i,
   );
   if (ijMatch) {
-    const priority = Math.min(10, Math.max(1, parseInt(ijMatch[1])));
+    const rawPriority = Math.min(10, Math.max(1, parseInt(ijMatch[1])));
+    const priorityCap = tier ? getPriorityCap(tier) : 10;
+    const priority = Math.min(rawPriority, priorityCap);
     const reason = ijMatch[2].trim();
     interjection = { priority, reason };
   }
 
   const cleanContent = rawContent.replace(/\[INTERJECT:\s*Priority:\s*\d+,\s*Reason:\s*"[^"]*"\]/i, "").trim();
 
-   const limitedContent = enforceWordLimit(cleanContent);
+  const limitedContent = enforceWordLimit(cleanContent, CONFIG.maxContributionWords);
 
-   const validated = validateResponse({
-     participant_id: participantId,
-     content: limitedContent,
-     type,
-     interjection,
-   });
+  const validated = validateResponse({
+    participant_id: participantId,
+    content: limitedContent,
+    type,
+    interjection,
+  });
 
-   if (validated) {
-     return validated;
-   }
+  if (validated) {
+    return validated;
+  }
 
-   return {
-     participant_id: participantId,
-     content: enforceWordLimit(rawContent),
-     type: "propose",
-     interjection: null,
-   };
- }
+  return {
+    participant_id: participantId,
+    content: enforceWordLimit(rawContent, CONFIG.maxContributionWords),
+    type: "propose",
+    interjection: null,
+  };
+}

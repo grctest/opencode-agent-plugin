@@ -28,6 +28,69 @@ function usePersistedState(key, defaultValue) {
   return [value, setValue];
 }
 
+function useSSE(meetingId, onEvent) {
+  const [connected, setConnected] = useState(false);
+  const [reconnectAttempt, setReconnectAttempt] = useState(0);
+  const esRef = useRef(null);
+  const reconnectTimeoutRef = useRef(null);
+
+  useEffect(() => {
+    if (!meetingId) return;
+
+    let cancelled = false;
+
+    function connect() {
+      if (cancelled) return;
+
+      if (esRef.current) {
+        esRef.current.close();
+        esRef.current = null;
+      }
+
+      const es = new EventSource(`/api/stream?meeting=${meetingId}`);
+      esRef.current = es;
+
+      es.onopen = () => {
+        if (cancelled) return;
+        setConnected(true);
+        setReconnectAttempt(0);
+      };
+
+      es.onerror = () => {
+        if (cancelled) return;
+        setConnected(false);
+        es.close();
+        esRef.current = null;
+
+        const delay = Math.min(1000 * Math.pow(2, reconnectAttempt), 30000);
+        setReconnectAttempt((prev) => prev + 1);
+        reconnectTimeoutRef.current = setTimeout(connect, delay);
+      };
+
+      es.onmessage = (event) => {
+        if (cancelled) return;
+        try {
+          const data = JSON.parse(event.data);
+          onEvent(data);
+        } catch { /* ignore */ }
+      };
+    }
+
+    connect();
+
+    return () => {
+      cancelled = true;
+      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+      if (esRef.current) {
+        esRef.current.close();
+        esRef.current = null;
+      }
+    };
+  }, [meetingId]);
+
+  return { connected, reconnectAttempt };
+}
+
 function StatusBadge({ status }) {
   return (
     <span className={cn("loom-badge", statusClass(status))}>
@@ -141,11 +204,6 @@ function ContributionItem({ contribution, participantName }) {
           <TypeBadge type={contribution.type} />
           <span className="loom-text-xs loom-text-muted">Round {contribution.round}</span>
           <span className="loom-text-xs loom-text-muted">{relativeTime(contribution.created_at)}</span>
-          {contribution.confidence != null && (
-            <span className="loom-text-xs loom-text-muted">
-              {(contribution.confidence * 100).toFixed(0)}%
-            </span>
-          )}
         </div>
       </div>
       {expanded || !isLong ? (
@@ -185,85 +243,73 @@ function InterjectionItem({ interjection, participantName }) {
 }
 
 function WarpViewer({ warp }) {
+  if (!warp) {
+    return (
+      <div className="loom-card">
+        <h3 className="loom-title-sm loom-mb-sm">Warp (Shared Context)</h3>
+        <span className="loom-italic loom-text-muted">No warp context yet</span>
+      </div>
+    );
+  }
+
+  const sections = warp.split(/(?=## )/g).filter(Boolean);
+
   return (
     <div className="loom-card">
       <h3 className="loom-title-sm loom-mb-sm">Warp (Shared Context)</h3>
       <div className="loom-warp-content">
-        {warp ? (
-          warp.split("\n\n").map((section, i) => (
+        {sections.map((section, i) => {
+          const lines = section.trim().split("\n");
+          const heading = lines[0].replace(/^#+\s*/, "");
+          const body = lines.slice(1).join("\n").trim();
+
+          return (
             <div key={i} className="loom-warp-section">
-              {section.startsWith("###") ? (
-                <h4 className="loom-warp-heading">{section.replace("###", "").trim()}</h4>
-              ) : section.startsWith("**") ? (
-                <p className="loom-warp-emphasis">{section.replace(/\*\*/g, "")}</p>
-              ) : (
-                <p className="loom-text loom-text-muted">{section}</p>
+              <h4 className="loom-warp-heading">{heading}</h4>
+              {body && body !== "(none yet)" && (
+                <div className="loom-warp-body">
+                  {body.split("\n").map((line, j) => (
+                    <p key={j} className={cn("loom-text", line.startsWith("-") ? "loom-warp-bullet" : "loom-text-muted")}>
+                      {line.replace(/^-\s*/, "")}
+                    </p>
+                  ))}
+                </div>
               )}
             </div>
-          ))
-        ) : (
-          <span className="loom-italic">No warp context yet</span>
-        )}
+          );
+        })}
       </div>
     </div>
   );
 }
 
-function AgentPerspective({ participant, meetingId }) {
-  const [context, setContext] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    if (!meetingId || !participant.id) return;
-    setLoading(true);
-    fetch(`/api/agent_context?meeting=${meetingId}&participant=${participant.id}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then(setContext)
-      .catch(() => setContext(null))
-      .finally(() => setLoading(false));
-  }, [meetingId, participant.id]);
-
-  if (loading) {
-    return (
-      <div className="loom-card loom-agent-perspective">
-        <div className="loom-flex loom-gap-xs loom-items-center">
-          <span className="loom-thinking-dots"><span /><span /><span /></span>
-          <span className="loom-text-xs loom-text-muted">{participant.name}&apos;s view...</span>
-        </div>
-      </div>
-    );
-  }
-
-  if (!context?.participant) {
-    return null;
-  }
-
-  const { participant: p, meeting } = context;
+function AgentPerspective({ participant, meeting }) {
+  const warpPreview = meeting?.warp ? meeting.warp.slice(0, 500) : "";
 
   return (
     <div className="loom-card loom-agent-perspective">
       <div className="loom-agent-perspective-header">
-        <span className="loom-agent-perspective-name">{p.name}</span>
-        <TierBadge tier={p.tier} />
+        <span className="loom-agent-perspective-name">{participant.name}</span>
+        <TierBadge tier={participant.tier} />
       </div>
       <div className="loom-agent-perspective-body">
         <div className="loom-agent-perspective-section">
           <span className="loom-agent-perspective-label">Persona</span>
-          <p className="loom-text-xs loom-text-muted">{p.persona}</p>
+          <p className="loom-text-xs loom-text-muted">{participant.persona}</p>
         </div>
         <div className="loom-agent-perspective-section">
           <span className="loom-agent-perspective-label">Agenda</span>
-          <p className="loom-text-xs loom-text-muted">{p.agenda}</p>
+          <p className="loom-text-xs loom-text-muted">{participant.agenda}</p>
         </div>
         <div className="loom-agent-perspective-section">
           <span className="loom-agent-perspective-label">Model</span>
-          <p className="loom-text-xs loom-text-muted">{p.provider_id}/{p.model_id}</p>
+          <p className="loom-text-xs loom-text-muted">{participant.provider_id}/{participant.model_id}</p>
         </div>
-        {meeting?.warp && (
+        {warpPreview && (
           <div className="loom-agent-perspective-section">
             <span className="loom-agent-perspective-label">Shared Context (Warp)</span>
             <div className="loom-agent-perspective-warp">
-              {meeting.warp.slice(0, 300)}{meeting.warp.length > 300 ? "..." : ""}
+              {warpPreview}{meeting.warp.length > 500 ? "..." : ""}
             </div>
           </div>
         )}
@@ -437,7 +483,7 @@ function WarpGrowthChart({ contributions, warp }) {
     <div className="loom-card">
       <h3 className="loom-title-sm loom-mb-sm">Warp Growth</h3>
       <div className="loom-warp-chart">
-         <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} preserveAspectRatio="xMidYMid meet" className="loom-warp-svg">
+        <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} preserveAspectRatio="xMidYMid meet" className="loom-warp-svg" style={{ width: "100%", height: "auto", maxHeight: "80px" }}>
           <polyline
             fill="none"
             stroke="var(--color-primary)"
@@ -514,7 +560,6 @@ export function App() {
   const [interjections, setInterjections] = useState([]);
   const [error, setError] = useState(null);
   const [agentErrors, setAgentErrors] = useState([]);
-  const [connected, setConnected] = useState(false);
   const [theme, setTheme] = useState(() => localStorage.getItem("loom-theme") ?? "system");
 
   const [activeTab, setActiveTab] = usePersistedState("active-tab", "overview");
@@ -524,29 +569,25 @@ export function App() {
   const [scrolledToBottom, setScrolledToBottom] = useState(true);
   const [extensions, setExtensions] = useState([]);
   const [extensionBanner, setExtensionBanner] = useState(null);
-  const [progressFlash, setProgressFlash] = useState(false);
 
-  const prevStatusRef = useRef(null);
-  const eventSourceRef = useRef(null);
   const bannerTimeoutRef = useRef(null);
   const mainRef = useRef(null);
   const searchInputRef = useRef(null);
+  const contributionsRef = useRef([]);
 
   useEffect(() => {
-    if (theme === "system") {
-      document.documentElement.removeAttribute("data-theme");
+    contributionsRef.current = contributions;
+  }, [contributions]);
+
+  useEffect(() => {
+    if (theme === "light") {
+      document.documentElement.setAttribute("data-theme", "light");
+    } else if (theme === "dark") {
+      document.documentElement.setAttribute("data-theme", "dark");
     } else {
-      document.documentElement.setAttribute("data-theme", theme);
+      document.documentElement.removeAttribute("data-theme");
     }
     localStorage.setItem("loom-theme", theme);
-  }, [theme]);
-
-  useEffect(() => {
-    if (theme !== "system") return;
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const handler = () => document.documentElement.removeAttribute("data-theme");
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
   }, [theme]);
 
   const fetchMeetings = useCallback(async () => {
@@ -581,49 +622,26 @@ export function App() {
     }
   }, []);
 
-  const connectSSE = useCallback((meetingId) => {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
+  const handleSSEEvent = useCallback((data) => {
+    if (data.type === "contributions") {
+      const newContribs = data.data;
+      if (newContribs && newContribs.length > 0) {
+        setContributions((prev) => {
+          const existingIds = new Set(prev.map((c) => c.id));
+          const uniqueNew = newContribs.filter((c) => !existingIds.has(c.id));
+          return [...prev, ...uniqueNew];
+        });
+      }
+    } else if (data.type === "state") {
+      setState(data.data);
+    } else if (data.type === "participants") {
+      setParticipants(data.data);
+    } else if (data.type === "agent_error") {
+      setAgentErrors((prev) => [...prev, data.data]);
     }
-    setConnected(false);
+  }, []);
 
-    const es = new EventSource(`/api/stream?meeting=${meetingId}`);
-    eventSourceRef.current = es;
-
-    es.onopen = () => setConnected(true);
-    es.onerror = () => {
-      setConnected(false);
-      es.close();
-      eventSourceRef.current = null;
-    };
-    es.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === "connected") {
-          setConnected(true);
-        } else if (data.type === "contribution") {
-          fetchMeetingData(meetingId);
-        } else if (data.type === "state") {
-          const prevStatus = prevStatusRef.current;
-          setState(data.data);
-          if (data.data?.status === "weaving") {
-            fetchMeetingData(meetingId);
-          }
-          if (prevStatus && prevStatus !== "weaving" && data.data?.status === "weaving") {
-            setProgressFlash(true);
-            setTimeout(() => setProgressFlash(false), 2000);
-          }
-          prevStatusRef.current = data.data?.status;
-        } else if (data.type === "participants") {
-          setParticipants(data.data);
-        } else if (data.type === "agent_error") {
-          setAgentErrors((prev) => [...prev, data.data]);
-          fetchMeetingData(meetingId);
-        }
-      } catch { /* ignore */ }
-    };
-  }, [fetchMeetingData]);
+  const { connected, reconnectAttempt } = useSSE(selectedMeeting, handleSSEEvent);
 
   useEffect(() => {
     if (!selectedMeeting && meetings.length > 0) {
@@ -634,9 +652,12 @@ export function App() {
   useEffect(() => {
     if (selectedMeeting) {
       fetchMeetingData(selectedMeeting);
-      connectSSE(selectedMeeting);
     }
-  }, [selectedMeeting, fetchMeetingData, connectSSE]);
+  }, [selectedMeeting, fetchMeetingData]);
+
+  useEffect(() => {
+    fetchMeetings();
+  }, [fetchMeetings]);
 
   useEffect(() => {
     if (!state?.warp) return;
@@ -663,13 +684,6 @@ export function App() {
       if (bannerTimeoutRef.current) clearTimeout(bannerTimeoutRef.current);
     };
   }, []);
-
-  useEffect(() => {
-     fetchMeetings();
-     return () => {
-       if (eventSourceRef.current) eventSourceRef.current.close();
-     };
-   }, [fetchMeetings]);
 
   useEffect(() => {
     const main = mainRef.current;
@@ -811,7 +825,7 @@ export function App() {
         </div>
 
         {state && (
-          <div className={cn("loom-sidebar-section", progressFlash && "loom-progress-flash")}>
+          <div className="loom-sidebar-section">
             <RoundIndicator current={state.round} max={state.max_rounds} />
           </div>
         )}
@@ -856,7 +870,7 @@ export function App() {
               <span className="loom-text-xs loom-text-muted">Round {state.round} / {state.max_rounds}</span>
               <span className="loom-text-xs loom-text-muted">Convergence: {state.convergence}</span>
               <span className={cn("loom-text-xs", connected ? "loom-text-live" : "loom-text-muted")}>
-                {connected ? "● live" : "○ offline"}
+                {connected ? "● live" : reconnectAttempt > 0 ? `○ reconnecting (${reconnectAttempt})` : "○ offline"}
               </span>
               {activeAgentCount > 0 && (
                 <span className="loom-text-xs loom-text-active">
@@ -868,6 +882,13 @@ export function App() {
                   ⚠ {errorCount} error{errorCount > 1 ? "s" : ""}
                 </span>
               )}
+              <a
+                className="pure-button loom-export-btn"
+                href={`/api/export?meeting=${selectedMeeting}`}
+                download
+              >
+                ↓ Export Markdown
+              </a>
             </div>
           </div>
         )}
@@ -1042,7 +1063,7 @@ export function App() {
                 </p>
                 <div className="loom-space-sm">
                   {participants.map((p) => (
-                    <AgentPerspective key={p.id} participant={p} meetingId={selectedMeeting} />
+                    <AgentPerspective key={p.id} participant={p} meeting={state} />
                   ))}
                 </div>
               </div>

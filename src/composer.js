@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -19,12 +19,21 @@ function personasBasePath() {
   return candidates[0];
 }
 
+function userPersonasPath() {
+  const configDir = process.env.LOOM_CONFIG_DIR || join(process.env.HOME || "/root", ".config", "opencode", "loom");
+  const personasDir = join(configDir, "personas");
+  if (existsSync(join(personasDir, "domains.json"))) {
+    return personasDir;
+  }
+  return null;
+}
+
 function validatePersona(persona, tier, index) {
   const errors = [];
   if (!persona.name || typeof persona.name !== "string") errors.push(`name required`);
   if (!persona.persona || typeof persona.persona !== "string" || persona.persona.length < 50) errors.push("persona must be >50 chars");
   if (!persona.agenda || typeof persona.agenda !== "string") errors.push("agenda required");
-  if (!persona.domain || typeof persona.domain !== "string") errors.push("domain required");
+  if (!persona.domains || (typeof persona.domains !== "string" && !Array.isArray(persona.domains))) errors.push("domain(s) required");
   if (errors.length > 0) {
     console.warn(`[Loom] Invalid persona at ${tier}[${index}]: ${errors.join(", ")}`);
     return false;
@@ -32,25 +41,56 @@ function validatePersona(persona, tier, index) {
   return true;
 }
 
-function loadPersonas() {
+function normalizePersona(persona) {
+  if (typeof persona.domains === "string") {
+    persona.domains = [persona.domains];
+  }
+  persona.version = persona.version || "1.0";
+  return persona;
+}
+
+function loadPersonasFromPath(base) {
   const tiers = ["junior", "mid", "senior", "principal"];
   const result = {};
-  const base = personasBasePath();
 
   for (const tier of tiers) {
     try {
       const path = join(base, `${tier}.json`);
       const data = readFileSync(path, "utf-8");
       const raw = JSON.parse(data);
-      result[tier] = raw
-        .map((p, i) => {
-          if (!validatePersona(p, tier, i)) return null;
-          p.version = p.version || "1.0";
-          return p;
-        })
-        .filter(Boolean);
+      if (!result[tier]) result[tier] = [];
+      result[tier].push(
+        ...raw
+          .map((p, i) => {
+            if (!validatePersona(p, tier, i)) return null;
+            return normalizePersona(p);
+          })
+          .filter(Boolean)
+      );
     } catch {
-      result[tier] = [];
+      if (!result[tier]) result[tier] = [];
+    }
+  }
+
+  return result;
+}
+
+function loadPersonas() {
+  const result = loadPersonasFromPath(personasBasePath());
+
+  const userPath = userPersonasPath();
+  if (userPath) {
+    const userPersonas = loadPersonasFromPath(userPath);
+    for (const [tier, personas] of Object.entries(userPersonas)) {
+      if (personas.length > 0) {
+        if (!result[tier]) result[tier] = [];
+        const existingNames = new Set(result[tier].map((p) => p.name));
+        for (const p of personas) {
+          if (!existingNames.has(p.name)) {
+            result[tier].push(p);
+          }
+        }
+      }
     }
   }
 
@@ -67,47 +107,12 @@ function loadDomainKeywords() {
   }
 }
 
-const ALL_PERSONAS = loadPersonas();
-const DOMAIN_KEYWORDS = loadDomainKeywords();
-
-function escapeRegExp(str) {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function getPersonas() {
+  return loadPersonas();
 }
 
-const MIN_DOMAIN_SCORE = 2;
-const MIN_WORD_LENGTH = 4;
-
-function detectDomains(question) {
-  const q = question.toLowerCase();
-  const domainScores = [];
-
-  for (const [domain, keywords] of Object.entries(DOMAIN_KEYWORDS)) {
-    let score = 0;
-    const matchedPhrases = new Set();
-
-    const sortedKeywords = [...keywords].sort((a, b) => b.length - a.length);
-    let remaining = q;
-
-    for (const keyword of sortedKeywords) {
-      if (keyword.length < MIN_WORD_LENGTH && !/^(roi|ipo|sql|nosql|qa|kpi|okr|sla)$/i.test(keyword)) {
-        continue;
-      }
-      const regex = new RegExp(`\\b${escapeRegExp(keyword)}\\b`, "i");
-      const matches = remaining.match(regex);
-      if (matches) {
-        score += matches.length;
-        matchedPhrases.add(keyword);
-        remaining = remaining.replace(regex, " ");
-      }
-    }
-
-    if (score >= MIN_DOMAIN_SCORE) {
-      domainScores.push({ domain, score });
-    }
-  }
-
-  domainScores.sort((a, b) => b.score - a.score);
-  return domainScores.map((d) => d.domain);
+function getDomainKeywords() {
+  return loadDomainKeywords();
 }
 
 function simpleHash(str) {
@@ -139,8 +144,15 @@ function personaOverlap(a, b) {
   return intersection / Math.min(wordsA.size, wordsB.size);
 }
 
+function getPersonaDomains(persona) {
+  if (Array.isArray(persona.domains)) return persona.domains;
+  if (typeof persona.domains === "string") return [persona.domains];
+  if (typeof persona.domain === "string") return [persona.domain];
+  return ["general"];
+}
+
 function pickPersona(tier, used, domains, rng, existingPersonas) {
-  const pool = ALL_PERSONAS[tier] ?? [];
+  const pool = getPersonas()[tier] ?? [];
   if (pool.length === 0) return null;
 
   let candidates = pool.filter((p) => !used.has(p.name));
@@ -150,10 +162,14 @@ function pickPersona(tier, used, domains, rng, existingPersonas) {
 
   const weighted = candidates.map((p) => {
     let weight = 1;
-    if (domains.includes(p.domain)) {
-      weight += 10;
+    const personaDomains = getPersonaDomains(p);
+    for (const pd of personaDomains) {
+      if (domains.includes(pd)) {
+        weight += 10;
+        break;
+      }
     }
-    if (p.domain === "general") {
+    if (personaDomains.includes("general")) {
       weight += 2;
     }
     return { persona: p, weight };
@@ -172,26 +188,30 @@ function pickPersona(tier, used, domains, rng, existingPersonas) {
         }
       }
       used.add(persona.name);
+      const pDomains = getPersonaDomains(persona);
       return {
         id: `${tier}_${persona.name.toLowerCase().replace(/\s+/g, "_")}`,
         name: persona.name,
         persona: persona.persona,
         agenda: persona.agenda,
         tier,
-        domain: persona.domain,
+        domain: pDomains.join(", "),
+        domains: pDomains,
       };
     }
   }
 
   const fallback = weighted[weighted.length - 1].persona;
   used.add(fallback.name);
+  const pDomains = getPersonaDomains(fallback);
   return {
     id: `${tier}_${fallback.name.toLowerCase().replace(/\s+/g, "_")}`,
     name: fallback.name,
     persona: fallback.persona,
     agenda: fallback.agenda,
     tier,
-    domain: fallback.domain,
+    domain: pDomains.join(", "),
+    domains: pDomains,
   };
 }
 
@@ -235,8 +255,92 @@ function generateRoles(count, domains) {
   return roles.slice(0, count);
 }
 
-export function composeRoom(question, desiredCount) {
-  const domains = detectDomains(question);
+export async function detectDomainsWithLLM(question, promptFn, getModel) {
+  const keywords = getDomainKeywords();
+  const domainList = Object.keys(keywords).join(", ");
+  const domainDescriptions = Object.entries(keywords)
+    .map(([domain, kws]) => `- ${domain}: ${kws.slice(0, 5).join(", ")}...`)
+    .join("\n");
+
+  const prompt = `Analyze the following question and determine which domains it touches on.
+
+Question: "${question}"
+
+Available domains with example keywords:
+${domainDescriptions}
+
+Respond with ONLY a JSON array of domain names that apply. Include a domain if the question relates to any of its concepts. If none clearly apply, respond with [].
+
+Examples:
+- "How should we price our SaaS product?" → ["business", "finance"]
+- "Design a new API for user authentication" → ["engineering"]
+- "Plan our Q4 marketing campaign" → ["creative", "business"]
+- "Should I buy GameStop stock?" → ["finance"]
+- "How do we improve team culture?" → ["executive"]
+
+JSON array:`;
+
+  try {
+    const model = getModel();
+    const result = await promptFn(
+      "You are a domain classification expert. Analyze questions and return relevant domains as JSON.",
+      model,
+      prompt,
+    );
+
+    const jsonMatch = result.match(/\[.*?\]/s);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (Array.isArray(parsed)) {
+        const validDomains = parsed.filter((d) => Object.keys(keywords).includes(d));
+        if (validDomains.length > 0) return validDomains;
+      }
+    }
+  } catch {
+  }
+
+  return detectDomainsFallback(question);
+}
+
+export function detectDomainsFallback(question) {
+  const q = question.toLowerCase();
+  const domainScores = [];
+
+  for (const [domain, keywords] of Object.entries(getDomainKeywords())) {
+    let score = 0;
+    const matchedPhrases = new Set();
+
+    const sortedKeywords = [...keywords].sort((a, b) => b.length - a.length);
+    let remaining = q;
+
+    for (const keyword of sortedKeywords) {
+      if (keyword.length < 4 && !/^(roi|ipo|sql|nosql|qa|kpi|okr|sla)$/i.test(keyword)) {
+        continue;
+      }
+      const regex = new RegExp(`\\b${keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+      const matches = remaining.match(regex);
+      if (matches) {
+        score += matches.length;
+        matchedPhrases.add(keyword);
+        remaining = remaining.replace(regex, " ");
+      }
+    }
+
+    if (score >= 1) {
+      domainScores.push({ domain, score });
+    }
+  }
+
+  domainScores.sort((a, b) => b.score - a.score);
+  return domainScores.map((d) => d.domain);
+}
+
+export function composeRoom(question, desiredCount, seed) {
+  const domains = detectDomainsFallback(question);
+  return composeRoomWithDomains(question, desiredCount, domains, seed);
+}
+
+export function composeRoomWithDomains(question, desiredCount, domains, seed) {
   const used = new Set();
   const participants = [];
   const selectedPersonas = [];
@@ -245,7 +349,8 @@ export function composeRoom(question, desiredCount) {
   const count = Math.max(2, Math.min(7, defaultCount));
 
   const roles = generateRoles(count, domains);
-  const rng = createSeededRng(simpleHash(question));
+  const effectiveSeed = seed ?? simpleHash(question);
+  const rng = createSeededRng(effectiveSeed);
 
   for (const role of roles) {
     const p = pickPersona(role, used, domains, rng, selectedPersonas);

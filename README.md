@@ -245,24 +245,37 @@ The Looom produces:
 
 ```
 src/
-├── index.ts                  # Plugin entry — tools + event hooks
-├── loom-engine.ts            # Thin wrapper around MeetingOrchestrator
-├── orchestrator.ts           # Main deliberation loop (rounds, convergence, synthesis)
-├── composer.ts               # Room composition + persona selection (loads JSON)
-├── database.ts               # SQLite operations + cleanup utilities
-├── model-discovery.ts        # Provider detection + model scoring/assignment
-├── tiers.ts                  # Role rights + behavioral prompts
-├── prompts.ts                # All LLM prompt templates
-├── validation.ts             # Response parsing
-├── interjection-resolver.ts  # Interjection priority + resolution
-├── warp-manager.ts           # Shared context evolution + transcript formatting
-├── synthesizer.ts            # Final artifact generation
-├── convergence-checker.ts    # Convergence detection logic
-├── moderation.ts             # Moderator intervention + ruling parsing
-├── interjections.ts          # Interjection detection pipeline
-├── client-types.ts           # SDK client interface + type guard
-├── artifact.ts               # Artifact types + confidence derivation
-└── types.ts                  # All shared type definitions
+├── index.js                  # Plugin entry — tools + event hooks
+├── orchestrator.js           # Main deliberation loop (rounds, convergence, synthesis)
+├── composer.js               # Room composition + persona selection (loads JSON)
+├── database.js               # SQLite operations + cleanup utilities
+├── model-discovery.js        # Provider detection + model scoring/assignment
+├── tiers.js                  # Role rights + behavioral prompts
+├── prompts.js                # All LLM prompt templates
+├── validation.js             # Response parsing
+├── interjection-resolver.js  # Interjection priority + resolution
+├── warp-manager.js           # Shared context evolution + transcript formatting
+├── synthesizer.js            # Final artifact generation
+├── convergence-checker.js    # Convergence detection logic
+├── moderation.js             # Moderator intervention + ruling parsing
+├── client-types.js           # SDK client interface + type guard
+├── session-manager.js        # Child session lifecycle management
+├── synthesis-coordinator.js  # Final artifact synthesis flow
+├── concurrency.js            # Concurrency limiting utilities
+├── config.js                 # Central configuration constants
+├── shared.js                 # Shared utilities and constants
+├── types.js                  # All shared type definitions
+├── handlers/
+│   └── knit-handler.js       # Main /knit command handler + model logic
+├── services/
+│   └── model-service.js      # Model discovery and assignment service
+└── dashboard/
+    ├── server.js             # Dashboard HTTP server (Bun.serve)
+    ├── api.js                # Database read API for dashboard
+    ├── app.jsx               # React dashboard UI
+    ├── app.css               # Dashboard styles
+    ├── utils.js              # Dashboard utility functions
+    └── index.html            # Dashboard HTML shell
 
 personas/                     # JSON persona definitions
 ├── junior.json               # 8 junior personas
@@ -273,24 +286,16 @@ personas/                     # JSON persona definitions
 
 commands/                     # Slash command definitions
 ├── knit.md                   # Primary /knit command
-└── knit_models.md            # Optional model discovery command
-
-test/
-├── engine.test.ts            # Orchestrator + LoomEngine unit tests
-├── tiers.test.ts             # Tier config + rights tests
-├── composer.test.ts          # Room composition tests
-├── database.test.ts          # Database operations tests
-├── validation.test.ts        # Response parsing tests
-└── integration.test.ts       # End-to-end smoke test
+├── knit_models.md            # Optional model discovery command
+├── loom_viz.md               # Dashboard visualization command
+└── loom_stop.md              # Stop dashboard command
 ```
 
 ## Building
 
 ```bash
 npm run bundle            # Build single-file plugin bundle (esbuild)
-npm run build             # Compile TypeScript (type checking)
-npm run typecheck         # Type-check only
-npm run test              # Run all tests
+npm run typecheck         # Syntax check the bundle
 npm run install:plugin    # Bundle + install to opencode config
 npm run update:plugin     # Clear old version + fresh install
 ```

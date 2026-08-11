@@ -137,7 +137,7 @@
  * @property {"high" | "medium" | "low"} confidence
  */
 
-/** @typedef {"initializing" | "waiting_for_user" | "weaving" | "converged" | "deadlocked" | "max_rounds_reached" | "aborted"} LoomStatus */
+/** @typedef {"initializing" | "waiting_for_user" | "weaving" | "converged" | "deadlocked" | "max_rounds_reached" | "aborted" | "cancelled" | "timeout"} LoomStatus */
 
 /** Runtime state of a participant during deliberation. */
 /**

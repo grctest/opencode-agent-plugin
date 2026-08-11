@@ -128,20 +128,4 @@ export function createModelPlan(available, roles) {
   return { orchestrator, participants, available };
 }
 
-/** @type {ModelAssignment[] | null} */
-let storedPlan = null;
 
-/** Stores a model plan for auto-application in the next `knit` invocation. */
-export function storeModelPlan(plan) {
-  storedPlan = plan;
-}
-
-/** Retrieves the previously stored model plan (if any). */
-export function getStoredModelPlan() {
-  return storedPlan;
-}
-
-/** Clears the stored model plan. */
-export function clearStoredModelPlan() {
-  storedPlan = null;
-}

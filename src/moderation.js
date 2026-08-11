@@ -1,5 +1,6 @@
 import { buildModeratorPrompt } from "./prompts.js";
 import { CONFIG } from "./config.js";
+import { LOOKBACK } from "./shared.js";
 
 /**
  * @typedef {Object} ModeratorRuling
@@ -61,10 +62,10 @@ export async function checkModeratorIntervention(round, participants, weft, curr
     return { action: "continue", nextSpeakerIdx: -1 };
   }
 
-  let situation = `Circular argument detected: ${challengeCount} challenges/dissents in the last 3 contributions within a single round. The deliberation appears to be going in circles.`;
+  let situation = `Circular argument detected: ${challengeCount} challenges/dissents in the last ${trigger.lookbackWindow} contributions within a single round. The deliberation appears to be going in circles.`;
 
-  if (weft.length >= 6) {
-    const lastSix = weft.slice(-6);
+  if (weft.length >= LOOKBACK.SENDER_HISTORY) {
+    const lastSix = weft.slice(-LOOKBACK.SENDER_HISTORY);
     const challengeCounts = {};
     for (const c of lastSix) {
       if (c.type === "challenge" || c.type === "dissent") {
@@ -73,7 +74,7 @@ export async function checkModeratorIntervention(round, participants, weft, curr
     }
     const repeatedChallenger = Object.entries(challengeCounts).find(([, n]) => n >= 3);
     if (repeatedChallenger) {
-      situation = `Participant ${repeatedChallenger[0]} has challenged/dissented 3+ times in the last 6 contributions across rounds. Possible circular argument or deadlock.`;
+      situation = `Participant ${repeatedChallenger[0]} has challenged/dissented 3+ times in the last ${LOOKBACK.SENDER_HISTORY} contributions across rounds. Possible circular argument or deadlock.`;
     }
   }
   const prompt = buildModeratorPrompt(
@@ -84,6 +85,7 @@ export async function checkModeratorIntervention(round, participants, weft, curr
     weft.slice(-3),
   );
   const principalModel = getHighestTierModel();
+  if (!principalModel) return { action: "continue", nextSpeakerIdx: -1 };
 
   try {
     const result = await promptFn(

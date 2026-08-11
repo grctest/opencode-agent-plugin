@@ -1,58 +1,33 @@
 import { getTierConfig, splitModel } from "./tiers.js";
-import { buildAgentSystemPrompt, buildAgentUserPrompt, buildSynthesisPrompt } from "./prompts.js";
+import { buildAgentSystemPrompt, buildAgentUserPrompt } from "./prompts.js";
 import { CONFIG } from "./config.js";
 import { checkModeratorIntervention } from "./moderation.js";
-import { resolveInterjections, formatInterjectionNotes } from "./interjection-resolver.js";
-import { evolveWarp, formatTranscriptFromData } from "./warp-manager.js";
-import { synthesizeFromData } from "./synthesizer.js";
-import { checkConvergence } from "./convergence-checker.js";
+import { formatInterjectionNotes } from "./interjection-resolver.js";
+import { evolveWarp, formatTranscriptFromData, generateRoundBriefs, compactWarpWithLLM } from "./warp-manager.js";
+import { checkConvergence, checkSemanticConvergence } from "./convergence-checker.js";
 import { MeetingDatabase } from "./database.js";
 import { RoundExecutor } from "./round-executor.js";
-import { join } from "node:path";
-import { unlinkSync } from "node:fs";
+import { SessionManager } from "./session-manager.js";
+import { SynthesisCoordinator } from "./synthesis-coordinator.js";
+import { truncate, LOOKBACK } from "./shared.js";
 
-/**
- * @typedef {Object} OrchestratorOptions
- * @property {import("./client-types.js").AgentSessionClient} client
- * @property {string} directory
- * @property {string} parentSessionId
- * @property {string} opencodeSessionId
- * @property {string} question
- * @property {string} context
- * @property {import("./types.js").ParticipantConfig[]} participants
- * @property {number} maxRounds
- * @property {"consensus" | "majority" | "moderator_forces"} convergence
- * @property {(state: import("./types.js").LoomState) => void} [onUpdate]
- * @property {(participantId: string, response: string) => void} [onAgentComplete]
- * @property {(name: string, round: number, type: string) => void} [onContribution]
- * @property {(round: number, summary: string) => void} [onRoundComplete]
- * @property {() => void} [onSynthesisStart]
- * @property {(output: string) => void} [onSynthesisComplete]
- * @property {() => Promise<"continue" | "end" | string>} [waitForUserInput]
- * @property {boolean} [parallel]
- */
+const DEFAULT_MEETING_TIMEOUT_MS = 900000;
 
 export class MeetingOrchestrator {
-  /** @type {string} */
   #meetingId;
-  /** @type {import("./types.js").LoomState} */
   #state;
-  /** @type {OrchestratorOptions} */
   #options;
-  /** @type {import("./client-types.js").AgentSessionClient} */
   #client;
-  /** @type {string} */
   #directory;
-  /** @type {string} */
   #parentSessionId;
-  /** @type {string} */
-  #opencodeSessionId;
-  /** @type {MeetingDatabase | null} */
   #database = null;
-  /** @type {boolean} */
   #parallel = true;
-  /** @type {RoundExecutor | null} */
   #roundExecutor = null;
+  #cancelled = false;
+  #startTime = 0;
+  #meetingTimeoutMs = DEFAULT_MEETING_TIMEOUT_MS;
+  #sessionManager = null;
+  #synthesisCoordinator = null;
 
   constructor(options) {
     this.#meetingId = crypto.randomUUID();
@@ -60,8 +35,8 @@ export class MeetingOrchestrator {
     this.#client = options.client;
     this.#directory = options.directory;
     this.#parentSessionId = options.parentSessionId;
-    this.#opencodeSessionId = options.opencodeSessionId;
     this.#parallel = options.parallel !== false;
+    this.#meetingTimeoutMs = options.meetingTimeoutMs ?? DEFAULT_MEETING_TIMEOUT_MS;
 
     this.#state = {
       id: this.#meetingId,
@@ -90,7 +65,7 @@ export class MeetingOrchestrator {
   }
 
   getDbPath() {
-    return join(this.#directory, ".opencode", "loom", "meetings", `${this.#meetingId}.db`);
+    return `${this.#directory}/.opencode/loom/meetings/${this.#meetingId}.db`;
   }
 
   getMeetingId() {
@@ -101,12 +76,18 @@ export class MeetingOrchestrator {
     return Object.freeze({ ...this.#state });
   }
 
+  cancel() {
+    this.#cancelled = true;
+  }
+
   #getHighestTierModel() {
     for (const tier of ["principal", "senior", "mid", "junior"]) {
       const p = this.#state.participants.find((pp) => pp.config.tier === tier);
-      if (p) return splitModel(p.tier_config.model);
+      if (p && p.tier_config.model) return splitModel(p.tier_config.model);
     }
-    return splitModel(this.#state.participants[0].tier_config.model);
+    const firstWithModel = this.#state.participants.find((p) => p.tier_config.model);
+    if (firstWithModel) return splitModel(firstWithModel.tier_config.model);
+    return null;
   }
 
   #getParticipantModel(participant) {
@@ -116,37 +97,38 @@ export class MeetingOrchestrator {
     throw new Error(`No model assigned for participant ${participant.config.name} (${participant.config.tier}). Run knit_models first.`);
   }
 
-  async #getDb() {
-    if (!this.#database) {
-      const dbPath = join(this.#directory, ".opencode", "loom", "meetings", `${this.#meetingId}.db`);
-      const db = await MeetingDatabase.create(dbPath, this.#meetingId);
-      this.#database = db;
-      db.initializeMeeting({
-        question: this.#options.question,
-        context: this.#options.context,
-        maxRounds: this.#options.maxRounds,
-        convergence: this.#options.convergence,
-        parentSessionId: this.#options.parentSessionId,
-        opencodeSessionId: this.#opencodeSessionId,
-        participants: this.#state.participants.map((p) => p.config),
-      });
-    }
-    return this.#database;
-  }
-
   async initialize() {
     if (this.#state.status !== "initializing") {
       return;
     }
 
-    const db = await this.#getDb();
+    this.#startTime = Date.now();
+
+    const dbPath = this.getDbPath();
+    const db = await MeetingDatabase.create(dbPath, this.#meetingId);
+    this.#database = db;
+
+    this.#sessionManager = new SessionManager(this.#client, this.#directory, this.#parentSessionId);
+    this.#synthesisCoordinator = new SynthesisCoordinator(this.#client, this.#directory, this.#sessionManager);
+
+    db.initializeMeeting({
+      question: this.#options.question,
+      context: this.#options.context,
+      maxRounds: this.#options.maxRounds,
+      convergence: this.#options.convergence,
+      parentSessionId: this.#options.parentSessionId,
+      opencodeSessionId: this.#options.opencodeSessionId ?? this.#options.parentSessionId,
+      participants: this.#state.participants.map((p) => p.config),
+    });
+
     for (const p of this.#state.participants) {
       if (!p.session_id) {
-        const sessionId = await this.#createChildSession(p);
+        const sessionId = await this.#sessionManager.createChildSession(p);
         p.session_id = sessionId;
         db.setParticipantSessionId(p.config.id, sessionId);
       }
     }
+
     await this.#persistState();
     this.#state.status = "weaving";
 
@@ -158,29 +140,13 @@ export class MeetingOrchestrator {
       options: {
         onAgentComplete: this.#options.onAgentComplete,
         onContribution: this.#options.onContribution,
-        onProgress: async (message) => this.#postProgress(message),
+        onProgress: async (message) => this.#sessionManager.postProgress(message),
       },
-      promptParent: async (system, model, message) => this.#promptParent(system, model, message),
+      promptParent: async (system, model, message) => this.#sessionManager.promptParent(system, model, message),
       getParticipantModel: (participant) => this.#getParticipantModel(participant),
       getHighestTierModel: () => this.#getHighestTierModel(),
       logError: (context, error) => this.#logError(context, error),
     });
-  }
-
-  async #createChildSession(participant) {
-    const result = await this.#client.session.create({
-      body: {
-        parentID: this.#parentSessionId,
-        title: `Loom · ${participant.config.name} (${participant.config.tier})`,
-      },
-      query: { directory: this.#directory },
-    });
-
-    if (!result.data || result.error) {
-      throw new Error(`Failed to create session for ${participant.config.name}: ${result.error?.message || "unknown error"}`);
-    }
-
-    return result.data.id;
   }
 
   async runMeeting() {
@@ -189,12 +155,24 @@ export class MeetingOrchestrator {
     const participantItems = this.#state.participants
       .map((p) => `  - ${p.config.name} (${p.config.tier}${p.config.domain ? ", " + p.config.domain : ""})`)
       .join("\n");
-    await this.#postProgress(
+    await this.#sessionManager.postProgress(
       `🎬 Loom started — ${this.#state.participants.length} participants:\n${participantItems}`
     );
 
     let continueWeaving = true;
     while (continueWeaving) {
+      if (this.#cancelled) {
+        this.#state.status = "cancelled";
+        await this.#sessionManager.postProgress("🛑 Loom cancelled by user.");
+        break;
+      }
+
+      if (Date.now() - this.#startTime > this.#meetingTimeoutMs) {
+        this.#state.status = "timeout";
+        await this.#sessionManager.postProgress("⏱️ Loom timed out — generating output from collected contributions.");
+        break;
+      }
+
       if (this.#state.current_round > 0 && this.#options.waitForUserInput) {
         this.#state.status = "waiting_for_user";
         this.#notifyUpdate();
@@ -205,7 +183,7 @@ export class MeetingOrchestrator {
           break;
         } else if (userAction !== "continue") {
           this.#state.warp += `\n\n**User Input:** ${userAction}`;
-          (await this.#getDb()).setWarp(this.#state.warp);
+          this.#database.setWarp(this.#state.warp);
         }
       }
 
@@ -221,7 +199,8 @@ export class MeetingOrchestrator {
     if (!this.#database) {
       throw new Error("Cannot extend: database not available");
     }
-    const db = await this.#getDb();
+    this.#startTime = Date.now();
+    const db = this.#database;
     const currentWarp = db.getWarp();
     db.setWarp(`${currentWarp}\n\n**User Input:** ${newPrompt}`);
     this.#state.warp = db.getWarp();
@@ -230,14 +209,26 @@ export class MeetingOrchestrator {
     this.#state.max_rounds += 4;
     db.setRound(this.#state.current_round);
     for (const p of this.#state.participants) {
-      p.status = "listening";
-      db.setParticipantStatus(p.config.id, "listening");
+      if (p.status === "failed") {
+        await this.#sessionManager.recreateSession(p, db);
+      } else {
+        p.status = "listening";
+        db.setParticipantStatus(p.config.id, "listening");
+      }
     }
-    await this.#postProgress(
+    await this.#sessionManager.postProgress(
       `🧵 Extending loom — adding 4 more rounds (now ${this.#state.max_rounds} total)`
     );
     let continueWeaving = true;
     while (continueWeaving) {
+      if (this.#cancelled) {
+        this.#state.status = "cancelled";
+        break;
+      }
+      if (Date.now() - this.#startTime > this.#meetingTimeoutMs) {
+        this.#state.status = "timeout";
+        break;
+      }
       continueWeaving = await this.runRound();
       this.#notifyUpdate();
     }
@@ -256,14 +247,31 @@ export class MeetingOrchestrator {
     };
     this.#state.rounds.push(round);
 
-    (await this.#getDb()).setRound(this.#state.current_round);
+    this.#database.setRound(this.#state.current_round);
     this.#notifyUpdate();
 
     const sharedState = this.#buildSharedState();
-    (await this.#getDb()).setWarp(sharedState.warp);
-    (await this.#getDb()).setRound(sharedState.round);
+    this.#database.setWarp(sharedState.warp);
+    this.#database.setRound(sharedState.round);
 
-    const activeParticipants = this.#state.participants.filter((p) => p.status !== "passed" && p.status !== "failed");
+    let activeParticipants = this.#state.participants.filter((p) => p.status !== "passed" && p.status !== "failed");
+
+    for (const p of activeParticipants) {
+      if (!p.session_id) {
+        const recreated = await this.#sessionManager.recreateSession(p, this.#database);
+        if (!recreated) {
+          p.status = "failed";
+          this.#database.setParticipantStatus(p.config.id, "failed");
+        }
+      }
+    }
+
+    activeParticipants = this.#state.participants.filter((p) => p.status !== "passed" && p.status !== "failed");
+
+    if (activeParticipants.length === 0) {
+      this.#state.status = "converged";
+      return false;
+    }
 
     if (!this.#roundExecutor) {
       throw new Error("RoundExecutor not initialized — call initialize() first");
@@ -271,10 +279,9 @@ export class MeetingOrchestrator {
 
     await this.#roundExecutor.runPromptPhase(round, activeParticipants, this.#parallel);
     await this.#roundExecutor.runReflectionPhase(round, activeParticipants);
-    await this.#roundExecutor.runInterjectionPhase(round, activeParticipants);
 
-    if (round.interjections.length > 0) {
-      await resolveInterjections(round, (ij) => this.#moderateInterjection(ij));
+    if (this.#options.allowInterjections !== false) {
+      await this.#roundExecutor.runInterjectionPhase(round, activeParticipants);
     }
 
     round.summary = await this.#summarizeRound(round);
@@ -282,13 +289,18 @@ export class MeetingOrchestrator {
     if (ijNotes) {
       this.#state.warp += ijNotes;
     }
-    this.#state.warp = evolveWarp(this.#state.warp, round);
-    (await this.#getDb()).setWarp(this.#state.warp);
+    const compactFn = async (warp, round) => {
+      const model = this.#getHighestTierModel();
+      if (!model) return null;
+      return compactWarpWithLLM(warp, round, async (system, m, message) => this.#sessionManager.promptParent(system, m, message), model);
+    };
+    this.#state.warp = await evolveWarp(this.#state.warp, round, compactFn);
+    this.#database.setWarp(this.#state.warp);
 
     const contribCount = round.contributions.length;
     const ijCount = round.interjections.length;
-    const summaryText = round.summary ? ` | ${this.#truncate(round.summary, 100)}` : "";
-    await this.#postProgress(
+    const summaryText = round.summary ? ` | ${truncate(round.summary, 100)}` : "";
+    await this.#sessionManager.postProgress(
       `📋 Round ${this.#state.current_round} complete — ${contribCount} contribution${contribCount !== 1 ? "s" : ""}, ${ijCount} interjection${ijCount !== 1 ? "s" : ""}${summaryText}`
     );
 
@@ -303,7 +315,7 @@ export class MeetingOrchestrator {
       this.#state.weft,
       this.#state.current_round,
       this.#state.max_rounds,
-      async (system, model, message) => this.#promptParent(system, model, message),
+      async (system, model, message) => this.#sessionManager.promptParent(system, model, message),
       () => this.#getHighestTierModel(),
     );
 
@@ -313,7 +325,7 @@ export class MeetingOrchestrator {
       return false;
     }
 
-    if (this.#checkConvergence(round)) {
+    if (await this.#checkConvergence(round)) {
       await this.#persistState();
       return false;
     }
@@ -357,9 +369,10 @@ export class MeetingOrchestrator {
     if (this.#state.convergence_mode === "moderator_forces" && contribCount > 2) {
       try {
         const model = this.#getHighestTierModel();
+        if (!model) throw new Error("No model available for semantic summary");
         const prompt = `Summarize this deliberation round in 2-3 sentences. What was established? What remains contested?\n\nContributions:\n${round.contributions.map((c) => `- ${c.content.slice(0, 150)}`).join("\n")}\n\nSummary:`;
-        const semanticSummary = await this.#promptParent("You are a neutral summarizer.", model, prompt);
-        if (semanticSummary.trim().length > 10) {
+        const semanticSummary = await this.#sessionManager.promptParent("You are a neutral summarizer.", model, prompt);
+        if (semanticSummary && semanticSummary.trim().length > 10) {
           summary = semanticSummary.trim();
         }
       } catch (err) {
@@ -370,190 +383,75 @@ export class MeetingOrchestrator {
     return summary;
   }
 
-  #checkConvergence(round) {
+  async #checkConvergence(round) {
     const activeCount = this.#state.participants.filter((p) => p.status !== "passed" && p.status !== "failed").length;
     const passedCount = this.#state.participants.filter((p) => p.status === "passed").length;
 
-    const recentContributions = this.#state.weft.slice(-12);
+    const recentContributions = this.#state.weft.slice(-LOOKBACK.CONVERGENCE_RECENT);
 
-    const result = checkConvergence(
+    const result = checkConvergence({
       passedCount,
       activeCount,
-      this.#state.participants.length,
-      this.#state.current_round,
-      this.#state.max_rounds,
-      this.#state.convergence_mode,
-      recentContributions,
-      this.#state.rounds,
-    );
+      totalParticipants: this.#state.participants.length,
+      currentRound: this.#state.current_round,
+      maxRounds: this.#state.max_rounds,
+      convergenceMode: this.#state.convergence_mode,
+      contributions: recentContributions,
+      rounds: this.#state.rounds,
+    });
 
     this.#state.status = result.status;
+
+    if (result.needsLLMCheck && this.#state.current_round >= 3) {
+      try {
+        const semanticResult = await checkSemanticConvergence({
+          contributions: this.#state.weft,
+          rounds: this.#state.rounds,
+          currentRound: this.#state.current_round,
+          maxRounds: this.#state.max_rounds,
+          question: this.#state.question,
+        }, async (system, model, message) => this.#sessionManager.promptParent(system, model, message), () => this.#getHighestTierModel());
+        if (semanticResult.shouldStop) {
+          this.#state.status = "converged";
+          result.shouldStop = true;
+        }
+      } catch (err) {
+        this.#logError("semantic_convergence", err);
+      }
+    }
+
     return result.shouldStop;
   }
 
   async #synthesize() {
-    const synthesizer = this.#state.participants.find((p) => p.config.tier === "principal")
-      ?? this.#state.participants.find((p) => p.config.tier === "senior")
-      ?? this.#state.participants[this.#state.participants.length - 1];
-
-    if (!synthesizer) return "No participants available for synthesis.";
-
-    if (this.#options.onSynthesisStart) {
-      this.#options.onSynthesisStart();
-    }
-    await this.#postProgress(`🔄 Synthesizing final output...`);
-
-    const db = await this.#getDb();
+    const synthesizer = this.#synthesisCoordinator.selectSynthesizer(this.#state.participants);
+    const db = this.#database;
     const transcriptData = db.getTranscriptData(this.#meetingId);
 
-    const synthSessionId = await this.#createSynthesizerSession(synthesizer);
-
-    let artifactText;
-    try {
-      artifactText = await this.#promptSynthesizerSession(synthSessionId, synthesizer, transcriptData);
-    } catch (err) {
-      this.#logError("synthesizer session failed", err);
-      const contributionSummary = this.#state.weft
-        .map((c) => `- **[${c.participant_id}]** (${c.type}): ${this.#truncate(c.content, 100)}`)
-        .join("\n");
-      artifactText = `## Deliberation Output\n\n### Contributions\n${contributionSummary}\n\n### Status\nSynthesis generation failed. The above represents raw contributions from the deliberation.`;
-    }
-
-    const result = await synthesizeFromData(
+    const output = await this.#synthesisCoordinator.run(
       transcriptData,
       this.#state.participants,
       this.#state.objections,
       synthesizer,
-      async (_system, _model, _message) => artifactText,
       (p) => this.#getParticipantModel(p),
+      () => {
+        if (this.#options.onSynthesisStart) this.#options.onSynthesisStart();
+      },
+      (output) => {
+        if (this.#options.onSynthesisComplete) this.#options.onSynthesisComplete(output);
+        this.#notifyUpdate();
+      },
     );
 
-    this.#state.artifact = result.artifact;
-
-    await this.#postProgress(`✅ Synthesis complete`);
-
-    if (this.#options.onSynthesisComplete) {
-      this.#options.onSynthesisComplete(result.output);
-    }
-    this.#notifyUpdate();
-
-    return result.output;
-  }
-
-  async #createSynthesizerSession(synthesizer) {
-    const result = await this.#client.session.create({
-      body: {
-        parentID: this.#parentSessionId,
-        title: `Loom · Synthesizer (${synthesizer.config.tier})`,
-      },
-      query: { directory: this.#directory },
-    });
-
-    if (!result.data || result.error) {
-      throw new Error(`Failed to create synthesizer session: ${result.error?.message || "unknown error"}`);
-    }
-
-    return result.data.id;
-  }
-
-  async #promptSynthesizerSession(sessionId, synthesizer, transcriptData) {
-    const model = this.#getParticipantModel(synthesizer);
-    const transcript = formatTranscriptFromData(transcriptData, this.#state.participants);
-
-    const userPrompt = buildSynthesisPrompt(transcriptData.question, transcript);
-
-    const result = await this.#client.session.prompt({
-      path: { id: sessionId },
-      body: {
-        system: `You are ${synthesizer.config.name} (${synthesizer.config.tier}). Synthesize the final output.\n\n${synthesizer.tier_config.system_prompt_addendum}`,
-        model,
-        parts: [{ type: "text", text: userPrompt }],
-      },
-      query: { directory: this.#directory },
-    });
-
-    if (result.error) {
-      throw new Error(result.error.message || JSON.stringify(result.error));
-    }
-
-    const text = this.#extractText(result.data);
-    if (!text) {
-      throw new Error("Synthesizer returned empty response");
-    }
-    return text;
-  }
-
-  async #promptParent(system, model, message) {
-    const result = await this.#client.session.prompt({
-      path: { id: this.#parentSessionId },
-      body: { system, model, tools: {}, parts: [{ type: "text", text: message }] },
-      query: { directory: this.#directory },
-    });
-    if (result.error) throw new Error(JSON.stringify(result.error));
-    const parts = result.data.parts;
-    return parts.filter((p) => p.type === "text").map((p) => p.text).join("\n");
-  }
-
-  #extractText(data) {
-    if (!data?.parts) return null;
-    const parts = data.parts;
-    const textParts = parts.filter((p) => p.type === "text");
-    const content = textParts.map((p) => p.text).join("\n").trim();
-    return content.length > 0 ? content : null;
-  }
-
-  #truncate(text, max) {
-    const cleaned = text.replace(/\n/g, " ").trim();
-    if (cleaned.length <= max) return cleaned;
-    return cleaned.slice(0, max - 3) + "...";
-  }
-
-  async #postProgress(message) {
-    try {
-      const session = this.#client.session;
-      if (typeof session.promptAsync === "function") {
-        await session.promptAsync({
-          path: { id: this.#parentSessionId },
-          body: {
-            noReply: true,
-            parts: [{ type: "text", text: message }],
-          },
-          query: { directory: this.#directory },
-        });
-      }
-    } catch (err) {
-      this.#logError("progress post failed", err);
-    }
-  }
-
-  async #moderateInterjection(ij) {
-    const situation = `Two participants claim equal priority (${ij.priority}) for interjection:
-- ${ij.participant_id}: "${ij.reason}"
-Who should be granted the floor?`;
-
-    try {
-      const model = this.#getHighestTierModel();
-      const prompt = `${situation}
-
-Respond with: "grant" or "deny". One word only.`;
-      const result = await this.#promptParent(
-        "You are the deliberation moderator. Rule on interjection priority disputes.",
-        model,
-        prompt,
-      );
-      return result.toLowerCase().includes("grant");
-    } catch (err) {
-      this.#logError("moderator tiebreaker", err);
-      return false;
-    }
+    this.#state.artifact = { content: output, format: "markdown" };
+    return output;
   }
 
   async #persistState() {
-    const db = await this.#getDb();
     const sharedState = this.#buildSharedState();
-    db.setWarp(sharedState.warp);
-    db.setRound(sharedState.round);
-    db.setStatus(sharedState.status);
+    this.#database.setWarp(sharedState.warp);
+    this.#database.setRound(sharedState.round);
+    this.#database.setStatus(sharedState.status);
   }
 
   #logError(context, error) {
