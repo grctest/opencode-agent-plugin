@@ -1,14 +1,9 @@
-import type { Interjection, Round } from "./types.js";
-
 /**
  * Resolves all pending interjections for a round.
  * Priority >= 9: auto-granted. Priority >= 7: granted unless contested (moderator decides).
  * Priority < 7: denied.
  */
-export async function resolveInterjections(
-  round: Round,
-  moderate: (ij: Interjection) => Promise<boolean>,
-): Promise<void> {
+export async function resolveInterjections(round, moderate) {
   round.interjections.sort((a, b) => b.priority - a.priority);
 
   const pending = round.interjections.filter((ij) => ij.resolved === "pending");
@@ -42,12 +37,12 @@ export async function resolveInterjections(
 }
 
 /** Returns only the interjections that were granted in a round. */
-export function getGrantedInterjections(round: Round): Interjection[] {
+export function getGrantedInterjections(round) {
   return round.interjections.filter((ij) => ij.granted);
 }
 
 /** Formats granted interjection notes for inclusion in the warp context. Returns empty string if none. */
-export function formatInterjectionNotes(round: Round): string {
+export function formatInterjectionNotes(round) {
   const granted = getGrantedInterjections(round);
   if (granted.length === 0) return "";
 

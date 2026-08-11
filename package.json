@@ -4,39 +4,32 @@
   "description": "Multi-agent deliberation protocol for opencode — a knitting machine for AI agents",
   "type": "module",
   "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "files": [
-    "dist",
-    "personas",
-    "skills",
-    "commands"
-  ],
   "scripts": {
-    "build": "tsc",
-    "bundle": "./node_modules/@esbuild/linux-x64/bin/esbuild src/index.ts --bundle --format=esm --platform=node --outfile=dist/loom.js --external:@opencode-ai/plugin --external:@opencode-ai/sdk --external:zod --external:bun:sqlite --external:better-sqlite3",
-    "dev": "tsc --watch",
-    "typecheck": "tsc --noEmit",
-    "test": "tsx test/engine.test.ts && tsx test/tiers.test.ts && tsx test/composer.test.ts && tsx test/database.test.ts && tsx test/validation.test.ts && tsx test/integration.test.ts",
+    "bundle": "node scripts/build.mjs",
+    "dev": "node scripts/build.mjs --watch",
+    "typecheck": "node --check dist/loom.js",
     "install:plugin": "node scripts/install.mjs",
     "update:plugin": "node scripts/update.mjs"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": "^1.18.15",
-    "@opencode-ai/sdk": "^1.18.15",
-    "zod": "^4.4.3"
+    "@opencode-ai/sdk": "^1.18.15"
   },
   "devDependencies": {
+    "@esbuild/linux-x64": "^0.28.2",
     "@opencode-ai/plugin": "^1.18.14",
     "@opencode-ai/sdk": "^1.18.14",
-    "@types/better-sqlite3": "^7.6.0",
-    "@types/node": "^26.2.0",
-    "better-sqlite3": "^11.0.0",
     "esbuild": "^0.28.2",
-    "typescript": "^7.0.2",
-    "zod": "^4.4.3"
+    "marked": "^18.0.0"
   },
   "allowScripts": {
     "esbuild@0.28.2": true,
+    "@parcel/watcher@2.5.1": true,
     "msgpackr-extract@3.0.4": true
+  },
+  "dependencies": {
+    "purecss": "^3.0.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
   }
 }

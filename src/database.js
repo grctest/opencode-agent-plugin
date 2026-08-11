@@ -1,76 +1,67 @@
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
-import type { Contribution, Interjection, LoomStatus, ParticipantConfig, TranscriptData, TranscriptRound } from "./types.js";
+import { mkdirSync, existsSync, readdirSync, unlinkSync } from "node:fs";
+import { dirname, join } from "node:path";
 
-interface Statement {
-  run(...params: any[]): any;
-  get(...params: any[]): any;
-  all(...params: any[]): any;
-}
+/**
+ * @typedef {Object} Statement
+ * @property {...any[]} run
+ * @property {...any[]} get
+ * @property {...any[]} all
+ */
 
-interface DBHandle {
-  prepare(sql: string): Statement;
-  exec(sql: string): void;
-  close(): void;
-  readonly filename: string;
-}
+/**
+ * @typedef {Object} DBHandle
+ * @property {(sql: string) => Statement} prepare
+ * @property {(sql: string) => void} exec
+ * @property {() => void} close
+ * @property {string} filename
+ */
 
-let DatabaseClass: any = null;
-let dbReady: Promise<void> | null = null;
+/** @type {any} */
+let DatabaseClass = null;
+/** @type {Promise<void> | null} */
+let dbReady = null;
 
-function importBunSqlite(): Promise<any> {
-  // @ts-expect-error bun:sqlite is a Bun-only module, resolved at runtime
-  return import("bun:sqlite");
-}
-
-function importBetterSqlite3(): Promise<any> {
-  return import("better-sqlite3");
-}
-
-function ensureDb(): Promise<void> {
+function ensureDb() {
   if (DatabaseClass) return Promise.resolve();
   if (dbReady) return dbReady;
   dbReady = (async () => {
-    try {
-      const mod = await importBunSqlite();
-      DatabaseClass = mod.Database;
-    } catch {
-      const mod = await importBetterSqlite3();
-      DatabaseClass = mod.default;
-    }
+    const mod = await import("bun:sqlite");
+    DatabaseClass = mod.Database;
   })();
   return dbReady;
 }
 
-function isoNow(): string {
+function isoNow() {
   return new Date().toISOString();
 }
 
-function deserializeStatus(s: string): LoomStatus {
-  return s as LoomStatus;
+function deserializeStatus(s) {
+  return s;
 }
 
 export class MeetingDatabase {
-  private db: DBHandle;
-  private meetingId: string;
+  /** @type {DBHandle} */
+  #db;
+  /** @type {string} */
+  #meetingId;
 
-  static async create(dbPath: string, meetingId: string): Promise<MeetingDatabase> {
+  static async create(dbPath, meetingId) {
     await ensureDb();
     return new MeetingDatabase(dbPath, meetingId);
   }
 
-  private constructor(dbPath: string, meetingId: string) {
-    this.meetingId = meetingId;
+  constructor(dbPath, meetingId) {
+    this.#meetingId = meetingId;
     mkdirSync(dirname(dbPath), { recursive: true });
     const db = new DatabaseClass(dbPath);
-    this.db = db as unknown as DBHandle;
-    this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec("PRAGMA foreign_keys = ON");
-    this.initSchema();
+    this.#db = db;
+    this.#db.exec("PRAGMA journal_mode = WAL");
+    this.#db.exec("PRAGMA foreign_keys = ON");
+    this.#initSchema();
   }
 
-  private initSchema(): void {
-    this.db.exec(`
+  #initSchema() {
+    this.#db.exec(`
       CREATE TABLE IF NOT EXISTS meetings (
         id TEXT PRIMARY KEY,
         question TEXT NOT NULL,
@@ -100,7 +91,8 @@ export class MeetingDatabase {
         tier TEXT NOT NULL,
         provider_id TEXT,
         model_id TEXT,
-        session_id TEXT
+        session_id TEXT,
+        status TEXT NOT NULL DEFAULT 'listening'
       );
 
       CREATE TABLE IF NOT EXISTS contributions (
@@ -136,29 +128,33 @@ export class MeetingDatabase {
         created_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS agent_errors (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        meeting_id TEXT NOT NULL REFERENCES meetings(id),
+        participant_id TEXT NOT NULL,
+        round INTEGER NOT NULL,
+        error_type TEXT NOT NULL,
+        error_message TEXT,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+      );
+
       CREATE INDEX IF NOT EXISTS idx_contributions_meeting ON contributions(meeting_id);
       CREATE INDEX IF NOT EXISTS idx_interjections_meeting ON interjections(meeting_id);
       CREATE INDEX IF NOT EXISTS idx_agent_responses_meeting ON agent_responses(meeting_id, participant_id);
+      CREATE INDEX IF NOT EXISTS idx_agent_errors_meeting ON agent_errors(meeting_id);
     `);
   }
 
-  initializeMeeting(input: {
-    question: string;
-    context: string;
-    maxRounds: number;
-    convergence: "consensus" | "majority" | "moderator_forces";
-    parentSessionId: string;
-    participants: ParticipantConfig[];
-    opencodeSessionId: string;
-  }): void {
+  initializeMeeting(input) {
     const now = isoNow();
-    this.db
+    this.#db
       .prepare(
         `INSERT INTO meetings (id, question, context, status, round, warp, max_rounds, convergence, parent_session_id, opencode_session_id, created_at, updated_at)
          VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
-        this.meetingId,
+        this.#meetingId,
         input.question,
         input.context ?? "",
         "initializing",
@@ -171,20 +167,20 @@ export class MeetingDatabase {
         now,
       );
 
-    this.db
+    this.#db
       .prepare(
         `INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)`,
       )
       .run("opencode_session_id", input.opencodeSessionId);
 
-    const insertParticipant = this.db.prepare(
+    const insertParticipant = this.#db.prepare(
       `INSERT INTO participants (id, meeting_id, name, persona, agenda, tier, provider_id, model_id, session_id)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     for (const p of input.participants) {
       insertParticipant.run(
         p.id,
-        this.meetingId,
+        this.#meetingId,
         p.name,
         p.persona,
         p.agenda,
@@ -196,47 +192,47 @@ export class MeetingDatabase {
     }
   }
 
-  getWarp(): string {
-    const row = this.db
+  getWarp() {
+    const row = this.#db
       .prepare("SELECT warp FROM meetings WHERE id = ?")
-      .get(this.meetingId) as { warp: string | null } | null;
+      .get(this.#meetingId);
     return row?.warp ?? "";
   }
 
-  setWarp(warp: string): void {
-    this.db
+  setWarp(warp) {
+    this.#db
       .prepare("UPDATE meetings SET warp = ?, updated_at = ? WHERE id = ?")
-      .run(warp, isoNow(), this.meetingId);
+      .run(warp, isoNow(), this.#meetingId);
   }
 
-  getRound(): number {
-    const row = this.db
+  getRound() {
+    const row = this.#db
       .prepare("SELECT round FROM meetings WHERE id = ?")
-      .get(this.meetingId) as { round: number } | null;
+      .get(this.#meetingId);
     return row?.round ?? 0;
   }
 
-  setRound(round: number): void {
-    this.db
+  setRound(round) {
+    this.#db
       .prepare("UPDATE meetings SET round = ?, updated_at = ? WHERE id = ?")
-      .run(round, isoNow(), this.meetingId);
+      .run(round, isoNow(), this.#meetingId);
   }
 
-  getStatus(): LoomStatus {
-    const row = this.db
+  getStatus() {
+    const row = this.#db
       .prepare("SELECT status FROM meetings WHERE id = ?")
-      .get(this.meetingId) as { status: string } | null;
+      .get(this.#meetingId);
     return row ? deserializeStatus(row.status) : "initializing";
   }
 
-  setStatus(status: LoomStatus): void {
-    this.db
+  setStatus(status) {
+    this.#db
       .prepare("UPDATE meetings SET status = ?, updated_at = ? WHERE id = ?")
-      .run(status, isoNow(), this.meetingId);
+      .run(status, isoNow(), this.#meetingId);
   }
 
-  addContribution(meetingId: string, contribution: Contribution & { round?: number; confidence?: number }): void {
-    this.db
+  addContribution(meetingId, contribution) {
+    this.#db
       .prepare(
         `INSERT INTO contributions (meeting_id, participant_id, round, type, content, confidence, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -252,29 +248,24 @@ export class MeetingDatabase {
       );
   }
 
-  getContributions(meetingId: string): Contribution[] {
-    const rows = this.db
+  getContributions(meetingId) {
+    const rows = this.#db
       .prepare(
         `SELECT participant_id, content, type, created_at
          FROM contributions WHERE meeting_id = ? ORDER BY id ASC`,
       )
-      .all(meetingId) as Array<{
-      participant_id: string;
-      content: string;
-      type: string;
-      created_at: string;
-    }>;
+      .all(meetingId);
     return rows.map((r) => ({
       participant_id: r.participant_id,
       content: r.content,
-      type: r.type as Contribution["type"],
+      type: r.type,
       targets_which: null,
       timestamp: new Date(r.created_at).getTime(),
     }));
   }
 
-  addInterjection(meetingId: string, interjection: Interjection): void {
-    this.db
+  addInterjection(meetingId, interjection) {
+    this.#db
       .prepare(
         `INSERT INTO interjections (meeting_id, participant_id, content, priority, granted, pushback, resolved, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -291,78 +282,116 @@ export class MeetingDatabase {
       );
   }
 
-  getInterjections(meetingId: string): Interjection[] {
-    const rows = this.db
+  getInterjections(meetingId) {
+    const rows = this.#db
       .prepare(
         `SELECT participant_id, content as reason, priority, granted, pushback, resolved
          FROM interjections WHERE meeting_id = ? ORDER BY id ASC`,
       )
-      .all(meetingId) as Array<{
-      participant_id: string;
-      reason: string;
-      priority: number;
-      granted: number;
-      pushback: string | null;
-      resolved: string;
-    }>;
+      .all(meetingId);
     return rows.map((r) => ({
       participant_id: r.participant_id,
       priority: r.priority,
       reason: r.reason,
       granted: r.granted === 1,
       pushback: r.pushback,
-      resolved: r.resolved as Interjection["resolved"],
+      resolved: r.resolved,
     }));
   }
 
-  setParticipantSessionId(participantId: string, sessionId: string): void {
-    this.db
+  setParticipantSessionId(participantId, sessionId) {
+    this.#db
       .prepare("UPDATE participants SET session_id = ? WHERE id = ? AND meeting_id = ?")
-      .run(sessionId, participantId, this.meetingId);
+      .run(sessionId, participantId, this.#meetingId);
   }
 
-  getTranscriptData(meetingId: string): TranscriptData {
-    const meeting = this.db
-      .prepare("SELECT question, warp FROM meetings WHERE id = ?")
-      .get(meetingId) as { question: string; warp: string } | null;
+  setParticipantStatus(participantId, status) {
+    this.#db
+      .prepare("UPDATE participants SET status = ? WHERE id = ? AND meeting_id = ?")
+      .run(status, participantId, this.#meetingId);
+  }
 
-    const contributions = this.db
+  getParticipantStatus(participantId) {
+    const row = this.#db
+      .prepare("SELECT status FROM participants WHERE id = ? AND meeting_id = ?")
+      .get(participantId, this.#meetingId);
+    return row?.status ?? "listening";
+  }
+
+  getAllParticipantsWithStatus() {
+    return this.#db
+      .prepare(
+        `SELECT id, name, persona, agenda, tier, provider_id, model_id, session_id, status
+         FROM participants WHERE meeting_id = ?`,
+      )
+      .all(this.#meetingId)
+      .map((r) => ({
+        id: r.id,
+        name: r.name,
+        persona: r.persona,
+        agenda: r.agenda,
+        tier: r.tier,
+        provider_id: r.provider_id,
+        model_id: r.model_id,
+        session_id: r.session_id,
+        status: r.status,
+      }));
+  }
+
+  recordAgentError(meetingId, participantId, round, errorType, errorMessage, attempts) {
+    this.#db
+      .prepare(
+        `INSERT INTO agent_errors (meeting_id, participant_id, round, error_type, error_message, attempts, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(meetingId, participantId, round, errorType, errorMessage ?? null, attempts, isoNow());
+  }
+
+  getAgentErrors(meetingId) {
+    return this.#db
+      .prepare(
+        `SELECT participant_id, round, error_type, error_message, attempts, created_at
+         FROM agent_errors WHERE meeting_id = ? ORDER BY id ASC`,
+      )
+      .all(meetingId)
+      .map((r) => ({
+        participant_id: r.participant_id,
+        round: r.round,
+        error_type: r.error_type,
+        error_message: r.error_message,
+        attempts: r.attempts,
+        created_at: r.created_at,
+      }));
+  }
+
+  getTranscriptData(meetingId) {
+    const meeting = this.#db
+      .prepare("SELECT question, warp FROM meetings WHERE id = ?")
+      .get(meetingId);
+
+    const contributions = this.#db
       .prepare(
         `SELECT participant_id, round, type, content, created_at
          FROM contributions WHERE meeting_id = ? ORDER BY created_at ASC`,
       )
-      .all(meetingId) as Array<{
-      participant_id: string;
-      round: number;
-      type: string;
-      content: string;
-      created_at: string;
-    }>;
+      .all(meetingId);
 
-    const interjections = this.db
+    const interjections = this.#db
       .prepare(
         `SELECT participant_id, content as reason, priority, granted, pushback, resolved, created_at
          FROM interjections WHERE meeting_id = ? ORDER BY created_at ASC`,
       )
-      .all(meetingId) as Array<{
-      participant_id: string;
-      reason: string;
-      priority: number;
-      granted: number;
-      pushback: string | null;
-      resolved: string;
-      created_at: string;
-    }>;
+      .all(meetingId);
 
-    const roundMap = new Map<number, TranscriptRound>();
+    const roundMap = new Map();
     for (const c of contributions) {
       if (!roundMap.has(c.round)) {
         roundMap.set(c.round, { number: c.round, contributions: [], interjections: [], summary: "" });
       }
-      roundMap.get(c.round)!.contributions.push({
+      roundMap.get(c.round).contributions.push({
         participant_id: c.participant_id,
         content: c.content,
-        type: c.type as Contribution["type"],
+        type: c.type,
         targets_which: null,
         timestamp: new Date(c.created_at).getTime(),
       });
@@ -373,13 +402,13 @@ export class MeetingDatabase {
       if (!roundMap.has(roundNum)) {
         roundMap.set(roundNum, { number: roundNum, contributions: [], interjections: [], summary: "" });
       }
-      roundMap.get(roundNum)!.interjections.push({
+      roundMap.get(roundNum).interjections.push({
         participant_id: ij.participant_id,
         priority: ij.priority,
         reason: ij.reason,
         granted: ij.granted === 1,
         pushback: ij.pushback,
-        resolved: ij.resolved as Interjection["resolved"],
+        resolved: ij.resolved,
       });
     }
 
@@ -392,9 +421,9 @@ export class MeetingDatabase {
     };
   }
 
-  writeAgentResponse(meetingId: string, participantId: string, round: number, response: string): void {
+  writeAgentResponse(meetingId, participantId, round, response) {
     this.clearAgentResponse(meetingId, participantId);
-    this.db
+    this.#db
       .prepare(
         `INSERT INTO agent_responses (meeting_id, participant_id, round, response, created_at)
          VALUES (?, ?, ?, ?, ?)`,
@@ -402,17 +431,17 @@ export class MeetingDatabase {
       .run(meetingId, participantId, round, response, isoNow());
   }
 
-  readAgentResponse(meetingId: string, participantId: string): string | null {
-    const row = this.db
+  readAgentResponse(meetingId, participantId) {
+    const row = this.#db
       .prepare(
         `SELECT response FROM agent_responses WHERE meeting_id = ? AND participant_id = ?`,
       )
-      .get(meetingId, participantId) as { response: string } | null;
+      .get(meetingId, participantId);
     return row?.response ?? null;
   }
 
-  hasAgentResponded(meetingId: string, participantId: string): boolean {
-    const row = this.db
+  hasAgentResponded(meetingId, participantId) {
+    const row = this.#db
       .prepare(
         `SELECT 1 FROM agent_responses WHERE meeting_id = ? AND participant_id = ?`,
       )
@@ -420,37 +449,34 @@ export class MeetingDatabase {
     return row != null;
   }
 
-  clearAgentResponse(meetingId: string, participantId: string): void {
-    this.db
+  clearAgentResponse(meetingId, participantId) {
+    this.#db
       .prepare(`DELETE FROM agent_responses WHERE meeting_id = ? AND participant_id = ?`)
       .run(meetingId, participantId);
   }
 
-  getParticipantModel(participantId: string): { providerID: string; modelID: string } | null {
-    const row = this.db
+  getParticipantModel(participantId) {
+    const row = this.#db
       .prepare(`SELECT provider_id, model_id FROM participants WHERE id = ? AND meeting_id = ?`)
-      .get(participantId, this.meetingId) as {
-      provider_id: string | null;
-      model_id: string | null;
-    } | null;
+      .get(participantId, this.#meetingId);
     if (!row || !row.provider_id || !row.model_id) return null;
     return { providerID: row.provider_id, modelID: row.model_id };
   }
 
-  close(): void {
-    this.db.close();
+  close() {
+    this.#db.close();
   }
 
-  getDatabasePath(): string {
-    const handle = this.db as any;
+  getDatabasePath() {
+    const handle = this.#db;
     return handle.filename ?? handle.name ?? "unknown";
   }
 
-  getOpencodeSessionId(): string | null {
+  getOpencodeSessionId() {
     try {
-      const row = this.db
+      const row = this.#db
         .prepare("SELECT value FROM metadata WHERE key = ?")
-        .get("opencode_session_id") as { value: string } | undefined;
+        .get("opencode_session_id");
       return row?.value ?? null;
     } catch {
       return null;
@@ -458,35 +484,60 @@ export class MeetingDatabase {
   }
 }
 
+export async function findMeetingBySessionId(directory, sessionId) {
+  const { Database: DBClass } = await import("bun:sqlite");
+  const meetingsDir = join(directory, ".opencode", "loom", "meetings");
+  if (!existsSync(meetingsDir)) return null;
+  const files = readdirSync(meetingsDir).filter((f) => f.endsWith(".db"));
+  for (const file of files) {
+    const filePath = join(meetingsDir, file);
+    let conn = null;
+    try {
+      conn = new DBClass(filePath, { readonly: true });
+      const row = conn
+        .prepare(
+          `SELECT m.id, m.question, m.status, m.round, m.max_rounds FROM meetings m
+           JOIN metadata md ON md.key = 'opencode_session_id' AND md.value = ?
+           LIMIT 1`,
+        )
+        .get(sessionId);
+      if (row) {
+        conn.close();
+        return { meetingId: row.id, question: row.question, status: row.status, round: row.round, max_rounds: row.max_rounds, dbPath: filePath };
+      }
+    } catch {
+    } finally {
+      if (conn) conn.close();
+    }
+  }
+  return null;
+}
+
+export function getDbPathForMeeting(directory, meetingId) {
+  const path = join(directory, ".opencode", "loom", "meetings", `${meetingId}.db`);
+  return existsSync(path) ? path : null;
+}
+
 // ─── Static cleanup utilities ─────────────────────────────────────────────────
 
-import { unlinkSync, readdirSync, existsSync } from "node:fs";
-import { join } from "node:path";
-
-export function deleteMeetingFiles(dbPath: string): void {
+export function deleteMeetingFiles(dbPath) {
   for (const suffix of ["", "-wal", "-shm"]) {
     try { unlinkSync(`${dbPath}${suffix}`); } catch { /* ignore */ }
   }
 }
 
-export function listMeetingFiles(directory: string): string[] {
+export function listMeetingFiles(directory) {
   const dir = join(directory, ".opencode", "loom", "meetings");
   if (!existsSync(dir)) return [];
   return readdirSync(dir).filter((f) => f.endsWith(".db"));
 }
 
-export async function readSessionIdFromDb(dbPath: string): Promise<string | null> {
+export async function readSessionIdFromDb(dbPath) {
   try {
-    let DBClass: any = null;
-    try {
-      // @ts-expect-error bun:sqlite is a Bun-only module
-      DBClass = (await import("bun:sqlite")).Database;
-    } catch {
-      DBClass = (await import("better-sqlite3")).default;
-    }
+    const { Database: DBClass } = await import("bun:sqlite");
     const db = new DBClass(dbPath, { readonly: true });
     try {
-      const row = db.prepare("SELECT value FROM metadata WHERE key = ?").get("opencode_session_id") as any;
+      const row = db.prepare("SELECT value FROM metadata WHERE key = ?").get("opencode_session_id");
       return row?.value ?? null;
     } finally {
       db.close();
@@ -496,7 +547,7 @@ export async function readSessionIdFromDb(dbPath: string): Promise<string | null
   }
 }
 
-export function cleanupOrphanDatabases(directory: string, activeSessionIds: Set<string>): number {
+export function cleanupOrphanDatabases(directory, activeSessionIds) {
   const meetingsDir = join(directory, ".opencode", "loom", "meetings");
   if (!existsSync(meetingsDir)) return 0;
 
@@ -515,22 +566,18 @@ export function cleanupOrphanDatabases(directory: string, activeSessionIds: Set<
   return cleaned;
 }
 
-function readSessionIdFromDbSync(dbPath: string): string | null {
-  let DBClass: any = null;
+function readSessionIdFromDbSync(dbPath) {
+  let DBClass = null;
   try {
-    DBClass = (globalThis as any).Bun ? (require("bun:sqlite") as any).Database : null;
+    DBClass = globalThis.Bun ? require("bun:sqlite").Database : null;
   } catch {
-    try {
-      DBClass = require("better-sqlite3");
-    } catch {
-      return null;
-    }
+    return null;
   }
   if (!DBClass) return null;
   try {
     const db = new DBClass(dbPath, { readonly: true });
     try {
-      const row = db.prepare("SELECT value FROM metadata WHERE key = ?").get("opencode_session_id") as any;
+      const row = db.prepare("SELECT value FROM metadata WHERE key = ?").get("opencode_session_id");
       return row?.value ?? null;
     } finally {
       db.close();

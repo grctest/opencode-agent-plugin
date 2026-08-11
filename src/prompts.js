@@ -1,7 +1,5 @@
-import type { ParticipantState, Contribution } from "./types.js";
-
 /** Builds the system prompt that establishes a participant's identity, agenda, and deliberation rules. */
-export function buildSpeakerSystemPrompt(participant: ParticipantState): string {
+export function buildSpeakerSystemPrompt(participant) {
   return `You are **${participant.config.name}** in a structured multi-agent deliberation called a "Loom."
 
 ## Your Identity
@@ -23,13 +21,7 @@ ${participant.tier_config.system_prompt_addendum}
 }
 
 /** Builds the user prompt containing the topic, shared context (warp), and recent contributions for a participant's turn. */
-export function buildSpeakerUserPrompt(
-  participant: ParticipantState,
-  question: string,
-  warp: string,
-  weft: Array<{ participant_id: string; type: string; content: string }>,
-  participants: Array<{ config: { id: string; name: string } }>,
-): string {
+export function buildSpeakerUserPrompt(participant, question, warp, weft, participants) {
   const recentContributions = weft.slice(-10);
   const transcript =
     recentContributions.length === 0
@@ -58,11 +50,7 @@ Read the topic, context, and recent contributions. Then make your contribution o
 }
 
 /** Builds a prompt asking a listener to privately reflect on a speaker's contribution. */
-export function buildReflectionPrompt(
-  listener: ParticipantState,
-  speakerName: string,
-  contribution: string,
-): string {
+export function buildReflectionPrompt(listener, speakerName, contribution) {
   return `## Private Reflection
 
 **${speakerName}** just said:
@@ -79,11 +67,7 @@ This is private — only you will see it.`;
 }
 
 /** Builds a prompt asking a neutral coordinator which listeners (if any) should interject. */
-export function buildInterjectionCheckPrompt(
-  currentSpeakerId: string,
-  lastContribution: string,
-  participants: Array<{ config: { id: string; name: string; tier: string; persona: string }; status: string; canInterject: boolean }>,
-): string {
+export function buildInterjectionCheckPrompt(currentSpeakerId, lastContribution, participants) {
   const speaker = participants.find((p) => p.config.id === currentSpeakerId);
 
   const listeners = participants.filter(
@@ -125,12 +109,7 @@ Be conservative — most of the time, listeners should wait.`;
 }
 
 /** Builds a prompt asking the current speaker to yield or contest an interjection attempt. */
-export function buildPushbackPrompt(
-  participant: ParticipantState,
-  interjectorName: string,
-  interjectorPriority: number,
-  lastContribution: string,
-): string {
+export function buildPushbackPrompt(participant, interjectorName, interjectorPriority, lastContribution) {
   return `## Interjection Attempt
 
 **${interjectorName}** wants to interrupt you with priority ${interjectorPriority}:
@@ -147,13 +126,7 @@ Choose carefully — only contest if your point genuinely cannot wait.`;
 }
 
 /** Builds a prompt for the moderator to rule on deadlocks, circular arguments, or force convergence. */
-export function buildModeratorPrompt(
-  situation: string,
-  currentRound: number,
-  maxRounds: number,
-  totalContributions: number,
-  lastThreeContributions: Array<{ content: string }>,
-): string {
+export function buildModeratorPrompt(situation, currentRound, maxRounds, totalContributions, lastThreeContributions) {
   return `You are the MODERATOR of a structured multi-agent deliberation. You do NOT contribute opinions or domain knowledge. Your ONLY job is process governance.
 
 ## Your Authority
@@ -185,11 +158,7 @@ reason: <brief justification>`;
 }
 
 /** Builds a prompt for synthesizing the final deliberation artifact from all contributions. */
-export function buildSynthesisPrompt(
-  question: string,
-  transcript: string,
-  participants: Array<{ config: { name: string; tier: string }; contributions_count: number }>,
-): string {
+export function buildSynthesisPrompt(question, transcript, participants) {
   return `You are the synthesizer. The deliberation is complete. Produce the final artifact.
 
 ## Original Question
@@ -221,7 +190,7 @@ For Confidence, choose High (strong consensus), Medium (general agreement with s
 }
 
 /** Builds a synthesis prompt from pre-formatted transcript data (for child session use). */
-export function buildSynthesisPromptForTranscript(question: string, transcript: string): string {
+export function buildSynthesisPromptForTranscript(question, transcript) {
   return `You are the synthesizer. The deliberation is complete. Produce the final artifact.
 
 ## Original Question
@@ -252,7 +221,7 @@ For Confidence, choose High (strong consensus), Medium (general agreement with s
 // ─── Multi-Session Agent Prompts ──────────────────────────────────────
 
 /** Builds the system prompt for an agent in the multi-session architecture (identity + rules). */
-export function buildAgentSystemPrompt(participant: ParticipantState): string {
+export function buildAgentSystemPrompt(participant) {
   return `You are **${participant.config.name}** (${participant.config.tier}) in a structured multi-agent deliberation called a "Loom."
 
 ## Your Identity
@@ -274,13 +243,7 @@ ${participant.config.tier === "junior" ? "Think creatively and bring fresh persp
 }
 
 /** Builds the user prompt for an agent's turn: warp context + recent contributions + interjection notes. */
-export function buildAgentUserPrompt(
-  participant: ParticipantState,
-  warp: string,
-  weft: Contribution[],
-  question: string,
-  round: number,
-): string {
+export function buildAgentUserPrompt(participant, warp, weft, question, round) {
   const recentContributions = weft.slice(-10);
   const transcript =
     recentContributions.length === 0
@@ -308,5 +271,3 @@ ${participant.reflection ? `## Your Previous Reflection\n${participant.reflectio
 
 Read the context and contributions. Then make your contribution or pass.`;
 }
-
-

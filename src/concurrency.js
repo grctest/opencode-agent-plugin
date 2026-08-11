@@ -1,37 +1,36 @@
 /** A semaphore for limiting concurrent async operations. */
 export class Semaphore {
-  private permits: number;
-  private queue: Array<() => void> = [];
+  /** @type {number} */
+  #permits;
+  /** @type {Array<() => void>} */
+  #queue = [];
 
-  constructor(permits: number) {
-    this.permits = permits;
+  constructor(permits) {
+    this.#permits = permits;
   }
 
   /** Acquires a permit, waiting if none are available. */
-  async acquire(): Promise<void> {
-    if (this.permits > 0) {
-      this.permits--;
+  async acquire() {
+    if (this.#permits > 0) {
+      this.#permits--;
       return;
     }
-    return new Promise((resolve) => this.queue.push(resolve));
+    return new Promise((resolve) => this.#queue.push(resolve));
   }
 
   /** Releases a permit, waking up the next waiter if any. */
-  release(): void {
-    this.permits++;
-    const next = this.queue.shift();
+  release() {
+    this.#permits++;
+    const next = this.#queue.shift();
     if (next) {
-      this.permits--;
+      this.#permits--;
       next();
     }
   }
 }
 
 /** Runs tasks with a concurrency limit, returning settled results in order. */
-export async function withConcurrency<T>(
-  tasks: Array<() => Promise<T>>,
-  limit: number,
-): Promise<Array<PromiseSettledResult<T>>> {
+export async function withConcurrency(tasks, limit) {
   const semaphore = new Semaphore(limit);
   const wrapped = tasks.map(async (task) => {
     await semaphore.acquire();

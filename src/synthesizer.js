@@ -1,32 +1,20 @@
-import type { ParticipantState, Contribution, Round, Objection } from "./types.js";
-import type { PromptFn } from "./types.js";
 import { buildSynthesisPrompt } from "./prompts.js";
 import { formatTranscript, formatTranscriptFromData } from "./warp-manager.js";
 import { deriveConfidence, extractSection } from "./artifact.js";
-import type { Artifact } from "./types.js";
-import type { TranscriptData } from "./types.js";
 
-export interface SynthesisResult {
-  artifact: Artifact;
-  output: string;
-}
+/**
+ * @typedef {Object} SynthesisResult
+ * @property {import("./types.js").Artifact} artifact
+ * @property {string} output
+ */
 
 /** Produces the final deliberation artifact by prompting the synthesizer agent. */
-export async function synthesize(
-  question: string,
-  rounds: Round[],
-  weft: Contribution[],
-  participants: ParticipantState[],
-  objections: Objection[],
-  synthesizer: ParticipantState,
-  promptFn: PromptFn,
-  getModel: (p: ParticipantState) => { providerID: string; modelID: string },
-): Promise<SynthesisResult> {
+export async function synthesize(question, rounds, weft, participants, objections, synthesizer, promptFn, getModel) {
   const transcript = formatTranscript(rounds, participants);
   const model = getModel(synthesizer);
   const userPrompt = buildSynthesisPrompt(question, transcript, participants);
 
-  let artifactText: string;
+  let artifactText;
   try {
     artifactText = await promptFn(
       `You are ${synthesizer.config.name} (${synthesizer.config.tier}). Synthesize the final output.\n\n${synthesizer.tier_config.system_prompt_addendum}`,
@@ -45,7 +33,7 @@ export async function synthesize(
 
   const confidence = deriveConfidence(weft, unresolvedObjections.length);
 
-  const artifact: Artifact = {
+  const artifact = {
     content: finalOutput,
     format: "markdown",
     decisions: extractSection(finalOutput, "Decision"),
@@ -59,19 +47,12 @@ export async function synthesize(
 }
 
 /** Produces the final artifact from database transcript data (for child session synthesis). */
-export async function synthesizeFromData(
-  transcriptData: TranscriptData,
-  participants: ParticipantState[],
-  objections: Objection[],
-  synthesizer: ParticipantState,
-  promptFn: PromptFn,
-  getModel: (p: ParticipantState) => { providerID: string; modelID: string },
-): Promise<SynthesisResult> {
+export async function synthesizeFromData(transcriptData, participants, objections, synthesizer, promptFn, getModel) {
   const transcript = formatTranscriptFromData(transcriptData, participants);
   const model = getModel(synthesizer);
   const userPrompt = buildSynthesisPrompt(transcriptData.question, transcript, participants);
 
-  let artifactText: string;
+  let artifactText;
   try {
     artifactText = await promptFn(
       `You are ${synthesizer.config.name} (${synthesizer.config.tier}). Synthesize the final output.\n\n${synthesizer.tier_config.system_prompt_addendum}`,
@@ -92,7 +73,7 @@ export async function synthesizeFromData(
   const weft = transcriptData.rounds.flatMap((r) => r.contributions);
   const confidence = deriveConfidence(weft, unresolvedObjections.length);
 
-  const artifact: Artifact = {
+  const artifact = {
     content: finalOutput,
     format: "markdown",
     decisions: extractSection(finalOutput, "Decision"),

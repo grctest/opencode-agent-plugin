@@ -1,6 +1,4 @@
-import type { Tier, TierConfig, TierRights } from "./types.js";
-
-const BASE_RIGHTS: TierRights = {
+const BASE_RIGHTS = {
   contribute: true,
   interject: true,
   call_vote: false,
@@ -9,7 +7,7 @@ const BASE_RIGHTS: TierRights = {
 };
 
 /** Returns deliberation rights for a given tier. Custom tiers get base rights with voting enabled. */
-export function getRightsForTier(tier: Tier): TierRights {
+export function getRightsForTier(tier) {
   switch (tier) {
     case "junior":
       return { ...BASE_RIGHTS };
@@ -25,7 +23,7 @@ export function getRightsForTier(tier: Tier): TierRights {
 }
 
 /** Returns tier-specific behavioral guidance for agent system prompts. */
-export function getPromptForTier(tier: Tier): string {
+export function getPromptForTier(tier) {
   switch (tier) {
     case "junior":
       return "Think creatively and bring fresh perspectives. Wild ideas are welcome — you won't be penalized for being wrong. Challenge senior thinking with naive questions that expose hidden assumptions.";
@@ -41,22 +39,19 @@ export function getPromptForTier(tier: Tier): string {
 }
 
 /** Splits a "provider/model" string into its components. */
-export function splitModel(model: string): { providerID: string; modelID: string } {
+export function splitModel(model) {
   const idx = model.indexOf("/");
   if (idx === -1) throw new Error(`Invalid model format (expected "provider/model"): ${model}`);
   return { providerID: model.slice(0, idx), modelID: model.slice(idx + 1) };
 }
 
 /** Checks whether a participant's tier grants a specific deliberation right. */
-export function can(participant: { tier_config: TierConfig }, action: keyof TierRights): boolean {
+export function can(participant, action) {
   return participant.tier_config.rights[action];
 }
 
 /** Builds a complete tier config with optional model/temperature overrides. */
-export function getTierConfig(
-  tier: Tier,
-  overrides?: { model?: string; temperature?: number; reasoning_effort?: "low" | "medium" | "high" },
-): TierConfig {
+export function getTierConfig(tier, overrides) {
   return {
     model: overrides?.model ?? "",
     temperature: overrides?.temperature ?? 0.5,

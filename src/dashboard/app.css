@@ -1,0 +1,584 @@
+:root {
+  --radius-sm: calc(0.5rem - 4px);
+  --radius-md: calc(0.5rem - 2px);
+  --radius-lg: 0.5rem;
+}
+
+/* Default: dark theme (no data-theme needed) */
+:root,
+[data-theme="dark"] {
+  --color-background: oklch(0.145 0 0);
+  --color-foreground: oklch(0.985 0 0);
+  --color-card: oklch(0.205 0 0);
+  --color-card-foreground: oklch(0.985 0 0);
+  --color-primary: oklch(0.985 0 0);
+  --color-primary-foreground: oklch(0.205 0 0);
+  --color-secondary: oklch(0.269 0 0);
+  --color-secondary-foreground: oklch(0.985 0 0);
+  --color-muted: oklch(0.269 0 0);
+  --color-muted-foreground: oklch(0.708 0 0);
+  --color-accent: oklch(0.269 0 0);
+  --color-accent-foreground: oklch(0.985 0 0);
+  --color-destructive: oklch(0.396 0.141 25.723);
+  --color-destructive-foreground: oklch(0.637 0.237 25.331);
+  --color-border: oklch(0.269 0 0);
+  --color-input: oklch(0.269 0 0);
+  --color-ring: oklch(0.439 0 0);
+}
+
+[data-theme="light"] {
+  --color-background: oklch(0.98 0 0);
+  --color-foreground: oklch(0.2 0 0);
+  --color-card: oklch(0.95 0 0);
+  --color-card-foreground: oklch(0.2 0 0);
+  --color-primary: oklch(0.35 0.02 250);
+  --color-primary-foreground: oklch(0.98 0 0);
+  --color-secondary: oklch(0.9 0 0);
+  --color-secondary-foreground: oklch(0.2 0 0);
+  --color-muted: oklch(0.92 0 0);
+  --color-muted-foreground: oklch(0.45 0 0);
+  --color-accent: oklch(0.9 0 0);
+  --color-accent-foreground: oklch(0.2 0 0);
+  --color-destructive: oklch(0.55 0.15 25);
+  --color-destructive-foreground: oklch(0.98 0 0);
+  --color-border: oklch(0.85 0 0);
+  --color-input: oklch(0.95 0 0);
+  --color-ring: oklch(0.5 0.02 250);
+}
+
+* {
+  border-color: var(--color-border);
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+  font-family: system-ui, -apple-system, sans-serif;
+  margin: 0;
+  height: 100vh;
+  overflow: hidden;
+}
+
+#root {
+  height: 100%;
+}
+
+button {
+  cursor: pointer;
+  background: none;
+  border: none;
+  font: inherit;
+  color: inherit;
+}
+
+input {
+  box-sizing: border-box;
+}
+
+/* ============================================================
+   PureCSS Dark Theme Overrides
+   ============================================================ */
+
+/* Forms */
+.pure-form input[type="text"],
+.pure-form input[type="search"],
+.pure-form input[type="password"],
+.pure-form input[type="email"],
+.pure-form input[type="url"],
+.pure-form input[type="number"],
+.pure-form textarea,
+.pure-form select {
+  background: var(--color-input);
+  color: var(--color-foreground);
+  border: 1px solid var(--color-border);
+  box-shadow: none;
+}
+
+.pure-form input[type="text"]:focus,
+.pureForm input[type="search"]:focus,
+.pure-form input[type="password"]:focus,
+.pure-form input[type="email"]:focus,
+.pure-form input[type="url"]:focus,
+.pure-form input[type="number"]:focus,
+.pure-form textarea:focus,
+.pure-form select:focus {
+  border-color: var(--color-ring);
+}
+
+.pure-form ::placeholder {
+  color: var(--color-muted-foreground);
+  opacity: 0.7;
+}
+
+/* Buttons */
+.pure-button {
+  background: var(--color-secondary);
+  color: var(--color-secondary-foreground);
+  border: 1px solid var(--color-border);
+}
+
+.pure-button-hover,
+.pure-button:hover,
+.pure-button:focus {
+  background: var(--color-accent);
+  filter: none;
+}
+
+.pure-button-active,
+.pure-button:active {
+  background: var(--color-accent);
+  box-shadow: none;
+}
+
+.pure-button-primary,
+.pure-button-selected {
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+}
+
+.pure-button[disabled] {
+  opacity: 0.5;
+}
+
+/* Menus */
+.pure-menu-link {
+  color: var(--color-muted-foreground);
+  padding: 0.4em 1em;
+}
+
+.pure-menu-link:hover,
+.pure-menu-link:focus {
+  background: var(--color-accent);
+  color: var(--color-accent-foreground);
+}
+
+.pure-menu-selected .pure-menu-link,
+.pure-menu-selected .pure-menu-link:visited {
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+}
+
+.pure-menu-heading {
+  color: var(--color-foreground);
+  text-transform: none;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+/* Tables */
+.pure-table {
+  border-color: var(--color-border);
+}
+
+.pure-table thead {
+  background: var(--color-card);
+  color: var(--color-foreground);
+}
+
+.pure-table td,
+.pure-table th {
+  border-color: var(--color-border);
+}
+
+.pure-table-striped tr:nth-child(2n-1) td {
+  background: var(--color-card);
+}
+
+/* Horizontal rule */
+.pure-form legend {
+  border-color: var(--color-border);
+  color: var(--color-foreground);
+}
+
+/* ============================================================
+   Loom Dashboard Styles
+   ============================================================ */
+
+.loom-layout {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.loom-layout-error {
+  position: fixed;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  max-width: 32rem;
+}
+
+.loom-sidebar {
+  width: 18rem;
+  flex-shrink: 0;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-background);
+  overflow-y: auto;
+  padding: 1rem;
+}
+
+.loom-sidebar-section {
+  margin-bottom: 1.25rem;
+}
+
+.loom-sidebar-title {
+  font-size: 1.125rem;
+  font-weight: 700;
+  margin: 0 0 0.5rem;
+  color: var(--color-foreground);
+}
+
+.loom-theme-toggle {
+  display: flex;
+  gap: 0.25rem;
+  margin-bottom: 0.5rem;
+}
+
+.loom-theme-btn {
+  flex: 1;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  border-radius: var(--radius-md);
+}
+
+.loom-sidebar-heading {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-muted-foreground);
+  margin: 0 0 0.5rem;
+}
+
+.loom-main {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.5rem;
+}
+
+.loom-main-header {
+  margin-bottom: 1.25rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.loom-main-content {
+  padding-top: 1rem;
+}
+
+/* Card */
+.loom-card {
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 0.75rem;
+}
+
+.loom-card-dashed {
+  border-style: dashed;
+  background: color-mix(in oklch, var(--color-card) 50%, var(--color-background));
+}
+
+.loom-card-error {
+  border-color: var(--color-destructive);
+  background: color-mix(in oklch, var(--color-destructive) 12%, var(--color-background));
+}
+
+/* Typography */
+.loom-title-lg {
+  font-size: 1.25rem;
+  line-height: 1.4;
+  font-weight: 700;
+  margin: 0;
+}
+
+.loom-title-sm {
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.loom-text {
+  font-size: 0.875rem;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.loom-text-sm {
+  font-size: 0.875rem;
+}
+
+.loom-text-xs {
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.loom-text-muted {
+  color: var(--color-muted-foreground);
+}
+
+.loom-text-center {
+  text-align: center;
+}
+
+.loom-text-live {
+  color: #16a34a;
+}
+
+.loom-text-granted {
+  color: #16a34a;
+}
+
+.loom-text-denied {
+  color: #dc2626;
+}
+
+[data-theme="light"] .loom-text-live {
+  color: #15803d;
+}
+
+[data-theme="light"] .loom-text-granted {
+  color: #15803d;
+}
+
+[data-theme="light"] .loom-text-denied {
+  color: #b91c1c;
+}
+
+.loom-italic {
+  font-style: italic;
+}
+
+.loom-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.loom-pre-wrap {
+  white-space: pre-wrap;
+}
+
+/* Badges */
+.loom-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-md);
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.loom-badge-interjection {
+  background: #be185d;
+  color: white;
+}
+
+/* Badge colors */
+.loom-badge-weaving { background: #ca8a04; color: white; }
+.loom-badge-converged { background: #16a34a; color: white; }
+.loom-badge-deadlocked { background: #dc2626; color: white; }
+.loom-badge-max_rounds_reached { background: #ea580c; color: white; }
+.loom-badge-initializing { background: var(--color-muted); color: var(--color-muted-foreground); }
+.loom-badge-aborted { background: var(--color-destructive); color: var(--color-destructive-foreground); }
+
+.loom-badge-junior { background: var(--color-secondary); color: var(--color-secondary-foreground); }
+.loom-badge-mid { background: #2563eb; color: white; }
+.loom-badge-senior { background: #9333ea; color: white; }
+.loom-badge-principal { background: #d97706; color: white; }
+
+.loom-badge-propose { background: #15803d; color: white; }
+.loom-badge-challenge { background: #b91c1c; color: white; }
+.loom-badge-refine { background: #1d4ed8; color: white; }
+.loom-badge-support { background: #047857; color: white; }
+.loom-badge-dissent { background: #c2410c; color: white; }
+.loom-badge-synthesize { background: #7e22ce; color: white; }
+.loom-badge-question { background: #0e7490; color: white; }
+
+/* Agent status indicators */
+.loom-agent-status {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 9999px;
+  flex-shrink: 0;
+}
+
+.loom-agent-thinking {
+  background: #eab308;
+  animation: loom-pulse 1.2s ease-in-out infinite;
+}
+
+.loom-agent-error {
+  background: #ef4444;
+}
+
+.loom-agent-passed {
+  background: var(--color-muted-foreground);
+  opacity: 0.5;
+}
+
+.loom-agent-error-text {
+  color: #ef4444;
+}
+
+@keyframes loom-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.85); }
+}
+
+/* Progress bar */
+.loom-progress-track {
+  width: 100%;
+  height: 0.5rem;
+  background: var(--color-secondary);
+  border-radius: 9999px;
+  overflow: hidden;
+}
+
+.loom-progress-bar {
+  height: 100%;
+  background: var(--color-primary);
+  border-radius: 9999px;
+  transition: width 300ms ease;
+}
+
+/* Tabs */
+.loom-tabs {
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 0.5rem;
+}
+
+.loom-tabs .pure-menu-list {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.loom-tabs .pure-menu-item {
+  margin: 0;
+}
+
+.loom-tabs .pure-menu-link {
+  border-radius: var(--radius-md);
+  padding: 0.375rem 0.75rem;
+  font-size: 0.875rem;
+}
+
+.loom-tabs .pure-menu-selected .pure-menu-link {
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+}
+
+/* Search input */
+.loom-search-input {
+  height: 2.25rem;
+  font-size: 0.875rem;
+}
+
+/* Filter buttons */
+.loom-filter-btn {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  border-radius: var(--radius-md);
+}
+
+/* Meeting selector */
+.loom-menu-list {
+  max-height: 20rem;
+  overflow-y: auto;
+}
+
+.loom-menu-link {
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.loom-menu-question {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+}
+
+/* Link button */
+.loom-link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.75rem;
+  color: var(--color-primary);
+  text-decoration: none;
+  cursor: pointer;
+  margin-top: 0.5rem;
+}
+
+.loom-link-btn:hover {
+  text-decoration: underline;
+}
+
+/* Prose (markdown content) */
+.loom-prose {
+  font-size: 0.875rem;
+  line-height: 1.7;
+}
+
+.loom-prose p { margin: 0 0 0.5rem; }
+.loom-prose ul { margin: 0 0 0.5rem; padding-left: 1.5rem; list-style-type: disc; }
+.loom-prose ol { margin: 0 0 0.5rem; padding-left: 1.5rem; list-style-type: decimal; }
+.loom-prose li { margin-bottom: 0.25rem; }
+.loom-prose h1, .loom-prose h2, .loom-prose h3 { margin-top: 1rem; margin-bottom: 0.5rem; }
+.loom-prose code {
+  background: var(--color-secondary);
+  padding: 0.125rem 0.25rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+}
+.loom-prose pre {
+  background: var(--color-secondary);
+  padding: 0.75rem;
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+}
+.loom-prose pre code {
+  background: none;
+  padding: 0;
+}
+.loom-prose a {
+  color: var(--color-primary);
+  text-decoration: underline;
+}
+
+/* Flexbox utilities (used alongside PureCSS grid) */
+.loom-flex {
+  display: flex;
+}
+
+.loom-flex-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.loom-flex-wrap {
+  flex-wrap: wrap;
+}
+
+.loom-items-center {
+  align-items: center;
+}
+
+/* Spacing */
+.loom-space-sm > * + * { margin-top: 1rem; }
+.loom-space-xs > * + * { margin-top: 0.5rem; }
+.loom-space-md > * + * { margin-top: 1.5rem; }
+
+.loom-gap-md { gap: 0.75rem; }
+.loom-gap-sm { gap: 0.5rem; }
+.loom-gap-xs { gap: 0.25rem; }
+
+.loom-mb-xs { margin-bottom: 0.25rem; }
+.loom-mb-sm { margin-bottom: 0.5rem; }
+.loom-mt-xs { margin-top: 0.25rem; }
+.loom-mt-sm { margin-top: 0.5rem; }
+.loom-py-lg { padding-top: 2rem; padding-bottom: 2rem; }

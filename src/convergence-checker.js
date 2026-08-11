@@ -1,19 +1,11 @@
-import type { Round, LoomStatus } from "./types.js";
-
-export interface ConvergenceResult {
-  shouldStop: boolean;
-  status: LoomStatus;
-}
+/**
+ * @typedef {Object} ConvergenceResult
+ * @property {boolean} shouldStop
+ * @property {import("./types.js").LoomStatus} status
+ */
 
 /** Checks whether the deliberation should end based on convergence rules and round limits. */
-export function checkConvergence(
-  passedCount: number,
-  activeCount: number,
-  totalParticipants: number,
-  currentRound: number,
-  maxRounds: number,
-  convergenceMode: "consensus" | "majority" | "moderator_forces",
-): ConvergenceResult {
+export function checkConvergence(passedCount, activeCount, totalParticipants, currentRound, maxRounds, convergenceMode) {
   if (activeCount === 0) {
     return { shouldStop: true, status: "converged" };
   }

@@ -1,22 +1,8 @@
-import type { Interjection, ParticipantState, Round, Contribution, PromptFn, Client } from "./types.js";
 import { can, splitModel } from "./tiers.js";
 import { buildInterjectionCheckPrompt, buildPushbackPrompt, buildSpeakerSystemPrompt } from "./prompts.js";
 
-type ParticipantLookup = Array<{ config: { id: string; name: string; tier: string; persona: string }; status: string; canInterject: boolean }>;
-
 /** Handles the full interjection pipeline: check for interjection requests, resolve conflicts, and execute push-back. */
-export async function handleInterjections(
-  currentSpeakerId: string,
-  round: Round,
-  weft: Contribution[],
-  participants: ParticipantState[],
-  client: Client,
-  directory: string,
-  promptFn: PromptFn,
-  getHighestTierModel: () => { providerID: string; modelID: string },
-  isAborted: () => boolean,
-  updateMetadata: (extra: Record<string, any>) => Promise<void>,
-): Promise<"continued" | "broken"> {
+export async function handleInterjections(currentSpeakerId, round, weft, participants, client, directory, promptFn, getHighestTierModel, isAborted, updateMetadata) {
   if (isAborted()) return "broken";
 
   const interjections = await checkForInterjections(
@@ -40,19 +26,11 @@ export async function handleInterjections(
 }
 
 /** Asks a neutral coordinator which listeners want to interject after a speaker's contribution. */
-export async function checkForInterjections(
-  currentSpeakerId: string,
-  weft: Contribution[],
-  participants: ParticipantState[],
-  client: Client,
-  directory: string,
-  promptFn: PromptFn,
-  getHighestTierModel: () => { providerID: string; modelID: string },
-): Promise<Interjection[]> {
+export async function checkForInterjections(currentSpeakerId, weft, participants, client, directory, promptFn, getHighestTierModel) {
   const lastContribution = weft[weft.length - 1];
   const lastContent = lastContribution?.content ?? "";
 
-  const participantLookup: ParticipantLookup = participants.map((p) => ({
+  const participantLookup = participants.map((p) => ({
     config: p.config,
     status: p.status,
     canInterject: can(p, "interject"),
@@ -61,7 +39,7 @@ export async function checkForInterjections(
   const checkPrompt = buildInterjectionCheckPrompt(currentSpeakerId, lastContent, participantLookup);
   const principalModel = getHighestTierModel();
 
-  let result: string;
+  let result;
   try {
     result = await promptFn(
       "You are a neutral process coordinator evaluating interjection requests.",
@@ -72,7 +50,7 @@ export async function checkForInterjections(
     return [];
   }
 
-  const interjections: Interjection[] = [];
+  const interjections = [];
   for (const line of result.split("\n")) {
     const interjectMatch = line.match(
       /\[INTERJECT:\s*(.+?),\s*Priority:\s*(\d+),\s*Reason:\s*"(.+?)"\]/i,
@@ -104,18 +82,7 @@ export async function checkForInterjections(
   return interjections;
 }
 
-async function resolveInterjection(
-  ij: Interjection,
-  currentSpeakerId: string,
-  round: Round,
-  participants: ParticipantState[],
-  client: Client,
-  directory: string,
-  promptFn: PromptFn,
-  getHighestTierModel: () => { providerID: string; modelID: string },
-  isAborted: () => boolean,
-  updateMetadata: (extra: Record<string, any>) => Promise<void>,
-): Promise<"continued" | "broken"> {
+async function resolveInterjection(ij, currentSpeakerId, round, participants, client, directory, promptFn, getHighestTierModel, isAborted, updateMetadata) {
   const interjector = participants.find((p) => p.config.id === ij.participant_id);
   const currentSpeaker = participants.find((p) => p.config.id === currentSpeakerId);
 
@@ -187,7 +154,7 @@ State your interjection now. Be direct and under 200 words.`;
 
     try {
       const result = await promptFn(systemPrompt, model, userPrompt);
-      const contribution: Contribution = {
+      const contribution = {
         participant_id: interjector.config.id,
         content: result.replace(/^\[(\w+)\]\s*/, ""),
         type: "interjection",
@@ -205,13 +172,7 @@ State your interjection now. Be direct and under 200 words.`;
   return "continued";
 }
 
-async function checkPushback(
-  speaker: ParticipantState,
-  ij: Interjection,
-  interjectorName: string,
-  lastContribution: string,
-  promptFn: PromptFn,
-): Promise<"yield" | "contest_wins" | "contest_loses" | "tiebreaker"> {
+async function checkPushback(speaker, ij, interjectorName, lastContribution, promptFn) {
   const model = splitModel(speaker.tier_config.model);
   const prompt = buildPushbackPrompt(speaker, interjectorName, ij.priority, lastContribution);
 
@@ -238,13 +199,7 @@ async function checkPushback(
   }
 }
 
-async function moderatorTiebreaker(
-  speaker: ParticipantState,
-  interjector: ParticipantState,
-  ij: Interjection,
-  promptFn: PromptFn,
-  getHighestTierModel: () => { providerID: string; modelID: string },
-): Promise<"speaker_wins" | "interjector_wins"> {
+async function moderatorTiebreaker(speaker, interjector, ij, promptFn, getHighestTierModel) {
   const { buildModeratorPrompt } = await import("./prompts.js");
   const situation = `Two participants claim equal priority (${ij.priority}):
 - **${speaker.config.name}** (${speaker.config.tier}) is currently speaking

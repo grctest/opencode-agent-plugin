@@ -1,7 +1,4 @@
-import { z } from "zod";
-import type { ContributionType } from "./types.js";
-
-const ContributionTypeSchema = z.enum([
+const VALID_TYPES = new Set([
   "propose",
   "challenge",
   "refine",
@@ -12,26 +9,15 @@ const ContributionTypeSchema = z.enum([
   "interjection",
 ]);
 
-const InterjectionSchema = z.object({
-  priority: z.number().int().min(1).max(10),
-  reason: z.string().min(1).max(500),
-});
+/**
+ * @typedef {Object} ValidatedAgentResponse
+ * @property {string} participant_id
+ * @property {string} content
+ * @property {import("./types.js").ContributionType} type
+ * @property {{ priority: number; reason: string } | null} interjection
+ */
 
-const AgentResponseSchema = z.object({
-  participant_id: z.string(),
-  content: z.string(),
-  type: ContributionTypeSchema,
-  interjection: InterjectionSchema.nullable(),
-});
-
-export interface ValidatedAgentResponse {
-  participant_id: string;
-  content: string;
-  type: ContributionType;
-  interjection: { priority: number; reason: string } | null;
-}
-
-const TYPE_PREFIXES: Record<string, ContributionType> = {
+const TYPE_PREFIXES = {
   "[PROPOSE]": "propose",
   "[CHALLENGE]": "challenge",
   "[REFINE]": "refine",
@@ -41,8 +27,31 @@ const TYPE_PREFIXES: Record<string, ContributionType> = {
   "[QUESTION]": "question",
 };
 
+function validateResponse(data) {
+  if (!data || typeof data !== "object") return null;
+  if (typeof data.participant_id !== "string") return null;
+  if (typeof data.content !== "string") return null;
+  if (!VALID_TYPES.has(data.type)) return null;
+  if (data.interjection !== null) {
+    const ij = data.interjection;
+    if (
+      typeof ij !== "object" ||
+      typeof ij.priority !== "number" ||
+      !Number.isInteger(ij.priority) ||
+      ij.priority < 1 ||
+      ij.priority > 10 ||
+      typeof ij.reason !== "string" ||
+      ij.reason.length < 1 ||
+      ij.reason.length > 500
+    ) {
+      return null;
+    }
+  }
+  return data;
+}
+
 /** Parses an agent's text response into a structured AgentResponse with type and optional interjection. */
-export function parseAgentResponse(participantId: string, response: string): ValidatedAgentResponse | null {
+export function parseAgentResponse(participantId, response) {
   const text = response.trim();
 
   if (!text || text.length < 3) {
@@ -53,7 +62,7 @@ export function parseAgentResponse(participantId: string, response: string): Val
     return { participant_id: participantId, content: "[PASS]", type: "propose", interjection: null };
   }
 
-  let type: ContributionType = "propose";
+  let type = "propose";
   let contentStart = 0;
 
   for (const [prefix, t] of Object.entries(TYPE_PREFIXES)) {
@@ -65,7 +74,7 @@ export function parseAgentResponse(participantId: string, response: string): Val
   }
 
   const rawContent = text.slice(contentStart).trim();
-  let interjection: { priority: number; reason: string } | null = null;
+  let interjection = null;
 
   const ijMatch = rawContent.match(
     /\[INTERJECT:\s*Priority:\s*(\d+),\s*Reason:\s*"([^"]+)"\]/i,
@@ -78,15 +87,15 @@ export function parseAgentResponse(participantId: string, response: string): Val
 
   const cleanContent = rawContent.replace(/\[INTERJECT:\s*Priority:\s*\d+,\s*Reason:\s*"[^"]*"\]/i, "").trim();
 
-  const result = AgentResponseSchema.safeParse({
+  const validated = validateResponse({
     participant_id: participantId,
     content: cleanContent,
     type,
     interjection,
   });
 
-  if (result.success) {
-    return result.data;
+  if (validated) {
+    return validated;
   }
 
   return {

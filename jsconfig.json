@@ -1,19 +1,18 @@
 {
   "compilerOptions": {
-    "target": "ES2025",
+    "target": "esnext",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "lib": ["ES2025", "DOM"],
-    "skipLibCheck": true,
-    "outDir": "./dist",
-    "rootDir": "./src",
+    "checkJs": true,
     "strict": true,
+    "noEmit": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
-    "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "jsx": "automatic",
+    "jsxImportSource": "react",
+    "skipLibCheck": true
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]

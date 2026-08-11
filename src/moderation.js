@@ -1,21 +1,20 @@
-import type { ParticipantState, Round } from "./types.js";
 import { buildModeratorPrompt } from "./prompts.js";
 
-export interface ModeratorRuling {
-  decision: string;
-  next_speaker: string;
-  reason: string;
-}
+/**
+ * @typedef {Object} ModeratorRuling
+ * @property {string} decision
+ * @property {string} next_speaker
+ * @property {string} reason
+ */
 
-export interface ModeratorDecision {
-  action: "continue" | "break" | "converge";
-  nextSpeakerIdx: number;
-}
-
-type PromptFn = (system: string, model: { providerID: string; modelID: string }, message: string) => Promise<string>;
+/**
+ * @typedef {Object} ModeratorDecision
+ * @property {"continue" | "break" | "converge"} action
+ * @property {number} nextSpeakerIdx
+ */
 
 /** Parses a moderator's free-text ruling into structured fields (decision, next_speaker, reason). */
-export function parseModeratorRuling(text: string): ModeratorRuling {
+export function parseModeratorRuling(text) {
   const lines = text.split("\n");
   let decision = "";
   let next_speaker = "continue";
@@ -47,15 +46,7 @@ export function parseModeratorRuling(text: string): ModeratorRuling {
  * Checks if moderator intervention is needed (circular arguments) and obtains a ruling.
  * Returns an action: continue, break (redirect to specific speaker), or converge (end meeting).
  */
-export async function checkModeratorIntervention(
-  round: Round,
-  participants: ParticipantState[],
-  weft: Array<{ content: string }>,
-  currentRound: number,
-  maxRounds: number,
-  promptFn: PromptFn,
-  getHighestTierModel: () => { providerID: string; modelID: string },
-): Promise<ModeratorDecision> {
+export async function checkModeratorIntervention(round, participants, weft, currentRound, maxRounds, promptFn, getHighestTierModel) {
   if (round.contributions.length < 6) {
     return { action: "continue", nextSpeakerIdx: -1 };
   }

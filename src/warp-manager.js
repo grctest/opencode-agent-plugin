@@ -1,9 +1,7 @@
-import type { Round, TranscriptData } from "./types.js";
-
 const MAX_WARP_CHARS = 12000;
 
 /** Appends a round summary to the warp context, compacting if it exceeds MAX_WARP_CHARS. */
-export function evolveWarp(warp: string, round: Round): string {
+export function evolveWarp(warp, round) {
   if (!round.summary) return warp;
 
   const summaryText = `\n\n### Round ${round.number}\n${round.summary}`;
@@ -17,7 +15,7 @@ export function evolveWarp(warp: string, round: Round): string {
 }
 
 /** Rule-based fallback compaction: extracts key points from contributions. */
-function compactWarp(currentWarp: string, newSummary: string, round: Round): string {
+function compactWarp(currentWarp, newSummary, round) {
   const keyPoints = round.contributions
     .filter((c) => c.type === "propose" || c.type === "refine" || c.type === "support")
     .slice(0, 3)
@@ -39,12 +37,7 @@ ${newSummary}`;
 }
 
 /** LLM-based compaction: compresses warp context into key facts, falling back to rule-based. */
-export async function compactWarpWithLLM(
-  warp: string,
-  round: Round,
-  promptFn: (system: string, model: { providerID: string; modelID: string }, message: string) => Promise<string>,
-  model: { providerID: string; modelID: string },
-): Promise<string> {
+export async function compactWarpWithLLM(warp, round, promptFn, model) {
   if (!round.summary) return warp;
 
   const summaryText = `\n\n### Round ${round.number}\n${round.summary}`;
@@ -76,16 +69,13 @@ Compressed context:`;
 }
 
 /** Estimates character count (proxy for token count). */
-export function estimateChars(text: string): number {
+export function estimateChars(text) {
   return text.length;
 }
 
 /** Formats the full deliberation transcript for synthesis. */
-export function formatTranscript(
-  rounds: Round[],
-  participants: Array<{ config: { id: string; name: string; tier: string } }>,
-): string {
-  const lines: string[] = [];
+export function formatTranscript(rounds, participants) {
+  const lines = [];
 
   for (const round of rounds) {
     lines.push(`### Round ${round.number}`);
@@ -119,11 +109,8 @@ export function formatTranscript(
 }
 
 /** Formats transcript data from the database into a string for the synthesizer. */
-export function formatTranscriptFromData(
-  data: TranscriptData,
-  participants: Array<{ config: { id: string; name: string; tier: string } }>,
-): string {
-  const lines: string[] = [];
+export function formatTranscriptFromData(data, participants) {
+  const lines = [];
 
   for (const round of data.rounds) {
     lines.push(`### Round ${round.number}`);

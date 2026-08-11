@@ -1,11 +1,10 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ParticipantConfig, RoomRecommendation, Persona, Tier } from "./types.js";
 
 const __dirname = dirname(fileURLToPath(new URL(".", import.meta.url)));
 
-function personasBasePath(): string {
+function personasBasePath() {
   const candidates = [
     join(__dirname, "..", "personas", "loom"),
     join(__dirname, "..", "personas"),
@@ -20,16 +19,16 @@ function personasBasePath(): string {
   return candidates[0];
 }
 
-function loadPersonas(): Record<string, Persona[]> {
+function loadPersonas() {
   const tiers = ["junior", "mid", "senior", "principal"];
-  const result: Record<string, Persona[]> = {};
+  const result = {};
   const base = personasBasePath();
 
   for (const tier of tiers) {
     try {
       const path = join(base, `${tier}.json`);
       const data = readFileSync(path, "utf-8");
-      result[tier] = JSON.parse(data) as Persona[];
+      result[tier] = JSON.parse(data);
     } catch {
       result[tier] = [];
     }
@@ -38,11 +37,11 @@ function loadPersonas(): Record<string, Persona[]> {
   return result;
 }
 
-function loadDomainKeywords(): Record<string, string[]> {
+function loadDomainKeywords() {
   try {
     const path = join(personasBasePath(), "domains.json");
     const data = readFileSync(path, "utf-8");
-    return JSON.parse(data) as Record<string, string[]>;
+    return JSON.parse(data);
   } catch {
     return {};
   }
@@ -51,13 +50,13 @@ function loadDomainKeywords(): Record<string, string[]> {
 const ALL_PERSONAS = loadPersonas();
 const DOMAIN_KEYWORDS = loadDomainKeywords();
 
-function escapeRegExp(str: string): string {
+function escapeRegExp(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function detectDomains(question: string): string[] {
+function detectDomains(question) {
   const q = question.toLowerCase();
-  const domainScores: Array<{ domain: string; score: number }> = [];
+  const domainScores = [];
 
   for (const [domain, keywords] of Object.entries(DOMAIN_KEYWORDS)) {
     let score = 0;
@@ -77,7 +76,7 @@ function detectDomains(question: string): string[] {
   return domainScores.map((d) => d.domain);
 }
 
-function pickPersona(tier: Tier, used: Set<string>, domains: string[]): ParticipantConfig | null {
+function pickPersona(tier, used, domains) {
   const pool = ALL_PERSONAS[tier] ?? [];
   if (pool.length === 0) return null;
 
@@ -127,8 +126,8 @@ function pickPersona(tier: Tier, used: Set<string>, domains: string[]): Particip
   };
 }
 
-function generateRoles(count: number, domains: string[]): string[] {
-  const roles: string[] = [];
+function generateRoles(count, domains) {
+  const roles = [];
   const isFinancial = domains.includes("finance");
   const isTechnical = domains.includes("engineering");
   const isCreative = domains.includes("creative");
@@ -167,10 +166,10 @@ function generateRoles(count: number, domains: string[]): string[] {
   return roles.slice(0, count);
 }
 
-export function composeRoom(question: string, desiredCount?: number): RoomRecommendation {
+export function composeRoom(question, desiredCount) {
   const domains = detectDomains(question);
-  const used = new Set<string>();
-  const participants: ParticipantConfig[] = [];
+  const used = new Set();
+  const participants = [];
 
   const defaultCount = desiredCount ?? (domains.length > 0 ? 4 : 3);
   const count = Math.max(2, Math.min(7, defaultCount));
@@ -192,7 +191,7 @@ export function composeRoom(question: string, desiredCount?: number): RoomRecomm
   };
 }
 
-export function formatRoomPreview(room: RoomRecommendation): string {
+export function formatRoomPreview(room) {
   const lines = [
     "## Proposed Deliberation Room",
     "",

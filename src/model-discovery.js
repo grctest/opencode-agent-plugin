@@ -1,29 +1,32 @@
-export interface AvailableModel {
-  providerID: string;
-  modelID: string;
-  name: string;
-  status: string;
-  cost: { input: number; output: number; cache_read?: number; cache_write?: number };
-  limit: { context: number; output: number };
-  reasoning: boolean;
-  temperature: boolean;
-}
+/**
+ * @typedef {Object} AvailableModel
+ * @property {string} providerID
+ * @property {string} modelID
+ * @property {string} name
+ * @property {string} status
+ * @property {{ input: number; output: number; cache_read?: number; cache_write?: number }} cost
+ * @property {{ context: number; output: number }} limit
+ * @property {boolean} reasoning
+ * @property {boolean} temperature
+ */
 
-export interface ModelAssignment {
-  tier: string;
-  providerID: string;
-  modelID: string;
-  modelName: string;
-}
+/**
+ * @typedef {Object} ModelAssignment
+ * @property {string} tier
+ * @property {string} providerID
+ * @property {string} modelID
+ * @property {string} modelName
+ */
 
-export interface ModelPlan {
-  orchestrator: ModelAssignment;
-  participants: ModelAssignment[];
-  available: AvailableModel[];
-}
+/**
+ * @typedef {Object} ModelPlan
+ * @property {ModelAssignment} orchestrator
+ * @property {ModelAssignment[]} participants
+ * @property {AvailableModel[]} available
+ */
 
 /** Scores a model for auto-selection: prefers free, active, high-context, reasoning-capable models. */
-function scoreModel(model: AvailableModel): number {
+function scoreModel(model) {
   let score = 0;
 
   if (model.cost.input === 0 && model.cost.output === 0) {
@@ -44,18 +47,18 @@ function scoreModel(model: AvailableModel): number {
 }
 
 /** Sorts models by quality score (highest first). */
-function sortModelsByQuality(models: AvailableModel[]): AvailableModel[] {
+function sortModelsByQuality(models) {
   return [...models].sort((a, b) => scoreModel(b) - scoreModel(a));
 }
 
 /** Assigns the best available models to each role, prioritizing principal > senior > mid > junior. */
-export function selectModelsForRoles(available: AvailableModel[], roles: string[]): ModelAssignment[] {
+export function selectModelsForRoles(available, roles) {
   const sorted = sortModelsByQuality(available);
   const free = sorted.filter((m) => m.cost.input === 0 && m.cost.output === 0);
   const candidates = free.length >= roles.length ? free : sorted;
 
-  const assignments: ModelAssignment[] = [];
-  const usedIndices = new Set<number>();
+  const assignments = [];
+  const usedIndices = new Set();
 
   const priorityOrder = ["principal", "senior", "mid", "junior"];
   const sortedRoles = [...roles].sort(
@@ -81,7 +84,7 @@ export function selectModelsForRoles(available: AvailableModel[], roles: string[
 }
 
 /** Formats the model assignment plan as a markdown table for user review. */
-export function formatModelPlan(plan: ModelPlan): string {
+export function formatModelPlan(plan) {
   const lines = [
     "## Proposed Model Assignment",
     "",
@@ -108,7 +111,7 @@ export function formatModelPlan(plan: ModelPlan): string {
 }
 
 /** Formats the cost of a model assignment for display. */
-function formatCost(assignment: ModelAssignment, available: AvailableModel[]): string {
+function formatCost(assignment, available) {
   const model = available.find(
     (m) => m.providerID === assignment.providerID && m.modelID === assignment.modelID,
   );
@@ -118,26 +121,27 @@ function formatCost(assignment: ModelAssignment, available: AvailableModel[]): s
 }
 
 /** Creates a complete model plan: selects models for each role and designates the orchestrator. */
-export function createModelPlan(available: AvailableModel[], roles?: string[]): ModelPlan {
+export function createModelPlan(available, roles) {
   const defaultRoles = ["junior", "mid", "senior", "principal"];
   const participants = selectModelsForRoles(available, roles ?? defaultRoles);
   const orchestrator = participants.find((p) => p.tier === "mid") || participants[0];
   return { orchestrator, participants, available };
 }
 
-let storedPlan: ModelAssignment[] | null = null;
+/** @type {ModelAssignment[] | null} */
+let storedPlan = null;
 
 /** Stores a model plan for auto-application in the next `knit` invocation. */
-export function storeModelPlan(plan: ModelAssignment[]): void {
+export function storeModelPlan(plan) {
   storedPlan = plan;
 }
 
 /** Retrieves the previously stored model plan (if any). */
-export function getStoredModelPlan(): ModelAssignment[] | null {
+export function getStoredModelPlan() {
   return storedPlan;
 }
 
 /** Clears the stored model plan. */
-export function clearStoredModelPlan(): void {
+export function clearStoredModelPlan() {
   storedPlan = null;
 }

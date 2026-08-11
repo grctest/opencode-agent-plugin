@@ -1,48 +1,29 @@
 import { tool } from "@opencode-ai/plugin";
-import type { Plugin } from "@opencode-ai/plugin";
 import { LoomEngine } from "./loom-engine.js";
 import { composeRoom, formatRoomPreview } from "./composer.js";
-import type { AgentSessionClient } from "./client-types.js";
 import { isAgentSessionClient } from "./client-types.js";
-import type { ParticipantConfig, Tier } from "./types.js";
-import { createModelPlan, formatModelPlan, getStoredModelPlan, storeModelPlan } from "./model-discovery.js";
-import type { AvailableModel, ModelAssignment } from "./model-discovery.js";
-import { cleanupOrphanDatabases, deleteMeetingFiles, listMeetingFiles, readSessionIdFromDb } from "./database.js";
-import { join } from "node:path";
+import { createModelPlan, formatModelPlan } from "./model-discovery.js";
+import { deleteMeetingFiles, findMeetingBySessionId, getDbPathForMeeting } from "./database.js";
+import { startDashboard } from "./dashboard/server.js";
 
-export const Loom: Plugin = async (input) => {
+export const Loom = async (input) => {
   const { client, directory } = input;
 
   if (!isAgentSessionClient(client)) {
     throw new Error("Loom plugin requires a compatible opencode client with session.create, session.prompt, session.message, and provider API access.");
   }
 
-  const activeLooms = new Map<string, LoomEngine>();
-  const sessionDatabases = new Map<string, Set<string>>();
-  let pendingModels: ModelAssignment[] | null = null;
+  const activeLooms = new Map();
+  const sessionDatabases = new Map();
+  let activeDashboard = null;
+  let pendingModels = null;
 
-  try {
-    const sessionsRes = await (client as any).session.list({ query: { directory } });
-    const activeIds: Set<string> = new Set(
-      (sessionsRes?.data ?? []).map((s: any) => s.id as string)
-    );
-    const cleaned = cleanupOrphanDatabases(directory, activeIds);
-    if (cleaned > 0) {
-      console.log(`[loom] Cleaned up ${cleaned} orphaned meeting database(s)`);
-    }
-  } catch {
-    // Non-critical: orphan cleanup is best-effort
-  }
-
-  async function discoverModels(sessionID: string): Promise<{
-    available: AvailableModel[];
-    sessionModel: { providerID: string; modelID: string } | null;
-  }> {
-    const available: AvailableModel[] = [];
-    let sessionModel: { providerID: string; modelID: string } | null = null;
+  async function discoverModels(sessionID) {
+    const available = [];
+    let sessionModel = null;
 
     try {
-      const sessionResult = await (client as any).session.get({
+      const sessionResult = await client.session.get({
         path: { id: sessionID },
         query: { directory },
       });
@@ -57,13 +38,13 @@ export const Loom: Plugin = async (input) => {
     }
 
     try {
-      const fn = (client as any).provider?.providers ?? (client as any).provider?.list;
+      const fn = client.provider?.providers ?? client.provider?.list;
       if (typeof fn !== "function") return { available, sessionModel };
 
-      const result = await fn.call((client as any).provider, { query: { directory } });
+      const result = await fn.call(client.provider, { query: { directory } });
       const data = result?.data ?? result ?? {};
       const providers = data.providers ?? data.all ?? [];
-      const connected: string[] = data.connected ?? [];
+      const connected = data.connected ?? [];
 
       for (const provider of providers) {
         const isConnected = connected.length === 0 || connected.includes(provider.id);
@@ -71,7 +52,7 @@ export const Loom: Plugin = async (input) => {
 
         const models = provider.models || {};
         for (const [key, model] of Object.entries(models)) {
-          const m = model as any;
+          const m = model;
           if (m.status === "deprecated") continue;
           available.push({
             providerID: provider.id,
@@ -104,11 +85,7 @@ export const Loom: Plugin = async (input) => {
     return { available, sessionModel };
   }
 
-  function assignModelsToParticipants(
-    participants: ParticipantConfig[],
-    available: AvailableModel[],
-    sessionModel: { providerID: string; modelID: string } | null,
-  ): ParticipantConfig[] {
+  function assignModelsToParticipants(participants, available, sessionModel) {
     if (available.length === 0) return participants;
 
     const tiers = [...new Set(participants.map((p) => p.tier))];
@@ -117,7 +94,7 @@ export const Loom: Plugin = async (input) => {
       (a, b) => priorityOrder.indexOf(a) - priorityOrder.indexOf(b),
     );
 
-    let assignments: ModelAssignment[];
+    let assignments;
     if (available.length === 1 || !sessionModel) {
       assignments = sortedTiers.map((tier) => {
         const m = available[0];
@@ -125,7 +102,7 @@ export const Loom: Plugin = async (input) => {
       });
     } else {
       const sessionIdx = available.findIndex(
-        (m) => m.providerID === sessionModel!.providerID && m.modelID === sessionModel!.modelID,
+        (m) => m.providerID === sessionModel.providerID && m.modelID === sessionModel.modelID,
       );
       const topModel = sessionIdx >= 0 ? available[sessionIdx] : available[0];
       const lowerModels = available.filter((_, i) => i !== sessionIdx);
@@ -140,7 +117,7 @@ export const Loom: Plugin = async (input) => {
       });
     }
 
-    const modelMap = new Map<string, { providerID: string; modelID: string }>();
+    const modelMap = new Map();
     for (const a of assignments) {
       modelMap.set(a.tier, { providerID: a.providerID, modelID: a.modelID });
     }
@@ -237,15 +214,81 @@ export const Loom: Plugin = async (input) => {
 
           const { available, sessionModel } = await discoverModels(sessionID);
 
-          let participants: ParticipantConfig[];
+          const existingMeeting = await findMeetingBySessionId(directory, sessionID);
 
-          const modelMap = new Map<string, { providerID: string; modelID: string }>();
+          if (existingMeeting && args.extend !== false) {
+            const extDbPath = getDbPathForMeeting(directory, existingMeeting.meetingId);
+            if (extDbPath) {
+              const { Database: DBClass } = await import("bun:sqlite");
+              const dbConn = new DBClass(extDbPath);
+              try {
+                const existingParts = dbConn.prepare(
+                  `SELECT id, name, persona, agenda, tier, provider_id, model_id FROM participants ORDER BY tier ASC`
+                ).all();
+                dbConn.close();
+                const extEngine = new LoomEngine(
+                  client, directory, context.metadata,
+                  {
+                    question: existingMeeting.question,
+                    context: args.context ?? "No additional context provided.",
+                    parentSessionId: sessionID,
+                    opencodeSessionId: sessionID,
+                    participants: existingParts.map((p) => ({
+                      id: p.id, name: p.name, persona: p.persona, agenda: p.agenda, tier: p.tier,
+                      model: { providerID: p.provider_id, modelID: p.model_id },
+                    })),
+                    maxRounds: existingMeeting.max_rounds,
+                    convergence: args.convergence ?? "moderator_forces",
+                    onContribution: (name, round, type) => {
+                      context.metadata({ title: `Loom R${round}: ${name} (${type})`, metadata: { loom_last_contributor: name, loom_last_type: type, loom_round: round } });
+                    },
+                    onRoundComplete: (round, summary) => {
+                      context.metadata({ title: `Loom: Round ${round} complete`, metadata: { loom_round: round, loom_round_summary: summary.slice(0, 200) } });
+                    },
+                    onSynthesisStart: () => {
+                      context.metadata({ title: "Loom: Synthesizing final output...", metadata: { loom_status: "synthesizing" } });
+                    },
+                    onSynthesisComplete: (output) => {
+                      context.metadata({ title: "Loom: Synthesis complete", metadata: { loom_status: "synthesis_complete", loom_output_preview: output.slice(0, 200) } });
+                    },
+                  },
+                );
+                activeLooms.set(loomId, extEngine);
+                const extDbPathFull = join(directory, ".opencode", "loom", "meetings", `${existingMeeting.meetingId}.db`);
+                if (!sessionDatabases.has(sessionID)) {
+                  sessionDatabases.set(sessionID, new Set());
+                }
+                sessionDatabases.get(sessionID).add(extDbPathFull);
+                try {
+                  await extEngine.initialize();
+                  const artifact = await extEngine.extendMeeting(args.question);
+                  activeLooms.delete(loomId);
+                  const extState = extEngine.getState();
+                  return {
+                    title: `Loom Extended — ${extState.current_round} rounds`,
+                    output: `# Loom Deliberation (Extended)\n\n**Original Question:** ${existingMeeting.question}\n\n**New Input:** ${args.question}\n\n**Participants:** ${existingParts.map((p) => `${p.name} (${p.tier})`).join(", ")}\n\n**Total Rounds:** ${extState.current_round}\n\n**Meeting ID:** ${extEngine.getMeetingId()}\n\n---\n\n${artifact}`,
+                    metadata: { loom_id: loomId, meeting_id: extEngine.getMeetingId(), loom_status: extState.status, loom_rounds: extState.current_round, loom_extended: true, loom_participants: existingParts.map((p) => `${p.name} (${p.tier})`).join(", ") },
+                  };
+                } catch (extErr) {
+                  activeLooms.delete(loomId);
+                  throw extErr;
+                }
+              } catch (extErr) {
+                const extMsg = extErr instanceof Error ? extErr.message : String(extErr);
+                return { title: "Loom Extension Error", output: `Could not extend the existing loom: ${extMsg}\n\nTry starting a fresh loom with a new chat session.`, metadata: { loom_id: loomId, loom_status: "error" } };
+              }
+            }
+          }
+
+          let participants;
+
+          const modelMap = new Map();
           const explicitModels = args.models ?? pendingModels;
           if (explicitModels && explicitModels.length > 0) {
             for (const m of explicitModels) {
               const tier = m.tier;
-              const providerId = "provider_id" in m ? m.provider_id : (m as any).providerID;
-              const modelId = "model_id" in m ? m.model_id : (m as any).modelID;
+              const providerId = "provider_id" in m ? m.provider_id : m.providerID;
+              const modelId = "model_id" in m ? m.model_id : m.modelID;
               modelMap.set(tier, { providerID: providerId, modelID: modelId });
             }
             pendingModels = null;
@@ -257,7 +300,7 @@ export const Loom: Plugin = async (input) => {
               name: p.name,
               persona: p.persona,
               agenda: p.agenda,
-              tier: p.tier as Tier,
+              tier: p.tier,
               model: modelMap.get(p.tier),
             }));
           } else if (args.auto_compose !== false) {
@@ -350,7 +393,7 @@ export const Loom: Plugin = async (input) => {
           if (!sessionDatabases.has(sessionID)) {
             sessionDatabases.set(sessionID, new Set());
           }
-          sessionDatabases.get(sessionID)!.add(dbPath);
+          sessionDatabases.get(sessionID).add(dbPath);
 
           try {
             await engine.initialize();
@@ -373,7 +416,7 @@ export const Loom: Plugin = async (input) => {
                   .join(", "),
               },
             };
-          } catch (err: unknown) {
+          } catch (err) {
             activeLooms.delete(loomId);
             const message =
               err instanceof Error ? err.message : String(err);
@@ -397,7 +440,7 @@ export const Loom: Plugin = async (input) => {
         args: {
           loom_id: tool.schema.string().describe("The ID of the Loom session to check"),
         },
-        execute: async (args, _context): Promise<string> => {
+        execute: async (args, _context) => {
           const engine = activeLooms.get(args.loom_id);
           if (!engine) {
             return "No active Loom found with that ID.";
@@ -407,10 +450,69 @@ export const Loom: Plugin = async (input) => {
         },
       }),
 
+      loom_viz: tool({
+        description:
+          "Start the Loom deliberation dashboard server. " +
+          "Provides a web UI to visualize deliberation progress in real-time. " +
+          "The dashboard watches for new meetings and auto-switches to the most recent one.",
+        args: {
+          port: tool
+            .schema
+            .number()
+            .int()
+            .min(1024)
+            .max(65535)
+            .optional()
+            .describe("Port number for the dashboard server. Default: 3210"),
+        },
+        execute: async (args, context) => {
+          const port = args.port ?? 3210;
+
+          if (activeDashboard) {
+            return [
+              "Dashboard already running!",
+              `Open: http://localhost:${activeDashboard.port}`,
+              "Run /loom_stop to stop the current dashboard first.",
+            ].join("\n");
+          }
+
+          try {
+            const dashboard = startDashboard(directory, port);
+            activeDashboard = dashboard;
+            return [
+              "Dashboard started!",
+              "",
+              "Open in browser:",
+              `http://localhost:${dashboard.port}`,
+              "",
+              "The dashboard auto-detects new meetings and refreshes every 2 seconds.",
+              "Run /loom_stop when done to free the port.",
+            ].join("\n");
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            return `Failed to start dashboard: ${message}`;
+          }
+        },
+      }),
+
+      loom_stop: tool({
+        description: "Stop the running Loom dashboard server and free the port.",
+        args: {},
+        execute: async () => {
+          if (!activeDashboard) {
+            return "No dashboard is currently running.";
+          }
+          const port = activeDashboard.port;
+          activeDashboard.stop();
+          activeDashboard = null;
+          return `Dashboard stopped (was running on port ${port}).`;
+        },
+      }),
+
       knit_models: tool({
         description: "Discover available models in your opencode session and propose tier assignments.",
         args: {},
-        execute: async (_args, ctx): Promise<string> => {
+        execute: async (_args, ctx) => {
           try {
             const sessionID = ctx.sessionID;
             const { available, sessionModel } = await discoverModels(sessionID);
@@ -427,7 +529,7 @@ export const Loom: Plugin = async (input) => {
               output += `\n\n**Session model:** ${sessionModel.providerID}/${sessionModel.modelID} (used as default for top tiers)`;
             }
             return output;
-          } catch (err: unknown) {
+          } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             return `Model discovery failed: ${message}`;
           }
@@ -438,7 +540,7 @@ export const Loom: Plugin = async (input) => {
       if (event.type === "session.deleted") {
         const deletedId = event.properties?.info?.id;
         if (deletedId && sessionDatabases.has(deletedId)) {
-          const dbPaths = sessionDatabases.get(deletedId)!;
+          const dbPaths = sessionDatabases.get(deletedId);
           for (const dbPath of dbPaths) {
             deleteMeetingFiles(dbPath);
           }
@@ -458,9 +560,5 @@ export {
   getPromptForTier,
   getRightsForTier,
 } from "./tiers.js";
-export type {
-  Tier,
-  TierConfig,
-  ParticipantConfig,
-  LoomState,
-} from "./types.js";
+
+import { join } from "node:path";

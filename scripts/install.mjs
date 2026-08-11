@@ -171,6 +171,21 @@ function installFiles(opencodeDir) {
     }
     logInfo(`  Installed personas → ${personasTargetDir}`);
   }
+
+  // Copy dashboard assets
+  const dashboardSrcDir = join(PROJECT_ROOT, "dist", "dashboard");
+  const dashboardTargetDir = join(opencodeDir, "plugins", "loom", "dashboard");
+  if (existsSync(dashboardSrcDir)) {
+    if (existsSync(dashboardTargetDir)) {
+      rmSync(dashboardTargetDir, { recursive: true });
+    }
+    mkdirSync(dashboardTargetDir, { recursive: true });
+    const dashboardFiles = readdirSync(dashboardSrcDir);
+    for (const file of dashboardFiles) {
+      cpSync(join(dashboardSrcDir, file), join(dashboardTargetDir, file));
+    }
+    logInfo(`  Installed dashboard → ${dashboardTargetDir}`);
+  }
 }
 
 function isLoomCommand(filename) {

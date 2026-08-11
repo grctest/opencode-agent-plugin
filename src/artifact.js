@@ -1,29 +1,19 @@
-import type { Artifact, Objection, ParticipantState, Contribution, Round, PromptFn } from "./types.js";
 import { buildSynthesisPrompt } from "./prompts.js";
 import { formatTranscript } from "./warp-manager.js";
 import { splitModel } from "./tiers.js";
 
 /** Generates the final deliberation artifact by prompting the synthesizer agent. */
-export async function generateArtifact(
-  question: string,
-  rounds: Round[],
-  weft: Contribution[],
-  participants: ParticipantState[],
-  objections: Objection[],
-  currentRound: number,
-  synthesizer: ParticipantState,
-  promptFn: PromptFn,
-): Promise<{ artifact: Artifact; output: string }> {
+export async function generateArtifact(question, rounds, weft, participants, objections, currentRound, synthesizer, promptFn) {
   const transcript = formatTranscript(rounds, participants);
   const systemPrompt = `You are ${synthesizer.config.name} (${synthesizer.config.tier}). Your role is to synthesize the final deliberation output.
 
 ${synthesizer.tier_config.system_prompt_addendum}`;
   const userPrompt = buildSynthesisPrompt(question, transcript, participants);
 
-  let artifactText: string;
+  let artifactText;
   try {
     artifactText = await promptFn(systemPrompt, splitModel(synthesizer.tier_config.model), userPrompt);
-  } catch (err: unknown) {
+  } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     artifactText = `# Deliberation Output\n\nThe deliberation completed with ${weft.length} contributions across ${currentRound} rounds.\n\nSynthesis failed: ${message}\n\n## Raw Transcript\n${transcript}`;
   }
@@ -36,7 +26,7 @@ ${synthesizer.tier_config.system_prompt_addendum}`;
 
   const confidence = deriveConfidence(weft, unresolvedObjections.length);
 
-  const artifact: Artifact = {
+  const artifact = {
     content: finalOutput,
     format: "markdown",
     decisions: extractSection(finalOutput, "Decision"),
@@ -50,10 +40,7 @@ ${synthesizer.tier_config.system_prompt_addendum}`;
 }
 
 /** Derives a confidence level (high/medium/low) based on dissent count and challenge ratio. */
-export function deriveConfidence(
-  weft: Contribution[],
-  dissentCount: number,
-): "high" | "medium" | "low" {
+export function deriveConfidence(weft, dissentCount) {
   const totalContribs = weft.length;
   const challengeRatio =
     weft.filter((c) => c.type === "challenge" || c.type === "dissent").length /
@@ -65,9 +52,9 @@ export function deriveConfidence(
 }
 
 /** Extracts list items from a named section of a markdown document. */
-export function extractSection(text: string, sectionName: string): string[] {
+export function extractSection(text, sectionName) {
   const lines = text.split("\n");
-  const results: string[] = [];
+  const results = [];
   let inSection = false;
   let paragraph = "";
 
