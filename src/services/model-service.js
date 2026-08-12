@@ -1,4 +1,5 @@
-import { createModelPlan, formatModelPlan } from "../model-discovery.js";
+import { assignModelsByTier } from "../model-discovery.js";
+import { Logger, extractErrorInfo } from "../logger.js";
 
 export async function discoverModels(client, directory, sessionID) {
   const available = [];
@@ -17,7 +18,8 @@ export async function discoverModels(client, directory, sessionID) {
       };
     }
   } catch (err) {
-    console.warn(`[Loom] Failed to fetch session model: ${err instanceof Error ? err.message : String(err)}`);
+    const info = extractErrorInfo(err);
+    new Logger().warn("session_model_fetch_failed", "Failed to fetch session model", info);
   }
 
   try {
@@ -50,7 +52,8 @@ export async function discoverModels(client, directory, sessionID) {
       }
     }
   } catch (err) {
-    console.warn(`[Loom] Provider discovery failed: ${err instanceof Error ? err.message : String(err)}`);
+    const info = extractErrorInfo(err);
+    new Logger().warn("provider_discovery_failed", "Provider discovery failed", info);
   }
 
   if (available.length === 0 && sessionModel) {
@@ -73,33 +76,7 @@ export function assignModelsToParticipants(participants, available, sessionModel
   if (available.length === 0) return participants;
 
   const tiers = [...new Set(participants.map((p) => p.tier))];
-  const priorityOrder = ["principal", "senior", "mid", "junior"];
-  const sortedTiers = [...tiers].sort(
-    (a, b) => priorityOrder.indexOf(a) - priorityOrder.indexOf(b),
-  );
-
-  let assignments;
-  if (available.length === 1 || !sessionModel) {
-    assignments = sortedTiers.map((tier) => {
-      const m = available[0];
-      return { tier, providerID: m.providerID, modelID: m.modelID, modelName: m.name };
-    });
-  } else {
-    const sessionIdx = available.findIndex(
-      (m) => m.providerID === sessionModel.providerID && m.modelID === sessionModel.modelID,
-    );
-    const topModel = sessionIdx >= 0 ? available[sessionIdx] : available[0];
-    const lowerModels = available.filter((_, i) => i !== sessionIdx);
-
-    assignments = sortedTiers.map((tier, i) => {
-      if (tier === "principal" || tier === "senior") {
-        return { tier, providerID: topModel.providerID, modelID: topModel.modelID, modelName: topModel.name };
-      }
-      const lowerIdx = Math.min(i, lowerModels.length - 1);
-      const m = lowerModels.length > 0 ? lowerModels[Math.max(0, lowerIdx)] : topModel;
-      return { tier, providerID: m.providerID, modelID: m.modelID, modelName: m.name };
-    });
-  }
+  const assignments = assignModelsByTier(available, sessionModel, tiers);
 
   const modelMap = new Map();
   for (const a of assignments) {
@@ -120,15 +97,4 @@ export function getHighestTierModel(participants) {
   const firstWithModel = participants.find((p) => p.model);
   if (firstWithModel?.model) return { providerID: firstWithModel.model.providerID, modelID: firstWithModel.model.modelID };
   return null;
-}
-
-export async function promptParent(client, directory, sessionId, system, model, message) {
-  const result = await client.session.prompt({
-    path: { id: sessionId },
-    body: { system, model, tools: {}, parts: [{ type: "text", text: message }] },
-    query: { directory },
-  });
-  if (result.error) throw new Error(JSON.stringify(result.error));
-  const parts = result.data?.parts ?? [];
-  return parts.filter((p) => p.type === "text").map((p) => p.text).join("\n");
 }

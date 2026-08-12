@@ -1,17 +1,19 @@
-import { getTierConfig, splitModel } from "./shared.js";
+import { getTierConfig } from "./shared.js";
 import { buildAgentSystemPrompt, buildAgentUserPrompt } from "./prompts.js";
 import { getConfig } from "./config.js";
 import { checkModeratorIntervention } from "./moderation.js";
 import { formatInterjectionNotes } from "./interjection-resolver.js";
 import { evolveWarp, generateRoundBriefs, compactWarpWithLLM } from "./warp-manager.js";
-import { checkConvergence, checkSemanticConvergence } from "./convergence-checker.js";
-import { MeetingDatabase } from "./database.js";
+import { MeetingDatabase, indexMeeting } from "./database.js";
 import { RoundExecutor } from "./round-executor.js";
 import { SessionManager } from "./session-manager.js";
 import { SynthesisCoordinator } from "./synthesis-coordinator.js";
-import { truncate, LOOKBACK } from "./shared.js";
+import { truncate, LOOKBACK, parseReflections, parseStats } from "./shared.js";
 import { Logger, LoomError, extractErrorInfo } from "./logger.js";
-import { getDomainKeywords } from "./composer.js";
+import { detectDomainsWithLLM } from "./composer.js";
+import { getHighestTierModel } from "./services/model-service.js";
+import { summarizeRound } from "./round-summarizer.js";
+import { orchestrateConvergence } from "./convergence-orchestrator.js";
 
 export class MeetingOrchestrator {
   #meetingId;
@@ -21,7 +23,7 @@ export class MeetingOrchestrator {
   #directory;
   #parentSessionId;
   #database = null;
-  #parallel = true;
+  #turnMode;
   #roundExecutor = null;
   #cancelled = false;
   #startTime = 0;
@@ -30,14 +32,18 @@ export class MeetingOrchestrator {
   #synthesisCoordinator = null;
   #logger = null;
   #orchestratorMessages = [];
+  #nextSpeakerId = null;
+  #resume = false;
+  #callStats = { orchestrator: 0, domain: 0, compaction: 0, moderation: 0, summary: 0, convergence: 0, synthesis: 0 };
 
   constructor(options) {
-    this.#meetingId = crypto.randomUUID();
+    this.#meetingId = options.meetingId ?? crypto.randomUUID();
+    this.#resume = options.resume === true;
     this.#options = options;
     this.#client = options.client;
     this.#directory = options.directory;
     this.#parentSessionId = options.parentSessionId;
-    this.#parallel = options.parallel !== false;
+    this.#turnMode = options.turnMode ?? getConfig().turnMode ?? "sequential";
     this.#meetingTimeoutMs = options.meetingTimeoutMs ?? getConfig().defaultMeetingTimeoutMs;
 
     this.#logger = new Logger().forMeeting(this.#meetingId);
@@ -52,7 +58,7 @@ export class MeetingOrchestrator {
         tier_config: getTierConfig(p.tier),
         session_id: "",
         status: "listening",
-        reflection: "",
+        reflections: [],
         contributions_count: 0,
       })),
       warp: options.context,
@@ -66,6 +72,7 @@ export class MeetingOrchestrator {
       objections: [],
       convergence_mode: options.convergence,
       domain: options.domain ?? null,
+      next_contribution_id: 0,
     };
   }
 
@@ -90,14 +97,12 @@ export class MeetingOrchestrator {
     this.#logger.info("cancellation", "Loom cancelled by user");
   }
 
+  #modelList() {
+    return this.#state.participants.map((p) => ({ tier: p.config.tier, model: p.config.model }));
+  }
+
   #getHighestTierModel() {
-    for (const tier of ["principal", "senior", "mid", "junior"]) {
-      const p = this.#state.participants.find((pp) => pp.config.tier === tier);
-      if (p?.config?.model) return { providerID: p.config.model.providerID, modelID: p.config.model.modelID };
-    }
-    const firstWithModel = this.#state.participants.find((p) => p.config.model);
-    if (firstWithModel) return { providerID: firstWithModel.config.model.providerID, modelID: firstWithModel.config.model.modelID };
-    return null;
+    return getHighestTierModel(this.#modelList());
   }
 
   #getParticipantModel(participant) {
@@ -113,14 +118,15 @@ export class MeetingOrchestrator {
   }
 
   async #promptOrchestrator(system, model, message, type = "orchestrator") {
+    this.#callStats[type] = (this.#callStats[type] ?? 0) + 1;
     this.#orchestratorMessages.push({ type, role: "user", content: message, timestamp: Date.now() });
     if (this.#database) {
-      this.#database.addOrchestratorMessage(type, "user", message.slice(0, 500));
+      this.#database.addOrchestratorMessage(type, "user", message);
     }
     const response = await this.#sessionManager.promptOrchestrator(system, model, message);
     this.#orchestratorMessages.push({ type, role: "assistant", content: response, timestamp: Date.now() });
     if (this.#database) {
-      this.#database.addOrchestratorMessage(type, "assistant", response.slice(0, 500));
+      this.#database.addOrchestratorMessage(type, "assistant", response);
     }
     return response;
   }
@@ -131,7 +137,6 @@ export class MeetingOrchestrator {
     }
 
     this.#startTime = Date.now();
-    this.#syncWeftFromDb();
 
     try {
       const dbPath = this.getDbPath();
@@ -141,47 +146,42 @@ export class MeetingOrchestrator {
       this.#sessionManager = new SessionManager(this.#client, this.#directory, this.#parentSessionId, this.#logger);
       this.#synthesisCoordinator = new SynthesisCoordinator(this.#client, this.#directory, this.#sessionManager);
 
-      db.initializeMeeting({
-        question: this.#options.question,
-        context: this.#options.context,
-        maxRounds: this.#options.maxRounds,
-        convergence: this.#options.convergence,
-        domain: this.#options.domain ?? null,
-        parentSessionId: this.#options.parentSessionId,
-        opencodeSessionId: this.#options.opencodeSessionId ?? this.#options.parentSessionId,
-        participants: this.#state.participants.map((p) => p.config),
-      });
+      if (this.#resume) {
+        this.#restoreStateFromDb();
+      } else {
+        db.initializeMeeting({
+          question: this.#options.question,
+          context: this.#options.context,
+          maxRounds: this.#options.maxRounds,
+          convergence: this.#options.convergence,
+          domain: this.#options.domain ?? null,
+          parentSessionId: this.#options.parentSessionId,
+          opencodeSessionId: this.#options.opencodeSessionId ?? this.#options.parentSessionId,
+          participants: this.#state.participants.map((p) => p.config),
+        });
 
-      for (const p of this.#state.participants) {
-        if (!p.session_id) {
-          const sessionId = await this.#sessionManager.createChildSession(p);
-          p.session_id = sessionId;
-          db.setParticipantSessionId(p.config.id, sessionId);
+        for (const p of this.#state.participants) {
+          if (!p.session_id) {
+            const sessionId = await this.#sessionManager.createChildSession(p);
+            p.session_id = sessionId;
+            db.setParticipantSessionId(p.config.id, sessionId);
+          }
         }
       }
 
       const orchestratorSessionId = await this.#sessionManager.createOrchestratorSession();
       this.#sessionManager.setOrchestratorSessionId(orchestratorSessionId);
 
-      if (this.#options.detectDomains && !this.#options.domain) {
+      if (this.#options.detectDomains && !this.#state.domain) {
         try {
-          const model = this.#getHighestTierModel();
-          if (model) {
-            const keywords = getDomainKeywords();
-            const domainDescriptions = Object.entries(keywords).map(([d, kws]) => `- ${d}: ${kws.slice(0, 5).join(", ")}...`).join("\n");
-            const prompt = `Analyze the following question and determine which domains it touches on.\n\nQuestion: "${this.#options.question}"\n\nAvailable domains with example keywords:\n${domainDescriptions}\n\nRespond with ONLY a JSON array of domain names that apply. Include a domain if the question relates to any of its concepts. If none clearly apply, respond with [].\n\nJSON array:`;
-            const result = await this.#promptOrchestrator("You are a domain classification expert. Analyze questions and return relevant domains as JSON.", model, prompt, "domain");
-            const jsonMatch = result.match(/\[.*?\]/s);
-            if (jsonMatch) {
-              const parsed = JSON.parse(jsonMatch[0]);
-              if (Array.isArray(parsed)) {
-                const validDomains = parsed.filter((d) => Object.keys(keywords).includes(d));
-                if (validDomains.length > 0) {
-                  this.#state.domain = validDomains.join(", ");
-                  db.updateMeetingDomain(this.#meetingId, this.#state.domain);
-                }
-              }
-            }
+          const domains = await detectDomainsWithLLM(
+            this.#state.question,
+            async (system, model, message) => this.#promptOrchestrator(system, model, message, "domain"),
+            () => this.#getHighestTierModel(),
+          );
+          if (domains.length > 0) {
+            this.#state.domain = domains.join(", ");
+            db.updateMeetingDomain(this.#meetingId, this.#state.domain);
           }
         } catch (err) {
           this.#logger.warn("domain_detection_failed", "Orchestrator domain detection failed", extractErrorInfo(err));
@@ -200,19 +200,120 @@ export class MeetingOrchestrator {
           onAgentComplete: this.#options.onAgentComplete,
           onContribution: this.#options.onContribution,
           onProgress: async (message) => this.#sessionManager.postProgress(message),
+          recreateSession: async (participant) => this.#sessionManager.recreateSession(participant, db),
         },
         promptParent: async (system, model, message) => this.#promptOrchestrator(system, model, message),
         getParticipantModel: (participant) => this.#getParticipantModel(participant),
-        getHighestTierModel: () => this.#getHighestTierModel(),
         logError: (context, error) => this.#logError(context, error),
       });
 
-      this.#logger.info("initialized", "Meeting initialized", { participants: this.#state.participants.length });
+      this.#logger.info("initialized", `Meeting ${this.#resume ? "resumed" : "initialized"}`, { participants: this.#state.participants.length, resumed: this.#resume });
     } catch (err) {
       const info = extractErrorInfo(err);
       this.#logger.error("init_failed", "Failed to initialize meeting", info);
       throw err;
     }
+  }
+
+  /** Rebuilds in-memory state from the meeting database (used when extending a completed meeting). */
+  #restoreStateFromDb() {
+    const db = this.#database;
+    const meeting = db.getMeeting();
+    if (!meeting) {
+      throw new LoomError("Cannot resume: meeting not found in database", { phase: "resume", recoverable: false });
+    }
+
+    this.#nextSpeakerId = meeting.next_speaker_id ?? null;
+    this.#callStats = { ...this.#callStats, ...parseStats(meeting.stats) };
+
+    const dbParts = db.getAllParticipantsWithStatus();
+    this.#state.participants = dbParts.map((r) => ({
+        config: {
+          id: r.id,
+          name: r.name,
+          persona: r.persona,
+          agenda: r.agenda,
+          tier: r.tier,
+          model: r.provider_id && r.model_id ? { providerID: r.provider_id, modelID: r.model_id } : undefined,
+          domain: "general",
+          domains: ["general"],
+          known_biases: r.known_biases,
+          communication_style: r.communication_style,
+          preferred_contribution_types: r.preferred_contribution_types,
+        },
+      tier_config: getTierConfig(r.tier),
+      session_id: r.session_id,
+      status: r.status,
+      reflections: parseReflections(r.reflection),
+      contributions_count: 0,
+    }));
+
+    this.#state.question = meeting.question;
+    this.#state.context = meeting.context ?? "";
+    this.#state.warp = meeting.warp ?? "";
+    this.#state.max_rounds = meeting.max_rounds;
+    this.#state.convergence_mode = meeting.convergence;
+    this.#state.domain = meeting.domain;
+    this.#state.current_round = meeting.round;
+    this.#state.status = "weaving";
+
+    const contributions = db.getContributions(this.#meetingId);
+    this.#state.weft = contributions.map((c) => ({
+      id: c.id,
+      participant_id: c.participant_id,
+      content: c.content,
+      type: c.type,
+      round: c.round,
+      targets_which: c.targets_which ?? null,
+      timestamp: c.timestamp,
+    }));
+    this.#state.next_contribution_id = db.getMaxContributionId();
+
+    const summaries = db.getRoundSummaries(this.#meetingId);
+    const roundMap = new Map();
+    for (const c of contributions) {
+      if (!roundMap.has(c.round)) {
+        roundMap.set(c.round, { number: c.round, contributions: [], interjections: [], summary: summaries[c.round] ?? "" });
+      }
+      roundMap.get(c.round).contributions.push({
+        id: c.id,
+        participant_id: c.participant_id,
+        content: c.content,
+        type: c.type,
+        round: c.round,
+        targets_which: c.targets_which ?? null,
+        timestamp: c.timestamp,
+      });
+    }
+
+    const interjections = db.getInterjections(this.#meetingId);
+    for (const ij of interjections) {
+      const roundNum = ij.round ?? 1;
+      if (!roundMap.has(roundNum)) {
+        roundMap.set(roundNum, { number: roundNum, contributions: [], interjections: [], summary: summaries[roundNum] ?? "" });
+      }
+      roundMap.get(roundNum).interjections.push({
+        participant_id: ij.participant_id,
+        target_participant_id: ij.target_participant_id,
+        priority: ij.priority,
+        reason: ij.reason,
+        granted: ij.granted,
+        pushback: ij.pushback,
+        resolved: ij.resolved,
+      });
+    }
+
+    this.#state.rounds = Array.from(roundMap.values()).sort((a, b) => a.number - b.number);
+
+    const countByParticipant = {};
+    for (const c of contributions) {
+      countByParticipant[c.participant_id] = (countByParticipant[c.participant_id] ?? 0) + 1;
+    }
+    for (const p of this.#state.participants) {
+      p.contributions_count = countByParticipant[p.config.id] ?? 0;
+    }
+
+    indexMeeting(db.getDatabasePath(), this.#meetingId, this.#options.opencodeSessionId ?? this.#options.parentSessionId);
   }
 
   async runMeeting() {
@@ -264,37 +365,23 @@ export class MeetingOrchestrator {
   async #runWeavingLoop() {
     let continueWeaving = true;
     while (continueWeaving) {
-      if (this.#cancelled) {
-        this.#state.status = "cancelled";
-        await this.#sessionManager.postProgress("🛑 Loom cancelled by user.");
-        this.#logger.info("cancelled", "Meeting cancelled during weaving loop");
-        break;
-      }
-
-      if (Date.now() - this.#startTime > this.#meetingTimeoutMs) {
-        this.#state.status = "timeout";
-        await this.#sessionManager.postProgress("⏱️ Loom timed out — generating output from collected contributions.");
-        this.#logger.warn("timeout", "Meeting timed out", { elapsed: Date.now() - this.#startTime, limit: this.#meetingTimeoutMs });
-        break;
-      }
-
-      if (this.#state.current_round > 0 && this.#options.waitForUserInput) {
-        this.#state.status = "waiting_for_user";
-        this.#notifyUpdate();
-        const userAction = await this.#options.waitForUserInput();
-
-        if (userAction === "end") {
-          this.#state.status = "converged";
-          break;
-        } else if (userAction !== "continue") {
-          this.#state.warp += `\n\n**User Input:** ${userAction}`;
-          this.#database.setWarp(this.#state.warp);
-        }
-      }
-
-      continueWeaving = await this.runRound();
-      this.#notifyUpdate();
+    if (this.#cancelled) {
+      this.#state.status = "cancelled";
+      await this.#sessionManager.postProgress("🛑 Loom cancelled by user.");
+      this.#logger.info("cancelled", "Meeting cancelled during weaving loop");
+      break;
     }
+
+    if (Date.now() - this.#startTime > this.#meetingTimeoutMs) {
+      this.#state.status = "timeout";
+      await this.#sessionManager.postProgress("⏱️ Loom timed out — generating output from collected contributions.");
+      this.#logger.warn("timeout", "Meeting timed out", { elapsed: Date.now() - this.#startTime, limit: this.#meetingTimeoutMs });
+      break;
+    }
+
+    continueWeaving = await this.runRound();
+    this.#notifyUpdate();
+  }
   }
 
   #checkTimeout() {
@@ -354,6 +441,15 @@ export class MeetingOrchestrator {
 
     activeParticipants = this.#state.participants.filter((p) => p.status !== "passed" && p.status !== "failed");
 
+    if (this.#nextSpeakerId) {
+      const idx = activeParticipants.findIndex((p) => p.config.id === this.#nextSpeakerId);
+      if (idx > 0) {
+        const [speaker] = activeParticipants.splice(idx, 1);
+        activeParticipants.unshift(speaker);
+      }
+      this.#nextSpeakerId = null;
+    }
+
     if (activeParticipants.length === 0) {
       this.#state.status = "converged";
       return false;
@@ -363,14 +459,15 @@ export class MeetingOrchestrator {
       throw new LoomError("RoundExecutor not initialized — call initialize() first", { phase: "round_execution", recoverable: false });
     }
 
-    await this.#roundExecutor.runPromptPhase(round, activeParticipants, this.#parallel);
+    await this.#roundExecutor.runPromptPhase(round, activeParticipants, this.#turnMode);
     await this.#roundExecutor.runReflectionPhase(round, activeParticipants);
 
     if (this.#options.allowInterjections !== false) {
       await this.#roundExecutor.runInterjectionPhase(round, activeParticipants);
     }
 
-    round.summary = await this.#summarizeRound(round);
+    round.summary = await summarizeRound(round, this.#state, (system, model, message) => this.#promptOrchestrator(system, model, message, "summary"), () => this.#getHighestTierModel());
+    this.#database.setRoundSummary(round.number, round.summary);
     const ijNotes = formatInterjectionNotes(round);
     if (ijNotes) {
       this.#state.warp += ijNotes;
@@ -385,7 +482,7 @@ export class MeetingOrchestrator {
 
     const contribCount = round.contributions.length;
     const ijCount = round.interjections.length;
-    const summaryText = round.summary ? ` | ${truncate(round.summary, 100)}` : "";
+    const summaryText = round.summary ? ` | ${truncate(round.summary, 200)}` : "";
     await this.#sessionManager.postProgress(
       `📋 Round ${this.#state.current_round} complete — ${contribCount} contribution${contribCount !== 1 ? "s" : ""}, ${ijCount} interjection${ijCount !== 1 ? "s" : ""}${summaryText}`
     );
@@ -406,13 +503,28 @@ export class MeetingOrchestrator {
     );
 
     if (modDecision.action === "converge") {
-      this.#state.status = "converged";
-      this.#logger.info("moderator_converge", "Moderator forced convergence", { round: this.#state.current_round });
-      await this.#persistState();
-      return false;
+      const minRounds = getConfig().minRounds ?? 2;
+      if (this.#state.current_round >= minRounds) {
+        this.#state.status = "converged";
+        this.#logger.info("moderator_converge", "Moderator forced convergence", { round: this.#state.current_round });
+        await this.#persistState();
+        return false;
+      } else {
+        this.#logger.info("moderator_converge_deferred", "Moderator converge deferred (minRounds not reached)", { round: this.#state.current_round, minRounds });
+        await this.#sessionManager.postProgress(`🧭 Moderator wants to end the round early, but minimum rounds (${minRounds}) not yet reached.`);
+      }
     }
 
-    if (await this.#checkConvergence(round)) {
+    if (modDecision.action === "break" && modDecision.nextSpeakerIdx >= 0) {
+      const target = this.#state.participants[modDecision.nextSpeakerIdx];
+      if (target && target.status !== "passed" && target.status !== "failed") {
+        this.#nextSpeakerId = target.config.id;
+        this.#logger.info("moderator_break", `Moderator directed ${target.config.name} to speak next`, { round: this.#state.current_round });
+        await this.#sessionManager.postProgress(`🧭 Moderator directs ${target.config.name} to speak first next round.`);
+      }
+    }
+
+    if (await orchestrateConvergence(round, this.#state, (system, model, message) => this.#promptOrchestrator(system, model, message, "convergence"), () => this.#getHighestTierModel())) {
       await this.#persistState();
       return false;
     }
@@ -438,91 +550,18 @@ export class MeetingOrchestrator {
     };
   }
 
-  async #summarizeRound(round) {
-    const contribCount = round.contributions.length;
-    if (contribCount === 0) return "No contributions this round.";
-
-    const types = round.contributions.map((c) => c.type);
-    const typeCounts = {};
-    for (const t of types) typeCounts[t] = (typeCounts[t] ?? 0) + 1;
-    const typeSummary = Object.entries(typeCounts).map(([t, c]) => `${c} ${t}`).join(", ");
-
-    let summary = `Round contributions (${contribCount}): ${typeSummary}.`;
-    if (round.interjections.length > 0) {
-      summary += ` ${round.interjections.length} interjection(s).`;
+  #saveArtifact(artifact) {
+    this.#state.artifact = artifact;
+    if (this.#database) {
+      this.#database.saveArtifact(artifact);
     }
-
-    if (this.#state.convergence_mode === "moderator_forces" && contribCount > 2) {
-      try {
-        const model = this.#getHighestTierModel();
-        if (!model) throw new Error("No model available for semantic summary");
-        const prompt = `Summarize this deliberation round in 2-3 sentences. What was established? What remains contested?\n\nContributions:\n${round.contributions.map((c) => `- ${c.content.slice(0, 150)}`).join("\n")}\n\nSummary:`;
-        const semanticSummary = await this.#promptOrchestrator("You are a neutral summarizer.", model, prompt, "summary");
-        if (semanticSummary && semanticSummary.trim().length > 10) {
-          summary = semanticSummary.trim();
-        }
-      } catch (err) {
-        const info = extractErrorInfo(err);
-        this.#logError("semantic summary generation failed", err);
-        this.#logger.warn("summary_fallback", "Semantic summary failed, using heuristic", info);
-      }
-    }
-
-    return summary;
-  }
-
-  async #checkConvergence(round) {
-    const activeCount = this.#state.participants.filter((p) => p.status !== "passed" && p.status !== "failed").length;
-    const passedCount = this.#state.participants.filter((p) => p.status === "passed").length;
-
-    const recentContributions = this.#state.weft.slice(-LOOKBACK.CONVERGENCE_RECENT);
-
-    const result = checkConvergence({
-      passedCount,
-      activeCount,
-      totalParticipants: this.#state.participants.length,
-      currentRound: this.#state.current_round,
-      maxRounds: this.#state.max_rounds,
-      convergenceMode: this.#state.convergence_mode,
-      contributions: recentContributions,
-      rounds: this.#state.rounds,
-    });
-
-    this.#state.status = result.status;
-
-    if (result.needsLLMCheck && this.#state.current_round >= 3) {
-      try {
-        const semanticResult = await checkSemanticConvergence({
-          contributions: this.#state.weft,
-          rounds: this.#state.rounds,
-          currentRound: this.#state.current_round,
-          maxRounds: this.#state.max_rounds,
-          question: this.#state.question,
-        }, async (system, model, message) => this.#promptOrchestrator(system, model, message, "convergence"), () => this.#getHighestTierModel());
-        if (semanticResult.shouldStop) {
-          this.#state.status = "converged";
-          result.shouldStop = true;
-          this.#logger.info("semantic_convergence", "Semantic convergence detected");
-        } else if (semanticResult.action === "extend" && this.#state.max_rounds < 10) {
-          this.#state.max_rounds += 1;
-          this.#logger.info("semantic_extend", "Semantic analysis recommends one more round", { newMax: this.#state.max_rounds });
-          await this.#sessionManager.postProgress(`🧵 Adding one more round based on semantic analysis (now ${this.#state.max_rounds} total)`);
-        }
-      } catch (err) {
-        const info = extractErrorInfo(err);
-        this.#logError("semantic_convergence", err);
-        this.#logger.warn("convergence_check_failed", "Semantic convergence check failed", info);
-      }
-    }
-
-    return result.shouldStop;
   }
 
   async #synthesize() {
     const allFailed = this.#state.participants.every((p) => p.status === "failed");
     if (allFailed) {
       const output = `# Deliberation Output\n\n## Decision\nNo output could be generated — all participants failed to respond.\n\n## Reasoning\nAll ${this.#state.participants.length} participants encountered errors during the deliberation.\n\n## Action Items\n- Check model connectivity and retry\n- Verify provider authentication\n\n## Confidence\nLow (no contributions received)`;
-      this.#state.artifact = { content: output, format: "markdown" };
+      this.#saveArtifact({ content: output, format: "markdown", decisions: [], action_items: [], dissent: [], open_questions: [], confidence: "low" });
       await this.#sessionManager.postProgress("⚠️ All participants failed — no synthesis possible.");
       this.#logger.error("all_failed", "All participants failed — no synthesis possible");
       return output;
@@ -531,7 +570,7 @@ export class MeetingOrchestrator {
     const totalContributions = this.#state.weft.length;
     if (totalContributions === 0) {
       const output = `# Deliberation Output\n\n## Decision\nNo output could be generated — all participants passed without contributing.\n\n## Reasoning\nAll ${this.#state.participants.length} participants chose to pass. This may indicate the question was unclear or participants had nothing to add.\n\n## Action Items\n- Rephrase the question with more specific context\n- Add participants with more targeted expertise\n\n## Confidence\nLow (no contributions received)`;
-      this.#state.artifact = { content: output, format: "markdown" };
+      this.#saveArtifact({ content: output, format: "markdown", decisions: [], action_items: [], dissent: [], open_questions: [], confidence: "low" });
       await this.#sessionManager.postProgress("ℹ️ All participants passed — no contributions to synthesize.");
       this.#logger.warn("all_passed", "All participants passed — no contributions to synthesize");
       return output;
@@ -540,10 +579,13 @@ export class MeetingOrchestrator {
     const synthesizer = this.#synthesisCoordinator.selectSynthesizer(this.#state.participants);
     const transcriptData = this.#database.getTranscriptData(this.#meetingId);
 
-    const output = await this.#synthesisCoordinator.run(
+    const objections = this.#collectObjections();
+    this.#state.objections = objections;
+
+    const result = await this.#synthesisCoordinator.run(
       transcriptData,
       this.#state.participants,
-      this.#state.objections,
+      objections,
       synthesizer,
       (p) => this.#getParticipantModel(p),
       () => {
@@ -555,20 +597,30 @@ export class MeetingOrchestrator {
       },
     );
 
-    this.#state.artifact = { content: output, format: "markdown" };
-    return output;
+    this.#callStats.synthesis++;
+    await this.#persistState();
+    this.#saveArtifact(result.artifact ?? { content: result.output, format: "markdown", decisions: [], action_items: [], dissent: [], open_questions: [], confidence: null });
+    return result.output;
   }
 
-  #syncWeftFromDb() {
-    if (!this.#database) return;
-    const dbContributions = this.#database.getContributions(this.#meetingId);
-    this.#state.weft = dbContributions.map((c) => ({
-      participant_id: c.participant_id,
-      content: c.content,
-      type: c.type,
-      targets_which: null,
-      timestamp: c.timestamp,
-    }));
+  /**
+   * Collects unresolved objections = challenges/dissents from the final round that were
+   * never reconciled (no later round addressed them). Computed at synthesis time so it
+   * also works after a resumed/extended meeting.
+   */
+  #collectObjections() {
+    if (this.#state.rounds.length === 0) return [];
+    const lastRound = this.#state.rounds[this.#state.rounds.length - 1];
+    return lastRound.contributions
+      .filter((c) => c.type === "challenge" || c.type === "dissent")
+      .map((c) => {
+        const p = this.#state.participants.find((pp) => pp.config.id === c.participant_id);
+        return {
+          participant_id: c.participant_id,
+          content: `${p?.config.name ?? c.participant_id}: ${c.content}`,
+          unresolved: true,
+        };
+      });
   }
 
   async #persistState() {
@@ -576,6 +628,13 @@ export class MeetingOrchestrator {
     this.#database.setWarp(sharedState.warp);
     this.#database.setRound(sharedState.round);
     this.#database.setStatus(sharedState.status);
+    this.#database.setNextSpeaker(this.#nextSpeakerId);
+    this.#database.setStats(JSON.stringify(this.#getMergedStats()));
+  }
+
+  #getMergedStats() {
+    const roundStats = this.#roundExecutor?.getCallStats() ?? {};
+    return { ...this.#callStats, ...roundStats };
   }
 
   #logError(context, error) {

@@ -21,7 +21,7 @@ Each item includes: current state, value assessment, feasibility, production ris
 **Value:** Medium. Preserves a stronger dissent signal. For high-stakes deliberations, agents should be able to say "this question is based on a flawed premise."
 
 **Feasibility:**
-- Implementation: Small. Add `[REFUSE: reason]` parsing to `validation.ts`, add `"refuse"` to `ContributionType`, handle in `orchestrator.ts`, include in `artifact.ts` output
+- Implementation: Small. Add `[REFUSE: reason]` parsing to `validation.js`, add `"refuse"` to `ContributionType`, handle in `orchestrator.js`, include in final artifact output
 - Production risk: Low — it's a superset of existing `[PASS]` parsing. No circular logic or inter-agent coordination needed
 
 **Files to modify:**
@@ -37,9 +37,9 @@ Each item includes: current state, value assessment, feasibility, production ris
 
 ## 2. Per-Agent Model Assignment
 
-**Status:** Recommended — do second
+**Status:** Partially done — assignment engine consolidated in the last pass
 
-**Current state:** Models are assigned per tier. If you have 2 providers (e.g., OpenAI + Anthropic), principal/senior get one model and mid/junior get another. All agents within the same tier share the same model. The `participant.config.model` field already exists and is used — just no logic to assign different models to different participants within the same tier.
+**Current state:** Models are assigned per tier. If you have 2 providers (e.g., OpenAI + Anthropic), principal/senior get one model and mid/junior get another. All agents within the same tier share the same model. The `participant.config.model` field already exists and is used. The two previous assignment paths (`selectModelsForRoles` in `model-discovery.js` and `assignModelsToParticipants` in `model-service.js`) now share one deterministic, quality-scored engine (`assignModelsByTier`), so the `/knit_models` preview and the real meeting assignment always agree.
 
 **What's needed:**
 - When auto-composing, prefer diverse models across all participants (not just per tier)
@@ -49,7 +49,7 @@ Each item includes: current state, value assessment, feasibility, production ris
 **Value:** Medium. Model diversity reduces groupthink. Well-established in multi-agent literature — different models have different reasoning styles, biases, and blind spots.
 
 **Feasibility:**
-- Implementation: Small-Medium. Infrastructure already exists (each participant has a `model` field, `getParticipantModel()` reads it). Need better assignment logic in `composer.ts` and `index.ts` args
+- Implementation: Small-Medium. Infrastructure already exists (each participant has a `model` field, `getParticipantModel()` reads it). Need per-participant (not per-tier) diversity in `composer.js`/`model-discovery.js`
 - Production risk: Low — the model field already exists and is used. Just better assignment logic
 
 **Files to modify:**
@@ -124,13 +124,19 @@ Each item includes: current state, value assessment, feasibility, production ris
 
 These items require foundational features to exist first or carry significant production risk:
 
-- **Agent-initiated round extension** — agent requests "one more round" before convergence. Requires agent-to-orchestrator signaling beyond current contribution types.
-- **Cross-round memory** — agents reference their own prior contributions explicitly. Currently agents see the warp but not structured "you said X in round 1" memory.
-- **Inter-round reflection** — private reflection prompt between rounds. Requires orchestrator to prompt agents between rounds without it being a "contribution."
+- **Agent-initiated round extension** — agent requests "one more round" before convergence. Requires agent-to-orchestrator signaling beyond current contribution types. (Semantic convergence already auto-extends by one round when the discussion is close.)
+- **Cross-round memory** — agents reference their own prior contributions explicitly. Partially addressed: stable `[#id]` references and persisted reflections appear in agent prompts.
 - **Governance directives ([VETO], [FORCE_END], [CALL_VOTE])** — prerequisite for enforced seniority rights.
 
 ## Recently Implemented
 
+- **Inter-round reflection** — listeners privately reflect on challenge/dissent contributions; reflections persist in the DB and appear in the agent's next prompt
+- **Stable contribution IDs** — contributions get persistent database row ids; agents reference `[#id]` instead of the unreliable round-position scheme
+- **Meeting extension in place** — re-running `/knit` resumes the same meeting (same id, same database, same child sessions) and appends new input instead of forking
+- **Moderator break honored** — the moderator's `next_speaker` ruling reorders the next round instead of being ignored
+- **Round summaries persisted** — `rounds` table stores per-round summaries; warp compaction is now non-destructive because full summaries survive in the DB
+- **Final artifact persisted** — synthesis output (decisions, action items, dissent, open questions, confidence) saved to the DB and surfaced in the dashboard's Output tab and Markdown export
+- **Config pipeline fixed** — project `.loomrc.json` overrides actually reach consumers; config source is logged at startup
 - **Sequential interjection** — post-contribution interjection with pushback (`round-executor.js`)
 - **SQLite persistence** — meeting state survives restarts (`database.js`)
 - **Dashboard visualization** — real-time HTML progress (`dashboard/`)

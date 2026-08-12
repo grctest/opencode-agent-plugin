@@ -27,14 +27,17 @@ Invoke `knit` when the user explicitly types `/knit` followed by a question or t
 - `convergence` (optional): How deliberation ends — `consensus`, `majority`, or `moderator_forces` (default)
 - `models` (optional): Per-tier model overrides (use `/knit_models` to discover options)
 - `dry_run` (optional): Preview the composed room without running deliberation
+- `fresh` (optional): Force a fresh loom even if a previous meeting exists
+- `turn_mode` (optional): Turn mode — `sequential` (default), `staged` (2-at-a-time), or `parallel` (all concurrently)
 
 ## What Happens
 
 1. The Loom discovers available models from your opencode providers
 2. It analyzes the question to detect relevant domains (engineering, finance, etc.)
 3. It composes a room of 2-7 agents with appropriate expertise
-4. Agents take structured turns, interject with priority, and challenge each other
-5. A synthesizer produces a final artifact with decisions, action items, dissenting views, and confidence level
+4. Agents take structured turns (or staged/parallel depending on `turn_mode`), interject with priority, and challenge each other
+5. Between rounds, each agent receives a summary of the previous round's contributions (delta context)
+6. A synthesizer produces a final artifact with decisions, action items, dissenting views, and confidence level
 
 ## Configuration
 
@@ -63,6 +66,8 @@ You can also create a `.loomrc.json` in your project directory for project-speci
 /knit "Should we migrate our authentication from sessions to JWT?"
 /knit "What's our Q4 hiring plan?" --max_rounds 5
 /knit "Design a caching strategy for our API" --convergence consensus
+/knit "Architecture review" --turn_mode parallel
+/knit "Fresh start on database design" --fresh
 /knit_models  # Preview model assignments before running
 loom_viz       # Start the dashboard
 ```

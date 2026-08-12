@@ -3,12 +3,12 @@
   "version": "0.1.0",
   "description": "Multi-agent deliberation protocol for opencode — a knitting machine for AI agents",
   "type": "module",
-  "main": "dist/index.js",
+  "main": "dist/loom.js",
   "scripts": {
     "bundle": "node scripts/build.mjs",
     "dev": "node scripts/build.mjs --watch",
-    "typecheck": "node --check dist/loom.js",
-    "install:plugin": "node scripts/install.mjs",
+    "check": "node --check src/index.js && node --check src/orchestrator.js && node --check src/round-executor.js && node --check src/database.js && node --check src/handlers/knit-handler.js && node --check dist/loom.js",
+    "install:plugin": "npm run bundle && node scripts/install.mjs",
     "update:plugin": "node scripts/update.mjs"
   },
   "peerDependencies": {

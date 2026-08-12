@@ -124,20 +124,16 @@ export class SessionManager {
       query: { directory: this.#directory },
     }).catch((err) => {
       this.#progressFailureCount++;
-      this.#logger?.warn("progress_post_failed", "Failed to post progress message", extractErrorInfo(err));
+      if (this.#progressFailureCount >= MAX_PROGRESS_FAILURES_BEFORE_ALERT && !this.#progressAlerted) {
+        this.#progressAlerted = true;
+        this.#logger?.error(
+          "progress_stream_down",
+          `Failed to post progress ${MAX_PROGRESS_FAILURES_BEFORE_ALERT}+ times — live status updates will not appear in the chat`,
+          extractErrorInfo(err),
+        );
+      } else {
+        this.#logger?.warn("progress_post_failed", "Failed to post progress message", extractErrorInfo(err));
+      }
     });
-  }
-
-  postRaw(message) {
-    const session = this.#client.session;
-    if (typeof session.promptAsync !== "function") return;
-    session.promptAsync({
-      path: { id: this.#parentSessionId },
-      body: {
-        noReply: true,
-        parts: [{ type: "text", text: message }],
-      },
-      query: { directory: this.#directory },
-    }).catch(() => {});
   }
 }

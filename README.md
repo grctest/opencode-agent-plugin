@@ -23,7 +23,7 @@ A real-time web dashboard shows every agent contributing as it happens. If you r
 - **Auto-composed rooms** — persona selection based on your question's domain
 - **Model discovery** — finds available models from your opencode providers, assigns per tier
 - **Custom rooms** — bring your own participants, models, convergence mode, and round limits
-- **Real-time dashboard** — four tabs: Overview, Orchestrator, Timeline, and Warp
+- **Real-time dashboard** — five tabs: Overview, Orchestrator, Timeline, Output, and Warp
 - **Markdown export** — download the full transcript from the dashboard
 - **Configurable** — tune timeouts, word limits, convergence, and more via config
 
@@ -83,6 +83,8 @@ loom_viz
 | `meeting_timeout` | Maximum meeting duration in ms (60000–1800000) | `900000` (15 min) |
 | `seed` | Random seed for room composition | current time |
 | `dry_run` | Preview the composed room without deliberating | `false` |
+| `fresh` | Force a fresh loom even if a previous meeting exists | `false` |
+| `turn_mode` | `sequential` (default), `staged` (2-at-a-time), or `parallel` (all concurrently) | `sequential` |
 
 ## Personas
 
@@ -112,13 +114,14 @@ Run `/loom_viz` to start the real-time web dashboard. It auto-detects the most r
 - **Overview** — stats, participation matrix, contribution types, and timeline chart
 - **Orchestrator** — internal feed showing domain detection, moderation, convergence checks, and round summaries
 - **Timeline** — per-round contributions and interjections; click any contribution card to view the full output in a dialog
+- **Output** — the final synthesis artifact: decisions, action items, open questions, dissent, confidence, and full text
 - **Warp** — the evolving shared context and each agent's perspective (persona, agenda, model)
 
 The dashboard supports light, dark, and system themes. Export the current meeting as Markdown from the header.
 
 ## Configuration
 
-The Loom can be configured via a `"loom"` key in your `opencode.json` or via a project-level `.loomrc.json`. Invalid values fall back to defaults with a startup warning.
+The Loom can be configured via a `"loom"` key in your `opencode.json` or via a project-level `.loomrc.json` (top-level keys, no wrapper). Invalid values fall back to defaults with a startup warning.
 
 ```json
 {
@@ -132,6 +135,15 @@ The Loom can be configured via a `"loom"` key in your `opencode.json` or via a p
       "semanticConvergenceFromRound": 3
     }
   }
+}
+```
+
+Project-level equivalent in `.loomrc.json` (same keys, no `"loom"` wrapper):
+
+```json
+{
+  "defaultMaxRounds": 4,
+  "agentTimeoutMs": 180000
 }
 ```
 

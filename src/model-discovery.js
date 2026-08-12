@@ -25,15 +25,13 @@
  * @property {AvailableModel[]} available
  */
 
-/** Scores a model for auto-selection: prefers free, active, high-context, reasoning-capable models. */
+/**
+ * Capability-fit scoring: prefers active, high-context, reasoning-capable models.
+ * Cost is not a scoring factor — it remains a display-only column in the model plan.
+ * Two models with identical capability profiles score identically (stable/deterministic).
+ */
 function scoreModel(model) {
   let score = 0;
-
-  if (model.cost.input === 0 && model.cost.output === 0) {
-    score += 100;
-  } else {
-    score -= (model.cost.input + model.cost.output) * 10;
-  }
 
   if (model.status === "active") score += 20;
   else if (model.status === "beta") score += 10;
@@ -46,28 +44,52 @@ function scoreModel(model) {
   return score;
 }
 
-/** Sorts models by quality score (highest first). */
+/** Sorts models by quality score (highest first), then by provider+id for stability. */
 function sortModelsByQuality(models) {
-  return [...models].sort((a, b) => scoreModel(b) - scoreModel(a));
+  return [...models].sort((a, b) => {
+    const diff = scoreModel(b) - scoreModel(a);
+    if (diff !== 0) return diff;
+    // Deterministic tie-break: lexicographic on provider+model
+    const aKey = `${a.providerID}/${a.modelID}`;
+    const bKey = `${b.providerID}/${b.modelID}`;
+    return aKey < bKey ? -1 : aKey > bKey ? 1 : 0;
+  });
 }
 
-/** Assigns the best available models to each role, prioritizing principal > senior > mid > junior. */
-export function selectModelsForRoles(available, roles) {
+/**
+ * Single model-assignment engine: quality-sorted and deterministic.
+ * Principal/senior roles get the session model when available; remaining roles get
+ * the next-best unused models. This is the one source of truth for both the
+ * /knit_models preview plan and the real meeting assignment, so they always agree.
+ */
+export function assignModelsByTier(available, sessionModel, roles) {
+  if (available.length === 0) return [];
+
   const sorted = sortModelsByQuality(available);
-  const free = sorted.filter((m) => m.cost.input === 0 && m.cost.output === 0);
-  const candidates = free.length >= roles.length ? free : sorted;
-
-  const assignments = [];
-  const usedIndices = new Set();
-
   const priorityOrder = ["principal", "senior", "mid", "junior"];
   const sortedRoles = [...roles].sort(
     (a, b) => priorityOrder.indexOf(a) - priorityOrder.indexOf(b),
   );
 
+  const sessionIdx = sessionModel
+    ? sorted.findIndex(
+        (m) => m.providerID === sessionModel.providerID && m.modelID === sessionModel.modelID,
+      )
+    : -1;
+  const topModel = sessionIdx >= 0 ? sorted[sessionIdx] : sorted[0];
+
+  const assignments = [];
+  const usedIndices = new Set();
+  if (sessionIdx >= 0) usedIndices.add(sessionIdx);
+
   for (const role of sortedRoles) {
+    if ((role === "principal" || role === "senior") && topModel) {
+      assignments.push({ tier: role, providerID: topModel.providerID, modelID: topModel.modelID, modelName: topModel.name });
+      continue;
+    }
+
     let bestIdx = -1;
-    for (let i = 0; i < candidates.length; i++) {
+    for (let i = 0; i < sorted.length; i++) {
       if (!usedIndices.has(i)) {
         bestIdx = i;
         break;
@@ -76,7 +98,7 @@ export function selectModelsForRoles(available, roles) {
     if (bestIdx === -1) bestIdx = 0;
 
     usedIndices.add(bestIdx);
-    const m = candidates[bestIdx];
+    const m = sorted[bestIdx];
     assignments.push({ tier: role, providerID: m.providerID, modelID: m.modelID, modelName: m.name });
   }
 
@@ -120,10 +142,10 @@ function formatCost(assignment, available) {
   return `$${model.cost.input}/$${model.cost.output}`;
 }
 
-/** Creates a complete model plan: selects models for each role and designates the orchestrator. */
-export function createModelPlan(available, roles) {
+/** Creates a complete model plan: assigns models to each role and designates the orchestrator. */
+export function createModelPlan(available, roles, sessionModel) {
   const defaultRoles = ["junior", "mid", "senior", "principal"];
-  const participants = selectModelsForRoles(available, roles ?? defaultRoles);
+  const participants = assignModelsByTier(available, sessionModel, roles ?? defaultRoles);
   const orchestrator = participants.find((p) => p.tier === "mid") || participants[0];
   return { orchestrator, participants, available };
 }

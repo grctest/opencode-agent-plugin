@@ -7,6 +7,7 @@ import { OverviewTab } from "./components/OverviewTab.jsx";
 import { OrchestratorTab } from "./components/OrchestratorTab.jsx";
 import { TimelineTab } from "./components/TimelineTab.jsx";
 import { WarpTab } from "./components/WarpTab.jsx";
+import { OutputTab } from "./components/OutputTab.jsx";
 import { ErrorBoundary } from "./ErrorBoundary.jsx";
 import { usePersistedState, useMeetingApi } from "./hooks.js";
 
@@ -66,6 +67,8 @@ function useSSE(meetingId, onEvent) {
         if (pollingRef.current) clearTimeout(pollingRef.current);
         setConnected(true);
         setReconnectAttempt(0);
+        // Dispatch reset so the app re-fetches state from the server on reconnect
+        window.dispatchEvent(new CustomEvent("loom-sse-reset"));
       };
 
       es.onerror = () => {
@@ -257,6 +260,7 @@ export function App() {
     contributions,
     interjections,
     agentErrors,
+    artifact,
     error,
   } = useMeetingApi(selectedMeeting, true);
 
@@ -276,6 +280,8 @@ export function App() {
       window.dispatchEvent(new CustomEvent("loom-participants-update", { detail: data.data }));
     } else if (data.type === "agent_error") {
       window.dispatchEvent(new CustomEvent("loom-agent-error", { detail: data.data }));
+    } else if (data.type === "artifact") {
+      window.dispatchEvent(new CustomEvent("loom-artifact", { detail: data.data }));
     }
   }, []);
 
@@ -289,12 +295,18 @@ export function App() {
 
   useEffect(() => {
     if (!selectedMeeting) return;
+    let lastMaxId = 0;
     const interval = setInterval(async () => {
       try {
         const res = await fetch(`/api/orchestrator_messages?meeting=${selectedMeeting}`);
         if (res.ok) {
           const data = await res.json();
-          setOrchestratorMessages(data.messages || []);
+          const msgs = data.messages || [];
+          const newMaxId = msgs.length > 0 ? Math.max(...msgs.map((m) => m.id)) : 0;
+          if (newMaxId > lastMaxId) {
+            lastMaxId = newMaxId;
+            setOrchestratorMessages(msgs);
+          }
         }
       } catch { /* ignore */ }
     }, 2000);
@@ -482,7 +494,7 @@ export function App() {
 
           <div className="pure-menu pure-menu-horizontal loom-tabs">
             <ul className="pure-menu-list">
-              {["overview", "orchestrator", "timeline", "warp"].map((tab) => (
+              {["overview", "orchestrator", "timeline", "output", "warp"].map((tab) => (
                 <li key={tab} className={cn("pure-menu-item", activeTab === tab && "pure-menu-selected")}>
                   <button className="pure-menu-link" onClick={() => setActiveTab(tab)}>
                     {tab.charAt(0).toUpperCase() + tab.slice(1)}
@@ -533,6 +545,12 @@ export function App() {
                 activeRound={activeRound}
                 maxRounds={state?.max_rounds}
               />
+            )}
+          </ErrorBoundary>
+
+          <ErrorBoundary fallbackMessage="Failed to render the output tab">
+            {activeTab === "output" && (
+              <OutputTab artifact={artifact} participants={participants} />
             )}
           </ErrorBoundary>
 

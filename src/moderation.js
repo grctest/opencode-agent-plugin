@@ -1,6 +1,7 @@
 import { buildModeratorPrompt } from "./prompts.js";
 import { getConfig } from "./config.js";
 import { LOOKBACK } from "./shared.js";
+import { Logger, extractErrorInfo } from "./logger.js";
 
 /** Parses a moderator's XML ruling into structured fields (decision, next_speaker, reason). */
 export function parseModeratorRuling(text) {
@@ -118,7 +119,8 @@ export async function checkModeratorIntervention(round, participants, weft, curr
 
     return { action: "continue", nextSpeakerIdx: -1 };
   } catch (err) {
-    console.warn(`[Loom] Moderator prompt failed: ${err instanceof Error ? err.message : String(err)}. Continuing deliberation.`);
+    const info = extractErrorInfo(err);
+    new Logger().warn("moderator_prompt_failed", "Moderator prompt failed — continuing deliberation", info);
     return { action: "continue", nextSpeakerIdx: -1 };
   }
 }

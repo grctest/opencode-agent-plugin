@@ -1,12 +1,30 @@
-import { mkdirSync, existsSync, readdirSync, unlinkSync, readFileSync, writeFileSync, renameSync } from "node:fs";
+import { mkdirSync, existsSync, readdirSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { extractErrorInfo } from "./logger.js";
+import { Logger, extractErrorInfo } from "./logger.js";
+import { initSchema, migrateSchema } from "./database/schema.js";
+import {
+  loadSessionIndex,
+  indexMeeting as _indexMeeting,
+  unindexMeeting as _unindexMeeting,
+  getDatabasesBySessionId as _getDatabasesBySessionId,
+} from "./database/session-index.js";
+
+const dbLogger = new Logger();
+
+function safeParseJsonArray(value) {
+  if (!value) return undefined;
+  if (Array.isArray(value)) return value;
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /** @type {new (path: string, options?: { readonly?: boolean }) => DBHandle} */
 let DatabaseClass = null;
 let dbReady = null;
-
-const SCHEMA_VERSION = 5;
 
 function ensureDb() {
   if (DatabaseClass) return Promise.resolve();
@@ -43,6 +61,20 @@ export class MeetingDatabase {
     }
   }
 
+  static async readMeeting(dbPath) {
+    await ensureDb();
+    const db = new DatabaseClass(dbPath, { readonly: true });
+    try {
+      const row = db.prepare(
+        `SELECT id, question, context, status, round, max_rounds, convergence, domain, warp
+         FROM meetings LIMIT 1`
+      ).get();
+      return row ?? null;
+    } finally {
+      db.close();
+    }
+  }
+
   constructor(dbPath, meetingId) {
     this.#meetingId = meetingId;
     mkdirSync(dirname(dbPath), { recursive: true });
@@ -50,179 +82,8 @@ export class MeetingDatabase {
     this.#db = db;
     this.#db.exec("PRAGMA journal_mode = WAL");
     this.#db.exec("PRAGMA foreign_keys = ON");
-    this.#initSchema();
-    this.#migrate();
-  }
-
-  #initSchema() {
-    this.#db.exec(`
-      CREATE TABLE IF NOT EXISTS meetings (
-        id TEXT PRIMARY KEY,
-        question TEXT NOT NULL,
-        context TEXT,
-        status TEXT NOT NULL,
-        round INTEGER NOT NULL DEFAULT 0,
-        warp TEXT,
-        max_rounds INTEGER NOT NULL,
-        convergence TEXT NOT NULL,
-        domain TEXT,
-        parent_session_id TEXT,
-        opencode_session_id TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS participants (
-        id TEXT PRIMARY KEY,
-        meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
-        name TEXT NOT NULL,
-        persona TEXT NOT NULL,
-        agenda TEXT NOT NULL,
-        tier TEXT NOT NULL,
-        provider_id TEXT,
-        model_id TEXT,
-        session_id TEXT,
-        status TEXT NOT NULL DEFAULT 'listening',
-        reflection TEXT NOT NULL DEFAULT '',
-        UNIQUE(meeting_id, name)
-      );
-
-      CREATE TABLE IF NOT EXISTS contributions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
-        participant_id TEXT NOT NULL,
-        round INTEGER NOT NULL,
-        type TEXT NOT NULL,
-        content TEXT NOT NULL,
-        created_at TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS interjections (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
-        participant_id TEXT NOT NULL,
-        target_participant_id TEXT,
-        round INTEGER,
-        content TEXT NOT NULL,
-        priority INTEGER NOT NULL DEFAULT 0,
-        granted INTEGER NOT NULL DEFAULT 0,
-        pushback TEXT,
-        resolved TEXT NOT NULL DEFAULT 'pending',
-        created_at TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS agent_errors (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
-        participant_id TEXT NOT NULL,
-        round INTEGER NOT NULL,
-        error_type TEXT NOT NULL,
-        error_message TEXT,
-        attempts INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS error_log (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        meeting_id TEXT REFERENCES meetings(id) ON DELETE CASCADE,
-        severity TEXT NOT NULL DEFAULT 'error',
-        context TEXT NOT NULL,
-        message TEXT NOT NULL,
-        details TEXT,
-        created_at TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS orchestrator_messages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
-        msg_type TEXT NOT NULL,
-        role TEXT NOT NULL,
-        content TEXT NOT NULL,
-        created_at TEXT NOT NULL
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_contributions_meeting_round ON contributions(meeting_id, round);
-      CREATE INDEX IF NOT EXISTS idx_contributions_meeting ON contributions(meeting_id);
-      CREATE INDEX IF NOT EXISTS idx_interjections_meeting ON interjections(meeting_id);
-      CREATE INDEX IF NOT EXISTS idx_agent_errors_meeting ON agent_errors(meeting_id);
-      CREATE INDEX IF NOT EXISTS idx_participants_meeting ON participants(meeting_id);
-      CREATE INDEX IF NOT EXISTS idx_error_log_meeting ON error_log(meeting_id);
-      CREATE INDEX IF NOT EXISTS idx_orchestrator_messages_meeting ON orchestrator_messages(meeting_id);
-    `);
-  }
-
-  #migrate() {
-    const currentVersion = this.#getSchemaVersion();
-
-    if (currentVersion < 1) {
-      this.#db.exec(`CREATE TABLE IF NOT EXISTS _loom_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
-      this.#db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '1')`);
-      try { this.#db.exec(`ALTER TABLE participants ADD COLUMN reflection TEXT NOT NULL DEFAULT ''`); } catch { /* exists */ }
-      try { this.#db.exec(`ALTER TABLE meetings ADD COLUMN opencode_session_id TEXT`); } catch { /* exists */ }
-      try { this.#db.exec(`ALTER TABLE interjections ADD COLUMN round INTEGER`); } catch { /* exists */ }
-    }
-
-    if (currentVersion < 2) {
-      try { this.#db.exec(`DROP TABLE IF EXISTS agent_responses`); } catch { /* ignore */ }
-      try {
-        this.#db.exec(`DROP TABLE IF EXISTS metadata`);
-        this.#db.exec(`CREATE TABLE IF NOT EXISTS _loom_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
-      } catch { /* ignore */ }
-      this.#db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '2')`);
-    }
-
-    if (currentVersion < 3) {
-      try {
-        this.#db.exec(`
-          CREATE TABLE IF NOT EXISTS error_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            meeting_id TEXT REFERENCES meetings(id) ON DELETE CASCADE,
-            severity TEXT NOT NULL DEFAULT 'error',
-            context TEXT NOT NULL,
-            message TEXT NOT NULL,
-            details TEXT,
-            created_at TEXT NOT NULL
-          )
-        `);
-        this.#db.exec(`CREATE INDEX IF NOT EXISTS idx_error_log_meeting ON error_log(meeting_id)`);
-      } catch { /* exists */ }
-      this.#db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '3')`);
-    }
-
-    if (currentVersion < 4) {
-      try { this.#db.exec(`ALTER TABLE meetings ADD COLUMN domain TEXT`); } catch { /* exists */ }
-      this.#db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '4')`);
-    }
-
-    if (currentVersion < 5) {
-      try {
-        this.#db.exec(`
-          CREATE TABLE IF NOT EXISTS orchestrator_messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
-            msg_type TEXT NOT NULL,
-            role TEXT NOT NULL,
-            content TEXT NOT NULL,
-            created_at TEXT NOT NULL
-          )
-        `);
-        this.#db.exec(`CREATE INDEX IF NOT EXISTS idx_orchestrator_messages_meeting ON orchestrator_messages(meeting_id)`);
-      } catch { /* exists */ }
-      this.#db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '5')`);
-    }
-  }
-
-  #getSchemaVersion() {
-    try {
-      const hasMeta = this.#db.prepare(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='_loom_meta'"
-      ).get();
-      if (!hasMeta) return 0;
-      const row = this.#db.prepare("SELECT value FROM _loom_meta WHERE key = ?").get("schema_version");
-      return row ? parseInt(row.value, 10) : 0;
-    } catch {
-      return 0;
-    }
+    initSchema(this.#db);
+    migrateSchema(this.#db);
   }
 
   initializeMeeting(input) {
@@ -248,11 +109,11 @@ export class MeetingDatabase {
       );
 
     const dbPath = this.getDatabasePath();
-    indexMeeting(dbPath, this.#meetingId, input.opencodeSessionId);
+    _indexMeeting(dbPath, this.#meetingId, input.opencodeSessionId);
 
     const insertParticipant = this.#db.prepare(
-      `INSERT INTO participants (id, meeting_id, name, persona, agenda, tier, provider_id, model_id, session_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO participants (id, meeting_id, name, persona, agenda, tier, provider_id, model_id, session_id, known_biases, communication_style, preferred_contribution_types)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     for (const p of input.participants) {
       insertParticipant.run(
@@ -265,6 +126,9 @@ export class MeetingDatabase {
         p.model?.providerID ?? null,
         p.model?.modelID ?? null,
         null,
+        p.known_biases ? JSON.stringify(p.known_biases) : null,
+        p.communication_style ?? null,
+        p.preferred_contribution_types ? JSON.stringify(p.preferred_contribution_types) : null,
       );
     }
   }
@@ -278,7 +142,7 @@ export class MeetingDatabase {
         )
         .run(this.#meetingId, severity, context, message, details ? JSON.stringify(details) : null, isoNow());
     } catch (err) {
-      console.error(`[Loom ${this.#meetingId}] Failed to write error_log: ${err.message}`);
+      dbLogger.error("error_log_write_failed", "Failed to write error_log", { meetingId: this.#meetingId, error: err.message });
     }
   }
 
@@ -343,6 +207,13 @@ export class MeetingDatabase {
       }));
   }
 
+  getMaxOrchestratorMessageId() {
+    const row = this.#db
+      .prepare(`SELECT MAX(id) as maxId FROM orchestrator_messages`)
+      .get();
+    return row.maxId ?? 0;
+  }
+
   getRound() {
     const row = this.#db
       .prepare("SELECT round FROM meetings WHERE id = ?")
@@ -372,8 +243,8 @@ export class MeetingDatabase {
   addContribution(meetingId, contribution) {
     this.#db
       .prepare(
-        `INSERT INTO contributions (meeting_id, participant_id, round, type, content, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO contributions (meeting_id, participant_id, round, type, content, target_which, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         meetingId,
@@ -381,6 +252,7 @@ export class MeetingDatabase {
         contribution.round ?? this.getRound(),
         contribution.type,
         contribution.content,
+        contribution.targets_which ?? null,
         new Date(contribution.timestamp).toISOString(),
       );
   }
@@ -388,15 +260,17 @@ export class MeetingDatabase {
   getContributions(meetingId) {
     const rows = this.#db
       .prepare(
-        `SELECT participant_id, content, type, created_at
+        `SELECT id, participant_id, round, type, content, target_which, created_at
          FROM contributions WHERE meeting_id = ? ORDER BY id ASC`,
       )
       .all(meetingId);
     return rows.map((r) => ({
+      id: r.id,
       participant_id: r.participant_id,
+      round: r.round,
       content: r.content,
       type: r.type,
-      targets_which: null,
+      targets_which: r.target_which ?? null,
       timestamp: new Date(r.created_at).getTime(),
     }));
   }
@@ -404,15 +278,17 @@ export class MeetingDatabase {
   getRecentContributions(meetingId, count) {
     const rows = this.#db
       .prepare(
-        `SELECT participant_id, content, type, created_at
+        `SELECT id, participant_id, round, type, content, target_which, created_at
          FROM contributions WHERE meeting_id = ? ORDER BY id DESC LIMIT ?`,
       )
       .all(meetingId, count);
     return rows.reverse().map((r) => ({
+      id: r.id,
       participant_id: r.participant_id,
+      round: r.round,
       content: r.content,
       type: r.type,
-      targets_which: null,
+      targets_which: r.target_which ?? null,
       timestamp: new Date(r.created_at).getTime(),
     }));
   }
@@ -440,18 +316,28 @@ export class MeetingDatabase {
   getInterjections(meetingId) {
     const rows = this.#db
       .prepare(
-        `SELECT participant_id, content as reason, priority, granted, pushback, resolved
+        `SELECT id, participant_id, target_participant_id, round, content as reason, priority, granted, pushback, resolved
          FROM interjections WHERE meeting_id = ? ORDER BY id ASC`,
       )
       .all(meetingId);
     return rows.map((r) => ({
+      id: r.id,
       participant_id: r.participant_id,
+      target_participant_id: r.target_participant_id,
+      round: r.round,
       priority: r.priority,
       reason: r.reason,
       granted: r.granted === 1,
       pushback: r.pushback,
       resolved: r.resolved,
     }));
+  }
+
+  getMaxContributionId() {
+    const row = this.#db
+      .prepare(`SELECT MAX(id) as maxId FROM contributions WHERE meeting_id = ?`)
+      .get(this.#meetingId);
+    return row.maxId ?? 0;
   }
 
   setParticipantSessionId(participantId, sessionId) {
@@ -482,7 +368,7 @@ export class MeetingDatabase {
   getAllParticipantsWithStatus() {
     return this.#db
       .prepare(
-        `SELECT id, name, persona, agenda, tier, provider_id, model_id, session_id, status
+        `SELECT id, name, persona, agenda, tier, provider_id, model_id, session_id, status, reflection, known_biases, communication_style, preferred_contribution_types
          FROM participants WHERE meeting_id = ?`,
       )
       .all(this.#meetingId)
@@ -496,7 +382,107 @@ export class MeetingDatabase {
         model_id: r.model_id,
         session_id: r.session_id,
         status: r.status,
+        reflection: r.reflection,
+        known_biases: safeParseJsonArray(r.known_biases),
+        communication_style: r.communication_style ?? null,
+        preferred_contribution_types: safeParseJsonArray(r.preferred_contribution_types),
       }));
+  }
+
+  setRoundSummary(round, summary) {
+    this.#db
+      .prepare(
+        `INSERT INTO rounds (meeting_id, round, summary, created_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT(meeting_id, round) DO UPDATE SET summary = excluded.summary, created_at = excluded.created_at`,
+      )
+      .run(this.#meetingId, round, summary ?? "", isoNow());
+  }
+
+  getRoundSummaries(meetingId) {
+    const rows = this.#db
+      .prepare(
+        `SELECT round, summary FROM rounds WHERE meeting_id = ? ORDER BY round ASC`,
+      )
+      .all(meetingId);
+    const map = {};
+    for (const r of rows) map[r.round] = r.summary;
+    return map;
+  }
+
+  getMeeting() {
+    const row = this.#db
+      .prepare(
+        `SELECT id, question, context, status, round, warp, max_rounds, convergence, domain, parent_session_id, opencode_session_id, next_speaker_id, stats, created_at
+         FROM meetings WHERE id = ?`,
+      )
+      .get(this.#meetingId);
+    return row ?? null;
+  }
+
+  setNextSpeaker(nextSpeakerId) {
+    this.#db
+      .prepare("UPDATE meetings SET next_speaker_id = ? WHERE id = ?")
+      .run(nextSpeakerId ?? null, this.#meetingId);
+  }
+
+  setStats(statsJson) {
+    this.#db
+      .prepare("UPDATE meetings SET stats = ? WHERE id = ?")
+      .run(statsJson ?? null, this.#meetingId);
+  }
+
+  saveArtifact(artifact) {
+    this.#db
+      .prepare(
+        `INSERT INTO artifacts (meeting_id, content, decisions, action_items, dissent, open_questions, confidence, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(meeting_id) DO UPDATE SET
+           content = excluded.content,
+           decisions = excluded.decisions,
+           action_items = excluded.action_items,
+           dissent = excluded.dissent,
+           open_questions = excluded.open_questions,
+           confidence = excluded.confidence,
+           created_at = excluded.created_at`,
+      )
+      .run(
+        this.#meetingId,
+        artifact.content,
+        artifact.decisions ? JSON.stringify(artifact.decisions) : null,
+        artifact.action_items ? JSON.stringify(artifact.action_items) : null,
+        artifact.dissent ? JSON.stringify(artifact.dissent) : null,
+        artifact.open_questions ? JSON.stringify(artifact.open_questions) : null,
+        artifact.confidence ?? null,
+        isoNow(),
+      );
+  }
+
+  getArtifact(meetingId) {
+    const row = this.#db
+      .prepare(
+        `SELECT content, decisions, action_items, dissent, open_questions, confidence, created_at
+         FROM artifacts WHERE meeting_id = ?`,
+      )
+      .get(meetingId);
+    if (!row) return null;
+    const parse = (json) => {
+      if (!json) return [];
+      try {
+        const parsed = JSON.parse(json);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    };
+    return {
+      content: row.content,
+      decisions: parse(row.decisions),
+      action_items: parse(row.action_items),
+      dissent: parse(row.dissent),
+      open_questions: parse(row.open_questions),
+      confidence: row.confidence,
+      created_at: row.created_at,
+    };
   }
 
   recordAgentError(meetingId, participantId, round, errorType, errorMessage, attempts) {
@@ -532,28 +518,32 @@ export class MeetingDatabase {
 
     const contributions = this.#db
       .prepare(
-        `SELECT participant_id, round, type, content, created_at
+        `SELECT id, participant_id, round, type, content, target_which, created_at
          FROM contributions WHERE meeting_id = ? ORDER BY round ASC, id ASC`,
       )
       .all(meetingId);
 
     const interjections = this.#db
       .prepare(
-        `SELECT participant_id, content as reason, priority, granted, pushback, resolved, created_at
-         FROM interjections WHERE meeting_id = ? ORDER BY created_at ASC`,
+        `SELECT id, participant_id, target_participant_id, round, content as reason, priority, granted, pushback, resolved, created_at
+         FROM interjections WHERE meeting_id = ? ORDER BY id ASC`,
       )
       .all(meetingId);
+
+    const summaries = this.getRoundSummaries(meetingId);
 
     const roundMap = new Map();
     for (const c of contributions) {
       if (!roundMap.has(c.round)) {
-        roundMap.set(c.round, { number: c.round, contributions: [], interjections: [], summary: "" });
+        roundMap.set(c.round, { number: c.round, contributions: [], interjections: [], summary: summaries[c.round] ?? "" });
       }
       roundMap.get(c.round).contributions.push({
+        id: c.id,
         participant_id: c.participant_id,
         content: c.content,
         type: c.type,
-        targets_which: null,
+        round: c.round,
+        targets_which: c.target_which ?? null,
         timestamp: new Date(c.created_at).getTime(),
       });
     }
@@ -561,10 +551,12 @@ export class MeetingDatabase {
     for (const ij of interjections) {
       const roundNum = ij.round ?? 1;
       if (!roundMap.has(roundNum)) {
-        roundMap.set(roundNum, { number: roundNum, contributions: [], interjections: [], summary: "" });
+        roundMap.set(roundNum, { number: roundNum, contributions: [], interjections: [], summary: summaries[roundNum] ?? "" });
       }
       roundMap.get(roundNum).interjections.push({
+        id: ij.id,
         participant_id: ij.participant_id,
+        target_participant_id: ij.target_participant_id ?? null,
         priority: ij.priority,
         reason: ij.reason,
         granted: ij.granted === 1,
@@ -620,77 +612,12 @@ export class MeetingDatabase {
   }
 }
 
-const sessionIndex = new Map();
-let indexDir = null;
-
-function getIndexFilePath() {
-  if (!indexDir) return null;
-  return join(indexDir, ".opencode", "loom", "session-index.json");
-}
-
-export function loadSessionIndex(directory) {
-  indexDir = directory;
-  const filePath = getIndexFilePath();
-  if (!filePath) return;
-  try {
-    const data = readFileSync(filePath, "utf-8");
-    const parsed = JSON.parse(data);
-    for (const [sessionId, entries] of Object.entries(parsed)) {
-      const validEntries = entries.filter((e) => existsSync(e.dbPath));
-      if (validEntries.length > 0) {
-        sessionIndex.set(sessionId, validEntries);
-      }
-    }
-  } catch {
-  }
-}
-
-function persistSessionIndex() {
-  const filePath = getIndexFilePath();
-  if (!filePath) return;
-  try {
-    const obj = Object.fromEntries(sessionIndex);
-    mkdirSync(dirname(filePath), { recursive: true });
-    const tmpPath = `${filePath}.tmp`;
-    writeFileSync(tmpPath, JSON.stringify(obj, null, 2));
-    renameSync(tmpPath, filePath);
-  } catch {
-  }
-}
-
-export function getDatabasesBySessionId(sessionId) {
-  const entries = sessionIndex.get(sessionId);
-  return entries ? [...entries] : [];
-}
-
-export function indexMeeting(dbPath, meetingId, sessionId) {
-  if (!sessionId) return;
-  const existing = sessionIndex.get(sessionId);
-  if (!existing) {
-    sessionIndex.set(sessionId, []);
-  }
-  const entries = sessionIndex.get(sessionId);
-  if (!entries.some((e) => e.dbPath === dbPath)) {
-    entries.push({ meetingId, dbPath });
-    persistSessionIndex();
-  }
-}
-
-export function unindexMeeting(dbPath) {
-  for (const [sessionId, entries] of sessionIndex) {
-    const filtered = entries.filter((e) => e.dbPath !== dbPath);
-    if (filtered.length === 0) {
-      sessionIndex.delete(sessionId);
-    } else {
-      sessionIndex.set(sessionId, filtered);
-    }
-  }
-  persistSessionIndex();
-}
+// Re-export session index functions for backward compatibility
+export { loadSessionIndex, _indexMeeting as indexMeeting, _unindexMeeting as unindexMeeting, _getDatabasesBySessionId as getDatabasesBySessionId };
 
 export async function findMeetingBySessionId(directory, sessionId) {
-  const indexed = sessionIndex.get(sessionId);
-  if (indexed && indexed.length > 0) {
+  const indexed = _getDatabasesBySessionId(sessionId);
+  if (indexed.length > 0) {
     const { meetingId, dbPath } = indexed[indexed.length - 1];
     if (existsSync(dbPath)) {
       const { Database: DBClass } = await import("bun:sqlite");
@@ -708,7 +635,8 @@ export async function findMeetingBySessionId(directory, sessionId) {
           return { meetingId: row.id, question: row.question, status: row.status, round: row.round, max_rounds: row.max_rounds, dbPath };
         }
       } catch (err) {
-        console.warn(`[Loom] Indexed DB lookup failed for ${dbPath}: ${err.message}`);
+        const info = extractErrorInfo(err);
+        dbLogger.warn("indexed_db_lookup_failed", `Indexed DB lookup failed for ${dbPath}`, info);
       } finally {
         if (conn) conn.close();
       }
@@ -733,11 +661,12 @@ export async function findMeetingBySessionId(directory, sessionId) {
         .get(sessionId);
       if (row) {
         conn.close();
-        indexMeeting(filePath, row.id, sessionId);
+        _indexMeeting(filePath, row.id, sessionId);
         return { meetingId: row.id, question: row.question, status: row.status, round: row.round, max_rounds: row.max_rounds, dbPath: filePath };
       }
     } catch (err) {
-      console.warn(`[Loom] DB scan failed for ${filePath}: ${err.message}`);
+      const info = extractErrorInfo(err);
+      dbLogger.warn("db_scan_failed", `DB scan failed for ${filePath}`, info);
     } finally {
       if (conn) conn.close();
     }
@@ -751,7 +680,7 @@ export function getDbPathForMeeting(directory, meetingId) {
 }
 
 export function deleteMeetingFiles(dbPath) {
-  unindexMeeting(dbPath);
+  _unindexMeeting(dbPath);
   for (const suffix of ["", "-wal", "-shm"]) {
     try { unlinkSync(`${dbPath}${suffix}`); } catch { /* ignore */ }
   }
@@ -774,7 +703,8 @@ export async function readSessionIdFromDbAsync(dbPath) {
       db.close();
     }
   } catch (err) {
-    console.warn(`[Loom] Failed to read session ID from ${dbPath}: ${err.message}`);
+    const info = extractErrorInfo(err);
+    dbLogger.warn("read_session_id_failed", `Failed to read session ID from ${dbPath}`, info);
     return null;
   }
 }
@@ -794,23 +724,4 @@ export async function deleteMeetingsBySessionId(directory, sessionId) {
     }
   }
   return deleted;
-}
-
-export async function cleanupOrphanDatabases(directory, activeSessionIds) {
-  const meetingsDir = join(directory, ".opencode", "loom", "meetings");
-  if (!existsSync(meetingsDir)) return 0;
-
-  let cleaned = 0;
-  for (const file of readdirSync(meetingsDir)) {
-    if (!file.endsWith(".db")) continue;
-    const dbPath = join(meetingsDir, file);
-    const sessionId = await readSessionIdFromDbAsync(dbPath);
-    if (sessionId && !activeSessionIds.has(sessionId)) {
-      for (const suffix of ["", "-wal", "-shm"]) {
-        try { unlinkSync(`${dbPath}${suffix}`); } catch { /* ignore */ }
-      }
-      cleaned++;
-    }
-  }
-  return cleaned;
 }

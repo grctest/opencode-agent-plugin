@@ -11,6 +11,12 @@ export function OverviewTab({
   participantName,
   totalRounds,
 }) {
+  const stats = state?.stats ?? {};
+  const callStats = stats.calls ?? {};
+  const totalInputTokens = callStats.totalInputTokens ?? 0;
+  const totalOutputTokens = callStats.totalOutputTokens ?? 0;
+  const totalCalls = callStats.total ?? 0;
+
   return (
     <div className="loom-overview">
       <div className="loom-stats-grid">
@@ -31,6 +37,22 @@ export function OverviewTab({
           <span className="loom-stat-label">Participants</span>
         </div>
       </div>
+      {totalCalls > 0 && (
+        <div className="loom-stats-grid loom-mt-sm">
+          <div className="loom-stat-card">
+            <span className="loom-stat-value">{totalCalls}</span>
+            <span className="loom-stat-label">LLM Calls</span>
+          </div>
+          <div className="loom-stat-card">
+            <span className="loom-stat-value">{totalInputTokens.toLocaleString()}</span>
+            <span className="loom-stat-label">Input Tokens</span>
+          </div>
+          <div className="loom-stat-card">
+            <span className="loom-stat-value">{totalOutputTokens.toLocaleString()}</span>
+            <span className="loom-stat-label">Output Tokens</span>
+          </div>
+        </div>
+      )}
       <div className="loom-mt-sm">
         <ParticipationMatrix
           participants={participants}

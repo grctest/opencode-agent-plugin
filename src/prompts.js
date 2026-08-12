@@ -1,5 +1,5 @@
-import { getConfig } from "./config.js";
 import { generateRoundBriefs } from "./warp-manager.js";
+import { getPromptForTier } from "./shared.js";
 
 /** Builds a prompt asking a listener to privately reflect on a speaker's contribution. */
 export function buildReflectionPrompt(listener, speakerName, contribution) {
@@ -18,12 +18,35 @@ What is your honest reaction? Write 2-3 sentences:
 This is private — only you will see it.`;
 }
 
+/** Builds a prompt that produces private reflections for all listeners in a single call. */
+export function buildBatchReflectionPrompt(speakerName, contribution, listeners) {
+  const listenerLines = listeners
+    .map((l) => `  - ${l.config.name} (${l.config.tier}): ${l.config.agenda}`)
+    .join("\n");
+
+  return `## Batch Private Reflection
+
+**${speakerName}** just said:
+"${contribution}"
+
+Generate a private 2-3 sentence reflection for EACH participant below. For each, answer:
+- Does this change their view? How?
+- What assumption would they challenge?
+- What are they missing from their perspective?
+
+Participants:
+${listenerLines}
+
+Respond with ONLY a JSON object in this exact shape:
+{"reflections":[{"name":"<participant name>","reflection":"<their 2-3 sentence reflection>"}]}`;
+}
+
 /** Builds a prompt asking the current speaker to yield or contest an interjection attempt. */
-export function buildPushbackPrompt(participant, interjectorName, interjectorPriority, lastContribution) {
+export function buildPushbackPrompt(participant, interjectorName, interjectorPriority, lastContribution, interjectorReason = "") {
   return `## Interjection Attempt
 
-**${interjectorName}** wants to interrupt you with priority ${interjectorPriority}:
-"${lastContribution.slice(0, 300)}"
+**${interjectorName}** wants to interrupt you with priority ${interjectorPriority}.
+Reason: "${interjectorReason}"
 
 **Your current point was:**
 "${lastContribution.slice(0, 300)}"
@@ -151,34 +174,37 @@ function getDomainSynthesisGuidance(domain) {
 export function buildAgentSystemPrompt(participant) {
   const tier = participant.config.tier;
   const isJunior = tier === "junior";
-  const isPrincipal = tier === "principal";
+  const cfg = participant.config;
 
-  let tierGuidance;
-  if (isJunior) {
-    tierGuidance = "Think creatively and bring fresh perspectives. Wild ideas are welcome. Challenge senior thinking with naive questions that expose hidden assumptions.";
-  } else if (tier === "mid") {
-    tierGuidance = "Balance creativity with evidence. When you disagree, explain why with specific reasoning. Synthesize others' points before adding your own.";
-  } else if (tier === "senior") {
-    tierGuidance = "Prioritize accuracy and risk assessment. Flag irreversible decisions. Be conservative with claims but commit fully when you do.";
-  } else {
-    tierGuidance = "See the whole system. Cut through noise and circular argument. When consensus is impossible, decide.";
-  }
+  const tierGuidance = getPromptForTier(tier);
 
-  const interjectionRule = tier === "junior"
-    ? "5. To interject, add: [INTERJECT: Priority: <1-5>, Reason: \"why you must speak now\"] — then write your interjection content immediately after on the same line"
-    : tier === "mid"
-    ? "5. To interject, add: [INTERJECT: Priority: <1-7>, Reason: \"why you must speak now\"] — then write your interjection content immediately after on the same line"
-    : tier === "senior"
-    ? "5. To interject, add: [INTERJECT: Priority: <1-9>, Reason: \"why you must speak now\"] — then write your interjection content immediately after on the same line"
-    : "5. To interject, add: [INTERJECT: Priority: <1-10>, Reason: \"why you must speak now\"] — then write your interjection content immediately after on the same line";
+  const priorityCap = isJunior ? 5 : tier === "mid" ? 7 : tier === "senior" ? 9 : 10;
+  const interjectionRule = `5. To interject, add: [INTERJECT: Priority: <1-${priorityCap}>, Reason: "why you must speak now", Target: <optional contribution id like #12 or participant name>] — then write your interjection content immediately after on the same line`;
 
-  return `You are **${participant.config.name}** (${participant.config.tier}) in a structured multi-agent deliberation called "Loom."
+  const biases = Array.isArray(cfg.known_biases) && cfg.known_biases.length > 0
+    ? cfg.known_biases.map((b) => `- ${b}`).join("\n")
+    : null;
+  const style = typeof cfg.communication_style === "string" && cfg.communication_style.trim().length > 0
+    ? cfg.communication_style.trim()
+    : null;
+  const contribTypes = Array.isArray(cfg.preferred_contribution_types) && cfg.preferred_contribution_types.length > 0
+    ? cfg.preferred_contribution_types.join(", ")
+    : null;
+
+  const dispositionSection = (biases || style || contribTypes)
+    ? `
+## Your Disposition
+${biases ? `You are prone to these known tendencies — name them when they might be coloring your view, and actively check them:\n${biases}\n` : ""}${style ? `Communicate in this register: ${style}\n` : ""}${contribTypes ? `You naturally contribute via: ${contribTypes}. Lean into these, but stay open to others when the moment calls for it.\n` : ""}`
+    : "";
+
+  return `You are **${cfg.name}** (${cfg.tier}) in a structured multi-agent deliberation called "Loom."
 
 ## Your Identity
-${participant.config.persona}
+${cfg.persona}
 
 ## Your Agenda
-${participant.config.agenda}
+${cfg.agenda}
+${dispositionSection}
 
 ## Your Tier Guidance
 ${tierGuidance}
@@ -190,7 +216,7 @@ ${tierGuidance}
 4. Tag your type: [PROPOSE], [CHALLENGE], [REFINE], [SUPPORT], [DISSENT], [SYNTHESIZE], or [QUESTION]
 ${interjectionRule}
 6. Stay in character — your persona and agenda shape your contributions
-7. Reference prior contributions using their ID: [R2-C3] means Round 2, Contribution 3
+7. Reference prior contributions using their stable ID from the Recent Contributions list, e.g. [#12]
 
 ## Example Response
 [CHALLENGE] The proposed approach doesn't account for backward compatibility. In my experience, breaking changes typically require a migration period. Have we validated this with stakeholders?
@@ -201,25 +227,29 @@ ${interjectionRule}
 To interject on the current point: [INTERJECT: Priority: 8, Reason: "I have data showing the auth service migration alone will take 6 weeks, making Q1 unrealistic"] The auth service migration alone will take 6 weeks based on our last project timeline — Q1 is unrealistic without additional resources.`;
 }
 
-/** Builds the user prompt for an agent's turn: warp context + recent contributions + interjection notes. */
+/**
+ * Builds the user prompt for an agent's turn. Child sessions are persistent, so the prompt
+ * only carries the delta: the question (round 1), the shared context warp (round 1 only),
+ * round briefs for everything prior, and contributions from the previous + current rounds.
+ */
 export function buildAgentUserPrompt(participant, warp, weft, question, round, roundBriefs, domain = null) {
   const briefs = roundBriefs ?? generateRoundBriefs(warp, round);
-  const config = getConfig();
+  const firstRound = round <= 1;
 
-  const maxRecent = config.lookback?.agentContextRecent ?? 6;
-  const recentContributions = weft.slice(-maxRecent);
+  const recentContributions = weft.filter((c) => c.round == null || c.round >= round - 1);
   const transcript =
     recentContributions.length === 0
       ? "*(No contributions yet — you are the first to speak)*"
       : recentContributions
-          .map((c, i) => {
-            const idx = weft.length - recentContributions.length + i;
+          .map((c) => {
+            const id = c.id != null ? `[#${c.id}]` : "";
             const wasInterjection = c.type === "interjection" ? " [INTERJECTION]" : "";
-            return `- **[R${round}-C${idx + 1}]** [${c.participant_id}] (${c.type})${wasInterjection}: ${c.content}`;
+            return `- ${id} [${c.participant_id}] (${c.type})${wasInterjection}: ${c.content}`;
           })
           .join("\n");
 
-  const warpStr = typeof warp === "string" ? warp : "";
+  const warpStr = firstRound && typeof warp === "string" ? warp : "";
+  const reflections = formatReflections(participant);
 
   return `## Question
 ${question}
@@ -227,14 +257,22 @@ ${domain ? `\n## Domain: ${domain}\n` : ""}
 ## Round ${round}
 
 ${briefs ? `## Prior Deliberation Brief\n${briefs}\n` : ""}
-## Shared Context (Warp)
-${warpStr}
-
-## Recent Contributions (last ${maxRecent})
+${warpStr ? `## Shared Context (Warp)\n${warpStr}\n\n` : ""}
+## Recent Contributions (rounds ${Math.max(1, round - 1)}-${round})
 ${transcript}
 
-${participant.reflection ? `## Your Previous Reflection\n${participant.reflection}\n` : ""}
+${reflections}
 ## Your Turn
 
 Read the context and contributions. Then make your contribution or pass.`;
+}
+
+function formatReflections(participant) {
+  const reflections = Array.isArray(participant.reflections)
+    ? participant.reflections
+    : participant.reflection
+      ? [participant.reflection]
+      : [];
+  if (reflections.length === 0) return "";
+  return reflections.map((r) => `## Your Reflection\n${r}\n`).join("");
 }

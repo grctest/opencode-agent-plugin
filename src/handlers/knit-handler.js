@@ -1,14 +1,14 @@
 import { MeetingOrchestrator } from "../orchestrator.js";
 import { composeRoomWithDomains, formatRoomPreview, detectDomainsFallback } from "../composer.js";
 import { createModelPlan, formatModelPlan } from "../model-discovery.js";
-import { deleteMeetingFiles, findMeetingBySessionId, getDbPathForMeeting, MeetingDatabase } from "../database.js";
+import { findMeetingBySessionId, getDbPathForMeeting, MeetingDatabase } from "../database.js";
 import {
   discoverModels,
   assignModelsToParticipants,
-  getHighestTierModel,
 } from "../services/model-service.js";
 import { Logger, extractErrorInfo } from "../logger.js";
 import { getConfig } from "../config.js";
+import { unlinkSync } from "fs";
 
 function createMeetingCallbacks(context, logger) {
   return {
@@ -61,14 +61,26 @@ export function createKnitHandler(client, directory, activeLooms) {
 
     const { available, sessionModel } = await discoverModels(client, directory, sessionID);
 
+    if (args.fresh === true) {
+      const existingMeeting = await findMeetingBySessionId(directory, sessionID);
+      if (existingMeeting) {
+        const extDbPath = getDbPathForMeeting(directory, existingMeeting.meetingId);
+        if (extDbPath) {
+          try { unlinkSync(extDbPath); } catch {}
+          logger.info("loom_fresh", "Cleared existing loom database for fresh start", { meetingId: existingMeeting.meetingId });
+        }
+      }
+    }
+
     const existingMeeting = await findMeetingBySessionId(directory, sessionID);
 
-    if (existingMeeting && args.extend !== false) {
+    if (existingMeeting && args.extend !== false && !args.dry_run && args.fresh !== true) {
       return handleExtend(existingMeeting, args, context, loomId, sessionID);
     }
 
     let participants;
     let detectedDomains = [];
+    let composedRoom = null;
 
     const modelMap = new Map();
     const explicitModels = args.models ?? pendingModels;
@@ -101,14 +113,17 @@ export function createKnitHandler(client, directory, activeLooms) {
         model: modelMap.get(p.tier),
         domain: "general",
         domains: ["general"],
+        known_biases: p.known_biases,
+        communication_style: p.communication_style,
+        preferred_contribution_types: p.preferred_contribution_types,
       }));
     } else {
       detectedDomains = detectDomainsFallback(args.question);
 
       const seed = args.seed ?? Date.now();
-      const recommendation = composeRoomWithDomains(args.question, undefined, detectedDomains, seed);
-      participants = recommendation.participants;
-      detectedDomains = recommendation.domains;
+      composedRoom = composeRoomWithDomains(args.question, undefined, detectedDomains, seed);
+      participants = composedRoom.participants;
+      detectedDomains = composedRoom.domains;
     }
 
     if (modelMap.size === 0 && available.length > 0) {
@@ -118,10 +133,10 @@ export function createKnitHandler(client, directory, activeLooms) {
     if (args.dry_run) {
       const room = {
         participants,
-        estimated_rounds: args.max_rounds ?? participants.length,
+        estimated_rounds: args.max_rounds ?? composedRoom?.estimated_rounds ?? participants.length,
         reasoning: args.participants
           ? "Custom room"
-          : composeRoomWithDomains(args.question).reasoning,
+          : composedRoom.reasoning,
       };
       return {
         title: "Loom Room Preview",
@@ -154,6 +169,7 @@ export function createKnitHandler(client, directory, activeLooms) {
       meetingTimeoutMs: args.meeting_timeout,
       domain: primaryDomain,
       detectDomains: true,
+      turnMode: args.turn_mode,
       ...meetingCallbacks,
     });
 
@@ -214,23 +230,20 @@ export function createKnitHandler(client, directory, activeLooms) {
         };
       }
 
-      const highestModel = getHighestTierModel(existingParts.map((p) => ({
-        tier: p.tier,
-        model: p.provider_id ? { providerID: p.provider_id, modelID: p.model_id } : null,
-      })));
-
       const meetingCallbacks = createMeetingCallbacks(context, logger);
 
       const extEngine = new MeetingOrchestrator({
         client,
         directory,
+        meetingId: existingMeeting.meetingId,
+        resume: true,
         question: existingMeeting.question,
         context: args.context ?? "No additional context provided.",
         parentSessionId: sessionID,
         opencodeSessionId: sessionID,
         participants: existingParts.map((p) => ({
           id: p.id, name: p.name, persona: p.persona, agenda: p.agenda, tier: p.tier,
-          model: { providerID: p.provider_id, modelID: p.model_id },
+          model: p.provider_id && p.model_id ? { providerID: p.provider_id, modelID: p.model_id } : undefined,
         })),
         maxRounds: existingMeeting.max_rounds,
         convergence: args.convergence ?? "moderator_forces",
@@ -264,13 +277,13 @@ export function createKnitHandler(client, directory, activeLooms) {
 
   async function handleKnitModels() {
     try {
-      const { available } = await discoverModels(client, directory, "");
+      const { available, sessionModel } = await discoverModels(client, directory, "");
 
       if (available.length === 0) {
         return "No active models found. Connect a provider (e.g. run `opencode auth login`).";
       }
 
-      const plan = createModelPlan(available);
+      const plan = createModelPlan(available, undefined, sessionModel);
       pendingModels = plan.participants;
 
       let output = formatModelPlan(plan);

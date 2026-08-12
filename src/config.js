@@ -9,6 +9,8 @@ const DEFAULT_CONFIG = {
   maxInterjectionWords: 200,
   defaultMaxRounds: 3,
   minRounds: 2,
+  turnMode: "sequential",
+  stagedBatchSize: 2,
   interjectionThresholds: { autoGrant: 9, pushback: 7 },
   maxInterjectionsPerRound: 3,
   moderatorTrigger: { minContributions: 3, recentChallenges: 2, lookbackWindow: 4 },
@@ -16,12 +18,10 @@ const DEFAULT_CONFIG = {
   retryBaseDelayMs: 1000,
   retryMaxDelayMs: 8000,
   maxConcurrentPrompts: 7,
-  lookback: { agentContextRecent: 6 },
   convergence: {
     repetitionWindow: 5,
-    repetitionOverlapThreshold: 0.45,
+    lowNoveltyCosineThreshold: 0.75,
     diminishingReturnsWindow: 3,
-    minRoundsBeforeConvergence: 2,
     semanticConvergenceFromRound: 3,
     staleParticipantRatio: 0.34,
     moderatorForcesMinRound: 2,
@@ -38,6 +38,8 @@ const CONFIG_SCHEMA = {
   maxInterjectionWords: { type: 'number', min: 20, max: 1000 },
   defaultMaxRounds: { type: 'number', min: 1, max: 10 },
   minRounds: { type: 'number', min: 1, max: 5 },
+  turnMode: { type: 'string', enum: ['sequential', 'staged', 'parallel'] },
+  stagedBatchSize: { type: 'number', min: 2, max: 7 },
   maxRetryAttempts: { type: 'number', min: 0, max: 5 },
   retryBaseDelayMs: { type: 'number', min: 100, max: 30000 },
   retryMaxDelayMs: { type: 'number', min: 1000, max: 60000 },
@@ -47,10 +49,9 @@ const CONFIG_SCHEMA = {
 };
 
 const NESTED_SCHEMA = {
-  'convergence.repetitionOverlapThreshold': { type: 'number', min: 0, max: 1 },
+  'convergence.lowNoveltyCosineThreshold': { type: 'number', min: 0, max: 1 },
   'convergence.repetitionWindow': { type: 'number', min: 2, max: 10 },
   'convergence.diminishingReturnsWindow': { type: 'number', min: 2, max: 10 },
-  'convergence.minRoundsBeforeConvergence': { type: 'number', min: 1, max: 5 },
   'convergence.semanticConvergenceFromRound': { type: 'number', min: 2, max: 10 },
   'convergence.staleParticipantRatio': { type: 'number', min: 0, max: 1 },
   'convergence.moderatorForcesMinRound': { type: 'number', min: 1, max: 5 },
@@ -58,7 +59,6 @@ const NESTED_SCHEMA = {
   'moderatorTrigger.minContributions': { type: 'number', min: 1, max: 10 },
   'moderatorTrigger.recentChallenges': { type: 'number', min: 1, max: 10 },
   'moderatorTrigger.lookbackWindow': { type: 'number', min: 2, max: 10 },
-  'lookback.agentContextRecent': { type: 'number', min: 1, max: 20 },
 };
 
 function deepMerge(target, source) {
@@ -93,6 +93,13 @@ function validateConfigKey(key, value) {
     if (schema.max !== undefined && value > schema.max) {
       return { valid: false, error: `"${key}" must be <= ${schema.max}, got ${value}` };
     }
+  } else if (schema.type === 'string') {
+    if (typeof value !== 'string') {
+      return { valid: false, error: `"${key}" must be a string, got ${typeof value}` };
+    }
+    if (schema.enum && !schema.enum.includes(value)) {
+      return { valid: false, error: `"${key}" must be one of ${schema.enum.join(', ')}, got "${value}"` };
+    }
   }
   return { valid: true };
 }
@@ -114,6 +121,8 @@ function findConfigFile(directory) {
 
 const configCache = new Map();
 let globalWarnings = [];
+let activeConfig = null;
+let activeConfigSource = null;
 
 function getNestedValue(obj, path) {
   let current = obj;
@@ -149,8 +158,13 @@ function buildConfig(directory) {
     try {
       const content = readFileSync(configFile, 'utf-8');
       const parsed = JSON.parse(content);
-      if (parsed.loom && typeof parsed.loom === 'object') {
-        userConfig = parsed.loom;
+      if (parsed && typeof parsed === 'object') {
+        const isLoomRc = configFile.endsWith('.loomrc.json');
+        if (parsed.loom && typeof parsed.loom === 'object') {
+          userConfig = parsed.loom;
+        } else if (isLoomRc) {
+          userConfig = parsed;
+        }
       }
     } catch (err) {
       warnings.push(`Failed to read config from ${configFile}: ${err.message}`);
@@ -170,7 +184,7 @@ function buildConfig(directory) {
 
   validateNestedConfig(userConfig, warnings);
 
-  return { config: merged, warnings };
+  return { config: merged, warnings, source: configFile ?? null };
 }
 
 export function loadConfig(directory) {
@@ -178,12 +192,16 @@ export function loadConfig(directory) {
   if (configCache.has(key)) {
     const cached = configCache.get(key);
     globalWarnings = cached.warnings;
+    activeConfig = cached.config;
+    activeConfigSource = cached.source;
     return cached.config;
   }
 
-  const { config, warnings } = buildConfig(directory);
-  configCache.set(key, { config, warnings });
+  const { config, warnings, source } = buildConfig(directory);
+  configCache.set(key, { config, warnings, source });
   globalWarnings = warnings;
+  activeConfig = config;
+  activeConfigSource = source;
   return config;
 }
 
@@ -191,13 +209,26 @@ export function getConfig(directory) {
   if (directory) {
     return loadConfig(directory);
   }
-  if (configCache.has('__global__')) {
-    return configCache.get('__global__').config;
+  if (activeConfig) {
+    return activeConfig;
   }
-  const { config, warnings } = buildConfig(null);
-  configCache.set('__global__', { config, warnings });
+  if (configCache.has('__global__')) {
+    const cached = configCache.get('__global__');
+    activeConfig = cached.config;
+    activeConfigSource = cached.source;
+    return cached.config;
+  }
+  const { config, warnings, source } = buildConfig(null);
+  configCache.set('__global__', { config, warnings, source });
   globalWarnings = warnings;
+  activeConfig = config;
+  activeConfigSource = source;
   return config;
+}
+
+/** Returns the path of the config file that was loaded (null = defaults only). */
+export function getConfigSource() {
+  return activeConfigSource;
 }
 
 export function getConfigValidationWarnings() {
@@ -207,4 +238,6 @@ export function getConfigValidationWarnings() {
 export function resetConfig() {
   configCache.clear();
   globalWarnings = [];
+  activeConfig = null;
+  activeConfigSource = null;
 }

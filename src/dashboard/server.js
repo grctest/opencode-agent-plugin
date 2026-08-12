@@ -66,6 +66,7 @@ function sendSSE(controller, event) {
 export function startDashboard(directory, port) {
   const sseClients = new Map();
   const lastContributionId = new Map();
+  const lastOrchestratorMsgId = new Map();
   const lastErrorId = new Map();
   const participantStatusCache = new Map();
 
@@ -105,6 +106,11 @@ export function startDashboard(directory, port) {
             participantStatusCache.set(`terminal:${meetingId}`, "true");
             broadcast(meetingId, { type: "state", data: currentState, timestamp: new Date().toISOString() });
           }
+          const artifact = api.getArtifact();
+          if (artifact && participantStatusCache.get(`artifact:${meetingId}`) !== artifact.created_at) {
+            participantStatusCache.set(`artifact:${meetingId}`, artifact.created_at);
+            broadcast(meetingId, { type: "artifact", data: artifact, timestamp: new Date().toISOString() });
+          }
           continue;
         }
 
@@ -121,10 +127,17 @@ export function startDashboard(directory, port) {
           hadActivity = true;
         }
 
+        const maxMsgId = api.getMaxOrchestratorMessageId();
+        const prevMsgId = lastOrchestratorMsgId.get(meetingId) ?? 0;
+        if (maxMsgId > prevMsgId) {
+          lastOrchestratorMsgId.set(meetingId, maxMsgId);
+          hadActivity = true;
+        }
+
         const state = api.getState();
         if (state) {
           const prevState = participantStatusCache.get(`state:${meetingId}`);
-          const stateStr = JSON.stringify({ status: state.status, round: state.round });
+          const stateStr = JSON.stringify({ status: state.status, round: state.round, stats: state.stats });
           if (prevState !== stateStr) {
             participantStatusCache.set(`state:${meetingId}`, stateStr);
             broadcast(meetingId, {
@@ -166,7 +179,10 @@ export function startDashboard(directory, port) {
           }
           hadActivity = true;
         }
-      } catch {
+      } catch (err) {
+        console.error(
+          `[Loom dashboard] Poll error for meeting ${meetingId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
 
@@ -228,7 +244,21 @@ export function startDashboard(directory, port) {
             contributions: api.getContributions(),
             interjections: api.getInterjections(),
             agent_errors: api.getAgentErrors(),
+            artifact: api.getArtifact(),
           });
+        }
+
+        if (url.pathname === "/api/artifact") {
+          const meetingId = url.searchParams.get("meeting");
+          if (!meetingId || !isValidMeetingId(meetingId)) {
+            return Response.json({ error: "valid meeting id required" }, { status: 400 });
+          }
+          const dbPath = getMeetingDbPath(directory, meetingId);
+          if (!dbPath) {
+            return Response.json({ error: "not found" }, { status: 404 });
+          }
+          const api = DashboardApi.get(dbPath);
+          return Response.json(api.getArtifact());
         }
 
         if (url.pathname === "/api/orchestrator_messages") {
@@ -255,6 +285,19 @@ export function startDashboard(directory, port) {
           }
           const api = DashboardApi.get(dbPath);
           return Response.json(api.getState());
+        }
+
+        if (url.pathname === "/api/state_stats") {
+          const meetingId = url.searchParams.get("meeting");
+          if (!meetingId || !isValidMeetingId(meetingId)) {
+            return Response.json({ error: "valid meeting id required" }, { status: 400 });
+          }
+          const dbPath = getMeetingDbPath(directory, meetingId);
+          if (!dbPath) {
+            return Response.json({ error: "not found" }, { status: 404 });
+          }
+          const api = DashboardApi.get(dbPath);
+          return Response.json(api.getStateWithStats());
         }
 
         if (url.pathname === "/api/participants") {

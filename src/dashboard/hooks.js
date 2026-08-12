@@ -31,6 +31,7 @@ export function useMeetingApi(meetingId, sseEvents) {
   const [contributions, setContributions] = useState([]);
   const [interjections, setInterjections] = useState([]);
   const [agentErrors, setAgentErrors] = useState([]);
+  const [artifact, setArtifact] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -39,15 +40,25 @@ export function useMeetingApi(meetingId, sseEvents) {
       setLoading(false);
       return;
     }
+    setLoading(true);
     try {
       const res = await fetch(`/api/meeting?meeting=${id}`);
-      if (!res.ok) throw new Error(`Failed to load meeting: ${res.status}`);
+      if (!res.ok) {
+        if (res.status === 404) {
+          throw new Error("Meeting not found. It may have been deleted or is still initializing.");
+        }
+        throw new Error(`Failed to load meeting (HTTP ${res.status})`);
+      }
       const data = await res.json();
+      if (data.error) {
+        throw new Error(data.error);
+      }
       setState(data.state);
       setParticipants(data.participants);
       setContributions(data.contributions);
       setInterjections(data.interjections);
       setAgentErrors(data.agent_errors);
+      setArtifact(data.artifact ?? null);
       setError(null);
     } catch (e) {
       setError(e.message);
@@ -58,7 +69,6 @@ export function useMeetingApi(meetingId, sseEvents) {
 
   useEffect(() => {
     if (meetingId) {
-      setLoading(true);
       fetchMeetingData(meetingId);
     }
   }, [meetingId, fetchMeetingData]);
@@ -94,16 +104,33 @@ export function useMeetingApi(meetingId, sseEvents) {
       }
     };
 
+    const handleArtifact = (e) => {
+      const artifactData = e.detail;
+      if (artifactData) {
+        setArtifact(artifactData);
+      }
+    };
+
     window.addEventListener("loom-new-contributions", handleContributions);
     window.addEventListener("loom-state-update", handleState);
     window.addEventListener("loom-participants-update", handleParticipants);
     window.addEventListener("loom-agent-error", handleAgentError);
+    window.addEventListener("loom-artifact", handleArtifact);
+
+    const handleReset = () => {
+      if (meetingId) {
+        fetchMeetingData(meetingId);
+      }
+    };
+    window.addEventListener("loom-sse-reset", handleReset);
 
     return () => {
       window.removeEventListener("loom-new-contributions", handleContributions);
       window.removeEventListener("loom-state-update", handleState);
       window.removeEventListener("loom-participants-update", handleParticipants);
       window.removeEventListener("loom-agent-error", handleAgentError);
+      window.removeEventListener("loom-artifact", handleArtifact);
+      window.removeEventListener("loom-sse-reset", handleReset);
     };
   }, [meetingId, sseEvents]);
 
@@ -113,6 +140,7 @@ export function useMeetingApi(meetingId, sseEvents) {
     contributions,
     interjections,
     agentErrors,
+    artifact,
     loading,
     error,
     refetch: () => fetchMeetingData(meetingId),

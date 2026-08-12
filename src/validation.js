@@ -44,6 +44,9 @@ function validateResponse(data) {
     if (ij.draft !== undefined && ij.draft !== null && (typeof ij.draft !== "string" || ij.draft.length > 2000)) {
       return null;
     }
+    if (ij.target !== undefined && ij.target !== null && typeof ij.target !== "string") {
+      return null;
+    }
   }
   return data;
 }
@@ -76,16 +79,17 @@ export function parseAgentResponse(participantId, response, tier) {
   let cleanContent = rawContent;
 
   const ijMatch = rawContent.match(
-    /\[INTERJECT:\s*Priority:\s*(\d+),\s*Reason:\s*"([^"]+)"\]/i,
+    /\[INTERJECT:\s*Priority:\s*(\d+),\s*Reason:\s*"([^"]+)"(?:\s*,\s*Target:\s*([^\]]+?))?\s*\]/i,
   );
   if (ijMatch) {
     const rawPriority = Math.min(10, Math.max(1, parseInt(ijMatch[1])));
     const priorityCap = tier ? getPriorityCap(tier) : 10;
     const priority = Math.min(rawPriority, priorityCap);
     const reason = ijMatch[2].trim();
+    const target = ijMatch[3] ? ijMatch[3].trim() : null;
     const beforeIJ = rawContent.slice(0, ijMatch.index).trim();
     const afterIJ = rawContent.slice(ijMatch.index + ijMatch[0].length).trim();
-    interjection = { priority, reason, draft: afterIJ || null };
+    interjection = { priority, reason, target, draft: afterIJ || null };
     cleanContent = beforeIJ;
   }
 

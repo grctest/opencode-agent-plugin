@@ -300,6 +300,31 @@ input {
 .loom-badge-senior { background: #9333ea; color: white; }
 .loom-badge-principal { background: #d97706; color: white; }
 
+.loom-badge-confidence-high { background: #16a34a; color: white; }
+.loom-badge-confidence-medium { background: #ca8a04; color: white; }
+.loom-badge-confidence-low { background: #dc2626; color: white; }
+.loom-badge-confidence-unknown { background: var(--color-muted); color: var(--color-muted-foreground); }
+
+.loom-artifact-pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  margin: 0;
+  padding: 0;
+}
+
+.loom-plain-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.loom-plain-list li {
+  padding: 0.25rem 0;
+}
+
 .loom-badge-propose { background: #15803d; color: white; }
 .loom-badge-challenge { background: #b91c1c; color: white; }
 .loom-badge-refine { background: #1d4ed8; color: white; }

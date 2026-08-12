@@ -78,25 +78,39 @@ function buildIdf(contributions) {
   return idf;
 }
 
-function detectSemanticRepetition(contributions, window, threshold) {
-  if (contributions.length < window) return false;
-  const recent = contributions.slice(-window);
-  const idf = buildIdf(contributions);
-  const vectors = recent.map((c) => computeTfidfVector(c.content, idf));
+/**
+ * Detects stalled discussion: the LAST contribution of each of the last two rounds is
+ * highly similar (>= threshold) to the preceding context, meaning agents are rehashing
+ * the same point round after round rather than introducing new information.
+ */
+function detectLowNoveltyAcrossRounds(rounds, windowSize, threshold) {
+  if (rounds.length < 3) return false;
+  const checkRounds = rounds.slice(-2);
+  const pool = [];
+  let lowNoveltyRounds = 0;
 
-  let highSimilarityPairs = 0;
-  const totalPairs = (vectors.length * (vectors.length - 1)) / 2;
-
-  for (let i = 0; i < vectors.length; i++) {
-    for (let j = i + 1; j < vectors.length; j++) {
-      const sim = cosineSimilarity(vectors[i], vectors[j]);
-      if (sim >= threshold) {
-        highSimilarityPairs++;
+  for (let i = 0; i < rounds.length; i++) {
+    const r = rounds[i];
+    if (i >= rounds.length - 2) {
+      if (r.contributions.length === 0) {
+        continue;
+      }
+      const last = r.contributions[r.contributions.length - 1];
+      const candidates = pool.slice(-windowSize);
+      if (candidates.length >= 3) {
+        const idf = buildIdf([...candidates, last]);
+        const lastVec = computeTfidfVector(last.content, idf);
+        let maxSim = 0;
+        for (const c of candidates) {
+          maxSim = Math.max(maxSim, cosineSimilarity(lastVec, computeTfidfVector(c.content, idf)));
+        }
+        if (maxSim >= threshold) lowNoveltyRounds++;
       }
     }
+    for (const c of r.contributions) pool.push(c);
   }
 
-  return highSimilarityPairs / totalPairs >= 0.5;
+  return lowNoveltyRounds >= 2;
 }
 
 function detectContentDiversity(rounds, window) {
@@ -175,7 +189,8 @@ export function checkConvergence(input) {
     return { shouldStop: true, status: "converged", needsLLMCheck: false, confidence: 100 };
   }
 
-  if (currentRound < 2) {
+  const minRounds = config.minRounds ?? 2;
+  if (currentRound < minRounds) {
     return { shouldStop: false, status: "weaving", needsLLMCheck: false, confidence: 0 };
   }
 
@@ -183,7 +198,7 @@ export function checkConvergence(input) {
     return { shouldStop: true, status: "converged", needsLLMCheck: false, confidence: 80 };
   }
 
-  if (detectSemanticRepetition(contributions, config.convergence.repetitionWindow, config.convergence.repetitionOverlapThreshold)) {
+  if (detectLowNoveltyAcrossRounds(rounds, config.convergence.repetitionWindow, config.convergence.lowNoveltyCosineThreshold)) {
     return { shouldStop: true, status: "converged", needsLLMCheck: false, confidence: 80 };
   }
 
@@ -221,7 +236,7 @@ export function checkConvergence(input) {
   }
 
   if (currentRound >= maxRounds) {
-    return { shouldStop: true, status: "max_rounds_reached", needsLLMCheck: false, confidence: 100 };
+    return { shouldStop: true, status: "max_rounds_reached", needsLLMCheck: false, confidence: 60 };
   }
 
   if (currentRound >= 4 && activeCount <= Math.ceil(totalParticipants / 2)) {

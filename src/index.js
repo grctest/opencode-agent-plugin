@@ -3,7 +3,7 @@ import { isAgentSessionClient } from "./client-types.js";
 import { deleteMeetingFiles, deleteMeetingsBySessionId, findMeetingBySessionId, getDbPathForMeeting, getDatabasesBySessionId, loadSessionIndex } from "./database.js";
 import { startDashboard } from "./dashboard/server.js";
 import { createKnitHandler } from "./handlers/knit-handler.js";
-import { loadConfig, getConfigValidationWarnings, getConfig } from "./config.js";
+import { loadConfig, getConfigValidationWarnings, getConfig, getConfigSource } from "./config.js";
 import { Logger } from "./logger.js";
 
 export const Loom = async (input) => {
@@ -16,6 +16,14 @@ export const Loom = async (input) => {
   loadConfig(directory);
   loadSessionIndex(directory);
   const logger = new Logger();
+
+  const configSource = getConfigSource();
+  logger.info(
+    "config",
+    configSource
+      ? `Loom config loaded from ${configSource}`
+      : "No Loom config file found — using defaults",
+  );
 
   const warnings = getConfigValidationWarnings();
   for (const warning of warnings) {
@@ -116,6 +124,14 @@ export const Loom = async (input) => {
             .int()
             .optional()
             .describe("Random seed for room composition. Use the same seed to reproduce a room, or omit for variety."),
+          fresh: tool.schema
+            .boolean()
+            .optional()
+            .describe("Force a fresh loom even if a previous meeting exists. Default: false"),
+          turn_mode: tool.schema
+            .string()
+            .optional()
+            .describe("Turn mode for agent coordination: sequential (default), staged (2-at-a-time batched), or parallel (all concurrently)."),
         },
         execute: handleKnit,
       }),

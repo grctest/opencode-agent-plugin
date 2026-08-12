@@ -1,6 +1,3 @@
-import { buildSynthesisPrompt } from "./prompts.js";
-import { formatTranscriptFromData } from "./warp-manager.js";
-
 function supplementMissingSections(text, missingSections) {
   const note = `> **Note:** The synthesizer did not generate the following sections: ${missingSections.join(", ")}. Consider reviewing the raw deliberation transcript for additional context.`;
   return `${text}\n\n${note}`;
@@ -87,28 +84,9 @@ export function extractSection(text, sectionName) {
 
 const NEUTRAL_SYNTHESIZER_SYSTEM = `You are a neutral deliberation analyst. Your only job is to fairly represent all perspectives from the deliberation, without favoring any participant's agenda. You synthesize diverse viewpoints into a clear, balanced, actionable output.`;
 
-/** Produces the final artifact from database transcript data (for child session synthesis). */
-export async function synthesizeFromData(transcriptData, participants, objections, synthesizer, promptFn, getModel) {
-  const transcript = formatTranscriptFromData(transcriptData, participants);
-  const model = getModel(synthesizer);
-
-  const detectedDomain = transcriptData.domain || null;
-  const userPrompt = buildSynthesisPrompt(transcriptData.question, transcript, participants, detectedDomain);
-
-  let artifactText;
-  try {
-    artifactText = await promptFn(
-      NEUTRAL_SYNTHESIZER_SYSTEM,
-      model,
-      userPrompt,
-    );
-  } catch (err) {
-    console.error(`[Loom] Synthesis LLM call failed: ${err instanceof Error ? err.message : String(err)}. Falling back to contribution dump.`);
-    const contributions = transcriptData.rounds.flatMap((r) => r.contributions);
-    artifactText = `# Deliberation Output\n\n${contributions.map((c) => `- ${c.content}`).join("\n")}`;
-  }
-
-  const unresolvedObjections = objections.filter((o) => o.unresolved);
+/** Post-processes raw synthesis text into the final artifact: objections, missing-section notes, confidence, structured fields. */
+export function finalizeSynthesis(artifactText, transcriptData, participants, objections) {
+  const unresolvedObjections = (objections ?? []).filter((o) => o.unresolved);
   const objectionsText = unresolvedObjections.map((o) => `- ${o.content}`).join("\n");
   let finalOutput = objectionsText
     ? `${artifactText}\n\n## Unresolved Objections\n${objectionsText}`
@@ -137,3 +115,5 @@ export async function synthesizeFromData(transcriptData, participants, objection
 
   return { artifact, output: finalOutput };
 }
+
+export { NEUTRAL_SYNTHESIZER_SYSTEM };

@@ -1,10 +1,12 @@
 import { buildSynthesisPrompt } from "./prompts.js";
 import { formatTranscriptFromData } from "./warp-manager.js";
-import { synthesizeFromData, validateSynthesisSections } from "./synthesizer.js";
-import { extractText } from "./shared.js";
+import { finalizeSynthesis, validateSynthesisSections, NEUTRAL_SYNTHESIZER_SYSTEM } from "./synthesizer.js";
+import { extractText, withTimeout } from "./shared.js";
+import { getConfig } from "./config.js";
 import { extractErrorInfo } from "./logger.js";
 
 const MAX_SYNTHESIS_RETRIES = 2;
+const MAX_CRITIQUE_RETRIES = 1;
 const REQUIRED_SECTIONS = ["Decision", "Reasoning", "Action Items", "Dissenting Views", "Open Questions", "Confidence"];
 
 export class SynthesisCoordinator {
@@ -36,21 +38,18 @@ export class SynthesisCoordinator {
     let artifactText;
     try {
       const synthSessionId = await this.#sessionManager.createSynthesizerSession(synthesizer);
-      artifactText = await this.#promptWithRetry(synthSessionId, synthesizer, transcriptData, getParticipantModel, participants);
+      const model = getParticipantModel(synthesizer);
+      const transcript = formatTranscriptFromData(transcriptData, participants);
+      artifactText = await this.#promptWithRetry(synthSessionId, synthesizer, transcriptData, transcript, model, participants);
+      // Second pass: have the synthesizer audit its own work against the transcript.
+      artifactText = await this.#critique(synthSessionId, artifactText, transcript, model, synthesizer, participants);
     } catch (err) {
       const info = extractErrorInfo(err);
       await this.#sessionManager.postProgress(`Synthesis session failed: ${info.message}`);
       artifactText = this.fallbackSynthesis(transcriptData);
     }
 
-    const result = await synthesizeFromData(
-      transcriptData,
-      participants,
-      objections,
-      synthesizer,
-      async () => artifactText,
-      getParticipantModel,
-    );
+    const result = finalizeSynthesis(artifactText, transcriptData, participants, objections);
 
     await this.#sessionManager.postProgress("✅ Synthesis complete");
 
@@ -58,25 +57,27 @@ export class SynthesisCoordinator {
     return result.output;
   }
 
-  async #promptWithRetry(sessionId, synthesizer, transcriptData, getParticipantModel, allParticipants) {
-    const model = getParticipantModel(synthesizer);
-    const transcript = formatTranscriptFromData(transcriptData, allParticipants);
-    const detectedDomain = transcriptData.domain || null;
+  async #promptWithRetry(sessionId, synthesizer, transcriptData, transcript, model, allParticipants) {
     let additionalFeedback = "";
 
     for (let attempt = 0; attempt <= MAX_SYNTHESIS_RETRIES; attempt++) {
-      const userPrompt = buildSynthesisPrompt(transcriptData.question, transcript, [], detectedDomain) + additionalFeedback;
+      const userPrompt =
+        buildSynthesisPrompt(transcriptData.question, transcript, allParticipants, transcriptData.domain ?? null) +
+        additionalFeedback;
 
-      const result = await this.#client.session.prompt({
-        path: { id: sessionId },
-        body: {
-          system: `You are a neutral deliberation analyst. Your only job is to fairly represent all perspectives from the deliberation, without favoring any participant's agenda. You synthesize diverse viewpoints into a clear, balanced, actionable output.`,
-          model,
-          temperature: synthesizer.tier_config.temperature,
-          parts: [{ type: "text", text: userPrompt }],
-        },
-        query: { directory: this.#directory },
-      });
+      const result = await withTimeout(
+        this.#client.session.prompt({
+          path: { id: sessionId },
+          body: {
+            system: NEUTRAL_SYNTHESIZER_SYSTEM,
+            model,
+            temperature: synthesizer.tier_config.temperature,
+            parts: [{ type: "text", text: userPrompt }],
+          },
+          query: { directory: this.#directory },
+        }),
+        getConfig().synthesisTimeoutMs,
+      );
 
       if (result.error) {
         throw new Error(result.error.message || JSON.stringify(result.error));
@@ -96,8 +97,69 @@ export class SynthesisCoordinator {
     }
   }
 
-  async promptSynthesizerSession(sessionId, synthesizer, transcriptData, getParticipantModel) {
-    return this.#promptWithRetry(sessionId, synthesizer, transcriptData, getParticipantModel);
+  /** Second-pass audit: the synthesizer reviews its draft for misrepresentation, then fixes (one cycle). */
+  async #critique(sessionId, text, transcript, model, synthesizer, allParticipants) {
+    const critiquePrompt = `You are a neutral deliberation analyst reviewing your own synthesis.
+
+Review the draft below against the deliberation transcript for:
+1. Misattributed views (a point credited to the wrong participant)
+2. Invented points not present in the deliberation
+3. Significant dissent that was omitted from "Dissenting Views"
+4. Decisions or action items not supported by any contribution
+
+If corrections are needed, output the FULL revised synthesis with ALL required sections:
+## Decision
+## Reasoning
+## Action Items
+## Dissenting Views
+## Open Questions
+## Confidence
+
+If the draft is accurate and complete, respond with exactly: [NO_CHANGES]
+
+Draft synthesis:
+${text.slice(0, 6000)}`;
+
+    for (let attempt = 0; attempt < MAX_CRITIQUE_RETRIES; attempt++) {
+      try {
+        const result = await withTimeout(
+          this.#client.session.prompt({
+            path: { id: sessionId },
+            body: {
+              system: NEUTRAL_SYNTHESIZER_SYSTEM,
+              model,
+              temperature: synthesizer.tier_config.temperature,
+              parts: [{ type: "text", text: critiquePrompt }],
+            },
+            query: { directory: this.#directory },
+          }),
+          getConfig().synthesisTimeoutMs,
+        );
+
+        if (result.error) throw new Error(result.error.message || JSON.stringify(result.error));
+        const text2 = extractText(result.data);
+        if (!text2 || !text2.trim()) return text;
+
+        if (/^\[NO_CHANGES\]\s*$/i.test(text2.trim())) {
+          return text;
+        }
+
+        const missing = validateSynthesisSections(text2);
+        if (missing.length === 0) {
+          return text2;
+        }
+        // If the revision dropped sections, iterate once more with feedback
+        const feedback = `\n\nYour revised synthesis was missing these required sections: ${missing.join(", ")}. Output the FULL revised synthesis with ALL sections: ${REQUIRED_SECTIONS.join(", ")}.`;
+        // Re-prompt with the feedback appended to a fresh critique of the SAME draft
+        // (avoids compounding errors from the malformed revision)
+        void feedback;
+      } catch (err) {
+        const info = extractErrorInfo(err);
+        this.#sessionManager.postProgress(`Synthesis critique failed: ${info.message}. Using the original draft.`);
+        return text;
+      }
+    }
+    return text;
   }
 
   fallbackSynthesis(transcriptData) {

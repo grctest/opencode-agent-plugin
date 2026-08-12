@@ -1,4 +1,4 @@
-import { mkdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, existsSync, readFileSync, writeFileSync, watch } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
@@ -7,6 +7,8 @@ const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const ROOT = resolve(__dirname, "..");
 const DIST = join(ROOT, "dist");
 const DASHBOARD_DIST = join(DIST, "dashboard");
+
+const WATCH = process.argv.includes("--watch");
 
 mkdirSync(DASHBOARD_DIST, { recursive: true });
 
@@ -33,49 +35,50 @@ function copyPureCSS() {
 const steps = [
   {
     name: "Main plugin (dist/loom.js)",
-    run: () =>
-      esbuild.build({
-        entryPoints: ["src/index.js"],
-        bundle: true,
-        format: "esm",
-        platform: "node",
-        sourcemap: true,
-        outfile: join(DIST, "loom.js"),
-        external: [
-          "@opencode-ai/plugin",
-          "@opencode-ai/sdk",
-          "bun:sqlite",
-        ],
-      }),
+    esbuild: true,
+    options: {
+      entryPoints: ["src/index.js"],
+      bundle: true,
+      format: "esm",
+      platform: "node",
+      sourcemap: true,
+      outfile: join(DIST, "loom.js"),
+      external: [
+        "@opencode-ai/plugin",
+        "@opencode-ai/sdk",
+        "bun:sqlite",
+      ],
+    },
   },
   {
     name: "Dashboard server (dist/dashboard/server.js)",
-    run: () =>
-      esbuild.build({
-        entryPoints: ["src/dashboard/server.js"],
-        bundle: true,
-        format: "esm",
-        platform: "node",
-        outfile: join(DASHBOARD_DIST, "server.js"),
-        external: ["bun:sqlite"],
-      }),
+    esbuild: true,
+    options: {
+      entryPoints: ["src/dashboard/server.js"],
+      bundle: true,
+      format: "esm",
+      platform: "node",
+      outfile: join(DASHBOARD_DIST, "server.js"),
+      external: ["bun:sqlite"],
+    },
   },
   {
     name: "Dashboard app (dist/dashboard/app.js)",
-    run: () =>
-      esbuild.build({
-        entryPoints: ["src/dashboard/app.jsx"],
-        bundle: true,
-        format: "esm",
-        minify: true,
-        sourcemap: true,
-        outfile: join(DASHBOARD_DIST, "app.js"),
-        jsx: "automatic",
-        jsxImportSource: "react",
-      }),
+    esbuild: true,
+    options: {
+      entryPoints: ["src/dashboard/app.jsx"],
+      bundle: true,
+      format: "esm",
+      minify: true,
+      sourcemap: true,
+      outfile: join(DASHBOARD_DIST, "app.js"),
+      jsx: "automatic",
+      jsxImportSource: "react",
+    },
   },
   {
     name: "Dashboard styles (dist/dashboard/styles.css + pure.css)",
+    esbuild: false,
     run: () => {
       copyStyles();
       copyPureCSS();
@@ -86,13 +89,47 @@ const steps = [
 
 let failed = false;
 
-for (const { name, run: step } of steps) {
-  console.log(`\n📦 ${name}...`);
-  try {
-    await step();
-  } catch {
-    failed = true;
-    break;
+if (WATCH) {
+  const contexts = [];
+  for (const { name, esbuild: isEsbuild, options } of steps) {
+    console.log(`\n👀 ${name} (watch)...`);
+    try {
+      if (isEsbuild) {
+        const ctx = await esbuild.context(options);
+        await ctx.watch();
+        contexts.push(ctx);
+      }
+    } catch {
+      failed = true;
+      break;
+    }
+  }
+
+  if (!failed) {
+    watch(join(ROOT, "src/dashboard/app.css"), () => {
+      console.log("\n📦 Dashboard styles updated...");
+      copyStyles();
+    });
+    watch(join(ROOT, "node_modules/purecss/build"), () => {
+      console.log("\n📦 Pure.css updated...");
+      copyPureCSS();
+    });
+    console.log("\n✅ Watching for changes (Ctrl+C to stop)");
+    setInterval(() => {}, 1 << 30);
+  }
+} else {
+  for (const { name, esbuild: isEsbuild, options, run: step } of steps) {
+    console.log(`\n📦 ${name}...`);
+    try {
+      if (isEsbuild) {
+        await esbuild.build(options);
+      } else {
+        await step();
+      }
+    } catch {
+      failed = true;
+      break;
+    }
   }
 }
 
@@ -101,4 +138,6 @@ if (failed) {
   process.exit(1);
 }
 
-console.log("\n✅ Build complete");
+if (!WATCH) {
+  console.log("\n✅ Build complete");
+}

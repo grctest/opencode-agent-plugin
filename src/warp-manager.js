@@ -1,4 +1,5 @@
 import { getConfig } from "./config.js";
+import { Logger, extractErrorInfo } from "./logger.js";
 
 const MAX_WARP_CHARS = () => getConfig().maxWarpChars;
 
@@ -18,7 +19,8 @@ export async function evolveWarp(warp, round, compactFn) {
           return compactedStr;
         }
       } catch (err) {
-        console.warn(`[Loom] LLM warp compaction failed: ${err instanceof Error ? err.message : String(err)}. Using rule-based compaction.`);
+        const info = extractErrorInfo(err);
+        new Logger().warn("warp_compaction_failed", "LLM warp compaction failed — using rule-based compaction", info);
       }
     }
     return compactWarpRuleBased(currentWarp);
@@ -113,4 +115,55 @@ export function formatTranscriptFromData(data, participants) {
   }
 
   return lines.join("\n");
+}
+
+/**
+ * Compaction v2: retains structured blocks (Decision/Reasoning/Action Items/
+ * Dissenting Views/Open Questions/Confidence), the most recent 8000 chars of
+ * raw transcript, and any per-participant context lines. This gives the
+ * synthesizer a clear picture of key outcomes plus enough evidence to verify
+ * that the summary faithfully represents the deliberation.
+ */
+export function compactWarpRoundContext(transcriptData, maxLen = 8000) {
+  const structured = extractStructuredBlocks(transcriptData.rounds);
+  const recentText = extractRecentRawTranscript(transcriptData.rounds, maxLen);
+  const participantLines = extractPerParticipantContext(transcriptData.participants);
+  return [structured, recentText, participantLines].filter(Boolean).join("\n\n");
+}
+
+const STRUCTURED_BLOCK_RE = /^##\s+(Decision|Reasoning|Action Items|Dissenting Views|Open Questions|Confidence)\b/m;
+
+function extractStructuredBlocks(rounds) {
+  const parts = [];
+  for (const r of rounds) {
+    if (!r.summary) continue;
+    let m;
+    const re = /^(##\s+(Decision|Reasoning|Action Items|Dissenting Views|Open Questions|Confidence)\b[\s\S]*?)(?=^##\s+|\z)/gm;
+    while ((m = re.exec(r.summary)) !== null) {
+      parts.push(m[1].trimEnd());
+    }
+  }
+  return parts.length > 0 ? parts.join("\n\n") : "";
+}
+
+function extractRecentRawTranscript(rounds, maxLen) {
+  const chunks = [];
+  let len = 0;
+  for (let i = rounds.length - 1; i >= 0 && len < maxLen; i--) {
+    const r = rounds[i];
+    const chunk = r.contributions.map((c) => `[R${r.number}] ${c.participant_id}: ${c.content}`).join("\n");
+    if (len + chunk.length > maxLen) {
+      const remaining = maxLen - len;
+      chunks.unshift(chunk.slice(0, remaining));
+      break;
+    }
+    chunks.unshift(chunk);
+    len += chunk.length;
+  }
+  return chunks.join("\n") || "";
+}
+
+function extractPerParticipantContext(participants) {
+  if (!participants || participants.length === 0) return "";
+  return participants.map((p) => `- ${p.name} (${p.tier}): ${p.persona}`).join("\n");
 }

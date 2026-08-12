@@ -71,9 +71,10 @@ export class DashboardApi {
     this.#lastModified = Date.now();
     this.#openedAt = Date.now();
     try {
-      const stat = statSync(dbPath);
+      const stat = statSync(this.#dbPath);
       this.#fileMtimeMs = stat.mtimeMs;
     } catch {
+      // DB file may have been deleted between cache check and stat — not fatal
     }
   }
 
@@ -94,6 +95,7 @@ export class DashboardApi {
         this.#fileMtimeMs = mtimeMs;
       }
     } catch {
+      // DB file may have been deleted or locked — will retry on next access
     }
     this.#openedAt = now;
   }
@@ -101,11 +103,55 @@ export class DashboardApi {
   getState() {
     const row = this.#db
       .prepare(
-        `SELECT id as meeting_id, question, context, status, round, max_rounds, convergence, warp
+        `SELECT id as meeting_id, question, context, status, round, max_rounds, convergence, warp, domain, stats, created_at
          FROM meetings LIMIT 1`,
       )
       .get();
     return row ?? null;
+  }
+
+  getStateWithStats() {
+    const row = this.getState();
+    if (!row) return null;
+    const stats = row.stats ?? {};
+    return { ...row, stats };
+  }
+
+  getCallStats() {
+    const row = this.#db
+      .prepare(`SELECT stats FROM meetings LIMIT 1`)
+      .get();
+    if (!row || !row.stats) return null;
+    const stats = typeof row.stats === "string" ? JSON.parse(row.stats) : row.stats;
+    return stats;
+  }
+
+  getArtifact() {
+    const row = this.#db
+      .prepare(
+        `SELECT content, decisions, action_items, dissent, open_questions, confidence, created_at
+         FROM artifacts LIMIT 1`,
+      )
+      .get();
+    if (!row) return null;
+    const parse = (json) => {
+      if (!json) return [];
+      try {
+        const parsed = JSON.parse(json);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    };
+    return {
+      content: row.content,
+      decisions: parse(row.decisions),
+      action_items: parse(row.action_items),
+      dissent: parse(row.dissent),
+      open_questions: parse(row.open_questions),
+      confidence: row.confidence,
+      created_at: row.created_at,
+    };
   }
 
   getParticipants() {
@@ -124,6 +170,11 @@ export class DashboardApi {
          FROM agent_errors ORDER BY id ASC`,
       )
       .all();
+  }
+
+  getMaxOrchestratorMessageId() {
+    const row = this.#db.prepare(`SELECT MAX(id) as max_id FROM orchestrator_messages`).get();
+    return row?.max_id ?? 0;
   }
 
   getContributions() {
@@ -193,22 +244,13 @@ export class DashboardApi {
     return { meeting, participant };
   }
 
-  getRound(round) {
-    const contributions = this.#db
-      .prepare(
-        `SELECT id, participant_id, round, type, content, created_at
-         FROM contributions WHERE round = ? ORDER BY id ASC`,
-      )
-      .all(round);
-    return { contributions };
-  }
-
   exportMarkdown(meetingId) {
     const meeting = this.getState();
     const participants = this.getParticipants();
     const contributions = this.getContributions();
     const interjections = this.getInterjections();
     const errors = this.getAgentErrors();
+    const artifact = this.getArtifact();
 
     const lines = [];
     lines.push(`# Loom Deliberation Output`);
@@ -219,6 +261,13 @@ export class DashboardApi {
     lines.push(`**Convergence:** ${meeting?.convergence ?? "Unknown"}`);
     lines.push(`**Meeting ID:** ${meetingId}`);
     lines.push("");
+
+    if (artifact?.content) {
+      lines.push(`## Final Artifact`);
+      lines.push("");
+      lines.push(artifact.content);
+      lines.push("");
+    }
     lines.push(`## Participants`);
     lines.push("");
     for (const p of participants) {
@@ -303,7 +352,7 @@ export function listMeetings(directory) {
       const db = new Database(file, { readonly: true });
       const state = db
         .prepare(
-          `SELECT id as meeting_id, question, status, round, max_rounds, convergence FROM meetings LIMIT 1`,
+          `SELECT id as meeting_id, question, status, round, max_rounds, convergence, created_at FROM meetings LIMIT 1`,
         )
         .get();
       const participantCount = (
@@ -319,14 +368,16 @@ export function listMeetings(directory) {
           round: state.round,
           max_rounds: state.max_rounds,
           convergence: state.convergence,
+          created_at: state.created_at,
           participant_count: participantCount,
         });
       }
     } catch {
+      // Corrupted or locked DB — skip this meeting file
     }
   }
 
-  meetings.sort((a, b) => b.meeting_id.localeCompare(a.meeting_id));
+  meetings.sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""));
   return meetings;
 }
 

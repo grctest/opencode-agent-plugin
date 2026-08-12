@@ -1,8 +1,10 @@
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Logger, extractErrorInfo } from "./logger.js";
 
 const __dirname = dirname(fileURLToPath(new URL(".", import.meta.url)));
+const composerLogger = new Logger();
 
 function personasBasePath() {
   const candidates = [
@@ -67,7 +69,7 @@ function loadPersonasFromPath(base) {
         const p = raw[i];
         const errors = validatePersona(p);
         if (errors.length > 0) {
-          console.warn(`[Loom] Invalid persona at ${tier}[${i}] (${p.name ?? "unnamed"}): ${errors.join(", ")}`);
+          composerLogger.warn("invalid_persona", `Invalid persona at ${tier}[${i}] (${p.name ?? "unnamed"})`, { errors });
           totalRejected++;
           continue;
         }
@@ -77,13 +79,13 @@ function loadPersonasFromPath(base) {
     } catch (err) {
       if (!result[tier]) result[tier] = [];
       if (err.code !== "ENOENT") {
-        console.warn(`[Loom] Failed to load personas from ${base}/${tier}.json: ${err.message}`);
-      }
+          composerLogger.warn("persona_load_failed", `Failed to load personas from ${base}/${tier}.json`, { error: err.message });
+        }
     }
   }
 
   if (totalRejected > 0) {
-    console.warn(`[Loom] Persona validation: ${totalLoaded} loaded, ${totalRejected} rejected from ${base}`);
+    composerLogger.warn("persona_validation_summary", `Persona validation: ${totalLoaded} loaded, ${totalRejected} rejected from ${base}`);
   }
 
   return result;
@@ -252,6 +254,9 @@ function pickPersona(tier, used, domains, rng, existingPersonas, idf) {
         tier,
         domain: pDomains.join(", "),
         domains: pDomains,
+        known_biases: persona.known_biases,
+        communication_style: persona.communication_style,
+        preferred_contribution_types: persona.preferred_contribution_types,
       };
     }
   }
@@ -267,6 +272,9 @@ function pickPersona(tier, used, domains, rng, existingPersonas, idf) {
     tier,
     domain: pDomains.join(", "),
     domains: pDomains,
+    known_biases: fallback.known_biases,
+    communication_style: fallback.communication_style,
+    preferred_contribution_types: fallback.preferred_contribution_types,
   };
 }
 
@@ -388,7 +396,8 @@ JSON array:`;
       }
     }
   } catch (err) {
-    console.warn(`[Loom] LLM domain detection failed: ${err instanceof Error ? err.message : String(err)}. Using keyword fallback.`);
+    const info = extractErrorInfo(err);
+    composerLogger.warn("llm_domain_detection_failed", "LLM domain detection failed — using keyword fallback", info);
   }
 
   return detectDomainsFallback(question);
