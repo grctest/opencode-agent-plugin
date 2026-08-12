@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { cn, tierClass, typeClass, relativeTime } from "../utils.js";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
@@ -6,9 +7,25 @@ import { TierBadge, TypeBadge } from "./Badges.jsx";
 
 marked.setOptions({ breaks: true, gfm: true });
 
-function renderMarkdown(content) {
+export function renderMarkdown(content) {
   const raw = marked.parse(content, { async: false });
   return DOMPurify.sanitize(raw, { USE_PROFILES: { html: true } });
+}
+
+export function ContentDialog({ open, onClose, title, children }) {
+  if (!open) return null;
+  return createPortal(
+    <div className="loom-dialog-backdrop" onClick={onClose}>
+      <div className="loom-dialog" onClick={(e) => e.stopPropagation()}>
+        <div className="loom-dialog-header">
+          <span className="loom-title-sm">{title}</span>
+          <button className="loom-dialog-close" onClick={onClose}>×</button>
+        </div>
+        <div className="loom-dialog-body">{children}</div>
+      </div>
+    </div>,
+    document.body
+  );
 }
 
 export function ParticipantCard({ participant, error, contributionsByRound }) {
@@ -83,32 +100,33 @@ export function ThinkingCard({ participant }) {
   );
 }
 
-export function ContributionItem({ contribution, participantName }) {
-  const [expanded, setExpanded] = useState(false);
+export function ContributionItem({ contribution, participantName, onDialogOpen }) {
   const content = contribution.content ?? "";
   const html = renderMarkdown(content);
-  const preview = content.slice(0, 300);
   const isLong = content.length > 300;
 
   return (
-    <div className={cn("loom-card", "loom-contribution-card", `loom-contrib-type-${contribution.type}`)}>
+    <div
+      className={cn("loom-card", "loom-contribution-card", `loom-contrib-type-${contribution.type}`, isLong && "loom-contrib-clickable")}
+      onClick={() => isLong && onDialogOpen?.({ contribution, participantName })}
+    >
       <div className="loom-mb-sm">
         <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">
-          <span className="loom-contrib-participant">{participantName}</span>
+          <span className={cn("loom-contrib-participant", isLong && "loom-contrib-underline")}>
+            {participantName}
+          </span>
           <TypeBadge type={contribution.type} />
           <span className="loom-text-xs loom-text-muted">Round {contribution.round}</span>
           <span className="loom-text-xs loom-text-muted">{relativeTime(contribution.created_at)}</span>
         </div>
       </div>
-      {expanded || !isLong ? (
-        <div className="loom-prose" dangerouslySetInnerHTML={{ __html: html }} />
+      {isLong ? (
+        <p className="loom-text loom-text-muted">{content.slice(0, 300)}...</p>
       ) : (
-        <p className="loom-text loom-text-muted">{preview}...</p>
+        <div className="loom-prose" dangerouslySetInnerHTML={{ __html: html }} />
       )}
       {isLong && (
-        <button className="loom-link-btn" onClick={() => setExpanded(!expanded)}>
-          {expanded ? "Show less" : "Show more"}
-        </button>
+        <span className="loom-link-btn">Show full output</span>
       )}
     </div>
   );

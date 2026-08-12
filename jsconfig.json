@@ -10,7 +10,7 @@
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "jsx": "automatic",
+    "jsx": "react-jsx",
     "jsxImportSource": "react",
     "skipLibCheck": true
   },

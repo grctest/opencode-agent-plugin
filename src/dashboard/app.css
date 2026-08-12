@@ -659,17 +659,17 @@ input {
   border-radius: var(--radius-sm);
 }
 
-/* Orchestrator feed */
-.loom-orchestrator-feed {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
+/* Orchestrator list (virtualized) */
+.loom-orchestrator-list {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
 }
 
 .loom-orchestrator-exchange {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   overflow: hidden;
+  margin: 0.5rem;
 }
 
 .loom-orchestrator-query {
@@ -902,6 +902,7 @@ input {
 .loom-vrow {
   overflow: hidden;
   box-sizing: border-box;
+  padding: 4px 0;
 }
 
 /* Round groups */
@@ -1020,4 +1021,68 @@ input {
   gap: 1rem;
   min-height: 60vh;
   width: 100%;
+}
+
+/* Content dialog */
+.loom-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.loom-dialog {
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  max-width: 640px;
+  width: calc(100% - 2rem);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.loom-dialog-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.loom-dialog-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1.25rem;
+  line-height: 1;
+  color: var(--color-muted-foreground);
+  padding: 0.25rem;
+}
+.loom-dialog-close:hover { color: var(--color-foreground); }
+
+.loom-dialog-body {
+  padding: 1.5rem;
+  overflow-y: auto;
+  flex: 1;
+}
+
+/* Clickable contribution card */
+.loom-contrib-clickable {
+  cursor: pointer;
+  transition: border-color 150ms ease;
+}
+.loom-contrib-clickable:hover {
+  border-color: var(--color-ring);
+}
+
+/* Participant name underline affordance */
+.loom-contrib-underline {
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
 }

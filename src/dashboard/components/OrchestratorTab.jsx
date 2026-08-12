@@ -1,4 +1,5 @@
-import { useMemo } from "react";
+import { useRef, useMemo, useCallback } from "react";
+import { List } from "react-window";
 
 const TYPE_LABELS = {
   domain: "Domain Detection",
@@ -9,6 +10,9 @@ const TYPE_LABELS = {
   orchestrator: "Orchestrator",
 };
 
+const EXCHANGE_HEIGHT = 300;
+const MAX_LIST_HEIGHT = 600;
+
 function formatContent(content, role) {
   if (role === "user") {
     const truncated = content.length > 300 ? content.slice(0, 300) + "..." : content;
@@ -18,6 +22,8 @@ function formatContent(content, role) {
 }
 
 export function OrchestratorTab({ messages = [] }) {
+  const listRef = useRef(null);
+
   const grouped = useMemo(() => {
     const groups = [];
     let i = 0;
@@ -35,6 +41,49 @@ export function OrchestratorTab({ messages = [] }) {
     return groups;
   }, [messages]);
 
+  const rowHeightFn = useCallback(() => EXCHANGE_HEIGHT, []);
+
+  const listHeight = useMemo(() => {
+    return Math.min(MAX_LIST_HEIGHT, grouped.length * EXCHANGE_HEIGHT);
+  }, [grouped.length]);
+
+  const renderRow = useCallback(({ index, style, grouped }) => {
+    const group = grouped[index];
+    return (
+      <div style={style} className="loom-vrow">
+        <div className="loom-orchestrator-exchange">
+          {group.query && (
+            <div className="loom-orchestrator-query">
+              <div className="loom-orchestrator-meta">
+                <span className="loom-orchestrator-type">
+                  {TYPE_LABELS[group.query.type] || group.query.type}
+                </span>
+                <span className="loom-text-xs loom-text-muted">Query</span>
+              </div>
+              <div className="loom-orchestrator-content loom-orchestrator-content-query">
+                {formatContent(group.query.content, "user")}
+              </div>
+            </div>
+          )}
+          {group.response && (
+            <div className="loom-orchestrator-response">
+              <div className="loom-orchestrator-meta">
+                <span className="loom-text-xs loom-text-muted">Response</span>
+              </div>
+              <div className="loom-orchestrator-content loom-orchestrator-content-response">
+                {formatContent(group.response.content, "assistant")}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }, []);
+
+  const rowProps = useMemo(() => ({
+    grouped,
+  }), [grouped]);
+
   if (messages.length === 0) {
     return (
       <div className="loom-main-content">
@@ -51,34 +100,16 @@ export function OrchestratorTab({ messages = [] }) {
 
   return (
     <div className="loom-main-content">
-      <div className="loom-orchestrator-feed">
-        {grouped.map((group, idx) => (
-          <div key={idx} className="loom-orchestrator-exchange">
-            {group.query && (
-              <div className="loom-orchestrator-query">
-                <div className="loom-orchestrator-meta">
-                  <span className="loom-orchestrator-type">
-                    {TYPE_LABELS[group.query.type] || group.query.type}
-                  </span>
-                  <span className="loom-text-xs loom-text-muted">Query</span>
-                </div>
-                <div className="loom-orchestrator-content loom-orchestrator-content-query">
-                  {formatContent(group.query.content, "user")}
-                </div>
-              </div>
-            )}
-            {group.response && (
-              <div className="loom-orchestrator-response">
-                <div className="loom-orchestrator-meta">
-                  <span className="loom-text-xs loom-text-muted">Response</span>
-                </div>
-                <div className="loom-orchestrator-content loom-orchestrator-content-response">
-                  {formatContent(group.response.content, "assistant")}
-                </div>
-              </div>
-            )}
-          </div>
-        ))}
+      <div className="loom-orchestrator-list">
+        <List
+          ref={listRef}
+          height={listHeight}
+          rowCount={grouped.length}
+          rowHeight={rowHeightFn}
+          rowComponent={renderRow}
+          rowProps={rowProps}
+          width="100%"
+        />
       </div>
     </div>
   );

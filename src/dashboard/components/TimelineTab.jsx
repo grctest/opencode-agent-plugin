@@ -1,11 +1,11 @@
-import { useRef, useMemo, useCallback } from "react";
+import { useRef, useMemo, useCallback, useState } from "react";
 import { cn } from "../utils.js";
-import { ContributionItem, InterjectionItem, ThinkingCard } from "./Cards.jsx";
+import { ContributionItem, InterjectionItem, ThinkingCard, ContentDialog, renderMarkdown } from "./Cards.jsx";
 import { List } from "react-window";
 
-const HEADER_HEIGHT = 40;
-const CONTRIBUTION_HEIGHT = 80;
-const INTERJECTION_HEIGHT = 56;
+const HEADER_HEIGHT = 48;
+const CONTRIBUTION_HEIGHT = 120;
+const INTERJECTION_HEIGHT = 96;
 const EXTENSION_MARKER_HEIGHT = 32;
 
 function getRowHeight(item) {
@@ -35,6 +35,7 @@ export function TimelineTab({
   maxRounds,
 }) {
   const listRef = useRef(null);
+  const [dialogContribution, setDialogContribution] = useState(null);
 
   const flatItems = useMemo(() => {
     const items = [];
@@ -77,7 +78,7 @@ export function TimelineTab({
     return item ? getRowHeight(item) : CONTRIBUTION_HEIGHT;
   }, [flatItems]);
 
-  const renderRow = useCallback(({ index, style, flatItems, participantName, onToggleCollapse }) => {
+  const renderRow = useCallback(({ index, style, flatItems, participantName, onToggleCollapse, onDialogOpen }) => {
     const item = flatItems[index];
     if (!item) return null;
     if (item.type === "header") {
@@ -106,7 +107,7 @@ export function TimelineTab({
     if (item.type === "contribution") {
       return (
         <div style={style} className="loom-vrow">
-          <ContributionItem contribution={item.contribution} participantName={participantName(item.contribution.participant_id)} />
+          <ContributionItem contribution={item.contribution} participantName={participantName(item.contribution.participant_id)} onDialogOpen={onDialogOpen} />
         </div>
       );
     }
@@ -121,6 +122,7 @@ export function TimelineTab({
     flatItems,
     participantName,
     onToggleCollapse,
+    onDialogOpen: setDialogContribution,
   }), [flatItems, participantName, onToggleCollapse]);
 
   const listHeight = useMemo(() => {
@@ -186,6 +188,17 @@ export function TimelineTab({
           <p className="loom-text loom-text-muted">No contributions match your filter.</p>
         </div>
       )}
+      <ContentDialog
+        open={dialogContribution !== null}
+        onClose={() => setDialogContribution(null)}
+        title={dialogContribution ? `${dialogContribution.participantName} — ${dialogContribution.contribution.type}` : ""}
+      >
+        {dialogContribution && (
+          <div className="loom-prose" dangerouslySetInnerHTML={{
+            __html: renderMarkdown(dialogContribution.contribution.content ?? "")
+          }} />
+        )}
+      </ContentDialog>
     </div>
   );
 }
