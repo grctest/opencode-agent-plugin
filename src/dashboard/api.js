@@ -1,10 +1,12 @@
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 
 const DB_CACHE_MAX = 10;
 
 const DB_REFRESH_INTERVAL_MS = 2000;
+
+const DB_TTL_MS = 5 * 60 * 1000;
 
 export class DashboardApi {
   /** @type {Database} */
@@ -15,6 +17,8 @@ export class DashboardApi {
   #lastModified = 0;
   /** @type {number} */
   #openedAt = 0;
+  /** @type {number} */
+  #fileMtimeMs = 0;
 
   /** @type {Map<string, DashboardApi>} */
   static cache = new Map();
@@ -26,6 +30,7 @@ export class DashboardApi {
       existing.#maybeRefresh();
       return existing;
     }
+    DashboardApi.#evictExpired();
     if (DashboardApi.cache.size >= DB_CACHE_MAX) {
       let oldest = null;
       for (const [path, api] of DashboardApi.cache) {
@@ -43,6 +48,16 @@ export class DashboardApi {
     return api;
   }
 
+  static #evictExpired() {
+    const now = Date.now();
+    for (const [path, api] of DashboardApi.cache) {
+      if (now - api.#lastModified > DB_TTL_MS) {
+        api.#db.close();
+        DashboardApi.cache.delete(path);
+      }
+    }
+  }
+
   static closeAll() {
     for (const api of DashboardApi.cache.values()) {
       api.#db.close();
@@ -55,6 +70,11 @@ export class DashboardApi {
     this.#db = new Database(dbPath, { readonly: true });
     this.#lastModified = Date.now();
     this.#openedAt = Date.now();
+    try {
+      const stat = statSync(dbPath);
+      this.#fileMtimeMs = stat.mtimeMs;
+    } catch {
+    }
   }
 
   #touch() {
@@ -63,11 +83,19 @@ export class DashboardApi {
 
   #maybeRefresh() {
     const now = Date.now();
-    if (now - this.#openedAt > DB_REFRESH_INTERVAL_MS) {
-      this.#db.close();
-      this.#db = new Database(this.#dbPath, { readonly: true });
-      this.#openedAt = now;
+    if (now - this.#openedAt <= DB_REFRESH_INTERVAL_MS) return;
+
+    try {
+      const stat = statSync(this.#dbPath);
+      const mtimeMs = stat.mtimeMs;
+      if (mtimeMs !== this.#fileMtimeMs) {
+        this.#db.close();
+        this.#db = new Database(this.#dbPath, { readonly: true });
+        this.#fileMtimeMs = mtimeMs;
+      }
+    } catch {
     }
+    this.#openedAt = now;
   }
 
   getState() {
@@ -101,7 +129,7 @@ export class DashboardApi {
   getContributions() {
     return this.#db
       .prepare(
-        `SELECT id, participant_id, round, type, content, confidence, created_at
+        `SELECT id, participant_id, round, type, content, created_at
          FROM contributions ORDER BY round ASC, id ASC`,
       )
       .all();
@@ -110,7 +138,7 @@ export class DashboardApi {
   getContributionsSince(sinceId) {
     return this.#db
       .prepare(
-        `SELECT id, participant_id, round, type, content, confidence, created_at
+        `SELECT id, participant_id, round, type, content, created_at
          FROM contributions WHERE id > ? ORDER BY id ASC`,
       )
       .all(sinceId);
@@ -123,6 +151,22 @@ export class DashboardApi {
          FROM interjections ORDER BY id ASC`,
       )
       .all();
+  }
+
+  getOrchestratorMessages(meetingId) {
+    return this.#db
+      .prepare(
+        `SELECT id, msg_type, role, content, created_at
+         FROM orchestrator_messages WHERE meeting_id = ? ORDER BY id ASC`,
+      )
+      .all(meetingId)
+      .map((r) => ({
+        id: r.id,
+        type: r.msg_type,
+        role: r.role,
+        content: r.content,
+        created_at: r.created_at,
+      }));
   }
 
   getMaxContributionId() {

@@ -1,31 +1,12 @@
-import { mkdirSync, existsSync, readdirSync, unlinkSync } from "node:fs";
+import { mkdirSync, existsSync, readdirSync, unlinkSync, readFileSync, writeFileSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { extractErrorInfo } from "./logger.js";
 
-/**
- * @typedef {Object} Statement
- * @property {(params?: any) => { changes: number; lastInsertRowId: number | bigint }} run
- * @property {(params?: any) => any} get
- * @property {(params?: any) => any[]} all
- */
-
-/**
- * @typedef {Object} DBHandle
- * @property {(sql: string) => Statement} prepare
- * @property {(sql: string) => void} exec
- * @property {() => void} close
- * @property {string} filename
- */
-
-/**
- * @typedef {new (path: string, options?: { readonly?: boolean }) => DBHandle} DatabaseConstructor
- */
-
-/** @type {DatabaseConstructor | null} */
+/** @type {new (path: string, options?: { readonly?: boolean }) => DBHandle} */
 let DatabaseClass = null;
-/** @type {Promise<void> | null} */
 let dbReady = null;
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 5;
 
 function ensureDb() {
   if (DatabaseClass) return Promise.resolve();
@@ -42,14 +23,24 @@ function isoNow() {
 }
 
 export class MeetingDatabase {
-  /** @type {DBHandle} */
   #db;
-  /** @type {string} */
   #meetingId;
 
   static async create(dbPath, meetingId) {
     await ensureDb();
     return new MeetingDatabase(dbPath, meetingId);
+  }
+
+  static async readParticipants(dbPath) {
+    await ensureDb();
+    const db = new DatabaseClass(dbPath, { readonly: true });
+    try {
+      return db.prepare(
+        `SELECT id, name, persona, agenda, tier, provider_id, model_id FROM participants ORDER BY tier ASC`
+      ).all();
+    } finally {
+      db.close();
+    }
   }
 
   constructor(dbPath, meetingId) {
@@ -74,6 +65,7 @@ export class MeetingDatabase {
         warp TEXT,
         max_rounds INTEGER NOT NULL,
         convergence TEXT NOT NULL,
+        domain TEXT,
         parent_session_id TEXT,
         opencode_session_id TEXT,
         created_at TEXT NOT NULL,
@@ -91,7 +83,8 @@ export class MeetingDatabase {
         model_id TEXT,
         session_id TEXT,
         status TEXT NOT NULL DEFAULT 'listening',
-        reflection TEXT NOT NULL DEFAULT ''
+        reflection TEXT NOT NULL DEFAULT '',
+        UNIQUE(meeting_id, name)
       );
 
       CREATE TABLE IF NOT EXISTS contributions (
@@ -129,10 +122,32 @@ export class MeetingDatabase {
         created_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS error_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        meeting_id TEXT REFERENCES meetings(id) ON DELETE CASCADE,
+        severity TEXT NOT NULL DEFAULT 'error',
+        context TEXT NOT NULL,
+        message TEXT NOT NULL,
+        details TEXT,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS orchestrator_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+        msg_type TEXT NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_contributions_meeting_round ON contributions(meeting_id, round);
       CREATE INDEX IF NOT EXISTS idx_contributions_meeting ON contributions(meeting_id);
       CREATE INDEX IF NOT EXISTS idx_interjections_meeting ON interjections(meeting_id);
       CREATE INDEX IF NOT EXISTS idx_agent_errors_meeting ON agent_errors(meeting_id);
       CREATE INDEX IF NOT EXISTS idx_participants_meeting ON participants(meeting_id);
+      CREATE INDEX IF NOT EXISTS idx_error_log_meeting ON error_log(meeting_id);
+      CREATE INDEX IF NOT EXISTS idx_orchestrator_messages_meeting ON orchestrator_messages(meeting_id);
     `);
   }
 
@@ -142,23 +157,58 @@ export class MeetingDatabase {
     if (currentVersion < 1) {
       this.#db.exec(`CREATE TABLE IF NOT EXISTS _loom_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
       this.#db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '1')`);
-
       try { this.#db.exec(`ALTER TABLE participants ADD COLUMN reflection TEXT NOT NULL DEFAULT ''`); } catch { /* exists */ }
       try { this.#db.exec(`ALTER TABLE meetings ADD COLUMN opencode_session_id TEXT`); } catch { /* exists */ }
       try { this.#db.exec(`ALTER TABLE interjections ADD COLUMN round INTEGER`); } catch { /* exists */ }
     }
 
     if (currentVersion < 2) {
-      try {
-        this.#db.exec(`DROP TABLE IF EXISTS agent_responses`);
-      } catch { /* ignore */ }
-
+      try { this.#db.exec(`DROP TABLE IF EXISTS agent_responses`); } catch { /* ignore */ }
       try {
         this.#db.exec(`DROP TABLE IF EXISTS metadata`);
         this.#db.exec(`CREATE TABLE IF NOT EXISTS _loom_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
       } catch { /* ignore */ }
-
       this.#db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '2')`);
+    }
+
+    if (currentVersion < 3) {
+      try {
+        this.#db.exec(`
+          CREATE TABLE IF NOT EXISTS error_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            meeting_id TEXT REFERENCES meetings(id) ON DELETE CASCADE,
+            severity TEXT NOT NULL DEFAULT 'error',
+            context TEXT NOT NULL,
+            message TEXT NOT NULL,
+            details TEXT,
+            created_at TEXT NOT NULL
+          )
+        `);
+        this.#db.exec(`CREATE INDEX IF NOT EXISTS idx_error_log_meeting ON error_log(meeting_id)`);
+      } catch { /* exists */ }
+      this.#db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '3')`);
+    }
+
+    if (currentVersion < 4) {
+      try { this.#db.exec(`ALTER TABLE meetings ADD COLUMN domain TEXT`); } catch { /* exists */ }
+      this.#db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '4')`);
+    }
+
+    if (currentVersion < 5) {
+      try {
+        this.#db.exec(`
+          CREATE TABLE IF NOT EXISTS orchestrator_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+            msg_type TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TEXT NOT NULL
+          )
+        `);
+        this.#db.exec(`CREATE INDEX IF NOT EXISTS idx_orchestrator_messages_meeting ON orchestrator_messages(meeting_id)`);
+      } catch { /* exists */ }
+      this.#db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '5')`);
     }
   }
 
@@ -168,7 +218,6 @@ export class MeetingDatabase {
         "SELECT name FROM sqlite_master WHERE type='table' AND name='_loom_meta'"
       ).get();
       if (!hasMeta) return 0;
-
       const row = this.#db.prepare("SELECT value FROM _loom_meta WHERE key = ?").get("schema_version");
       return row ? parseInt(row.value, 10) : 0;
     } catch {
@@ -180,8 +229,8 @@ export class MeetingDatabase {
     const now = isoNow();
     this.#db
       .prepare(
-        `INSERT INTO meetings (id, question, context, status, round, warp, max_rounds, convergence, parent_session_id, opencode_session_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO meetings (id, question, context, status, round, warp, max_rounds, convergence, domain, parent_session_id, opencode_session_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         this.#meetingId,
@@ -191,17 +240,12 @@ export class MeetingDatabase {
         input.context ?? "",
         input.maxRounds,
         input.convergence,
+        input.domain ?? null,
         input.parentSessionId,
         input.opencodeSessionId,
         now,
         now,
       );
-
-    this.#db
-      .prepare(
-        `INSERT OR REPLACE INTO _loom_meta (key, value) VALUES (?, ?)`,
-      )
-      .run("opencode_session_id", input.opencodeSessionId);
 
     const dbPath = this.getDatabasePath();
     indexMeeting(dbPath, this.#meetingId, input.opencodeSessionId);
@@ -225,6 +269,36 @@ export class MeetingDatabase {
     }
   }
 
+  logError(context, message, details = null, severity = 'error') {
+    try {
+      this.#db
+        .prepare(
+          `INSERT INTO error_log (meeting_id, severity, context, message, details, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(this.#meetingId, severity, context, message, details ? JSON.stringify(details) : null, isoNow());
+    } catch (err) {
+      console.error(`[Loom ${this.#meetingId}] Failed to write error_log: ${err.message}`);
+    }
+  }
+
+  getErrorLog(meetingId) {
+    return this.#db
+      .prepare(
+        `SELECT id, severity, context, message, details, created_at
+         FROM error_log WHERE meeting_id = ? ORDER BY id ASC`,
+      )
+      .all(meetingId)
+      .map((r) => ({
+        id: r.id,
+        severity: r.severity,
+        context: r.context,
+        message: r.message,
+        details: r.details ? JSON.parse(r.details) : null,
+        created_at: r.created_at,
+      }));
+  }
+
   getWarp() {
     const row = this.#db
       .prepare("SELECT warp FROM meetings WHERE id = ?")
@@ -236,6 +310,37 @@ export class MeetingDatabase {
     this.#db
       .prepare("UPDATE meetings SET warp = ?, updated_at = ? WHERE id = ?")
       .run(warp, isoNow(), this.#meetingId);
+  }
+
+  updateMeetingDomain(meetingId, domain) {
+    this.#db
+      .prepare("UPDATE meetings SET domain = ?, updated_at = ? WHERE id = ?")
+      .run(domain, isoNow(), meetingId);
+  }
+
+  addOrchestratorMessage(msgType, role, content) {
+    this.#db
+      .prepare(
+        `INSERT INTO orchestrator_messages (meeting_id, msg_type, role, content, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(this.#meetingId, msgType, role, content, isoNow());
+  }
+
+  getOrchestratorMessages(meetingId) {
+    return this.#db
+      .prepare(
+        `SELECT id, msg_type, role, content, created_at
+         FROM orchestrator_messages WHERE meeting_id = ? ORDER BY id ASC`,
+      )
+      .all(meetingId)
+      .map((r) => ({
+        id: r.id,
+        type: r.msg_type,
+        role: r.role,
+        content: r.content,
+        created_at: r.created_at,
+      }));
   }
 
   getRound() {
@@ -288,6 +393,22 @@ export class MeetingDatabase {
       )
       .all(meetingId);
     return rows.map((r) => ({
+      participant_id: r.participant_id,
+      content: r.content,
+      type: r.type,
+      targets_which: null,
+      timestamp: new Date(r.created_at).getTime(),
+    }));
+  }
+
+  getRecentContributions(meetingId, count) {
+    const rows = this.#db
+      .prepare(
+        `SELECT participant_id, content, type, created_at
+         FROM contributions WHERE meeting_id = ? ORDER BY id DESC LIMIT ?`,
+      )
+      .all(meetingId, count);
+    return rows.reverse().map((r) => ({
       participant_id: r.participant_id,
       content: r.content,
       type: r.type,
@@ -406,13 +527,13 @@ export class MeetingDatabase {
 
   getTranscriptData(meetingId) {
     const meeting = this.#db
-      .prepare("SELECT question, warp FROM meetings WHERE id = ?")
+      .prepare("SELECT question, warp, domain FROM meetings WHERE id = ?")
       .get(meetingId);
 
     const contributions = this.#db
       .prepare(
         `SELECT participant_id, round, type, content, created_at
-         FROM contributions WHERE meeting_id = ? ORDER BY created_at ASC`,
+         FROM contributions WHERE meeting_id = ? ORDER BY round ASC, id ASC`,
       )
       .all(meetingId);
 
@@ -457,6 +578,7 @@ export class MeetingDatabase {
     return {
       question: meeting?.question ?? "",
       warp: meeting?.warp ?? "",
+      domain: meeting?.domain ?? null,
       rounds,
     };
   }
@@ -470,20 +592,22 @@ export class MeetingDatabase {
   }
 
   close() {
+    try {
+      this.#db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    } catch { /* ignore */ }
     this.#db.close();
   }
 
   getDatabasePath() {
-    const handle = this.#db;
-    return handle.filename ?? handle.name ?? "unknown";
+    return this.#db.filename ?? this.#db.name ?? "unknown";
   }
 
   getOpencodeSessionId() {
     try {
       const row = this.#db
-        .prepare("SELECT value FROM _loom_meta WHERE key = ?")
-        .get("opencode_session_id");
-      return row?.value ?? null;
+        .prepare("SELECT opencode_session_id FROM meetings WHERE id = ?")
+        .get(this.#meetingId);
+      return row?.opencode_session_id ?? null;
     } catch {
       return null;
     }
@@ -497,6 +621,47 @@ export class MeetingDatabase {
 }
 
 const sessionIndex = new Map();
+let indexDir = null;
+
+function getIndexFilePath() {
+  if (!indexDir) return null;
+  return join(indexDir, ".opencode", "loom", "session-index.json");
+}
+
+export function loadSessionIndex(directory) {
+  indexDir = directory;
+  const filePath = getIndexFilePath();
+  if (!filePath) return;
+  try {
+    const data = readFileSync(filePath, "utf-8");
+    const parsed = JSON.parse(data);
+    for (const [sessionId, entries] of Object.entries(parsed)) {
+      const validEntries = entries.filter((e) => existsSync(e.dbPath));
+      if (validEntries.length > 0) {
+        sessionIndex.set(sessionId, validEntries);
+      }
+    }
+  } catch {
+  }
+}
+
+function persistSessionIndex() {
+  const filePath = getIndexFilePath();
+  if (!filePath) return;
+  try {
+    const obj = Object.fromEntries(sessionIndex);
+    mkdirSync(dirname(filePath), { recursive: true });
+    const tmpPath = `${filePath}.tmp`;
+    writeFileSync(tmpPath, JSON.stringify(obj, null, 2));
+    renameSync(tmpPath, filePath);
+  } catch {
+  }
+}
+
+export function getDatabasesBySessionId(sessionId) {
+  const entries = sessionIndex.get(sessionId);
+  return entries ? [...entries] : [];
+}
 
 export function indexMeeting(dbPath, meetingId, sessionId) {
   if (!sessionId) return;
@@ -504,7 +669,11 @@ export function indexMeeting(dbPath, meetingId, sessionId) {
   if (!existing) {
     sessionIndex.set(sessionId, []);
   }
-  sessionIndex.get(sessionId).push({ meetingId, dbPath });
+  const entries = sessionIndex.get(sessionId);
+  if (!entries.some((e) => e.dbPath === dbPath)) {
+    entries.push({ meetingId, dbPath });
+    persistSessionIndex();
+  }
 }
 
 export function unindexMeeting(dbPath) {
@@ -516,6 +685,7 @@ export function unindexMeeting(dbPath) {
       sessionIndex.set(sessionId, filtered);
     }
   }
+  persistSessionIndex();
 }
 
 export async function findMeetingBySessionId(directory, sessionId) {
@@ -537,7 +707,8 @@ export async function findMeetingBySessionId(directory, sessionId) {
         if (row) {
           return { meetingId: row.id, question: row.question, status: row.status, round: row.round, max_rounds: row.max_rounds, dbPath };
         }
-      } catch {
+      } catch (err) {
+        console.warn(`[Loom] Indexed DB lookup failed for ${dbPath}: ${err.message}`);
       } finally {
         if (conn) conn.close();
       }
@@ -565,7 +736,8 @@ export async function findMeetingBySessionId(directory, sessionId) {
         indexMeeting(filePath, row.id, sessionId);
         return { meetingId: row.id, question: row.question, status: row.status, round: row.round, max_rounds: row.max_rounds, dbPath: filePath };
       }
-    } catch {
+    } catch (err) {
+      console.warn(`[Loom] DB scan failed for ${filePath}: ${err.message}`);
     } finally {
       if (conn) conn.close();
     }
@@ -577,8 +749,6 @@ export function getDbPathForMeeting(directory, meetingId) {
   const path = join(directory, ".opencode", "loom", "meetings", `${meetingId}.db`);
   return existsSync(path) ? path : null;
 }
-
-// ─── Static cleanup utilities ─────────────────────────────────────────────────
 
 export function deleteMeetingFiles(dbPath) {
   unindexMeeting(dbPath);
@@ -593,22 +763,40 @@ export function listMeetingFiles(directory) {
   return readdirSync(dir).filter((f) => f.endsWith(".db"));
 }
 
-export async function readSessionIdFromDb(dbPath) {
+export async function readSessionIdFromDbAsync(dbPath) {
   try {
     const { Database: DBClass } = await import("bun:sqlite");
     const db = new DBClass(dbPath, { readonly: true });
     try {
-      const row = db.prepare("SELECT value FROM _loom_meta WHERE key = ?").get("opencode_session_id");
-      return row?.value ?? null;
+      const row = db.prepare("SELECT opencode_session_id FROM meetings LIMIT 1").get();
+      return row?.opencode_session_id ?? null;
     } finally {
       db.close();
     }
-  } catch {
+  } catch (err) {
+    console.warn(`[Loom] Failed to read session ID from ${dbPath}: ${err.message}`);
     return null;
   }
 }
 
-export function cleanupOrphanDatabases(directory, activeSessionIds) {
+export async function deleteMeetingsBySessionId(directory, sessionId) {
+  const meetingsDir = join(directory, ".opencode", "loom", "meetings");
+  if (!existsSync(meetingsDir)) return 0;
+
+  let deleted = 0;
+  for (const file of readdirSync(meetingsDir)) {
+    if (!file.endsWith(".db")) continue;
+    const dbPath = join(meetingsDir, file);
+    const dbSessionId = await readSessionIdFromDbAsync(dbPath);
+    if (dbSessionId === sessionId) {
+      deleteMeetingFiles(dbPath);
+      deleted++;
+    }
+  }
+  return deleted;
+}
+
+export async function cleanupOrphanDatabases(directory, activeSessionIds) {
   const meetingsDir = join(directory, ".opencode", "loom", "meetings");
   if (!existsSync(meetingsDir)) return 0;
 
@@ -616,7 +804,7 @@ export function cleanupOrphanDatabases(directory, activeSessionIds) {
   for (const file of readdirSync(meetingsDir)) {
     if (!file.endsWith(".db")) continue;
     const dbPath = join(meetingsDir, file);
-    const sessionId = readSessionIdFromDbSync(dbPath);
+    const sessionId = await readSessionIdFromDbAsync(dbPath);
     if (sessionId && !activeSessionIds.has(sessionId)) {
       for (const suffix of ["", "-wal", "-shm"]) {
         try { unlinkSync(`${dbPath}${suffix}`); } catch { /* ignore */ }
@@ -625,25 +813,4 @@ export function cleanupOrphanDatabases(directory, activeSessionIds) {
     }
   }
   return cleaned;
-}
-
-function readSessionIdFromDbSync(dbPath) {
-  let DBClass = null;
-  try {
-    DBClass = globalThis.Bun ? require("bun:sqlite").Database : null;
-  } catch {
-    return null;
-  }
-  if (!DBClass) return null;
-  try {
-    const db = new DBClass(dbPath, { readonly: true });
-    try {
-      const row = db.prepare("SELECT value FROM _loom_meta WHERE key = ?").get("opencode_session_id");
-      return row?.value ?? null;
-    } finally {
-      db.close();
-    }
-  } catch {
-    return null;
-  }
 }

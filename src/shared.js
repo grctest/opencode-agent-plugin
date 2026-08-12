@@ -1,4 +1,9 @@
-import { CONFIG } from "./config.js";
+import { getConfig } from "./config.js";
+
+/** Checks whether a participant's tier grants a specific deliberation right. */
+export function can(participant, action) {
+  return participant.tier_config.rights[action];
+}
 
 /** Extracts text content from an LLM response data object. */
 export function extractText(data) {
@@ -16,7 +21,7 @@ export function truncate(text, max) {
 }
 
 /** Enforces a word limit on text, appending [truncated] if exceeded. */
-export function enforceWordLimit(text, maxWords = CONFIG.maxContributionWords) {
+export function enforceWordLimit(text, maxWords = getConfig().maxContributionWords) {
   const words = text.split(/\s+/);
   if (words.length <= maxWords) return text;
   return words.slice(0, maxWords).join(" ") + " [truncated]";
@@ -30,27 +35,10 @@ export function withTimeout(promise, ms) {
   });
 }
 
-/** Creates a structured error for Loom operations. */
-export function loomError(phase, participantId, recoverable, cause) {
-  const message = cause instanceof Error ? cause.message : String(cause);
-  return {
-    phase,
-    participantId: participantId ?? null,
-    recoverable: recoverable ?? false,
-    message,
-    cause,
-    timestamp: new Date().toISOString(),
-  };
-}
-
 /** Lookback windows used throughout the deliberation engine. */
 export const LOOKBACK = {
-  AGENT_CONTEXT_RECENT: 3,
   CONVERGENCE_RECENT: 6,
-  CONVERGENCE_REPETITION_WINDOW: 5,
-  MODERATOR_LOOKBACK: 3,
   SENDER_HISTORY: 6,
-  SUMMARY_RECENT: 3,
 };
 
 /** Priority caps per tier for interjection self-reporting. */
@@ -64,16 +52,6 @@ export const INTERJECTION_PRIORITY_CAP = {
 /** Gets the maximum interjection priority a tier can self-report. */
 export function getPriorityCap(tier) {
   return INTERJECTION_PRIORITY_CAP[tier] ?? 5;
-}
-
-/** Checks if an interjection priority is valid for the given tier. */
-export function isValidPriorityForTier(tier, priority) {
-  return priority >= 1 && priority <= getPriorityCap(tier);
-}
-
-/** Generates a unique participant ID from name and index. */
-export function generateParticipantId(name, index) {
-  return `${name.toLowerCase().replace(/\s+/g, "_")}_${index}`;
 }
 
 /** Default rights configuration for tiers. */

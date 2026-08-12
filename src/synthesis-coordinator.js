@@ -1,7 +1,11 @@
 import { buildSynthesisPrompt } from "./prompts.js";
 import { formatTranscriptFromData } from "./warp-manager.js";
-import { synthesizeFromData } from "./synthesizer.js";
+import { synthesizeFromData, validateSynthesisSections } from "./synthesizer.js";
 import { extractText } from "./shared.js";
+import { extractErrorInfo } from "./logger.js";
+
+const MAX_SYNTHESIS_RETRIES = 2;
+const REQUIRED_SECTIONS = ["Decision", "Reasoning", "Action Items", "Dissenting Views", "Open Questions", "Confidence"];
 
 export class SynthesisCoordinator {
   #client;
@@ -32,9 +36,10 @@ export class SynthesisCoordinator {
     let artifactText;
     try {
       const synthSessionId = await this.#sessionManager.createSynthesizerSession(synthesizer);
-      artifactText = await this.promptSynthesizerSession(synthSessionId, synthesizer, transcriptData, getParticipantModel);
+      artifactText = await this.#promptWithRetry(synthSessionId, synthesizer, transcriptData, getParticipantModel, participants);
     } catch (err) {
-      this.#sessionManager.postProgress(`Synthesis session failed: ${err.message}`);
+      const info = extractErrorInfo(err);
+      await this.#sessionManager.postProgress(`Synthesis session failed: ${info.message}`);
       artifactText = this.fallbackSynthesis(transcriptData);
     }
 
@@ -53,30 +58,46 @@ export class SynthesisCoordinator {
     return result.output;
   }
 
-  async promptSynthesizerSession(sessionId, synthesizer, transcriptData, getParticipantModel) {
+  async #promptWithRetry(sessionId, synthesizer, transcriptData, getParticipantModel, allParticipants) {
     const model = getParticipantModel(synthesizer);
-    const transcript = formatTranscriptFromData(transcriptData, synthesizer);
-    const userPrompt = buildSynthesisPrompt(transcriptData.question, transcript);
+    const transcript = formatTranscriptFromData(transcriptData, allParticipants);
+    const detectedDomain = transcriptData.domain || null;
+    let additionalFeedback = "";
 
-    const result = await this.#client.session.prompt({
-      path: { id: sessionId },
-      body: {
-        system: `You are ${synthesizer.config.name} (${synthesizer.config.tier}). Synthesize the final output.\n\n${synthesizer.tier_config.system_prompt_addendum}`,
-        model,
-        parts: [{ type: "text", text: userPrompt }],
-      },
-      query: { directory: this.#directory },
-    });
+    for (let attempt = 0; attempt <= MAX_SYNTHESIS_RETRIES; attempt++) {
+      const userPrompt = buildSynthesisPrompt(transcriptData.question, transcript, [], detectedDomain) + additionalFeedback;
 
-    if (result.error) {
-      throw new Error(result.error.message || JSON.stringify(result.error));
+      const result = await this.#client.session.prompt({
+        path: { id: sessionId },
+        body: {
+          system: `You are a neutral deliberation analyst. Your only job is to fairly represent all perspectives from the deliberation, without favoring any participant's agenda. You synthesize diverse viewpoints into a clear, balanced, actionable output.`,
+          model,
+          temperature: synthesizer.tier_config.temperature,
+          parts: [{ type: "text", text: userPrompt }],
+        },
+        query: { directory: this.#directory },
+      });
+
+      if (result.error) {
+        throw new Error(result.error.message || JSON.stringify(result.error));
+      }
+
+      const text = extractText(result.data);
+      if (!text) {
+        throw new Error("Synthesizer returned empty response");
+      }
+
+      const missing = validateSynthesisSections(text);
+      if (missing.length === 0 || attempt === MAX_SYNTHESIS_RETRIES) {
+        return text;
+      }
+
+      additionalFeedback = `\n\nYour previous response was missing these required sections: ${missing.join(", ")}. Please include ALL of the following sections in your response: ${REQUIRED_SECTIONS.join(", ")}.`;
     }
+  }
 
-    const text = extractText(result.data);
-    if (!text) {
-      throw new Error("Synthesizer returned empty response");
-    }
-    return text;
+  async promptSynthesizerSession(sessionId, synthesizer, transcriptData, getParticipantModel) {
+    return this.#promptWithRetry(sessionId, synthesizer, transcriptData, getParticipantModel);
   }
 
   fallbackSynthesis(transcriptData) {
@@ -87,6 +108,8 @@ export class SynthesisCoordinator {
     const questions = contributions.filter((c) => c.type === "question");
 
     let output = `## Decision\nSynthesis generation encountered an error. The following represents the key points from the deliberation.\n\n`;
+    output += `## Reasoning\nFallback synthesis was used due to an error in the synthesis session.\n\n`;
+    output += `## Action Items\n- Review the key proposals below\n- Re-run synthesis if needed\n\n`;
     output += `## Key Proposals\n${proposals.map((c) => `- ${c.content}`).join("\n")}\n\n`;
     if (challenges.length > 0) {
       output += `## Dissenting Views\n${challenges.map((c) => `- ${c.content}`).join("\n")}\n\n`;

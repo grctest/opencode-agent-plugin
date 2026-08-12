@@ -39,6 +39,7 @@ const steps = [
         bundle: true,
         format: "esm",
         platform: "node",
+        sourcemap: true,
         outfile: join(DIST, "loom.js"),
         external: [
           "@opencode-ai/plugin",
@@ -67,6 +68,7 @@ const steps = [
         bundle: true,
         format: "esm",
         minify: true,
+        sourcemap: true,
         outfile: join(DASHBOARD_DIST, "app.js"),
         jsx: "automatic",
         jsxImportSource: "react",

@@ -16,7 +16,8 @@ export async function discoverModels(client, directory, sessionID) {
         modelID: sessionData.model.modelID,
       };
     }
-  } catch {
+  } catch (err) {
+    console.warn(`[Loom] Failed to fetch session model: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   try {
@@ -48,7 +49,8 @@ export async function discoverModels(client, directory, sessionID) {
         });
       }
     }
-  } catch {
+  } catch (err) {
+    console.warn(`[Loom] Provider discovery failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   if (available.length === 0 && sessionModel) {

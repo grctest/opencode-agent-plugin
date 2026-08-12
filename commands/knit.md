@@ -36,6 +36,27 @@ Invoke `knit` when the user explicitly types `/knit` followed by a question or t
 4. Agents take structured turns, interject with priority, and challenge each other
 5. A synthesizer produces a final artifact with decisions, action items, dissenting views, and confidence level
 
+## Configuration
+
+The Loom can be configured via your `opencode.json` file under a `"loom"` key:
+
+```json
+{
+  "loom": {
+    "agentTimeoutMs": 120000,
+    "maxWarpChars": 12000,
+    "defaultMaxRounds": 3,
+    "maxInterjectionsPerRound": 3,
+    "convergence": {
+      "repetitionOverlapThreshold": 0.45,
+      "semanticConvergenceFromRound": 3
+    }
+  }
+}
+```
+
+You can also create a `.loomrc.json` in your project directory for project-specific overrides.
+
 ## Examples
 
 ```
@@ -43,4 +64,5 @@ Invoke `knit` when the user explicitly types `/knit` followed by a question or t
 /knit "What's our Q4 hiring plan?" --max_rounds 5
 /knit "Design a caching strategy for our API" --convergence consensus
 /knit_models  # Preview model assignments before running
+loom_viz       # Start the dashboard
 ```

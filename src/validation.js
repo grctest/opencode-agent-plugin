@@ -1,4 +1,4 @@
-import { CONFIG } from "./config.js";
+import { getConfig } from "./config.js";
 import { enforceWordLimit, getPriorityCap } from "./shared.js";
 
 const VALID_TYPES = new Set([
@@ -11,14 +11,6 @@ const VALID_TYPES = new Set([
   "question",
   "interjection",
 ]);
-
-/**
- * @typedef {Object} ValidatedAgentResponse
- * @property {string} participant_id
- * @property {string} content
- * @property {import("./types.js").ContributionType} type
- * @property {{ priority: number; reason: string } | null} interjection
- */
 
 const TYPE_PREFIXES = {
   "[PROPOSE]": "propose",
@@ -47,6 +39,9 @@ function validateResponse(data) {
       ij.reason.length < 1 ||
       ij.reason.length > 500
     ) {
+      return null;
+    }
+    if (ij.draft !== undefined && ij.draft !== null && (typeof ij.draft !== "string" || ij.draft.length > 2000)) {
       return null;
     }
   }
@@ -78,6 +73,7 @@ export function parseAgentResponse(participantId, response, tier) {
 
   const rawContent = text.slice(contentStart).trim();
   let interjection = null;
+  let cleanContent = rawContent;
 
   const ijMatch = rawContent.match(
     /\[INTERJECT:\s*Priority:\s*(\d+),\s*Reason:\s*"([^"]+)"\]/i,
@@ -87,12 +83,14 @@ export function parseAgentResponse(participantId, response, tier) {
     const priorityCap = tier ? getPriorityCap(tier) : 10;
     const priority = Math.min(rawPriority, priorityCap);
     const reason = ijMatch[2].trim();
-    interjection = { priority, reason };
+    const beforeIJ = rawContent.slice(0, ijMatch.index).trim();
+    const afterIJ = rawContent.slice(ijMatch.index + ijMatch[0].length).trim();
+    interjection = { priority, reason, draft: afterIJ || null };
+    cleanContent = beforeIJ;
   }
 
-  const cleanContent = rawContent.replace(/\[INTERJECT:\s*Priority:\s*\d+,\s*Reason:\s*"[^"]*"\]/i, "").trim();
-
-  const limitedContent = enforceWordLimit(cleanContent, CONFIG.maxContributionWords);
+  const config = getConfig();
+  const limitedContent = enforceWordLimit(cleanContent, config.maxContributionWords);
 
   const validated = validateResponse({
     participant_id: participantId,
@@ -107,7 +105,7 @@ export function parseAgentResponse(participantId, response, tier) {
 
   return {
     participant_id: participantId,
-    content: enforceWordLimit(rawContent, CONFIG.maxContributionWords),
+    content: enforceWordLimit(rawContent, config.maxContributionWords),
     type: "propose",
     interjection: null,
   };

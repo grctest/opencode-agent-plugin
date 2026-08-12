@@ -81,13 +81,32 @@ export function startDashboard(directory, port) {
     }
   };
 
-  const pollInterval = setInterval(() => {
+  const ACTIVE_POLL_INTERVAL = 1000;
+  const IDLE_POLL_INTERVAL = 5000;
+  let currentPollInterval = ACTIVE_POLL_INTERVAL;
+  let pollTimer = null;
+  let consecutiveIdlePolls = 0;
+
+  const TERMINAL_STATUSES = new Set(["converged", "cancelled", "timeout", "max_rounds_reached", "aborted", "deadlocked"]);
+
+  const pollMeetings = () => {
+    let hadActivity = false;
     for (const [meetingId, clients] of sseClients) {
       if (clients.size === 0) continue;
       try {
         const dbPath = getMeetingDbPath(directory, meetingId);
         if (!dbPath) continue;
         const api = DashboardApi.get(dbPath);
+
+        const currentState = api.getState();
+        if (currentState && TERMINAL_STATUSES.has(currentState.status)) {
+          const wasTerminal = participantStatusCache.get(`terminal:${meetingId}`);
+          if (!wasTerminal) {
+            participantStatusCache.set(`terminal:${meetingId}`, "true");
+            broadcast(meetingId, { type: "state", data: currentState, timestamp: new Date().toISOString() });
+          }
+          continue;
+        }
 
         const maxId = api.getMaxContributionId();
         const prevId = lastContributionId.get(meetingId) ?? 0;
@@ -99,15 +118,22 @@ export function startDashboard(directory, port) {
             data: newContributions,
             timestamp: new Date().toISOString(),
           });
+          hadActivity = true;
         }
 
         const state = api.getState();
         if (state) {
-          broadcast(meetingId, {
-            type: "state",
-            data: state,
-            timestamp: new Date().toISOString(),
-          });
+          const prevState = participantStatusCache.get(`state:${meetingId}`);
+          const stateStr = JSON.stringify({ status: state.status, round: state.round });
+          if (prevState !== stateStr) {
+            participantStatusCache.set(`state:${meetingId}`, stateStr);
+            broadcast(meetingId, {
+              type: "state",
+              data: state,
+              timestamp: new Date().toISOString(),
+            });
+            if (state.status === "weaving") hadActivity = true;
+          }
         }
 
         const participants = api.getParticipants();
@@ -122,6 +148,7 @@ export function startDashboard(directory, port) {
               data: participants,
               timestamp: new Date().toISOString(),
             });
+            hadActivity = true;
           }
         }
 
@@ -137,11 +164,33 @@ export function startDashboard(directory, port) {
               timestamp: new Date().toISOString(),
             });
           }
+          hadActivity = true;
         }
       } catch {
       }
     }
-  }, 1000);
+
+    if (hadActivity) {
+      consecutiveIdlePolls = 0;
+      if (currentPollInterval !== ACTIVE_POLL_INTERVAL) {
+        currentPollInterval = ACTIVE_POLL_INTERVAL;
+        restartPollTimer();
+      }
+    } else {
+      consecutiveIdlePolls++;
+      if (consecutiveIdlePolls > 5 && currentPollInterval !== IDLE_POLL_INTERVAL) {
+        currentPollInterval = IDLE_POLL_INTERVAL;
+        restartPollTimer();
+      }
+    }
+  };
+
+  const restartPollTimer = () => {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(pollMeetings, currentPollInterval);
+  };
+
+  pollTimer = setInterval(pollMeetings, currentPollInterval);
 
   const server = Bun.serve({
     port,
@@ -161,6 +210,38 @@ export function startDashboard(directory, port) {
         if (url.pathname === "/api/meetings") {
           const meetings = listMeetings(directory);
           return Response.json(meetings);
+        }
+
+        if (url.pathname === "/api/meeting") {
+          const meetingId = url.searchParams.get("meeting");
+          if (!meetingId || !isValidMeetingId(meetingId)) {
+            return Response.json({ error: "valid meeting id required" }, { status: 400 });
+          }
+          const dbPath = getMeetingDbPath(directory, meetingId);
+          if (!dbPath) {
+            return Response.json({ error: "not found" }, { status: 404 });
+          }
+          const api = DashboardApi.get(dbPath);
+          return Response.json({
+            state: api.getState(),
+            participants: api.getParticipants(),
+            contributions: api.getContributions(),
+            interjections: api.getInterjections(),
+            agent_errors: api.getAgentErrors(),
+          });
+        }
+
+        if (url.pathname === "/api/orchestrator_messages") {
+          const meetingId = url.searchParams.get("meeting");
+          if (!meetingId || !isValidMeetingId(meetingId)) {
+            return Response.json({ error: "valid meeting id required" }, { status: 400 });
+          }
+          const dbPath = getMeetingDbPath(directory, meetingId);
+          if (!dbPath) {
+            return Response.json({ error: "not found" }, { status: 404 });
+          }
+          const api = DashboardApi.get(dbPath);
+          return Response.json({ messages: api.getOrchestratorMessages(meetingId) });
         }
 
         if (url.pathname === "/api/state") {
@@ -344,7 +425,7 @@ export function startDashboard(directory, port) {
   return {
     port: server.port,
     stop: () => {
-      clearInterval(pollInterval);
+      if (pollTimer) clearInterval(pollTimer);
       for (const clients of sseClients.values()) {
         for (const controller of clients) {
           try {

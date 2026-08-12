@@ -260,8 +260,6 @@ input {
   color: var(--color-muted-foreground);
 }
 
-.loom-text-center { text-align: center; }
-
 .loom-text-live { color: #16a34a; }
 .loom-text-granted { color: #16a34a; }
 .loom-text-denied { color: #dc2626; }
@@ -297,8 +295,6 @@ input {
 .loom-badge-deadlocked { background: #dc2626; color: white; }
 .loom-badge-max_rounds_reached { background: #ea580c; color: white; }
 .loom-badge-initializing { background: var(--color-muted); color: var(--color-muted-foreground); }
-.loom-badge-aborted { background: var(--color-destructive); color: var(--color-destructive-foreground); }
-
 .loom-badge-junior { background: var(--color-secondary); color: var(--color-secondary-foreground); }
 .loom-badge-mid { background: #2563eb; color: white; }
 .loom-badge-senior { background: #9333ea; color: white; }
@@ -617,12 +613,6 @@ input {
   margin: 0 0 0.25rem;
 }
 
-.loom-warp-emphasis {
-  font-size: 0.875rem;
-  font-weight: 500;
-  margin: 0;
-}
-
 /* Agent perspective */
 .loom-agent-perspective {
   border-left: 3px solid var(--color-accent);
@@ -667,6 +657,64 @@ input {
   padding: 0.5rem;
   background: var(--color-secondary);
   border-radius: var(--radius-sm);
+}
+
+/* Orchestrator feed */
+.loom-orchestrator-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.loom-orchestrator-exchange {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.loom-orchestrator-query {
+  padding: 0.75rem;
+  background: var(--color-card);
+}
+
+.loom-orchestrator-response {
+  padding: 0.75rem;
+  background: color-mix(in oklch, var(--color-card) 50%, var(--color-background));
+  border-top: 1px solid var(--color-border);
+}
+
+.loom-orchestrator-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.4rem;
+}
+
+.loom-orchestrator-type {
+  font-size: 0.625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #3b82f6;
+}
+
+.loom-orchestrator-content {
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.loom-orchestrator-content-query {
+  color: var(--color-muted-foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.75rem;
+  max-height: 8rem;
+  overflow-y: auto;
+}
+
+.loom-orchestrator-content-response {
+  color: var(--color-foreground);
 }
 
 /* Meeting selector */
@@ -850,23 +898,10 @@ input {
   color: var(--color-muted-foreground);
 }
 
-/* Warp Growth Chart */
-.loom-warp-chart {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.loom-warp-svg {
-  width: 100%;
-  height: 3rem;
-}
-
-.loom-warp-chart-labels {
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.625rem;
-  color: var(--color-muted-foreground);
+/* Virtualized row */
+.loom-vrow {
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
 /* Round groups */
@@ -976,3 +1011,13 @@ input {
 .loom-mt-xs { margin-top: 0.25rem; }
 .loom-mt-sm { margin-top: 0.5rem; }
 .loom-py-lg { padding-top: 2rem; padding-bottom: 2rem; }
+
+.loom-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  min-height: 60vh;
+  width: 100%;
+}

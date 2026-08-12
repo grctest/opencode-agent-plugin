@@ -212,12 +212,12 @@ Each `/knit` invocation creates a SQLite database tagged with the opencode sessi
 
 | Table | Contents |
 |-------|----------|
-| `meetings` | Question, context, warp, status, round, convergence mode |
-| `participants` | Config, model assignment, child session ID |
+| `meetings` | Question, context, warp, status, round, convergence mode, session ID |
+| `participants` | Config, model assignment, child session ID, reflection |
 | `contributions` | Per-round participant contributions |
 | `interjections` | Priority interruptions and resolutions |
-| `agent_responses` | Historical agent response text |
-| `metadata` | Session ID for orphan detection |
+| `agent_errors` | Per-round participant error records |
+| `_loom_meta` | Schema version for migrations |
 
 ### Multi-Invocation
 
@@ -234,7 +234,7 @@ Running `/knit` multiple times in the same session creates separate databases (o
 
 ## Output
 
-The Looom produces:
+The Loom produces:
 1. A synthesized artifact with decisions and reasoning
 2. Action items
 3. Any unresolved objections (minority report)

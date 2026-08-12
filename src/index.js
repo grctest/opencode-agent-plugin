@@ -1,11 +1,10 @@
 import { tool } from "@opencode-ai/plugin";
-import { MeetingOrchestrator } from "./orchestrator.js";
-import { composeRoom, formatRoomPreview } from "./composer.js";
 import { isAgentSessionClient } from "./client-types.js";
-import { deleteMeetingFiles, findMeetingBySessionId, getDbPathForMeeting } from "./database.js";
+import { deleteMeetingFiles, deleteMeetingsBySessionId, findMeetingBySessionId, getDbPathForMeeting, getDatabasesBySessionId, loadSessionIndex } from "./database.js";
 import { startDashboard } from "./dashboard/server.js";
 import { createKnitHandler } from "./handlers/knit-handler.js";
-import { join } from "node:path";
+import { loadConfig, getConfigValidationWarnings, getConfig } from "./config.js";
+import { Logger } from "./logger.js";
 
 export const Loom = async (input) => {
   const { client, directory } = input;
@@ -14,11 +13,19 @@ export const Loom = async (input) => {
     throw new Error("Loom plugin requires a compatible opencode client with session.create, session.prompt, session.message, and provider API access.");
   }
 
+  loadConfig(directory);
+  loadSessionIndex(directory);
+  const logger = new Logger();
+
+  const warnings = getConfigValidationWarnings();
+  for (const warning of warnings) {
+    logger.warn("config_validation", warning);
+  }
+
   const activeLooms = new Map();
-  const sessionDatabases = new Map();
   let activeDashboard = null;
 
-  const { handleKnit, handleKnitModels } = createKnitHandler(client, directory);
+  const { handleKnit, handleKnitModels } = createKnitHandler(client, directory, activeLooms);
 
   return {
     tool: {
@@ -104,6 +111,11 @@ export const Loom = async (input) => {
             .max(1800000)
             .optional()
             .describe("Maximum meeting duration in ms. Default: 900000 (15 min)"),
+          seed: tool.schema
+            .number()
+            .int()
+            .optional()
+            .describe("Random seed for room composition. Use the same seed to reproduce a room, or omit for variety."),
         },
         execute: handleKnit,
       }),
@@ -206,16 +218,18 @@ export const Loom = async (input) => {
           return handleKnitModels();
         },
       }),
+
+
     },
     event: async ({ event }) => {
       if (event.type === "session.deleted") {
         const deletedId = event.properties?.info?.id;
-        if (deletedId && sessionDatabases.has(deletedId)) {
-          const dbPaths = sessionDatabases.get(deletedId);
-          for (const dbPath of dbPaths) {
+        if (deletedId) {
+          const entries = getDatabasesBySessionId(deletedId);
+          for (const { dbPath } of entries) {
             deleteMeetingFiles(dbPath);
           }
-          sessionDatabases.delete(deletedId);
+          await deleteMeetingsBySessionId(directory, deletedId);
         }
       }
     },
@@ -230,4 +244,4 @@ export {
   can,
   getPromptForTier,
   getRightsForTier,
-} from "./tiers.js";
+} from "./shared.js";

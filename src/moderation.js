@@ -1,43 +1,36 @@
 import { buildModeratorPrompt } from "./prompts.js";
-import { CONFIG } from "./config.js";
+import { getConfig } from "./config.js";
 import { LOOKBACK } from "./shared.js";
 
-/**
- * @typedef {Object} ModeratorRuling
- * @property {string} decision
- * @property {string} next_speaker
- * @property {string} reason
- */
-
-/**
- * @typedef {Object} ModeratorDecision
- * @property {"continue" | "break" | "converge"} action
- * @property {number} nextSpeakerIdx
- */
-
-/** Parses a moderator's free-text ruling into structured fields (decision, next_speaker, reason). */
+/** Parses a moderator's XML ruling into structured fields (decision, next_speaker, reason). */
 export function parseModeratorRuling(text) {
-  const lines = text.split("\n");
   let decision = "";
   let next_speaker = "continue";
   let reason = "";
 
+  const rulingMatch = text.match(/<ruling>([\s\S]*?)<\/ruling>/i);
+  const content = rulingMatch ? rulingMatch[1] : text;
+
+  const lines = content.split("\n");
   for (const line of lines) {
-    const lower = line.toLowerCase().trim();
+    const trimmed = line.trim();
+    const lower = trimmed.toLowerCase();
     if (lower.startsWith("decision:")) {
-      decision = line.substring(line.indexOf(":") + 1).trim();
+      decision = trimmed.substring(trimmed.indexOf(":") + 1).trim();
     } else if (lower.startsWith("next_speaker:")) {
-      next_speaker = line.substring(line.indexOf(":") + 1).trim();
+      next_speaker = trimmed.substring(trimmed.indexOf(":") + 1).trim();
     } else if (lower.startsWith("reason:")) {
-      reason = line.substring(line.indexOf(":") + 1).trim();
+      reason = trimmed.substring(trimmed.indexOf(":") + 1).trim();
     }
   }
 
   if (!decision) {
-    decision = text.slice(0, 200);
     const lower = text.toLowerCase();
     if (lower.includes("converge") || lower.includes("synthesize") || lower.includes("wrap up")) {
       next_speaker = "synthesize";
+      decision = "Converge the deliberation";
+    } else {
+      decision = text.slice(0, 200);
     }
   }
 
@@ -49,7 +42,7 @@ export function parseModeratorRuling(text) {
  * Returns an action: continue, break (redirect to specific speaker), or converge (end meeting).
  */
 export async function checkModeratorIntervention(round, participants, weft, currentRound, maxRounds, promptFn, getHighestTierModel) {
-  const trigger = CONFIG.moderatorTrigger;
+  const trigger = getConfig().moderatorTrigger;
   if (round.contributions.length < trigger.minContributions) {
     return { action: "continue", nextSpeakerIdx: -1 };
   }
@@ -77,12 +70,19 @@ export async function checkModeratorIntervention(round, participants, weft, curr
       situation = `Participant ${repeatedChallenger[0]} has challenged/dissented 3+ times in the last ${LOOKBACK.SENDER_HISTORY} contributions across rounds. Possible circular argument or deadlock.`;
     }
   }
+
+  const lastThree = weft.slice(-3).map((c) => ({
+    content: c.content || "",
+    type: c.type,
+    participant_id: c.participant_id,
+  }));
+
   const prompt = buildModeratorPrompt(
     situation,
     currentRound,
     maxRounds,
     weft.length,
-    weft.slice(-3),
+    lastThree,
   );
   const principalModel = getHighestTierModel();
   if (!principalModel) return { action: "continue", nextSpeakerIdx: -1 };
@@ -117,7 +117,8 @@ export async function checkModeratorIntervention(round, participants, weft, curr
     }
 
     return { action: "continue", nextSpeakerIdx: -1 };
-  } catch {
+  } catch (err) {
+    console.warn(`[Loom] Moderator prompt failed: ${err instanceof Error ? err.message : String(err)}. Continuing deliberation.`);
     return { action: "continue", nextSpeakerIdx: -1 };
   }
 }

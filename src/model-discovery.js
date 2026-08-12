@@ -67,7 +67,7 @@ export function selectModelsForRoles(available, roles) {
 
   for (const role of sortedRoles) {
     let bestIdx = -1;
-    for (let i = candidates.length - 1; i >= 0; i--) {
+    for (let i = 0; i < candidates.length; i++) {
       if (!usedIndices.has(i)) {
         bestIdx = i;
         break;

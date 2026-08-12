@@ -25,11 +25,11 @@ Each item includes: current state, value assessment, feasibility, production ris
 - Production risk: Low — it's a superset of existing `[PASS]` parsing. No circular logic or inter-agent coordination needed
 
 **Files to modify:**
-- `src/validation.ts` — parse `[REFUSE: reason]` from agent response
-- `src/types.ts` — add `"refuse"` to `ContributionType`
-- `src/orchestrator.ts` — handle refusal as a distinct contribution type
-- `src/prompts.ts` — document `[REFUSE]` directive in agent system prompt
-- `src/artifact.ts` — include refusals in output
+- `src/validation.js` — parse `[REFUSE: reason]` from agent response
+- `src/types.js` — add `"refuse"` to `ContributionType`
+- `src/orchestrator.js` — handle refusal as a distinct contribution type
+- `src/prompts.js` — document `[REFUSE]` directive in agent system prompt
+- `src/synthesizer.js` — handle `"refuse"` type in synthesis
 
 **Effort:** Small | **Risk:** Low | **Value:** Medium
 
@@ -53,9 +53,10 @@ Each item includes: current state, value assessment, feasibility, production ris
 - Production risk: Low — the model field already exists and is used. Just better assignment logic
 
 **Files to modify:**
-- `src/composer.ts` — when auto-composing, prefer diverse models across participants
-- `src/index.ts` — allow `models` array in `/knit` args for per-participant overrides
-- `src/orchestrator.ts` — already reads `participant.config.model`, no changes needed
+- `src/composer.js` — when auto-composing, prefer diverse models across participants
+- `src/handlers/knit-handler.js` — allow `models` array in `/knit` args for per-participant overrides
+- `src/orchestrator.js` — already reads `participant.config.model`, no changes needed
+- `src/services/model-service.js` — add per-participant assignment logic
 
 **Effort:** Small-Medium | **Risk:** Low | **Value:** Medium
 
@@ -127,3 +128,10 @@ These items require foundational features to exist first or carry significant pr
 - **Cross-round memory** — agents reference their own prior contributions explicitly. Currently agents see the warp but not structured "you said X in round 1" memory.
 - **Inter-round reflection** — private reflection prompt between rounds. Requires orchestrator to prompt agents between rounds without it being a "contribution."
 - **Governance directives ([VETO], [FORCE_END], [CALL_VOTE])** — prerequisite for enforced seniority rights.
+
+## Recently Implemented
+
+- **Sequential interjection** — post-contribution interjection with pushback (`round-executor.js`)
+- **SQLite persistence** — meeting state survives restarts (`database.js`)
+- **Dashboard visualization** — real-time HTML progress (`dashboard/`)
+- **Modular architecture** — decomposed monoliths into focused modules (`handlers/`, `services/`)

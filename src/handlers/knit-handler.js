@@ -1,17 +1,59 @@
 import { MeetingOrchestrator } from "../orchestrator.js";
-import { composeRoomWithDomains, formatRoomPreview, detectDomainsWithLLM, detectDomainsFallback } from "../composer.js";
+import { composeRoomWithDomains, formatRoomPreview, detectDomainsFallback } from "../composer.js";
 import { createModelPlan, formatModelPlan } from "../model-discovery.js";
-import { deleteMeetingFiles, findMeetingBySessionId, getDbPathForMeeting } from "../database.js";
+import { deleteMeetingFiles, findMeetingBySessionId, getDbPathForMeeting, MeetingDatabase } from "../database.js";
 import {
   discoverModels,
   assignModelsToParticipants,
   getHighestTierModel,
-  promptParent,
 } from "../services/model-service.js";
-import { join } from "node:path";
+import { Logger, extractErrorInfo } from "../logger.js";
+import { getConfig } from "../config.js";
 
-export function createKnitHandler(client, directory) {
+function createMeetingCallbacks(context, logger) {
+  return {
+    onContribution: (name, round, type) => {
+      context.metadata({
+        title: `Loom R${round}: ${name} (${type})`,
+        metadata: {
+          loom_last_contributor: name,
+          loom_last_type: type,
+          loom_round: round,
+        },
+      });
+    },
+    onRoundComplete: (round, summary) => {
+      context.metadata({
+        title: `Loom: Round ${round} complete`,
+        metadata: {
+          loom_round: round,
+          loom_round_summary: summary.slice(0, 200),
+        },
+      });
+    },
+    onSynthesisStart: () => {
+      context.metadata({ title: "Loom: Synthesizing final output...", metadata: { loom_status: "synthesizing" } });
+    },
+    onSynthesisComplete: (output) => {
+      context.metadata({
+        title: "Loom: Synthesis complete",
+        metadata: {
+          loom_status: "synthesis_complete",
+          loom_output_preview: output.slice(0, 200),
+        },
+      });
+    },
+    onUpdate: (state) => {
+      logger.debug("state_update", `Status: ${state.status}, Round: ${state.current_round}`, {
+        activeParticipants: state.participants.filter((p) => p.status === "speaking").length,
+      });
+    },
+  };
+}
+
+export function createKnitHandler(client, directory, activeLooms) {
   let pendingModels = null;
+  const logger = new Logger();
 
   async function handleKnit(args, context) {
     const sessionID = context.sessionID;
@@ -61,25 +103,12 @@ export function createKnitHandler(client, directory) {
         domains: ["general"],
       }));
     } else {
-      try {
-        const highestModel = getHighestTierModel([]);
-        const modelForDetection = highestModel ?? (available.length > 0 ? { providerID: available[0].providerID, modelID: available[0].modelID } : null);
+      detectedDomains = detectDomainsFallback(args.question);
 
-        if (modelForDetection) {
-          detectedDomains = await detectDomainsWithLLM(
-            args.question,
-            async (system, model, message) => promptParent(client, directory, sessionID, system, model, message),
-            () => modelForDetection,
-          );
-        } else {
-          detectedDomains = detectDomainsFallback(args.question);
-        }
-      } catch {
-        detectedDomains = detectDomainsFallback(args.question);
-      }
-
-      const recommendation = composeRoomWithDomains(args.question, undefined, detectedDomains);
+      const seed = args.seed ?? Date.now();
+      const recommendation = composeRoomWithDomains(args.question, undefined, detectedDomains, seed);
       participants = recommendation.participants;
+      detectedDomains = recommendation.domains;
     }
 
     if (modelMap.size === 0 && available.length > 0) {
@@ -105,7 +134,11 @@ export function createKnitHandler(client, directory) {
       };
     }
 
-    const maxRounds = args.max_rounds ?? 3;
+    const maxRounds = args.max_rounds ?? getConfig().defaultMaxRounds;
+
+    const meetingCallbacks = createMeetingCallbacks(context, logger);
+
+    const primaryDomain = detectedDomains.length > 0 ? detectedDomains[0] : null;
 
     const engine = new MeetingOrchestrator({
       client,
@@ -119,39 +152,12 @@ export function createKnitHandler(client, directory) {
       convergence: args.convergence ?? "moderator_forces",
       allowInterjections: args.allow_interjections !== false,
       meetingTimeoutMs: args.meeting_timeout,
-      waitForUserInput: async () => "continue",
-      onContribution: (name, round, type) => {
-        context.metadata({
-          title: `Loom R${round}: ${name} (${type})`,
-          metadata: {
-            loom_last_contributor: name,
-            loom_last_type: type,
-            loom_round: round,
-          },
-        });
-      },
-      onRoundComplete: (round, summary) => {
-        context.metadata({
-          title: `Loom: Round ${round} complete`,
-          metadata: {
-            loom_round: round,
-            loom_round_summary: summary.slice(0, 200),
-          },
-        });
-      },
-      onSynthesisStart: () => {
-        context.metadata({ title: "Loom: Synthesizing final output...", metadata: { loom_status: "synthesizing" } });
-      },
-      onSynthesisComplete: (output) => {
-        context.metadata({
-          title: "Loom: Synthesis complete",
-          metadata: {
-            loom_status: "synthesis_complete",
-            loom_output_preview: output.slice(0, 200),
-          },
-        });
-      },
+      domain: primaryDomain,
+      detectDomains: true,
+      ...meetingCallbacks,
     });
+
+    activeLooms.set(loomId, engine);
 
     try {
       await engine.initialize();
@@ -172,16 +178,19 @@ export function createKnitHandler(client, directory) {
         },
       };
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const info = extractErrorInfo(err);
+      logger.error("loom_failed", "Loom deliberation failed", info);
       return {
         title: "Loom Error",
-        output: `The Loom encountered an error: ${message}\n\nYou can try again with different participants or a simpler question.`,
+        output: `The Loom encountered an error: ${info.message}\n\nYou can try again with different participants or a simpler question.`,
         metadata: {
           loom_id: loomId,
           loom_status: "error",
-          error: message,
+          error: info.message,
         },
       };
+    } finally {
+      activeLooms.delete(loomId);
     }
   }
 
@@ -195,17 +204,22 @@ export function createKnitHandler(client, directory) {
       };
     }
 
-    const { Database: DBClass } = await import("bun:sqlite");
-    const dbConn = new DBClass(extDbPath);
     try {
-      const existingParts = dbConn.prepare(
-        `SELECT id, name, persona, agenda, tier, provider_id, model_id FROM participants ORDER BY tier ASC`
-      ).all();
+      const existingParts = await MeetingDatabase.readParticipants(extDbPath);
+      if (existingParts.length === 0) {
+        return {
+          title: "Loom Extension Error",
+          output: "Could not find participants in the existing loom database.\n\nTry starting a fresh loom with a new chat session.",
+          metadata: { loom_id: loomId, loom_status: "error" },
+        };
+      }
 
       const highestModel = getHighestTierModel(existingParts.map((p) => ({
         tier: p.tier,
         model: p.provider_id ? { providerID: p.provider_id, modelID: p.model_id } : null,
       })));
+
+      const meetingCallbacks = createMeetingCallbacks(context, logger);
 
       const extEngine = new MeetingOrchestrator({
         client,
@@ -222,19 +236,10 @@ export function createKnitHandler(client, directory) {
         convergence: args.convergence ?? "moderator_forces",
         allowInterjections: args.allow_interjections !== false,
         meetingTimeoutMs: args.meeting_timeout,
-        onContribution: (name, round, type) => {
-          context.metadata({ title: `Loom R${round}: ${name} (${type})`, metadata: { loom_last_contributor: name, loom_last_type: type, loom_round: round } });
-        },
-        onRoundComplete: (round, summary) => {
-          context.metadata({ title: `Loom: Round ${round} complete`, metadata: { loom_round: round, loom_round_summary: summary.slice(0, 200) } });
-        },
-        onSynthesisStart: () => {
-          context.metadata({ title: "Loom: Synthesizing final output...", metadata: { loom_status: "synthesizing" } });
-        },
-        onSynthesisComplete: (output) => {
-          context.metadata({ title: "Loom: Synthesis complete", metadata: { loom_status: "synthesis_complete", loom_output_preview: output.slice(0, 200) } });
-        },
+        ...meetingCallbacks,
       });
+
+      activeLooms.set(loomId, extEngine);
 
       try {
         await extEngine.initialize();
@@ -247,12 +252,13 @@ export function createKnitHandler(client, directory) {
         };
       } catch (extErr) {
         throw extErr;
+      } finally {
+        activeLooms.delete(loomId);
       }
     } catch (extErr) {
-      const extMsg = extErr instanceof Error ? extErr.message : String(extErr);
-      return { title: "Loom Extension Error", output: `Could not extend the existing loom: ${extMsg}\n\nTry starting a fresh loom with a new chat session.`, metadata: { loom_id: loomId, loom_status: "error" } };
-    } finally {
-      dbConn.close();
+      const extInfo = extractErrorInfo(extErr);
+      logger.error("loom_extension_failed", "Loom extension failed", extInfo);
+      return { title: "Loom Extension Error", output: `Could not extend the existing loom: ${extInfo.message}\n\nTry starting a fresh loom with a new chat session.`, metadata: { loom_id: loomId, loom_status: "error" } };
     }
   }
 
@@ -270,8 +276,9 @@ export function createKnitHandler(client, directory) {
       let output = formatModelPlan(plan);
       return output;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return `Model discovery failed: ${message}`;
+      const info = extractErrorInfo(err);
+      logger.error("model_discovery_failed", "Model discovery failed", info);
+      return `Model discovery failed: ${info.message}`;
     }
   }
 

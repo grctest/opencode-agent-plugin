@@ -16,15 +16,15 @@ export class LoomEngine {
    * @param {string} config.context
    * @param {string} config.parentSessionId
    * @param {string} config.opencodeSessionId
-   * @param {Array<{ id: string; name: string; persona: string; agenda: string; tier: import("./types.js").Tier; model?: import("./types.js").ModelAssignment }>} config.participants
+   * @param {Array<{ id: string; name: string; persona: string; agenda: string; tier: string; model?: { providerID: string; modelID: string } }>} config.participants
    * @param {number} config.maxRounds
    * @param {"consensus" | "majority" | "moderator_forces"} config.convergence
-   * @param {Partial<Record<import("./types.js").Tier, { model?: string; temperature?: number }>>} [config.modelOverrides]
+   * @param {Partial<Record<string, { model?: string; temperature?: number }>>} [config.modelOverrides]
    * @param {(name: string, round: number, type: string) => void} [config.onContribution]
    * @param {(round: number, summary: string) => void} [config.onRoundComplete]
- * @param {() => void} [config.onSynthesisStart]
- * @param {(output: string) => void} [config.onSynthesisComplete]
- */
+   * @param {() => void} [config.onSynthesisStart]
+   * @param {(output: string) => void} [config.onSynthesisComplete]
+   */
   constructor(client, directory, metadataFn, config) {
     this.#orchestrator = new MeetingOrchestrator({
       client,

@@ -1,4 +1,4 @@
-import { CONFIG } from "./config.js";
+import { getConfig } from "./config.js";
 import { LOOKBACK } from "./shared.js";
 
 const STOPWORDS = new Set([
@@ -31,87 +31,107 @@ function overlapFraction(setA, setB) {
   return intersection / Math.min(setA.size, setB.size);
 }
 
-function detectRepetition(contributions) {
-  const window = LOOKBACK.CONVERGENCE_REPETITION_WINDOW;
+function computeTfidfVector(text, idf) {
+  const words = text.toLowerCase().replace(/[^a-z0-9\s]/g, "").split(/\s+/);
+  const meaningful = words.filter((w) => w.length > 3 && !STOPWORDS.has(w));
+  const termFreq = {};
+  for (const w of meaningful) {
+    termFreq[w] = (termFreq[w] || 0) + 1;
+  }
+  const vec = {};
+  for (const [term, freq] of Object.entries(termFreq)) {
+    const idfVal = idf[term] || 1;
+    vec[term] = freq * idfVal;
+  }
+  return vec;
+}
+
+function cosineSimilarity(vecA, vecB) {
+  let dotProduct = 0;
+  let normA = 0;
+  let normB = 0;
+  const allTerms = new Set([...Object.keys(vecA), ...Object.keys(vecB)]);
+  for (const term of allTerms) {
+    const a = vecA[term] || 0;
+    const b = vecB[term] || 0;
+    dotProduct += a * b;
+    normA += a * a;
+    normB += b * b;
+  }
+  if (normA === 0 || normB === 0) return 0;
+  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+function buildIdf(contributions) {
+  const docCount = contributions.length;
+  const docFreq = {};
+  for (const c of contributions) {
+    const words = fingerprint(c.content);
+    for (const w of words) {
+      docFreq[w] = (docFreq[w] || 0) + 1;
+    }
+  }
+  const idf = {};
+  for (const [term, freq] of Object.entries(docFreq)) {
+    idf[term] = Math.log((docCount + 1) / (freq + 1)) + 1;
+  }
+  return idf;
+}
+
+function detectSemanticRepetition(contributions, window, threshold) {
   if (contributions.length < window) return false;
   const recent = contributions.slice(-window);
-  const fingerprints = recent.map((c) => fingerprint(c.content));
+  const idf = buildIdf(contributions);
+  const vectors = recent.map((c) => computeTfidfVector(c.content, idf));
 
-  const threshold = CONFIG.convergence.repetitionOverlapThreshold;
-  for (let i = 0; i < fingerprints.length; i++) {
-    for (let j = i + 1; j < fingerprints.length; j++) {
-      if (overlapFraction(fingerprints[i], fingerprints[j]) <= threshold) {
-        return false;
+  let highSimilarityPairs = 0;
+  const totalPairs = (vectors.length * (vectors.length - 1)) / 2;
+
+  for (let i = 0; i < vectors.length; i++) {
+    for (let j = i + 1; j < vectors.length; j++) {
+      const sim = cosineSimilarity(vectors[i], vectors[j]);
+      if (sim >= threshold) {
+        highSimilarityPairs++;
       }
     }
   }
-  return true;
+
+  return highSimilarityPairs / totalPairs >= 0.5;
 }
 
-function detectNegationOverlap(contentA, contentB) {
-  const negationWords = ["not", "no", "never", "don't", "doesn't", "won't", "can't", "shouldn't", "isn't", "aren't", "wasn't", "weren't"];
-  const wordsA = contentA.toLowerCase().split(/\s+/);
-  const wordsB = contentB.toLowerCase().split(/\s+/);
+function detectContentDiversity(rounds, window) {
+  if (rounds.length < window) return true;
 
-  const negatedA = new Set();
-  const negatedB = new Set();
+  const recentRounds = rounds.slice(-window);
+  const allRecentContent = recentRounds
+    .flatMap((r) => r.contributions)
+    .map((c) => c.content)
+    .join(" ");
 
-  for (let i = 0; i < wordsA.length; i++) {
-    if (negationWords.includes(wordsA[i]) && i + 1 < wordsA.length) {
-      negatedA.add(wordsA[i + 1].replace(/[^a-z0-9]/g, ""));
-    }
-  }
-  for (let i = 0; i < wordsB.length; i++) {
-    if (negationWords.includes(wordsB[i]) && i + 1 < wordsB.length) {
-      negatedB.add(wordsB[i + 1].replace(/[^a-z0-9]/g, ""));
-    }
-  }
+  const olderRounds = rounds.slice(0, -window);
+  const allOlderContent = olderRounds
+    .flatMap((r) => r.contributions)
+    .map((c) => c.content)
+    .join(" ");
 
-  if (negatedA.size === 0 && negatedB.size === 0) return false;
+  if (allOlderContent.length === 0) return true;
 
-  for (const word of negatedA) {
-    if (!negatedB.has(word)) {
-      const fpA = fingerprint(contentA);
-      const fpB = fingerprint(contentB);
-      if (overlapFraction(fpA, fpB) > 0.6) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
+  const idf = buildIdf(
+    rounds.flatMap((r) => r.contributions).map((c) => ({ content: c.content }))
+  );
 
-function detectDiminishingReturns(rounds) {
-  const window = CONFIG.convergence.diminishingReturnsWindow;
-  if (rounds.length < window) return false;
-  const recentTypes = rounds.slice(-window).map((r) => {
-    const types = new Set();
-    for (const c of r.contributions) types.add(c.type);
-    return types;
-  });
+  const recentVec = computeTfidfVector(allRecentContent, idf);
+  const olderVec = computeTfidfVector(allOlderContent, idf);
 
-  const allTypes = new Set();
-  for (const typeSet of recentTypes) {
-    for (const t of typeSet) allTypes.add(t);
-  }
+  const similarity = cosineSimilarity(recentVec, olderVec);
 
-  const previousTypes = new Set();
-  for (let i = 0; i < rounds.length - window; i++) {
-    for (const c of rounds[i].contributions) previousTypes.add(c.type);
-  }
-
-  let newTypeFound = false;
-  for (const t of allTypes) {
-    if (!previousTypes.has(t)) {
-      newTypeFound = true;
-      break;
-    }
-  }
-
-  return !newTypeFound;
+  return similarity < 0.85;
 }
 
 function detectStaleParticipants(rounds, totalParticipants) {
+  const config = getConfig();
+  const ratio = config.convergence.staleParticipantRatio;
+
   if (rounds.length < 3) return false;
   const lastThree = rounds.slice(-3);
   const activeParticipants = new Set();
@@ -120,29 +140,23 @@ function detectStaleParticipants(rounds, totalParticipants) {
       activeParticipants.add(c.participant_id);
     }
   }
-  return activeParticipants.size <= Math.ceil(totalParticipants / 3);
+  return activeParticipants.size <= Math.ceil(totalParticipants * ratio);
 }
 
-/**
- * @typedef {Object} ConvergenceInput
- * @property {number} passedCount
- * @property {number} activeCount
- * @property {number} totalParticipants
- * @property {number} currentRound
- * @property {number} maxRounds
- * @property {"consensus" | "majority" | "moderator_forces"} convergenceMode
- * @property {import("./types.js").Contribution[]} contributions
- * @property {import("./types.js").Round[]} rounds
- */
+function detectDiminishingReturns(rounds) {
+  if (rounds.length < 3) return false;
 
-/**
- * @typedef {Object} ConvergenceResult
- * @property {boolean} shouldStop
- * @property {import("./types.js").LoomStatus} status
- * @property {boolean} needsLLMCheck
- */
+  const counts = rounds.map((r) => r.contributions.length);
+  const recent = counts.slice(-2);
+  const previous = counts.slice(0, -2);
+  if (previous.length === 0) return false;
 
-/** Checks whether the deliberation should end based on convergence rules and round limits. */
+  const prevAvg = previous.reduce((a, b) => a + b, 0) / previous.length;
+  const recentAvg = recent.reduce((a, b) => a + b, 0) / recent.length;
+
+  return prevAvg > 0 && recentAvg <= prevAvg * 0.5;
+}
+
 export function checkConvergence(input) {
   const {
     passedCount,
@@ -155,59 +169,66 @@ export function checkConvergence(input) {
     rounds,
   } = input;
 
+  const config = getConfig();
+
   if (activeCount === 0) {
-    return { shouldStop: true, status: "converged", needsLLMCheck: false };
+    return { shouldStop: true, status: "converged", needsLLMCheck: false, confidence: 100 };
   }
 
   if (currentRound < 2) {
-    return { shouldStop: false, status: "weaving", needsLLMCheck: false };
+    return { shouldStop: false, status: "weaving", needsLLMCheck: false, confidence: 0 };
   }
 
-  if (detectRepetition(contributions)) {
-    return { shouldStop: true, status: "converged", needsLLMCheck: false };
+  if (currentRound === 2 && activeCount > 0 && passedCount >= activeCount) {
+    return { shouldStop: true, status: "converged", needsLLMCheck: false, confidence: 80 };
   }
 
-  const recentContribs = contributions.slice(-LOOKBACK.CONVERGENCE_RECENT);
-  for (let i = 0; i < recentContribs.length; i++) {
-    for (let j = i + 1; j < recentContribs.length; j++) {
-      if (detectNegationOverlap(recentContribs[i].content, recentContribs[j].content)) {
-        return { shouldStop: false, status: "weaving", needsLLMCheck: true };
-      }
-    }
+  if (detectSemanticRepetition(contributions, config.convergence.repetitionWindow, config.convergence.repetitionOverlapThreshold)) {
+    return { shouldStop: true, status: "converged", needsLLMCheck: false, confidence: 80 };
   }
 
-  if (rounds.length >= 3 && detectDiminishingReturns(rounds)) {
-    return { shouldStop: false, status: "weaving", needsLLMCheck: true };
+  if (rounds.length >= config.convergence.diminishingReturnsWindow && !detectContentDiversity(rounds, config.convergence.diminishingReturnsWindow)) {
+    return { shouldStop: false, status: "weaving", needsLLMCheck: true, confidence: 60 };
   }
 
   if (rounds.length >= 3 && detectStaleParticipants(rounds, totalParticipants)) {
-    return { shouldStop: false, status: "weaving", needsLLMCheck: true };
+    return { shouldStop: false, status: "weaving", needsLLMCheck: true, confidence: 50 };
+  }
+
+  if (rounds.length >= 3 && detectDiminishingReturns(rounds)) {
+    return { shouldStop: false, status: "weaving", needsLLMCheck: true, confidence: 55 };
   }
 
   switch (convergenceMode) {
     case "consensus":
       if (passedCount === totalParticipants) {
-        return { shouldStop: true, status: "converged", needsLLMCheck: false };
+        return { shouldStop: true, status: "converged", needsLLMCheck: false, confidence: 100 };
       }
       break;
     case "majority":
       if (passedCount > totalParticipants / 2) {
-        return { shouldStop: true, status: "converged", needsLLMCheck: false };
+        return { shouldStop: true, status: "converged", needsLLMCheck: false, confidence: 90 };
       }
       break;
     case "moderator_forces":
+      if (currentRound >= config.convergence.moderatorForcesMinRound && passedCount >= activeCount && activeCount > 0) {
+        return { shouldStop: true, status: "converged", needsLLMCheck: false, confidence: 85 };
+      }
+      if (currentRound >= config.convergence.moderatorForcesHalfActiveRound && activeCount <= Math.ceil(totalParticipants / 2)) {
+        return { shouldStop: false, status: "weaving", needsLLMCheck: true, confidence: 55 };
+      }
       break;
   }
 
   if (currentRound >= maxRounds) {
-    return { shouldStop: true, status: "max_rounds_reached", needsLLMCheck: false };
+    return { shouldStop: true, status: "max_rounds_reached", needsLLMCheck: false, confidence: 100 };
   }
 
   if (currentRound >= 4 && activeCount <= Math.ceil(totalParticipants / 2)) {
-    return { shouldStop: false, status: "weaving", needsLLMCheck: true };
+    return { shouldStop: false, status: "weaving", needsLLMCheck: true, confidence: 40 };
   }
 
-  return { shouldStop: false, status: "weaving", needsLLMCheck: false };
+  return { shouldStop: false, status: "weaving", needsLLMCheck: false, confidence: 0 };
 }
 
 export async function checkSemanticConvergence(input, promptFn, getModel) {
@@ -242,15 +263,20 @@ ${roundSummaries}
 ${contributionsText}
 
 ## Task
-Assess whether this deliberation has converged. Answer with ONE of:
-- "CONTINUE" — if participants are still generating new ideas or meaningfully developing positions
-- "CONVERGE" — if participants are repeating positions, going in circles, or have naturally exhausted the discussion
+Decide whether this deliberation should continue or converge. Consider:
+- Are participants repeating positions from earlier rounds without new reasoning?
+- Is new information or meaningful reasoning still being introduced?
+- Has the discussion naturally exhausted its productive potential?
 
-Then provide a one-sentence reason for your assessment.
+Respond with EXACTLY this format:
+decision: <converge | continue | extend>
+reason: <one sentence explanation>
+key_disagreements: <comma-separated list of unresolved disagreements, or "none">
 
-Format exactly:
-verdict: CONTINUE or CONVERGE
-reason: <one sentence>`;
+Guidelines:
+- "converge" = productive discussion is done, synthesize now
+- "continue" = meaningful development is still happening
+- "extend" = close but needs one more round to resolve key disagreements`;
 
   try {
     const model = getModel();
@@ -262,23 +288,29 @@ reason: <one sentence>`;
     );
 
     const lines = result.trim().split("\n");
-    let verdict = "";
+    let decision = "continue";
     let reason = "";
 
     for (const line of lines) {
       const lower = line.toLowerCase().trim();
-      if (lower.startsWith("verdict:")) {
-        verdict = line.substring(line.indexOf(":") + 1).trim().toUpperCase();
+      if (lower.startsWith("decision:")) {
+        const val = line.substring(line.indexOf(":") + 1).trim().toLowerCase();
+        if (val === "converge" || val === "continue" || val === "extend") {
+          decision = val;
+        }
       } else if (lower.startsWith("reason:")) {
         reason = line.substring(line.indexOf(":") + 1).trim();
       }
     }
 
-    if (verdict === "CONVERGE") {
-      return { shouldStop: true, reason: reason || "Semantic convergence detected" };
+    if (decision === "converge") {
+      return { shouldStop: true, reason: reason || "Discussion has naturally converged", action: "converge" };
     }
-    return { shouldStop: false, reason: reason || "Discussion still productive" };
+    if (decision === "extend") {
+      return { shouldStop: false, reason: reason || "Close but needs one more round", action: "extend" };
+    }
+    return { shouldStop: false, reason: reason || "Discussion still productive", action: "continue" };
   } catch (err) {
-    return { shouldStop: false, reason: `Semantic check failed: ${err instanceof Error ? err.message : "unknown"}` };
+    return { shouldStop: false, reason: `Semantic check failed: ${err instanceof Error ? err.message : "unknown"}`, action: "continue" };
   }
 }
