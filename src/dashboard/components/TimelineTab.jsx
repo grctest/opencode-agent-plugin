@@ -192,6 +192,7 @@ export function TimelineTab({
         open={dialogContribution !== null}
         onClose={() => setDialogContribution(null)}
         title={dialogContribution ? `${dialogContribution.participantName} — ${dialogContribution.contribution.type}` : ""}
+        className={dialogContribution ? `loom-dialog-type-${dialogContribution.contribution.type}` : ""}
       >
         {dialogContribution && (
           <div className="loom-prose" dangerouslySetInnerHTML={{

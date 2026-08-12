@@ -449,16 +449,10 @@ export function App() {
         <Sidebar
           state={state}
           participants={participants}
-          meetings={meetings}
-          selectedMeeting={selectedMeeting}
-          onSelectMeeting={setSelectedMeeting}
           theme={theme}
           setTheme={setTheme}
-          searchQuery={searchQuery}
-          onSearchChange={setSearchQuery}
           agentErrors={agentErrors}
           contributionsByParticipant={contributionsByParticipant}
-          searchInputRef={searchInputRef}
         />
 
         <main className="loom-main" ref={mainRef}>

@@ -1072,6 +1072,31 @@ input {
   flex: 1;
 }
 
+/* Dialog type accents */
+.loom-dialog-type-propose { border-left: 3px solid #15803d; }
+.loom-dialog-type-propose .loom-dialog-header { background: color-mix(in oklch, #15803d 8%, var(--color-card)); }
+
+.loom-dialog-type-challenge { border-left: 3px solid #b91c1c; }
+.loom-dialog-type-challenge .loom-dialog-header { background: color-mix(in oklch, #b91c1c 8%, var(--color-card)); }
+
+.loom-dialog-type-refine { border-left: 3px solid #1d4ed8; }
+.loom-dialog-type-refine .loom-dialog-header { background: color-mix(in oklch, #1d4ed8 8%, var(--color-card)); }
+
+.loom-dialog-type-support { border-left: 3px solid #047857; }
+.loom-dialog-type-support .loom-dialog-header { background: color-mix(in oklch, #047857 8%, var(--color-card)); }
+
+.loom-dialog-type-dissent { border-left: 3px solid #c2410c; }
+.loom-dialog-type-dissent .loom-dialog-header { background: color-mix(in oklch, #c2410c 8%, var(--color-card)); }
+
+.loom-dialog-type-synthesize { border-left: 3px solid #7e22ce; }
+.loom-dialog-type-synthesize .loom-dialog-header { background: color-mix(in oklch, #7e22ce 8%, var(--color-card)); }
+
+.loom-dialog-type-question { border-left: 3px solid #0e7490; }
+.loom-dialog-type-question .loom-dialog-header { background: color-mix(in oklch, #0e7490 8%, var(--color-card)); }
+
+.loom-dialog-type-interjection { border-left: 3px solid #be185d; }
+.loom-dialog-type-interjection .loom-dialog-header { background: color-mix(in oklch, #be185d 8%, var(--color-card)); }
+
 /* Clickable contribution card */
 .loom-contrib-clickable {
   cursor: pointer;

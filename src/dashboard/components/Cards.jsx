@@ -12,11 +12,11 @@ export function renderMarkdown(content) {
   return DOMPurify.sanitize(raw, { USE_PROFILES: { html: true } });
 }
 
-export function ContentDialog({ open, onClose, title, children }) {
+export function ContentDialog({ open, onClose, title, className, children }) {
   if (!open) return null;
   return createPortal(
     <div className="loom-dialog-backdrop" onClick={onClose}>
-      <div className="loom-dialog" onClick={(e) => e.stopPropagation()}>
+      <div className={cn("loom-dialog", className)} onClick={(e) => e.stopPropagation()}>
         <div className="loom-dialog-header">
           <span className="loom-title-sm">{title}</span>
           <button className="loom-dialog-close" onClick={onClose}>×</button>

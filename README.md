@@ -4,301 +4,138 @@
 
 The Loom lets you convene a circle of AI agents with different expertise, seniority levels, and agendas. Each agent runs in its own child session. They take structured turns, interject with priority, challenge each other, and collaboratively weave complex artifacts through deliberation with governed convergence.
 
-## What The Loom Does
+## How It Works
 
-The Loom is a deliberation system where multiple AI agents with different expertise, seniority levels, and agendas collaborate on complex questions. It is designed for situations where you want multi-perspective analysis with preserved dissent and governed convergence.
+You ask a question. The Loom detects the domain — engineering, finance, business, creative, executive, or operations — and composes a team of AI agents with relevant expertise. Each agent runs in its own isolated session with its own model.
 
-- Structured turn-taking — participants contribute in sequence with tracked order
-- Priority interjection — agents can interrupt with priority when they have something urgent
-- Challenge and dissent — agents can challenge proposals, express dissent, or pass their turn
-- Tier-based behavioral guidance — junior to principal tiers with escalating expectations
-- Moderator deadlock resolution — detects circular arguments and forces convergence
-- Minority report — unresolved objections are preserved in the output
-- Auto-composed rooms from topic — persona selection based on question domain
-- Domain-aware persona selection — finance questions get finance experts, etc.
-- Dynamic model discovery — finds available models from your opencode providers
-- Model assignment per tier — each tier can be assigned a different model when multiple providers are available
-- Real-time HTML progress — watch each agent contribute as it happens
-- SQLite persistence with session lifecycle — deliberation state survives restarts
-- Collapsible content — expand full agent responses inline
+Agents deliberate in structured rounds: proposing ideas, challenging weak arguments, refining positions, and pushing back on assumptions. They can interject with priority when they have something urgent to say. When agents stall or go in circles, a **moderator** — a separate LLM call using the strongest available model — steps in to break the deadlock, redirect the conversation, or force convergence. Once deliberation ends, a **synthesizer** produces the final artifact: decisions, action items, unresolved dissent, and a confidence level.
 
-## Architecture
+A real-time web dashboard shows every agent contributing as it happens. If you run `/knit` again in the same session, it extends the existing deliberation rather than starting fresh.
 
-The Loom creates a parent orchestrator session plus one child session per participant. Each child session has its own model (discovered from your opencode providers) and isolated context. The orchestrator mediates communication via a SQLite database, resolves interjections, and synthesizes the final output.
+## Features
 
-### Command Flow
-
-```
-User types: /knit "question"
-    ↓
-commands/knit.md → main session LLM calls `knit` tool
-    ↓
-Plugin creates MeetingOrchestrator + SQLite DB
-    ↓
-Per-round: prompt child → collect response → write to DB → post progress
-    ↓
-Synthesis child session reads DB → produces final artifact
-```
-
-### Session Architecture
-
-```
-┌──────────────────────────────────────────────┐
-│           ORCHESTRATOR (main session)         │
-│                                              │
-│  ┌──────────────────────────────────────┐    │
-│  │         SQLite DATABASE               │    │
-│  │  ├── meetings (state, warp, round)   │    │
-│  │  ├── participants (config, model)    │    │
-│  │  ├── contributions (per-round)       │    │
-│  │  ├── interjections (priority)        │    │
-│  │  └── agent_responses (history)       │    │
-│  └──────────────────────────────────────┘    │
-│                                              │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐    │
-│  │ Child #1 │ │ Child #2 │ │ Child #3 │    │
-│  │ (junior) │ │ (mid)    │ │ (senior) │    │
-│  │ own model│ │ own model│ │ own model│    │
-│  └──────────┘ └──────────┘ └──────────┘    │
-│                                              │
-│  Progress: HTML messages + metadata updates  │
-└──────────────────────────────────────────────┘
-```
+- **Structured turn-taking** with priority interjection
+- **Tier-based roles** — junior to principal, each with escalating expectations and rights
+- **Moderator agent** — spawned on demand to break deadlocks and force convergence
+- **Semi-automatic convergence** — detects repetition, diminishing returns, and semantic agreement
+- **Minority report** — unresolved dissenting views are preserved in the output
+- **Meeting extension** — re-run `/knit` to continue a deliberation with new input
+- **Auto-composed rooms** — persona selection based on your question's domain
+- **Model discovery** — finds available models from your opencode providers, assigns per tier
+- **Custom rooms** — bring your own participants, models, convergence mode, and round limits
+- **Real-time dashboard** — four tabs: Overview, Orchestrator, Timeline, and Warp
+- **Markdown export** — download the full transcript from the dashboard
+- **Configurable** — tune timeouts, word limits, convergence, and more via config
 
 ## Installation
 
-### Quick Install (WSL/Linux/macOS)
-
 ```bash
-npm run install:plugin
+npm run install:plugin    # first install — detects your opencode config, builds and installs everything
+npm run update:plugin     # update to latest version
 ```
 
-This detects your opencode config directory, builds the plugin bundle, and installs all files (plugin, personas, commands).
-
-### Update Existing Installation
-
-```bash
-npm run update:plugin
-```
-
-This clears out the old version (files, config entries) and performs a clean reinstall. Use this when updating to a new version.
-
-### Manual Install
-
-```bash
-# Build the single-file bundle
-npm run bundle
-
-# Install to opencode config
-cp dist/loom.js ~/.config/opencode/plugins/loom.js
-cp -r personas/ ~/.config/opencode/personas/loom/
-cp commands/*.md ~/.config/opencode/commands/
-```
-
-No `opencode.json` configuration needed — the plugin loads automatically from the `plugins/` directory.
+No manual configuration needed. The plugin is auto-discovered from your `plugins/` directory.
 
 ## Quick Start
-
-### Start a Deliberation
 
 ```
 /knit "Should we migrate our authentication from sessions to JWT?"
 ```
 
-The Loom auto-discovers your available models, composes a domain-aware room, assigns models to tiers, and runs the deliberation. Progress appears in real-time with HTML formatting and collapsible content.
-
-### Discover Models (Optional)
+Preview available models before running:
 
 ```
 /knit_models
 ```
 
-Previews available models and proposes tier assignments without running a deliberation. Useful for inspecting what the Loom will use.
-
-### What You See
+Preview the composed room without deliberating:
 
 ```
-🎬 Loom started — 4 participants:
-  • Executive Advisor (principal, executive)
-  • Portfolio Manager (senior, finance)
-  • Financial Analyst (mid, finance)
-  • Budget Hawk (junior, finance)
-
-🤔 Financial Analyst (mid) is thinking...
-✅ Financial Analyst (mid) — question:
-  ▼ "What's the actual risk tolerance here?..."
-
-🤔 Budget Hawk (junior) is thinking...
-✅ Budget Hawk (junior) — challenge:
-  ▼ "Have we considered the opportunity cost?..."
-
-📋 Round 1 complete — 2 contributions, 0 interjections
-▼ Summary: Round focused on risk assessment...
-
-🔄 Synthesizing final output...
-✅ Synthesis complete
+/knit "Your question" --dry_run
 ```
 
-## Persona System
+Launch the dashboard:
 
-The Loom includes 24+ personas across 6 domains, defined as JSON files in the `personas/` folder:
+```
+loom_viz
+```
 
-| File | Count | Domains |
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `/knit` | Start (or extend) a multi-agent deliberation |
+| `/knit_models` | Discover available models and propose tier assignments |
+| `/loom_viz` | Start the real-time dashboard (default port 3210) |
+| `/loom_stop` | Stop the running dashboard |
+
+### `knit` arguments
+
+| Argument | Description | Default |
+|----------|-------------|---------|
+| `question` | The question or task to deliberate on | _(required)_ |
+| `context` | Additional context, background files, or constraints | — |
+| `participants` | Custom participant list (name, persona, agenda, tier) | auto-composed from domain |
+| `max_rounds` | Maximum deliberation rounds (1–10) | `3` |
+| `convergence` | `consensus`, `majority`, or `moderator_forces` | `moderator_forces` |
+| `models` | Per-tier model assignments (use `/knit_models` to discover) | auto-assigned |
+| `allow_interjections` | Allow agents to interject during others' turns | `true` |
+| `meeting_timeout` | Maximum meeting duration in ms (60000–1800000) | `900000` (15 min) |
+| `seed` | Random seed for room composition | current time |
+| `dry_run` | Preview the composed room without deliberating | `false` |
+
+## Personas
+
+The Loom ships with 35 personas across 6 domains, organized into four tiers:
+
+| Tier | Count | Domains |
 |------|-------|---------|
-| `personas/junior.json` | 8 | general, creative, finance, engineering |
-| `personas/mid.json` | 8 | business, engineering, creative, operations |
-| `personas/senior.json` | 6 | engineering, finance, business |
-| `personas/principal.json` | 4 | engineering, executive, creative, business |
+| junior | 11 | general, creative, engineering, finance, operations, executive, business |
+| mid | 10 | engineering, business, finance, creative, operations |
+| senior | 8 | engineering, finance, business, creative, operations |
+| principal | 6 | engineering, executive, creative, business, finance, operations |
 
-### Domain-Aware Selection
+When you ask a question, the Loom analyzes it for domain keywords and selects personas accordingly. For example, a finance question gets finance experts; an engineering question gets engineers.
 
-When you ask a question, the Loom analyzes it for domain keywords and selects personas accordingly:
-
-| Question Type | Selected Domains |
+| Question Type | Domains Selected |
 |---------------|------------------|
 | "Should I buy GameStop stock?" | finance, executive |
 | "How do we design our API?" | engineering, creative |
-| "What's our go-to-market strategy?" | business, marketing |
-| "How do we improve team culture?" | executive, operations |
+| "What's our go-to-market strategy?" | business, operations |
 
-### Tier Behavioral Guidance
+Each tier has different behavioral guidance — juniors ask questions and propose ideas, seniors demand evidence and can veto conclusions, and principals can end deliberation when consensus is reached. Personas can be customized by editing the JSON files in the `personas/` directory.
 
-| Tier | Guidance |
-|------|----------|
-| junior | Contribute ideas, ask questions, interject |
-| mid | + call for votes, push back on weak arguments |
-| senior | + veto conclusions, demand evidence |
-| principal | + end deliberation when consensus is reached |
+## Dashboard
 
-These rights are communicated to agents via system prompts, shaping how each tier behaves during deliberation.
+Run `/loom_viz` to start the real-time web dashboard. It auto-detects the most recent meeting and streams updates as they happen.
 
-### Customizing Personas
+- **Overview** — stats, participation matrix, contribution types, and timeline chart
+- **Orchestrator** — internal feed showing domain detection, moderation, convergence checks, and round summaries
+- **Timeline** — per-round contributions and interjections; click any contribution card to view the full output in a dialog
+- **Warp** — the evolving shared context and each agent's perspective (persona, agenda, model)
 
-Edit the JSON files in `personas/` to add, remove, or modify personas:
+The dashboard supports light, dark, and system themes. Export the current meeting as Markdown from the header.
+
+## Configuration
+
+The Loom can be configured via a `"loom"` key in your `opencode.json` or via a project-level `.loomrc.json`. Invalid values fall back to defaults with a startup warning.
 
 ```json
 {
-  "name": "Your Custom Persona",
-  "persona": "You think about X. You have deep experience in Y. You always ask Z.",
-  "agenda": "Ensure the discussion considers X. Challenge assumptions about Y.",
-  "domain": "finance",
-  "expertise": ["keyword1", "keyword2"]
+  "loom": {
+    "maxContributionWords": 250,
+    "maxInterjectionWords": 200,
+    "defaultMaxRounds": 3,
+    "maxInterjectionsPerRound": 3,
+    "convergence": {
+      "repetitionOverlapThreshold": 0.45,
+      "semanticConvergenceFromRound": 3
+    }
+  }
 }
 ```
 
-After editing, run `npm run update:plugin` to deploy changes.
-
-## Database Lifecycle
-
-Each `/knit` invocation creates a SQLite database tagged with the opencode session ID:
-
-```
-{ProjectDirectory}/.opencode/loom/meetings/{uuid}.db
-```
-
-### Lifetime
-
-| Event | Database |
-|-------|----------|
-| `/knit` invoked | Created with session ID tag |
-| Rounds execute | Data accumulated |
-| Deliberation completes | **Persists** (not deleted) |
-| Session continues | Data available for reference |
-| Project closed | **Persists** (session in history) |
-| Session deleted from UI | **Deleted** (event hook) |
-| Plugin startup | Orphaned DBs cleaned up |
-
-### Schema
-
-| Table | Contents |
-|-------|----------|
-| `meetings` | Question, context, warp, status, round, convergence mode, session ID |
-| `participants` | Config, model assignment, child session ID, reflection |
-| `contributions` | Per-round participant contributions |
-| `interjections` | Priority interruptions and resolutions |
-| `agent_errors` | Per-round participant error records |
-| `_loom_meta` | Schema version for migrations |
-
-### Multi-Invocation
-
-Running `/knit` multiple times in the same session creates separate databases (one per invocation), all tagged with the same session ID. Deleting the session cleans up all associated databases.
-
-## The Deliberation Protocol
-
-1. **Model discovery** — fetches connected providers and available models
-2. **Room composition** — analyzes question domain, selects appropriate personas, assigns models per tier
-3. **Round execution** — sequential per-participant prompting with real-time progress
-4. **Interjection resolution** — priority-based interruptions with moderator tiebreaker
-5. **Convergence** — consensus, majority, or moderator-forced
-6. **Synthesis** — dedicated child session reads full transcript from DB, produces final artifact
-
-## Output
-
-The Loom produces:
-1. A synthesized artifact with decisions and reasoning
-2. Action items
-3. Any unresolved objections (minority report)
-4. Open questions that remain
-5. A confidence level (high/medium/low)
-
-## Project Structure
-
-```
-src/
-├── index.js                  # Plugin entry — tools + event hooks
-├── orchestrator.js           # Main deliberation loop (rounds, convergence, synthesis)
-├── composer.js               # Room composition + persona selection (loads JSON)
-├── database.js               # SQLite operations + cleanup utilities
-├── model-discovery.js        # Provider detection + model scoring/assignment
-├── tiers.js                  # Role rights + behavioral prompts
-├── prompts.js                # All LLM prompt templates
-├── validation.js             # Response parsing
-├── interjection-resolver.js  # Interjection priority + resolution
-├── warp-manager.js           # Shared context evolution + transcript formatting
-├── synthesizer.js            # Final artifact generation
-├── convergence-checker.js    # Convergence detection logic
-├── moderation.js             # Moderator intervention + ruling parsing
-├── client-types.js           # SDK client interface + type guard
-├── session-manager.js        # Child session lifecycle management
-├── synthesis-coordinator.js  # Final artifact synthesis flow
-├── concurrency.js            # Concurrency limiting utilities
-├── config.js                 # Central configuration constants
-├── shared.js                 # Shared utilities and constants
-├── types.js                  # All shared type definitions
-├── handlers/
-│   └── knit-handler.js       # Main /knit command handler + model logic
-├── services/
-│   └── model-service.js      # Model discovery and assignment service
-└── dashboard/
-    ├── server.js             # Dashboard HTTP server (Bun.serve)
-    ├── api.js                # Database read API for dashboard
-    ├── app.jsx               # React dashboard UI
-    ├── app.css               # Dashboard styles
-    ├── utils.js              # Dashboard utility functions
-    └── index.html            # Dashboard HTML shell
-
-personas/                     # JSON persona definitions
-├── junior.json               # 8 junior personas
-├── mid.json                  # 8 mid personas
-├── senior.json               # 6 senior personas
-├── principal.json            # 4 principal personas
-└── domains.json              # Domain keyword mappings
-
-commands/                     # Slash command definitions
-├── knit.md                   # Primary /knit command
-├── knit_models.md            # Optional model discovery command
-├── loom_viz.md               # Dashboard visualization command
-└── loom_stop.md              # Stop dashboard command
-```
-
-## Building
-
-```bash
-npm run bundle            # Build single-file plugin bundle (esbuild)
-npm run typecheck         # Syntax check the bundle
-npm run install:plugin    # Bundle + install to opencode config
-npm run update:plugin     # Clear old version + fresh install
-```
+Other available options include agent and synthesis timeouts, word limits, interjection thresholds, moderator triggers, retry policy, max concurrency, and meeting timeout.
 
 ## License
 
