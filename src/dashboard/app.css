@@ -260,6 +260,100 @@ input {
   color: var(--color-muted-foreground);
 }
 
+/* Missing classes from components */
+.loom-card-sm {
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.375rem;
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+}
+
+.loom-text-bold { font-weight: 700; }
+
+.loom-warp-body {
+  background: var(--color-background-secondary, #f8fafc);
+  border-radius: 0.375rem;
+  padding: 0.5rem;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  max-width: 600px;
+  overflow-x: auto;
+}
+
+.loom-output-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.loom-card-section {
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+}
+
+/* Chart styles */
+.loom-type-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  background: var(--color-card);
+  border-radius: 0.5rem;
+  border: 1px solid var(--color-border);
+}
+
+.loom-type-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.loom-type-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.loom-type-chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.75rem;
+}
+
+.loom-type-chart-legend-item .loom-legend-color {
+  display: inline-block;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 0.25rem;
+}
+
+/* Timeline chart styles */
+.loom-timeline-chart {
+  padding: 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.375rem;
+  background: var(--color-card);
+}
+
+.loom-timeline-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.loom-timeline-chart-labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 0.25rem;
+  font-size: 0.65rem;
+  color: var(--color-muted-foreground);
+}
+
+/* Existing text styles */
 .loom-text-live { color: #16a34a; }
 .loom-text-granted { color: #16a34a; }
 .loom-text-denied { color: #dc2626; }
@@ -1136,3 +1230,29 @@ input {
   text-decoration: underline dotted;
   text-underline-offset: 2px;
 }
+
+/* Export buttons */
+.loom-export-stream-btn {
+  flex: 1;
+  text-align: center;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.75rem;
+}
+
+.loom-export-btn {
+  padding: 0.35rem 0.75rem;
+  font-size: 0.75rem;
+}
+
+/* Refusal cards */
+.loom-card-warning {
+  border-color: var(--color-destructive);
+  background: color-mix(in oklch, var(--color-destructive) 8%, var(--color-background));
+}
+
+.loom-export-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+

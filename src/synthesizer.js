@@ -88,16 +88,30 @@ const NEUTRAL_SYNTHESIZER_SYSTEM = `You are a neutral deliberation analyst. Your
 export function finalizeSynthesis(artifactText, transcriptData, participants, objections) {
   const unresolvedObjections = (objections ?? []).filter((o) => o.unresolved);
   const objectionsText = unresolvedObjections.map((o) => `- ${o.content}`).join("\n");
-  let finalOutput = objectionsText
-    ? `${artifactText}\n\n## Unresolved Objections\n${objectionsText}`
-    : artifactText;
+  
+  // Collect refusals from the transcript
+  const weft = transcriptData.rounds.flatMap((r) => r.contributions);
+  const refusals = weft.filter((c) => c.type === "refuse");
+  const refusalsText = refusals.map((r) => {
+    const p = participants.find((pp) => pp.config.id === r.participant_id);
+    return `${p?.config.name ?? r.participant_id}: ${r.content}`;
+  }).join("\n");
+  
+  let finalOutput = artifactText;
+  
+  if (objectionsText) {
+    finalOutput = `${finalOutput}\n\n## Unresolved Objections\n${objectionsText}`;
+  }
+  
+  if (refusalsText) {
+    finalOutput = `${finalOutput}\n\n## Refusals\n${refusalsText}`;
+  }
 
   const missingSections = validateSynthesisSections(finalOutput);
   if (missingSections.length > 0) {
     finalOutput = supplementMissingSections(finalOutput, missingSections);
   }
 
-  const weft = transcriptData.rounds.flatMap((r) => r.contributions);
   const parsedConfidence = parseConfidence(finalOutput);
   const activeParticipants = participants.filter((p) => p.status !== "failed").length;
   const heuristicConfidence = deriveConfidence(weft, unresolvedObjections.length, participants.length, activeParticipants);
@@ -109,6 +123,10 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, ob
     decisions: extractSection(finalOutput, "Decision"),
     action_items: extractSection(finalOutput, "Action Items"),
     dissent: unresolvedObjections,
+    refusals: refusals.map(r => ({
+      participant_id: r.participant_id,
+      content: r.content,
+    })),
     open_questions: extractSection(finalOutput, "Open Questions"),
     confidence,
   };

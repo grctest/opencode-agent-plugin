@@ -1,4 +1,4 @@
-import { useRef, useMemo, useCallback, useState } from "react";
+import { useRef, useMemo, useCallback, useState, memo } from "react";
 import { cn } from "../utils.js";
 import { ContributionItem, InterjectionItem, ThinkingCard, ContentDialog, renderMarkdown } from "./Cards.jsx";
 import { List } from "react-window";
@@ -16,7 +16,7 @@ function getRowHeight(item) {
   return CONTRIBUTION_HEIGHT;
 }
 
-export function TimelineTab({
+const TimelineTabBase = ({
   contributions,
   groupedContributions,
   filteredContributions,
@@ -33,7 +33,7 @@ export function TimelineTab({
   extensions,
   activeRound,
   maxRounds,
-}) {
+}) => {
   const listRef = useRef(null);
   const [dialogContribution, setDialogContribution] = useState(null);
 
@@ -203,3 +203,6 @@ export function TimelineTab({
     </div>
   );
 }
+
+const TimelineTab = memo(TimelineTabBase);
+export { TimelineTab };

@@ -22,6 +22,7 @@ export function truncate(text, max) {
 
 /** Enforces a word limit on text, appending [truncated] if exceeded. */
 export function enforceWordLimit(text, maxWords = getConfig().maxContributionWords) {
+  if (!text || typeof text !== "string") return "";
   const words = text.split(/\s+/);
   if (words.length <= maxWords) return text;
   return words.slice(0, maxWords).join(" ") + " [truncated]";

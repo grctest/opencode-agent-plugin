@@ -42,6 +42,8 @@ function compactWarpRuleBased(warp) {
   return `${condensed}\n\n${recentRounds.join("\n\n")}`;
 }
 
+export { compactWarpRuleBased };
+
 /** LLM-based compaction: compresses warp context into key facts. */
 export async function compactWarpWithLLM(warp, round, promptFn, model) {
   if (!round.summary) return warp ?? "";
@@ -99,7 +101,7 @@ export function formatTranscriptFromData(data, participants) {
     if (round.interjections.length > 0) {
       lines.push(`  **Interjections:**`);
       for (const ij of round.interjections) {
-        const name = participants.find((p) => p.config.id === ij.participant_id)?.config.name;
+        const name = participants.find((p) => p.config.id === ij.participant_id)?.config.name ?? ij.participant_id;
         lines.push(`  - [${name}] P${ij.priority}: ${ij.reason} → ${ij.resolved}`);
         if (ij.pushback) {
           lines.push(`    Pushback: ${ij.pushback}`);

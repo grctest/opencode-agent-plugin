@@ -37,7 +37,7 @@ function scoreModel(model) {
   else if (model.status === "beta") score += 10;
   else if (model.status === "deprecated") score -= 50;
 
-  score += model.limit.context / 10000;
+  score += (model.limit?.context ?? 128000) / 10000;
 
   if (model.reasoning) score += 15;
 
@@ -49,12 +49,13 @@ function sortModelsByQuality(models) {
   return [...models].sort((a, b) => {
     const diff = scoreModel(b) - scoreModel(a);
     if (diff !== 0) return diff;
-    // Deterministic tie-break: lexicographic on provider+model
     const aKey = `${a.providerID}/${a.modelID}`;
     const bKey = `${b.providerID}/${b.modelID}`;
     return aKey < bKey ? -1 : aKey > bKey ? 1 : 0;
   });
 }
+
+export { sortModelsByQuality, scoreModel };
 
 /**
  * Single model-assignment engine: quality-sorted and deterministic.
@@ -126,8 +127,6 @@ export function formatModelPlan(plan) {
 
   lines.push("");
   lines.push(`Available models: ${plan.available.length}`);
-  lines.push("");
-  lines.push("To start, confirm this assignment or request changes (e.g. 'use Sonnet for senior', 'make junior use Haiku').");
 
   return lines.join("\n");
 }

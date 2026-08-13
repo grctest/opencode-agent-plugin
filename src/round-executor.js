@@ -1,4 +1,4 @@
-import { buildAgentSystemPrompt, buildAgentUserPrompt, buildPushbackPrompt } from "./prompts.js";
+import { buildAgentSystemPrompt, buildAgentUserPrompt } from "./prompts.js";
 import { generateRoundBriefs } from "./warp-manager.js";
 import { parseAgentResponse } from "./validation.js";
 import { withConcurrency } from "./concurrency.js";
@@ -6,9 +6,8 @@ import { getConfig } from "./config.js";
 import { extractText, truncate, withTimeout, getPriorityCap, enforceWordLimit } from "./shared.js";
 import { Logger, extractErrorInfo } from "./logger.js";
 import { runReflectionPhase as runReflections } from "./reflection-manager.js";
-
-const CIRCUIT_BREAKER_THRESHOLD = 3;
-const CIRCUIT_BREAKER_RESET_MS = 5 * 60 * 1000;
+import { sanitizeForPrompt, sanitizeForDisplay, sanitizeContribution } from "./utils/sanitize.js";
+import { withRetry, isRetryableError, CircuitBreaker } from "./utils/retry.js";
 
 function isTimeoutError(err) {
   return err instanceof Error && /timed out after/i.test(err.message);
@@ -30,6 +29,7 @@ export class RoundExecutor {
   #turnOrder = [];
   #dirtySessions = new Set();
   #callStats;
+  #circuitBreaker;
 
   constructor({ client, directory, db, state, options, promptParent, getParticipantModel, logError }) {
     this.#client = client;
@@ -44,50 +44,43 @@ export class RoundExecutor {
     this.#modelFailureTimes = new Map();
     this.#logger = new Logger();
     this.#interjectionTracker = new Map();
-    this.#callStats = { agent_prompts: 0, reflection_calls: 0, interjection_calls: 0, pushback_calls: 0 };
+    this.#callStats = { agent_prompts: 0, reflection_calls: 0, interjection_calls: 0 };
+    const cbConfig = getConfig().circuitBreaker;
+    this.#circuitBreaker = new CircuitBreaker({
+      failureThreshold: cbConfig.failureThreshold,
+      resetTimeoutMs: cbConfig.resetTimeoutMs,
+    });
+  }
+
+  #failedInCurrentRound = 0;
+
+  isModelHealthy(model) {
+    return this.#circuitBreaker.isHealthy(model);
   }
 
   getCallStats() {
     return { ...this.#callStats };
   }
 
+  resetRoundStats() {
+    this.#failedInCurrentRound = 0;
+  }
+
   #modelKey(model) {
     return `${model.providerID}/${model.modelID}`;
   }
 
-  #isModelHealthy(model) {
-    const key = this.#modelKey(model);
-    const failures = this.#failureCounts.get(key) ?? 0;
-    if (failures < CIRCUIT_BREAKER_THRESHOLD) return true;
-
-    const lastFailure = this.#modelFailureTimes.get(key);
-    if (lastFailure && Date.now() - lastFailure > CIRCUIT_BREAKER_RESET_MS) {
-      this.#failureCounts.delete(key);
-      this.#modelFailureTimes.delete(key);
-      this.#logger.info("circuit_breaker_reset", `Model ${key} circuit breaker reset after timeout`);
-      return true;
+   #recordModelFailure(model) {
+    const cbConfig = getConfig().circuitBreaker;
+    const state = this.#circuitBreaker.recordFailure(model);
+    if (state.failures >= cbConfig.failureThreshold) {
+      this.#options.onProgress?.(`⚠️ Model ${this.#modelKey(model)} marked unhealthy after ${state.failures} consecutive failures. Will retry in ${cbConfig.resetTimeoutMs / 60000} minutes.`);
+      this.#logger.warn("circuit_breaker", `Model ${this.#modelKey(model)} marked unhealthy`, { failures: state.failures });
     }
-
-    return false;
-  }
-
-  #recordModelFailure(model) {
-    const key = this.#modelKey(model);
-    const count = (this.#failureCounts.get(key) ?? 0) + 1;
-    this.#failureCounts.set(key, count);
-    this.#modelFailureTimes.set(key, Date.now());
-    if (count >= CIRCUIT_BREAKER_THRESHOLD) {
-      this.#options.onProgress?.(`⚠️ Model ${key} marked unhealthy after ${count} consecutive failures. Will retry in ${CIRCUIT_BREAKER_RESET_MS / 60000} minutes.`);
-      this.#logger.warn("circuit_breaker", `Model ${key} marked unhealthy`, { failures: count });
-    }
-  }
+   }
 
   #recordModelSuccess(model) {
-    const key = this.#modelKey(model);
-    if (this.#failureCounts.has(key)) {
-      this.#failureCounts.delete(key);
-      this.#modelFailureTimes.delete(key);
-    }
+    this.#circuitBreaker.recordSuccess(model);
   }
 
   /**
@@ -137,6 +130,7 @@ export class RoundExecutor {
   async #handlePromptResult(p, result, round) {
     if (!result) {
       p.status = "failed";
+      this.#failedInCurrentRound++;
       this.#db.setParticipantStatus(p.config.id, "failed");
       this.#db.recordAgentError(
         this.#state.id, p.config.id, this.#state.current_round,
@@ -159,6 +153,14 @@ export class RoundExecutor {
 
     this.#storeContribution(p, result, round);
 
+    if (result.governance) {
+      const g = result.governance;
+      this.#logger.info("governance_directive", `${p.config.name} issued governance directive`, { directive: g.directive, value: g.value });
+      if (!round.governance) round.governance = [];
+      round.governance.push({ participant_id: p.config.id, directive: g.directive, value: g.value ?? null });
+      this.#options.onProgress?.(`${p.config.name} (${p.config.tier}) — issued governance directive [GOVERNANCE: ${g.directive}${g.value !== undefined ? `: ${g.value}` : ""}]`);
+    }
+
     const truncated = truncate(result.content, 120);
     this.#options.onProgress?.(`${p.config.name} (${p.config.tier}) — ${result.type}: "${truncated}"`);
   }
@@ -169,8 +171,8 @@ export class RoundExecutor {
 
   async runInterjectionPhase(round, activeParticipants) {
     const config = getConfig();
-    const maxInterjections = config.maxInterjectionsPerRound ?? 3;
-    const { autoGrant = 9, pushback = 7 } = config.interjectionThresholds ?? {};
+    const maxInterjections = config.maxInterjectionsPerRound ?? 2;
+    const threshold = config.interjectionThresholds?.autoGrant ?? 8;
     const pendingInterjections = round.interjections.filter((ij) => ij.resolved === "pending");
     if (pendingInterjections.length === 0) return;
 
@@ -197,52 +199,26 @@ export class RoundExecutor {
         continue;
       }
 
-      if (ij.priority >= autoGrant) {
+      if (ij.priority >= threshold) {
         ij.granted = true;
         ij.resolved = "granted";
         grantedCount++;
         this.#interjectionTracker.set(interjector.config.id, round.number);
-      } else if (ij.priority >= pushback) {
-        const target = activeParticipants.find((p) => p.config.id === ij.target_participant_id);
-        if (target) {
-          const pushback = await this.#checkPushback(target, ij, round);
-          if (pushback === "yield") {
-            ij.granted = true;
-            ij.resolved = "granted";
-            grantedCount++;
-            this.#interjectionTracker.set(interjector.config.id, round.number);
-          } else if (pushback === "contest_wins") {
-            ij.resolved = "contested";
-            ij.pushback = "Speaker contested and won";
-          } else {
-            ij.granted = true;
-            ij.resolved = "granted";
-            grantedCount++;
-            this.#interjectionTracker.set(interjector.config.id, round.number);
-          }
-        } else {
-          ij.granted = true;
-          ij.resolved = "granted";
-          grantedCount++;
-          this.#interjectionTracker.set(interjector.config.id, round.number);
-        }
+        await this.#promptInterjector(interjector, ij, round);
       } else {
         ij.resolved = "denied";
-      }
-
-      if (ij.granted) {
-        await this.#promptInterjector(interjector, ij, round);
       }
     }
   }
 
   #storeContribution(participant, result, round) {
     const id = ++this.#state.next_contribution_id;
+    const safeContent = sanitizeForPrompt(result.content);
     const contribution = {
       id,
       round: this.#state.current_round,
       participant_id: result.participant_id,
-      content: result.content,
+      content: safeContent,
       type: result.type,
       targets_which: null,
       timestamp: Date.now(),
@@ -268,7 +244,7 @@ export class RoundExecutor {
         target_participant_id: targetParticipantId,
         round: this.#state.current_round,
         priority: Math.min(result.interjection.priority, priorityCap),
-        reason: result.interjection.reason,
+        reason: sanitizeForPrompt(result.interjection.reason),
         draft: result.interjection.draft ?? null,
         granted: false,
         pushback: null,
@@ -315,6 +291,9 @@ export class RoundExecutor {
       return null;
     }
 
+    // Capture session version before prompt to detect late responses from old sessions
+    const sessionVersion = participant.session_version ?? 0;
+
     if (this.#dirtySessions.has(participant.config.id)) {
       this.#dirtySessions.delete(participant.config.id);
       const recreated = await this.#options.recreateSession?.(participant);
@@ -326,110 +305,87 @@ export class RoundExecutor {
 
     const model = this.#getParticipantModel(participant);
 
-    if (!this.#isModelHealthy(model)) {
+    if (!this.#circuitBreaker.isHealthy(model)) {
       this.#logError(`model ${this.#modelKey(model)} is unhealthy, skipping`, new Error("circuit breaker open"));
       this.#logger.warn("model_unhealthy", `Skipping ${participant.config.name} — model ${this.#modelKey(model)} unhealthy`);
       return null;
     }
 
     const config = getConfig();
-    const maxRetries = config.maxRetryAttempts;
-    const timeoutMs = config.agentTimeoutMs;
+    const baseTimeoutMs = config.agentTimeoutMs;
+    const totalParticipants = this.#state.participants.length;
+    const timeoutReductionFactor = Math.min(this.#failedInCurrentRound / totalParticipants, 0.5);
+    const timeoutMs = Math.floor(baseTimeoutMs * (1 - timeoutReductionFactor));
 
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        // Note: withTimeout rejects but cannot abort the in-flight SDK request.
-        // A timed-out response is discarded here, and the session is marked dirty so it
-        // gets recreated before the next prompt — a late-arriving response can never
-        // contaminate a future prompt.
-        this.#callStats.agent_prompts++;
-        const result = await withTimeout(
-          this.#client.session.prompt({
-            path: { id: participant.session_id },
-            body: {
-              system: buildAgentSystemPrompt(participant),
-              model,
-              temperature: participant.tier_config.temperature,
-              parts: [{ type: "text", text: buildAgentUserPrompt(
-                participant,
-                this.#state.warp,
-                this.#state.weft,
-                this.#state.question,
-                this.#state.current_round,
-                roundBriefs,
-              ) }],
-            },
-            query: { directory: this.#directory },
-          }),
-          timeoutMs,
-        );
-
-        if (result.error) {
-          throw new Error(result.error.message || JSON.stringify(result.error));
-        }
-
-        const content = extractText(result.data);
-        if (!content) return null;
-
-        const response = parseAgentResponse(participant.config.id, content);
-        if (!response) return null;
-
-        this.#recordModelSuccess(model);
-        this.#options.onAgentComplete?.(participant.config.id, response.content);
-        return response;
-      } catch (err) {
-        if (isTimeoutError(err)) {
-          this.#dirtySessions.add(participant.config.id);
-          this.#logger.warn("session_dirty", `Marking ${participant.config.name}'s session dirty after timeout — will recreate before next prompt`);
-        }
-        if (attempt === maxRetries) {
-          this.#recordModelFailure(model);
-          const info = extractErrorInfo(err);
-          this.#db.recordAgentError(
-            this.#state.id, participant.config.id, this.#state.current_round,
-            "prompt_failed", info.message, attempt + 1,
-          );
-          this.#logger.error("participant_failed", `${participant.config.name} failed after ${maxRetries + 1} attempts`, info);
-          return null;
-        }
-        const delay = Math.min(
-          config.retryBaseDelayMs * Math.pow(2, attempt) + Math.random() * 500,
-          config.retryMaxDelayMs,
-        );
-        await new Promise((resolve) => setTimeout(resolve, delay));
+    const promptFn = async () => {
+      // Verify session version hasn't changed (prevents late responses from old sessions)
+      if ((participant.session_version ?? 0) !== sessionVersion) {
+        throw new Error("Session version changed — discarding stale response");
       }
-    }
 
-    return null;
-  }
+      this.#callStats.agent_prompts++;
+      const result = await withTimeout(
+        this.#client.session.prompt({
+          path: { id: participant.session_id },
+          body: {
+            system: buildAgentSystemPrompt(participant),
+            model,
+            temperature: participant.tier_config.temperature,
+            parts: [{ type: "text", text: buildAgentUserPrompt(
+              participant,
+              this.#state.warp,
+              this.#state.weft,
+              this.#state.question,
+              this.#state.current_round,
+              roundBriefs,
+            ) }],
+          },
+          query: { directory: this.#directory },
+        }),
+        timeoutMs,
+      );
 
-  async #checkPushback(speaker, ij, round) {
-    const model = this.#getParticipantModel(speaker);
-    const speakerContribution = round.contributions.filter((c) => c.participant_id === ij.target_participant_id).pop()
-      ?? [...this.#state.weft].reverse().find((c) => c.participant_id === ij.target_participant_id);
-    const interjector = this.#state.participants.find((p) => p.config.id === ij.participant_id);
-    const interjectorName = interjector ? interjector.config.name : ij.participant_id;
-    const prompt = buildPushbackPrompt(speaker, interjectorName, ij.priority, speakerContribution?.content ?? "", ij.reason);
+      if (result.error) {
+        throw new Error(result.error.message || JSON.stringify(result.error));
+      }
+
+      const content = extractText(result.data);
+      if (!content) return null;
+
+      const safeContent = sanitizeForPrompt(content);
+      const response = parseAgentResponse(participant.config.id, safeContent);
+      if (!response) return null;
+
+      this.#recordModelSuccess(model);
+      this.#options.onAgentComplete?.(participant.config.id, response.content);
+      return response;
+    };
 
     try {
-      this.#callStats.pushback_calls++;
-      const result = await this.#promptParent(
-        `You are ${speaker.config.name} (${speaker.config.tier}). Someone wants to interrupt your turn.`,
-        model,
-        prompt
-      );
-      const text = result.trim();
-
-      if (text.startsWith("[CONTEST]")) {
-        return "contest_wins";
-      }
-
-      return "yield";
+      const adjustedMaxAttempts = Math.max(1, config.maxRetryAttempts - this.#failedInCurrentRound);
+      return await withRetry(promptFn, {
+        maxAttempts: adjustedMaxAttempts,
+        baseDelayMs: config.retryBaseDelayMs,
+        maxDelayMs: config.retryMaxDelayMs,
+        jitterMs: 500,
+        retryable: (err) => isRetryableError(err) || isTimeoutError(err),
+        onRetry: (err, attempt, delay) => {
+          if (isTimeoutError(err)) {
+            this.#dirtySessions.add(participant.config.id);
+            this.#logger.warn("session_dirty", `Marking ${participant.config.name}'s session dirty after timeout — will recreate before next prompt`);
+          }
+          this.#logger.warn("prompt_retry", `Retrying prompt for ${participant.config.name} (attempt ${attempt + 1}/${adjustedMaxAttempts})`, { delay, error: err.message });
+        },
+      });
     } catch (err) {
+      this.#recordModelFailure(model);
       const info = extractErrorInfo(err);
-      this.#logError("pushback check", err);
-      this.#logger.warn("pushback_failed", `Pushback check failed for ${speaker.config.name}`, info);
-      return "yield";
+      this.#db.recordAgentError(
+        this.#state.id, participant.config.id, this.#state.current_round,
+        "prompt_failed", info.message, config.maxRetryAttempts + 1,
+      );
+      this.#logger.error("participant_failed", `${participant.config.name} failed after ${config.maxRetryAttempts + 1} attempts`, info);
+      return null;
     }
   }
 
@@ -442,7 +398,7 @@ export class RoundExecutor {
     const draftContent = ij.draft;
 
     if (draftContent && draftContent.trim().length > 0) {
-      const content = enforceWordLimit(draftContent.trim(), config.maxInterjectionWords);
+      const content = enforceWordLimit(sanitizeForPrompt(draftContent.trim()), config.maxInterjectionWords);
       const contribution = {
         id: ++this.#state.next_contribution_id,
         round: this.#state.current_round,
@@ -477,7 +433,7 @@ export class RoundExecutor {
     const userPrompt = `## You Interjected
 
 You requested to interrupt with priority ${ij.priority}:
-"${ij.reason}"
+"${sanitizeForDisplay(ij.reason)}"
 
 State your interjection now. Be direct and under 200 words.`;
 
@@ -499,11 +455,12 @@ State your interjection now. Be direct and under 200 words.`;
       const content = extractText(result.data);
       if (!content) throw new Error("Empty interjection response");
 
+      const safeContent = sanitizeForPrompt(content.replace(/^\[(\w+)\]\s*/, ""));
       const contribution = {
         id: ++this.#state.next_contribution_id,
         round: this.#state.current_round,
         participant_id: interjector.config.id,
-        content: content.replace(/^\[(\w+)\]\s*/, ""),
+        content: safeContent,
         type: "interjection",
         targets_which: ij.target_participant_id,
         timestamp: Date.now(),

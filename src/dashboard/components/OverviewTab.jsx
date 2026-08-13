@@ -1,7 +1,8 @@
+import { memo } from "react";
 import { cn, typeClass } from "../utils.js";
 import { ParticipationMatrix, ContributionTypeChart, ContributionTimeline } from "./Charts.jsx";
 
-export function OverviewTab({
+export const OverviewTab = memo(({
   state,
   contributions,
   interjections,
@@ -10,7 +11,7 @@ export function OverviewTab({
   agentErrors,
   participantName,
   totalRounds,
-}) {
+}) => {
   const stats = state?.stats ?? {};
   const callStats = stats.calls ?? {};
   const totalInputTokens = callStats.totalInputTokens ?? 0;
@@ -95,4 +96,5 @@ export function OverviewTab({
       )}
     </div>
   );
-}
+});
+export default OverviewTab;

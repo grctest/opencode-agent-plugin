@@ -3,8 +3,9 @@ import { isAgentSessionClient } from "./client-types.js";
 import { deleteMeetingFiles, deleteMeetingsBySessionId, findMeetingBySessionId, getDbPathForMeeting, getDatabasesBySessionId, loadSessionIndex } from "./database.js";
 import { startDashboard } from "./dashboard/server.js";
 import { createKnitHandler } from "./handlers/knit-handler.js";
-import { loadConfig, getConfigValidationWarnings, getConfig, getConfigSource } from "./config.js";
+import { createConfig, getConfigSource } from "./config.js";
 import { Logger } from "./logger.js";
+import { setDefaultConfigDirectory } from "./config.js";
 
 export const Loom = async (input) => {
   const { client, directory } = input;
@@ -13,7 +14,8 @@ export const Loom = async (input) => {
     throw new Error("Loom plugin requires a compatible opencode client with session.create, session.prompt, session.message, and provider API access.");
   }
 
-  loadConfig(directory);
+  setDefaultConfigDirectory(directory);
+  const config = createConfig(directory);
   loadSessionIndex(directory);
   const logger = new Logger();
 
@@ -25,7 +27,7 @@ export const Loom = async (input) => {
       : "No Loom config file found — using defaults",
   );
 
-  const warnings = getConfigValidationWarnings();
+  const warnings = config.getWarnings();
   for (const warning of warnings) {
     logger.warn("config_validation", warning);
   }
@@ -41,7 +43,8 @@ export const Loom = async (input) => {
         description:
           "Start a multi-agent deliberation session (a 'Loom'). " +
           "ONLY invoke when the user explicitly types /knit followed by a question. " +
-          "Do NOT invoke for general questions, discussions, or information requests.",
+          "Do NOT invoke for general questions, discussions, or information requests. " +
+          "Run the deliberation directly — do NOT call with dry_run first unless the user explicitly asks for a preview.",
         args: {
           question: tool.schema
             .string()
@@ -88,7 +91,7 @@ export const Loom = async (input) => {
             .boolean()
             .optional()
             .describe(
-              "If true, return the composed room without running deliberation",
+              "Only set true if the user explicitly asked to preview the room before deliberating. Default: false — run directly.",
             ),
           convergence: tool.schema
             .enum(["consensus", "majority", "moderator_forces"])
@@ -224,6 +227,79 @@ export const Loom = async (input) => {
           activeDashboard.stop();
           activeDashboard = null;
           return `Dashboard stopped (was running on port ${port}).`;
+        },
+      }),
+
+      loom_debug: tool({
+        description: "Inspect internal state of a running or completed loom for debugging.",
+        args: {
+          loom_id: tool.schema.string().describe("The ID of the Loom session to inspect"),
+          include: tool.schema
+            .array(tool.schema.enum(['state', 'participants', 'contributions', 'rounds', 'warp', 'orchestratorMessages']))
+            .optional()
+            .describe("Which parts of the loom state to include (default: all)"),
+        },
+        execute: async (args, _context) => {
+          const engine = activeLooms.get(args.loom_id);
+          if (!engine) {
+            return "No active Loom found with that ID. For completed looms, use the dashboard export feature.";
+          }
+          
+          const state = engine.getState();
+          const include = args.include || ['state', 'participants', 'contributions', 'rounds', 'warp', 'orchestratorMessages'];
+          
+          const result = {};
+          if (include.includes('state')) {
+            result.status = state.status;
+            result.round = state.current_round;
+            result.maxRounds = state.max_rounds;
+            result.convergenceMode = state.convergence_mode;
+            result.domain = state.domain;
+            result.question = state.question;
+            result.context = state.context;
+          }
+          if (include.includes('participants')) {
+            result.participants = state.participants.map(p => ({
+              id: p.config.id,
+              name: p.config.name,
+              tier: p.config.tier,
+              status: p.status,
+              contributions: p.contributions_count,
+              reflections: p.reflections?.length ?? 0,
+              model: p.config.model ? `${p.config.model.providerID}/${p.config.model.modelID}` : 'unassigned',
+            }));
+          }
+          if (include.includes('contributions')) {
+            result.contributions = state.weft.map(c => ({
+              id: c.id,
+              round: c.round,
+              participantId: c.participant_id,
+              type: c.type,
+              contentPreview: c.content.slice(0, 200),
+              timestamp: new Date(c.timestamp).toISOString(),
+            }));
+          }
+          if (include.includes('rounds')) {
+            result.rounds = state.rounds.map(r => ({
+              number: r.number,
+              contributionCount: r.contributions.length,
+              interjectionCount: r.interjections.length,
+              summary: r.summary,
+            }));
+          }
+          if (include.includes('warp')) {
+            result.warp = state.warp;
+          }
+          if (include.includes('orchestratorMessages')) {
+            result.orchestratorMessages = engine.getOrchestratorMessages().map(m => ({
+              type: m.type,
+              role: m.role,
+              contentPreview: m.content.slice(0, 500),
+              timestamp: new Date(m.timestamp).toISOString(),
+            }));
+          }
+          
+          return JSON.stringify(result, null, 2);
         },
       }),
 

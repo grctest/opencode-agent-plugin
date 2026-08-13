@@ -6,7 +6,7 @@ import { getConfig } from "./config.js";
 import { extractErrorInfo } from "./logger.js";
 
 const MAX_SYNTHESIS_RETRIES = 2;
-const MAX_CRITIQUE_RETRIES = 1;
+const MAX_CRITIQUE_RETRIES = 2;
 const REQUIRED_SECTIONS = ["Decision", "Reasoning", "Action Items", "Dissenting Views", "Open Questions", "Confidence"];
 
 export class SynthesisCoordinator {
@@ -99,7 +99,7 @@ export class SynthesisCoordinator {
 
   /** Second-pass audit: the synthesizer reviews its draft for misrepresentation, then fixes (one cycle). */
   async #critique(sessionId, text, transcript, model, synthesizer, allParticipants) {
-    const critiquePrompt = `You are a neutral deliberation analyst reviewing your own synthesis.
+    let critiquePrompt = `You are a neutral deliberation analyst reviewing your own synthesis.
 
 Review the draft below against the deliberation transcript for:
 1. Misattributed views (a point credited to the wrong participant)
@@ -148,11 +148,9 @@ ${text.slice(0, 6000)}`;
         if (missing.length === 0) {
           return text2;
         }
-        // If the revision dropped sections, iterate once more with feedback
+        // If the revision dropped sections, re-prompt the SAME draft with feedback
         const feedback = `\n\nYour revised synthesis was missing these required sections: ${missing.join(", ")}. Output the FULL revised synthesis with ALL sections: ${REQUIRED_SECTIONS.join(", ")}.`;
-        // Re-prompt with the feedback appended to a fresh critique of the SAME draft
-        // (avoids compounding errors from the malformed revision)
-        void feedback;
+        critiquePrompt = `${critiquePrompt}\n\nFeedback: ${feedback}`;
       } catch (err) {
         const info = extractErrorInfo(err);
         this.#sessionManager.postProgress(`Synthesis critique failed: ${info.message}. Using the original draft.`);

@@ -1,20 +1,24 @@
+import { memo } from "react";
 import { cn } from "../utils.js";
+import { renderMarkdown } from "./Cards.jsx";
 
-function SectionList({ title, items }) {
+function SectionList({ title, items, isHtml = false }) {
   if (!items || items.length === 0) return null;
   return (
     <div className="loom-card loom-card-section">
       <h3 className="loom-title-sm loom-mb-sm">{title}</h3>
       <ul className="loom-plain-list">
         {items.map((item, i) => (
-          <li key={i} className="loom-text">{item}</li>
+          <li key={i} className="loom-text">
+            {isHtml ? <div className="loom-prose" dangerouslySetInnerHTML={{ __html: renderMarkdown(String(item)) }} /> : String(item)}
+          </li>
         ))}
       </ul>
     </div>
   );
 }
 
-export function OutputTab({ artifact, participants }) {
+function OutputTabBase({ artifact, participants }) {
   if (!artifact) {
     return (
       <div className="loom-card">
@@ -36,10 +40,23 @@ export function OutputTab({ artifact, participants }) {
         </span>
       </div>
 
-      {artifact.decisions?.length > 0 && <SectionList title="Decisions" items={artifact.decisions} />}
+      {artifact.decisions?.length > 0 && <SectionList title="Decisions" items={artifact.decisions} isHtml={true} />}
       {artifact.action_items?.length > 0 && <SectionList title="Action Items" items={artifact.action_items} />}
       {artifact.open_questions?.length > 0 && <SectionList title="Open Questions" items={artifact.open_questions} />}
-      {artifact.dissent?.length > 0 && <SectionList title="Unresolved Objections" items={artifact.dissent.map((d) => d.content ?? d)} />}
+      {artifact.dissent?.length > 0 && <SectionList title="Unresolved Objections" items={artifact.dissent.map((d) => typeof d === 'object' ? d.content : d)} />}
+      {artifact.refusals?.length > 0 && (
+        <div className="loom-card loom-card-section loom-card-warning">
+          <h3 className="loom-title-sm loom-mb-sm">Refusals</h3>
+          <ul className="loom-plain-list">
+            {artifact.refusals.map((r, i) => (
+              <li key={i} className="loom-text">
+                <span className="loom-text-xs loom-text-bold">— {r.participant_id}</span>
+                <div className="loom-text-muted">{renderMarkdown(String(r.content))}</div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="loom-card">
         <h3 className="loom-title-sm loom-mb-sm">Full Artifact</h3>
@@ -48,3 +65,6 @@ export function OutputTab({ artifact, participants }) {
     </div>
   );
 }
+
+const OutputTab = memo(OutputTabBase);
+export { OutputTab };

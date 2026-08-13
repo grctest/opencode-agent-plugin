@@ -186,64 +186,136 @@ export function checkConvergence(input) {
   const config = getConfig();
 
   if (activeCount === 0) {
-    return { shouldStop: true, status: "converged", needsLLMCheck: false, confidence: 100 };
+    return { 
+      shouldStop: true, 
+      status: "converged", 
+      needsLLMCheck: false, 
+      confidence: 100,
+      reasoning: { triggeredBy: 'allPassed', details: { passedCount, activeCount } }
+    };
   }
 
   const minRounds = config.minRounds ?? 2;
   if (currentRound < minRounds) {
-    return { shouldStop: false, status: "weaving", needsLLMCheck: false, confidence: 0 };
+    return { shouldStop: false, status: "weaving", needsLLMCheck: false, confidence: 0, reasoning: null };
   }
 
   if (currentRound === 2 && activeCount > 0 && passedCount >= activeCount) {
-    return { shouldStop: true, status: "converged", needsLLMCheck: false, confidence: 80 };
+    return { 
+      shouldStop: true, 
+      status: "converged", 
+      needsLLMCheck: false, 
+      confidence: 80,
+      reasoning: { triggeredBy: 'earlyConvergence', details: { passedCount, activeCount } }
+    };
   }
 
   if (detectLowNoveltyAcrossRounds(rounds, config.convergence.repetitionWindow, config.convergence.lowNoveltyCosineThreshold)) {
-    return { shouldStop: true, status: "converged", needsLLMCheck: false, confidence: 80 };
+    return { 
+      shouldStop: true, 
+      status: "converged", 
+      needsLLMCheck: false, 
+      confidence: 80,
+      reasoning: { triggeredBy: 'lowNovelty', details: { repetitionWindow: config.convergence.repetitionWindow, threshold: config.convergence.lowNoveltyCosineThreshold } }
+    };
   }
 
   if (rounds.length >= config.convergence.diminishingReturnsWindow && !detectContentDiversity(rounds, config.convergence.diminishingReturnsWindow)) {
-    return { shouldStop: false, status: "weaving", needsLLMCheck: true, confidence: 60 };
+    return { 
+      shouldStop: false, 
+      status: "weaving", 
+      needsLLMCheck: true, 
+      confidence: 60,
+      reasoning: { triggeredBy: 'diminishingReturns', details: { window: config.convergence.diminishingReturnsWindow } }
+    };
   }
 
   if (rounds.length >= 3 && detectStaleParticipants(rounds, totalParticipants)) {
-    return { shouldStop: false, status: "weaving", needsLLMCheck: true, confidence: 50 };
+    return { 
+      shouldStop: false, 
+      status: "weaving", 
+      needsLLMCheck: true, 
+      confidence: 50,
+      reasoning: { triggeredBy: 'staleParticipants', details: { staleRatio: config.convergence.staleParticipantRatio, activeCount } }
+    };
   }
 
   if (rounds.length >= 3 && detectDiminishingReturns(rounds)) {
-    return { shouldStop: false, status: "weaving", needsLLMCheck: true, confidence: 55 };
+    return { 
+      shouldStop: false, 
+      status: "weaving", 
+      needsLLMCheck: true, 
+      confidence: 55,
+      reasoning: { triggeredBy: 'diminishingReturns', details: { contributionDrop: true } }
+    };
   }
 
   switch (convergenceMode) {
     case "consensus":
       if (passedCount === totalParticipants) {
-        return { shouldStop: true, status: "converged", needsLLMCheck: false, confidence: 100 };
+        return { 
+          shouldStop: true, 
+          status: "converged", 
+          needsLLMCheck: false, 
+          confidence: 100,
+          reasoning: { triggeredBy: 'consensus', details: { passedCount, totalParticipants } }
+        };
       }
       break;
     case "majority":
       if (passedCount > totalParticipants / 2) {
-        return { shouldStop: true, status: "converged", needsLLMCheck: false, confidence: 90 };
+        return { 
+          shouldStop: true, 
+          status: "converged", 
+          needsLLMCheck: false, 
+          confidence: 90,
+          reasoning: { triggeredBy: 'majority', details: { passedCount, totalParticipants } }
+        };
       }
       break;
     case "moderator_forces":
       if (currentRound >= config.convergence.moderatorForcesMinRound && passedCount >= activeCount && activeCount > 0) {
-        return { shouldStop: true, status: "converged", needsLLMCheck: false, confidence: 85 };
+        return { 
+          shouldStop: true, 
+          status: "converged", 
+          needsLLMCheck: false, 
+          confidence: 85,
+          reasoning: { triggeredBy: 'moderatorForces', details: { currentRound, minRound: config.convergence.moderatorForcesMinRound, passedCount, activeCount } }
+        };
       }
       if (currentRound >= config.convergence.moderatorForcesHalfActiveRound && activeCount <= Math.ceil(totalParticipants / 2)) {
-        return { shouldStop: false, status: "weaving", needsLLMCheck: true, confidence: 55 };
+        return { 
+          shouldStop: false, 
+          status: "weaving", 
+          needsLLMCheck: true, 
+          confidence: 55,
+          reasoning: { triggeredBy: 'halfActive', details: { currentRound, activeCount, totalParticipants } }
+        };
       }
       break;
   }
 
   if (currentRound >= maxRounds) {
-    return { shouldStop: true, status: "max_rounds_reached", needsLLMCheck: false, confidence: 60 };
+    return { 
+      shouldStop: true, 
+      status: "max_rounds_reached", 
+      needsLLMCheck: false, 
+      confidence: 60,
+      reasoning: { triggeredBy: 'maxRounds', details: { currentRound, maxRounds } }
+    };
   }
 
   if (currentRound >= 4 && activeCount <= Math.ceil(totalParticipants / 2)) {
-    return { shouldStop: false, status: "weaving", needsLLMCheck: true, confidence: 40 };
+    return { 
+      shouldStop: false, 
+      status: "weaving", 
+      needsLLMCheck: true, 
+      confidence: 40,
+      reasoning: { triggeredBy: 'lowParticipation', details: { currentRound, activeCount, totalParticipants } }
+    };
   }
 
-  return { shouldStop: false, status: "weaving", needsLLMCheck: false, confidence: 0 };
+  return { shouldStop: false, status: "weaving", needsLLMCheck: false, confidence: 0, reasoning: null };
 }
 
 export async function checkSemanticConvergence(input, promptFn, getModel) {

@@ -1,57 +1,15 @@
 import { getConfig } from "./config.js";
 import { enforceWordLimit, getPriorityCap } from "./shared.js";
+import { AgentResponseSchema, ContributionTypeSchema, parseAgentResponseRaw } from "./schemas.js";
 
-const VALID_TYPES = new Set([
-  "propose",
-  "challenge",
-  "refine",
-  "support",
-  "dissent",
-  "synthesize",
-  "question",
-  "interjection",
-]);
-
-const TYPE_PREFIXES = {
-  "[PROPOSE]": "propose",
-  "[CHALLENGE]": "challenge",
-  "[REFINE]": "refine",
-  "[SUPPORT]": "support",
-  "[DISSENT]": "dissent",
-  "[SYNTHESIZE]": "synthesize",
-  "[QUESTION]": "question",
-};
-
-function validateResponse(data) {
-  if (!data || typeof data !== "object") return null;
-  if (typeof data.participant_id !== "string") return null;
-  if (typeof data.content !== "string") return null;
-  if (!VALID_TYPES.has(data.type)) return null;
-  if (data.interjection !== null) {
-    const ij = data.interjection;
-    if (
-      typeof ij !== "object" ||
-      typeof ij.priority !== "number" ||
-      !Number.isInteger(ij.priority) ||
-      ij.priority < 1 ||
-      ij.priority > 10 ||
-      typeof ij.reason !== "string" ||
-      ij.reason.length < 1 ||
-      ij.reason.length > 500
-    ) {
-      return null;
-    }
-    if (ij.draft !== undefined && ij.draft !== null && (typeof ij.draft !== "string" || ij.draft.length > 2000)) {
-      return null;
-    }
-    if (ij.target !== undefined && ij.target !== null && typeof ij.target !== "string") {
-      return null;
-    }
-  }
-  return data;
-}
-
-/** Parses an agent's text response into a structured AgentResponse with type and optional interjection. */
+/**
+ * Parses an agent's text response into a structured AgentResponse with type and optional interjection.
+ * Uses Zod schema validation for robust parsing.
+ * @param {string} participantId
+ * @param {string} response
+ * @param {string} [tier] - Agent tier for priority cap
+ * @returns {Object|null} Validated response or null if invalid
+ */
 export function parseAgentResponse(participantId, response, tier) {
   const text = response.trim();
 
@@ -63,54 +21,69 @@ export function parseAgentResponse(participantId, response, tier) {
     return { participant_id: participantId, content: "[PASS]", type: "propose", interjection: null };
   }
 
-  let type = "propose";
-  let contentStart = 0;
+  // Parse raw response (extracts type prefix and interjection directive)
+  const parsed = parseAgentResponseRaw(response, tier);
+  if (!parsed) return null;
 
-  for (const [prefix, t] of Object.entries(TYPE_PREFIXES)) {
-    if (text.startsWith(prefix)) {
-      type = t;
-      contentStart = prefix.length;
-      break;
-    }
-  }
-
-  const rawContent = text.slice(contentStart).trim();
-  let interjection = null;
-  let cleanContent = rawContent;
-
-  const ijMatch = rawContent.match(
-    /\[INTERJECT:\s*Priority:\s*(\d+),\s*Reason:\s*"([^"]+)"(?:\s*,\s*Target:\s*([^\]]+?))?\s*\]/i,
-  );
-  if (ijMatch) {
-    const rawPriority = Math.min(10, Math.max(1, parseInt(ijMatch[1])));
-    const priorityCap = tier ? getPriorityCap(tier) : 10;
-    const priority = Math.min(rawPriority, priorityCap);
-    const reason = ijMatch[2].trim();
-    const target = ijMatch[3] ? ijMatch[3].trim() : null;
-    const beforeIJ = rawContent.slice(0, ijMatch.index).trim();
-    const afterIJ = rawContent.slice(ijMatch.index + ijMatch[0].length).trim();
-    interjection = { priority, reason, target, draft: afterIJ || null };
-    cleanContent = beforeIJ;
-  }
-
+  // Apply word limit
   const config = getConfig();
-  const limitedContent = enforceWordLimit(cleanContent, config.maxContributionWords);
+  const limitedContent = enforceWordLimit(parsed.content, config.maxContributionWords);
 
-  const validated = validateResponse({
+  // Validate with Zod schema
+  const result = AgentResponseSchema.safeParse({
     participant_id: participantId,
     content: limitedContent,
-    type,
-    interjection,
+    type: parsed.type,
+    interjection: parsed.interjection,
+    ...(parsed.governance ? { governance: parsed.governance } : {}),
   });
 
-  if (validated) {
-    return validated;
+  if (result.success) {
+    return result.data;
   }
 
+  // Log validation failure for debugging
+  console.warn('[Validation] Agent response failed schema:', result.error.flatten());
+
+  // Fallback: return basic response with validation errors stripped
   return {
     participant_id: participantId,
-    content: enforceWordLimit(rawContent, config.maxContributionWords),
+    content: limitedContent,
     type: "propose",
     interjection: null,
   };
+}
+
+/**
+ * Validates a contribution object for database storage.
+ * @param {Object} contribution
+ * @returns {Object|null} Validated contribution or null
+ */
+export function validateContribution(contribution) {
+  // Import ContributionSchema dynamically to avoid circular deps
+  const { ContributionSchema } = require("./schemas.js");
+  const result = ContributionSchema.safeParse(contribution);
+  return result.success ? result.data : null;
+}
+
+/**
+ * Validates round data.
+ * @param {Object} round
+ * @returns {Object|null}
+ */
+export function validateRound(round) {
+  const { RoundSchema } = require("./schemas.js");
+  const result = RoundSchema.safeParse(round);
+  return result.success ? result.data : null;
+}
+
+/**
+ * Validates meeting state.
+ * @param {Object} state
+ * @returns {Object|null}
+ */
+export function validateMeetingState(state) {
+  const { MeetingStateSchema } = require("./schemas.js");
+  const result = MeetingStateSchema.safeParse(state);
+  return result.success ? result.data : null;
 }

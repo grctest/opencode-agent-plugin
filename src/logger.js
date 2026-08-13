@@ -24,11 +24,22 @@ export class LoomError extends Error {
 
 export class Logger {
   #meetingId = null;
+  #correlationId = null;
   #minLevel = resolveMinLevel();
 
-  forMeeting(meetingId) {
+  constructor(meetingId = null) {
     this.#meetingId = meetingId;
-    return this;
+    this.#correlationId = crypto.randomUUID();
+  }
+
+  forMeeting(meetingId) {
+    return new Logger(meetingId);
+  }
+
+  withCorrelationId(correlationId) {
+    const logger = new Logger(this.#meetingId);
+    logger.#correlationId = correlationId;
+    return logger;
   }
 
   setMinLevel(level) {
@@ -60,7 +71,9 @@ export class Logger {
     if (level < this.#minLevel) return;
     const entry = {
       level: LEVEL_LABELS[level],
-      meeting: this.#meetingId ? this.#meetingId.slice(0, 8) : null,
+      correlationId: this.#correlationId,
+      meetingId: this.#meetingId ? this.#meetingId.slice(0, 8) : null,
+      fullMeetingId: this.#meetingId,
       context,
       message,
       ...(details !== null ? { details } : {}),

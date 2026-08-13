@@ -4,6 +4,8 @@ description: Start a multi-agent deliberation session (a 'Loom')
 
 Use the `knit` tool to start a Loom deliberation about: $ARGUMENTS
 
+Run the `knit` tool **directly** — do NOT pass `dry_run` or preview the room first. Just invoke it with the question and let the deliberation run. Only use `dry_run` if the user explicitly asks to preview before deliberating.
+
 ## When to Use
 
 Invoke `knit` when the user explicitly types `/knit` followed by a question or topic. This creates a structured multi-agent deliberation where AI agents with different expertise levels and perspectives collaborate to produce a synthesized answer.
@@ -26,7 +28,7 @@ Invoke `knit` when the user explicitly types `/knit` followed by a question or t
 - `max_rounds` (optional): Maximum deliberation rounds (1-10, default: 3)
 - `convergence` (optional): How deliberation ends — `consensus`, `majority`, or `moderator_forces` (default)
 - `models` (optional): Per-tier model overrides (use `/knit_models` to discover options)
-- `dry_run` (optional): Preview the composed room without running deliberation
+- `dry_run` (optional): Preview the composed room without deliberating. Only use if the user explicitly asks — otherwise run directly.
 - `fresh` (optional): Force a fresh loom even if a previous meeting exists
 - `turn_mode` (optional): Turn mode — `sequential` (default), `staged` (2-at-a-time), or `parallel` (all concurrently)
 

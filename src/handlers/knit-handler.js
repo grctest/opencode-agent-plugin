@@ -8,7 +8,27 @@ import {
 } from "../services/model-service.js";
 import { Logger, extractErrorInfo } from "../logger.js";
 import { getConfig } from "../config.js";
-import { unlinkSync } from "fs";
+import { unlinkSync, writeFileSync, mkdirSync, existsSync } from "fs";
+import { join } from "path";
+import { sanitizeForPrompt } from "../utils/sanitize.js";
+
+/**
+ * Extracts a short one-line decision summary from a markdown artifact,
+ * preferring the first non-empty line under `## Decision`.
+ * @param {string} artifact
+ * @returns {string|null}
+ */
+function extractDecisionSummary(artifact) {
+  if (!artifact || typeof artifact !== "string") return null;
+  const match = artifact.match(/##\s*Decision\b([\s\S]*?)(?=\n##\s|\n*$)/i);
+  const section = match ? match[1] : artifact;
+  const firstLine = section
+    .split("\n")
+    .map((l) => l.replace(/^[-*#>\s]+/, "").trim())
+    .find((l) => l.length > 0);
+  if (!firstLine) return null;
+  return firstLine.length > 200 ? `${firstLine.slice(0, 197)}...` : firstLine;
+}
 
 function createMeetingCallbacks(context, logger) {
   return {
@@ -54,6 +74,59 @@ function createMeetingCallbacks(context, logger) {
 export function createKnitHandler(client, directory, activeLooms) {
   let pendingModels = null;
   const logger = new Logger();
+
+  /**
+   * Writes the full deliberation report to a persistent documentation file in the
+   * meeting directory, so the chat response can stay concise.
+   * @param {string} meetingId
+   * @param {string} report - Full markdown report
+   * @returns {string|null} Absolute path to the written file
+   */
+  function writeReportFile(meetingId, report) {
+    try {
+      const home = process.env.HOME || process.env.USERPROFILE || "/root";
+    const baseDir = (directory && directory !== "/")
+      ? join(directory, ".opencode", "loom")
+      : join(home, ".config", "opencode", "loom");
+    const dir = join(baseDir, "meetings");
+      mkdirSync(dir, { recursive: true });
+      const filePath = join(dir, `${meetingId}.md`);
+      writeFileSync(filePath, report, "utf-8");
+      return filePath;
+    } catch (err) {
+      const info = extractErrorInfo(err);
+      logger.warn("report_write_failed", "Failed to write deliberation report file", info);
+      return null;
+    }
+  }
+
+  /**
+   * Builds a concise chat summary from a completed deliberation, deferring the full
+   * report to the written documentation file and the dashboard.
+   * @param {Object} state - Final meeting state
+   * @param {string} question
+   * @param {Array} participants
+   * @param {string} meetingId
+   * @param {string|null} reportPath
+   * @param {string} [artifact] - Full artifact text (first Decision section used for summary)
+   * @returns {string} Concise summary for the chat
+   */
+  function buildSummary(state, question, participants, meetingId, reportPath, artifact = "") {
+    const decision = extractDecisionSummary(artifact);
+    const lines = [
+      `**Loom complete** — ${state.current_round} round${state.current_round !== 1 ? "s" : ""} (${state.status})`,
+      `**Question:** ${question}`,
+      `**Participants:** ${participants.length}`,
+    ];
+    if (decision) lines.push(`**Decision:** ${decision}`);
+    lines.push(`**Meeting ID:** ${meetingId}`);
+    if (reportPath) {
+      lines.push("");
+      lines.push(`Full report saved to \`${reportPath}\`.`);
+    }
+    lines.push("Run `/loom_viz` for the interactive dashboard.");
+    return lines.join("\n");
+  }
 
   async function handleKnit(args, context) {
     const sessionID = context.sessionID;
@@ -153,13 +226,16 @@ export function createKnitHandler(client, directory, activeLooms) {
 
     const meetingCallbacks = createMeetingCallbacks(context, logger);
 
+    const question = args.question ? sanitizeForPrompt(args.question, 5000) : '';
+    const sanitizedContext = args.context ? sanitizeForPrompt(args.context, 8000) : 'No additional context provided.';
+
     const primaryDomain = detectedDomains.length > 0 ? detectedDomains[0] : null;
 
     const engine = new MeetingOrchestrator({
       client,
       directory,
-      question: args.question,
-      context: args.context ?? "No additional context provided.",
+      question,
+      context: sanitizedContext,
       parentSessionId: sessionID,
       opencodeSessionId: sessionID,
       participants,
@@ -180,9 +256,12 @@ export function createKnitHandler(client, directory, activeLooms) {
       const artifact = await engine.runMeeting();
 
       const state = engine.getState();
+      const fullReport = `# Loom Deliberation Output\n\n**Question:** ${args.question}\n\n**Participants:** ${participants.map((p) => `${p.name} (${p.tier})`).join(", ")}\n\n**Rounds:** ${state.current_round}\n\n**Meeting ID:** ${engine.getMeetingId()}\n\n---\n\n${artifact}`;
+      const reportPath = writeReportFile(engine.getMeetingId(), fullReport);
+
       return {
         title: `Loom Complete — ${state.current_round} rounds`,
-        output: `# Loom Deliberation Output\n\n**Question:** ${args.question}\n\n**Participants:** ${participants.map((p) => `${p.name} (${p.tier})`).join(", ")}\n\n**Rounds:** ${state.current_round}\n\n**Meeting ID:** ${engine.getMeetingId()}\n\n---\n\n${artifact}`,
+        output: buildSummary(state, args.question, participants, engine.getMeetingId(), reportPath, artifact),
         metadata: {
           loom_id: loomId,
           meeting_id: engine.getMeetingId(),
@@ -207,6 +286,7 @@ export function createKnitHandler(client, directory, activeLooms) {
       };
     } finally {
       activeLooms.delete(loomId);
+      await engine.close();
     }
   }
 
@@ -238,7 +318,7 @@ export function createKnitHandler(client, directory, activeLooms) {
         meetingId: existingMeeting.meetingId,
         resume: true,
         question: existingMeeting.question,
-        context: args.context ?? "No additional context provided.",
+        context: args.context ? sanitizeForPrompt(args.context, 8000) : "No additional context provided.",
         parentSessionId: sessionID,
         opencodeSessionId: sessionID,
         participants: existingParts.map((p) => ({
@@ -258,15 +338,30 @@ export function createKnitHandler(client, directory, activeLooms) {
         await extEngine.initialize();
         const artifact = await extEngine.extendMeeting(args.question);
         const extState = extEngine.getState();
+        const fullReport = `# Loom Deliberation (Extended)\n\n**Original Question:** ${existingMeeting.question}\n\n**New Input:** ${args.question}\n\n**Participants:** ${existingParts.map((p) => `${p.name} (${p.tier})`).join(", ")}\n\n**Total Rounds:** ${extState.current_round}\n\n**Meeting ID:** ${extEngine.getMeetingId()}\n\n---\n\n${artifact}`;
+        const reportPath = writeReportFile(extEngine.getMeetingId(), fullReport);
+        const summary = [
+          `**Loom extended** — ${extState.current_round} round${extState.current_round !== 1 ? "s" : ""} total (${extState.status})`,
+          `**Original question:** ${existingMeeting.question}`,
+          `**New input:** ${args.question}`,
+          `**Participants:** ${existingParts.length}`,
+          `**Meeting ID:** ${extEngine.getMeetingId()}`,
+        ];
+        if (reportPath) {
+          summary.push("");
+          summary.push(`Full report saved to \`${reportPath}\`.`);
+        }
+        summary.push("Run `/loom_viz` for the interactive dashboard.");
         return {
           title: `Loom Extended — ${extState.current_round} rounds`,
-          output: `# Loom Deliberation (Extended)\n\n**Original Question:** ${existingMeeting.question}\n\n**New Input:** ${args.question}\n\n**Participants:** ${existingParts.map((p) => `${p.name} (${p.tier})`).join(", ")}\n\n**Total Rounds:** ${extState.current_round}\n\n**Meeting ID:** ${extEngine.getMeetingId()}\n\n---\n\n${artifact}`,
+          output: summary.join("\n"),
           metadata: { loom_id: loomId, meeting_id: extEngine.getMeetingId(), loom_status: extState.status, loom_rounds: extState.current_round, loom_extended: true, loom_participants: existingParts.map((p) => `${p.name} (${p.tier})`).join(", ") },
         };
       } catch (extErr) {
         throw extErr;
       } finally {
         activeLooms.delete(loomId);
+        await extEngine.close();
       }
     } catch (extErr) {
       const extInfo = extractErrorInfo(extErr);

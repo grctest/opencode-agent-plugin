@@ -1,4 +1,4 @@
-import { useRef, useMemo, useCallback } from "react";
+import { useRef, useMemo, useCallback, memo } from "react";
 import { List } from "react-window";
 
 const TYPE_LABELS = {
@@ -21,7 +21,7 @@ function formatContent(content, role) {
   return content.length > 500 ? content.slice(0, 500) + "..." : content;
 }
 
-export function OrchestratorTab({ messages = [] }) {
+const OrchestratorTabBase = ({ messages = [] }) => {
   const listRef = useRef(null);
 
   const grouped = useMemo(() => {
@@ -114,3 +114,6 @@ export function OrchestratorTab({ messages = [] }) {
     </div>
   );
 }
+
+const OrchestratorTab = memo(OrchestratorTabBase);
+export { OrchestratorTab };

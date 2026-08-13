@@ -113,7 +113,7 @@ export class DashboardApi {
   getStateWithStats() {
     const row = this.getState();
     if (!row) return null;
-    const stats = row.stats ?? {};
+    const stats = row.stats ? (typeof row.stats === "string" ? JSON.parse(row.stats) : row.stats) : {};
     return { ...row, stats };
   }
 
@@ -129,7 +129,7 @@ export class DashboardApi {
   getArtifact() {
     const row = this.#db
       .prepare(
-        `SELECT content, decisions, action_items, dissent, open_questions, confidence, created_at
+        `SELECT content, decisions, action_items, dissent, open_questions, confidence, refusals, created_at
          FROM artifacts LIMIT 1`,
       )
       .get();
@@ -148,6 +148,7 @@ export class DashboardApi {
       decisions: parse(row.decisions),
       action_items: parse(row.action_items),
       dissent: parse(row.dissent),
+      refusals: parse(row.refusals),
       open_questions: parse(row.open_questions),
       confidence: row.confidence,
       created_at: row.created_at,
@@ -177,13 +178,18 @@ export class DashboardApi {
     return row?.max_id ?? 0;
   }
 
-  getContributions() {
+  getContributions(limit = 100, offset = 0) {
     return this.#db
       .prepare(
         `SELECT id, participant_id, round, type, content, created_at
-         FROM contributions ORDER BY round ASC, id ASC`,
+         FROM contributions ORDER BY round ASC, id ASC LIMIT ? OFFSET ?`,
       )
-      .all();
+      .all(limit, offset);
+  }
+
+  getContributionsCount() {
+    const row = this.#db.prepare(`SELECT COUNT(*) as count FROM contributions`).get();
+    return row?.count ?? 0;
   }
 
   getContributionsSince(sinceId) {
@@ -324,6 +330,157 @@ export class DashboardApi {
     return lines.join("\n");
   }
 
+  exportJSON(meetingId) {
+    const meeting = this.getState();
+    const participants = this.getParticipants();
+    const contributions = this.getContributions();
+    const interjections = this.getInterjections();
+    const errors = this.getAgentErrors();
+    const artifact = this.getArtifact();
+    const orchestratorMessages = this.getOrchestratorMessages(meetingId);
+
+    const exportData = {
+      meeting: {
+        id: meetingId,
+        question: meeting?.question ?? "Unknown",
+        status: meeting?.status ?? "Unknown",
+        round: meeting?.round ?? 0,
+        maxRounds: meeting?.max_rounds ?? 0,
+        convergence: meeting?.convergence ?? "Unknown",
+        domain: meeting?.domain ?? null,
+        warp: meeting?.warp ?? "",
+        createdAt: meeting?.created_at ?? null,
+      },
+      participants: participants.map(p => ({
+        id: p.id,
+        name: p.name,
+        tier: p.tier,
+        persona: p.persona,
+        agenda: p.agenda,
+        model: p.provider_id && p.model_id ? `${p.provider_id}/${p.model_id}` : null,
+        status: p.status,
+      })),
+      contributions: contributions.map(c => ({
+        id: c.id,
+        round: c.round,
+        participantId: c.participant_id,
+        type: c.type,
+        content: c.content,
+        targetsWhich: c.targets_which,
+        createdAt: c.created_at,
+      })),
+      interjections: interjections.map(ij => ({
+        id: ij.id,
+        participantId: ij.participant_id,
+        targetParticipantId: ij.target_participant_id,
+        round: ij.round,
+        priority: ij.priority,
+        reason: ij.reason,
+        granted: ij.granted,
+        pushback: ij.pushback,
+        resolved: ij.resolved,
+        createdAt: ij.created_at,
+      })),
+      errors: errors.map(e => ({
+        id: e.id,
+        participantId: e.participant_id,
+        round: e.round,
+        errorType: e.error_type,
+        errorMessage: e.error_message,
+        attempts: e.attempts,
+        createdAt: e.created_at,
+      })),
+      artifact: artifact ? {
+        content: artifact.content,
+        decisions: artifact.decisions,
+        actionItems: artifact.action_items,
+        dissent: artifact.dissent,
+        openQuestions: artifact.open_questions,
+        confidence: artifact.confidence,
+        createdAt: artifact.created_at,
+      } : null,
+      orchestratorMessages,
+      exportedAt: new Date().toISOString(),
+    };
+
+    return JSON.stringify(exportData, null, 2);
+  }
+
+  /**
+   * Generates a streaming markdown export for large meetings.
+   * Yields chunks in order so the response starts immediately.
+   */
+  *exportMarkdownStream(meetingId) {
+    const meeting = this.getState();
+    const participants = this.getParticipants();
+    const interjections = this.getInterjections();
+    const errors = this.getAgentErrors();
+    const artifact = this.getArtifact();
+
+    yield `# Loom Deliberation Output\n\n`;
+    yield `**Question:** ${meeting?.question ?? "Unknown"}\n`;
+    yield `**Status:** ${meeting?.status ?? "Unknown"}\n`;
+    yield `**Rounds:** ${meeting?.round ?? 0}/${meeting?.max_rounds ?? 0}\n`;
+    yield `**Convergence:** ${meeting?.convergence ?? "Unknown"}\n`;
+    yield `**Meeting ID:** ${meetingId}\n\n`;
+
+    if (artifact?.content) {
+      yield `## Final Artifact\n\n${artifact.content}\n\n`;
+    }
+
+    yield `## Participants\n\n`;
+    for (const p of participants) {
+      yield `- **${p.name}** (${p.tier}) — ${p.provider_id ?? "unknown"}/${p.model_id ?? "unknown"}\n`;
+    }
+    yield `\n`;
+
+    // Stream contributions by round
+    const allContributions = this.getContributions(500, 0);
+    const roundMap = new Map();
+    const roundNumbers = [];
+    for (const c of allContributions) {
+      if (!roundMap.has(c.round)) {
+        roundMap.set(c.round, []);
+        roundNumbers.push(c.round);
+      }
+      roundMap.get(c.round).push(c);
+    }
+
+    for (const roundNum of roundNumbers.sort((a, b) => a - b)) {
+      yield `## Round ${roundNum}\n\n`;
+      for (const c of roundMap.get(roundNum)) {
+        const participant = participants.find((p) => p.id === c.participant_id);
+        const name = participant?.name ?? c.participant_id;
+        yield `- **[${name}]** (${c.type}): ${c.content}\n`;
+      }
+      yield `\n`;
+    }
+
+    if (interjections.length > 0) {
+      yield `## Interjections\n\n`;
+      for (const ij of interjections) {
+        const participant = participants.find((p) => p.id === ij.participant_id);
+        const name = participant?.name ?? ij.participant_id;
+        yield `- **[${name}]** P${ij.priority}: ${ij.content} → ${ij.granted ? "granted" : "denied"}\n`;
+      }
+      yield `\n`;
+    }
+
+    if (errors.length > 0) {
+      yield `## Errors\n\n`;
+      for (const e of errors) {
+        const participant = participants.find((p) => p.id === e.participant_id);
+        const name = participant?.name ?? e.participant_id;
+        yield `- **[${name}]** Round ${e.round}: ${e.error_type} — ${e.error_message}\n`;
+      }
+      yield `\n`;
+    }
+
+    if (meeting?.warp) {
+      yield `## Final Warp Context\n\n${meeting.warp}\n`;
+    }
+  }
+
   close() {
     this.#db.close();
     DashboardApi.cache.delete(this.#dbPath);
@@ -331,7 +488,11 @@ export class DashboardApi {
 }
 
 export function listMeetings(directory) {
-  const meetingsDir = join(directory, ".opencode", "loom", "meetings");
+  const home = process.env.HOME || process.env.USERPROFILE || "/root";
+  const baseDir = (directory && directory !== "/")
+    ? join(directory, ".opencode", "loom")
+    : join(home, ".config", "opencode", "loom");
+  const meetingsDir = join(baseDir, "meetings");
   if (!existsSync(meetingsDir)) return [];
 
   const files = [];
@@ -389,6 +550,10 @@ export function isValidMeetingId(id) {
 
 export function getMeetingDbPath(directory, meetingId) {
   if (!isValidMeetingId(meetingId)) return null;
-  const path = join(directory, ".opencode", "loom", "meetings", `${meetingId}.db`);
+  const home = process.env.HOME || process.env.USERPROFILE || "/root";
+  const baseDir = (directory && directory !== "/")
+    ? join(directory, ".opencode", "loom")
+    : join(home, ".config", "opencode", "loom");
+  const path = join(baseDir, "meetings", `${meetingId}.db`);
   return existsSync(path) ? path : null;
 }

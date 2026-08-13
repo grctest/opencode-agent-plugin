@@ -6,15 +6,25 @@ const indexLogger = new Logger();
 const sessionIndex = new Map();
 let indexDir = null;
 
+function resolveIndexDir(directory) {
+  if (directory && directory !== "/" && directory.trim() !== "") {
+    return directory;
+  }
+  const home = process.env.HOME || process.env.USERPROFILE || "/root";
+  const userConfig = join(home, ".config", "opencode");
+  return userConfig;
+}
+
 function getIndexFilePath() {
   if (!indexDir) return null;
-  return join(indexDir, ".opencode", "loom", "session-index.json");
+  const dir = resolveIndexDir(indexDir);
+  return join(dir, "loom", "session-index.json");
 }
 
 export function loadSessionIndex(directory) {
   indexDir = directory;
-  const filePath = getIndexFilePath();
-  if (!filePath) return;
+  const resolvedDir = resolveIndexDir(directory);
+  const filePath = join(resolvedDir, "loom", "session-index.json");
   try {
     const data = readFileSync(filePath, "utf-8");
     const parsed = JSON.parse(data);

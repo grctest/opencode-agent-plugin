@@ -11,6 +11,14 @@ import {
 
 const dbLogger = new Logger();
 
+function getLoomBaseDir(directory) {
+  if (directory && directory !== "/" && directory.trim() !== "") {
+    return join(directory, ".opencode", "loom");
+  }
+  const home = process.env.HOME || process.env.USERPROFILE || "/root";
+  return join(home, ".config", "opencode", "loom");
+}
+
 function safeParseJsonArray(value) {
   if (!value) return undefined;
   if (Array.isArray(value)) return value;
@@ -40,6 +48,8 @@ function isoNow() {
   return new Date().toISOString();
 }
 
+export { isoNow };
+
 export class MeetingDatabase {
   #db;
   #meetingId;
@@ -47,6 +57,22 @@ export class MeetingDatabase {
   static async create(dbPath, meetingId) {
     await ensureDb();
     return new MeetingDatabase(dbPath, meetingId);
+  }
+
+  static async withTransaction(dbPath, fn) {
+    await ensureDb();
+    const db = new DatabaseClass(dbPath);
+    try {
+      db.exec('BEGIN TRANSACTION');
+      const result = await fn(db);
+      db.exec('COMMIT');
+      return result;
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    } finally {
+      db.close();
+    }
   }
 
   static async readParticipants(dbPath) {
@@ -88,12 +114,18 @@ export class MeetingDatabase {
 
   initializeMeeting(input) {
     const now = isoNow();
-    this.#db
-      .prepare(
-        `INSERT INTO meetings (id, question, context, status, round, warp, max_rounds, convergence, domain, parent_session_id, opencode_session_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
+    const insertMeeting = this.#db.prepare(
+      `INSERT INTO meetings (id, question, context, status, round, warp, max_rounds, convergence, domain, parent_session_id, opencode_session_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    const insertParticipant = this.#db.prepare(
+      `INSERT INTO participants (id, meeting_id, name, persona, agenda, tier, provider_id, model_id, session_id, known_biases, communication_style, preferred_contribution_types)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+
+    this.#db.exec('BEGIN TRANSACTION');
+    try {
+      insertMeeting.run(
         this.#meetingId,
         input.question,
         input.context ?? "",
@@ -108,28 +140,47 @@ export class MeetingDatabase {
         now,
       );
 
+      for (const p of input.participants) {
+        insertParticipant.run(
+          p.id,
+          this.#meetingId,
+          p.name,
+          p.persona,
+          p.agenda,
+          p.tier,
+          p.model?.providerID ?? null,
+          p.model?.modelID ?? null,
+          null,
+          p.known_biases ? JSON.stringify(p.known_biases) : null,
+          p.communication_style ?? null,
+          p.preferred_contribution_types ? JSON.stringify(p.preferred_contribution_types) : null,
+        );
+      }
+
+      this.#db.exec('COMMIT');
+    } catch (err) {
+      this.#db.exec('ROLLBACK');
+      throw err;
+    }
+
     const dbPath = this.getDatabasePath();
     _indexMeeting(dbPath, this.#meetingId, input.opencodeSessionId);
+  }
 
-    const insertParticipant = this.#db.prepare(
-      `INSERT INTO participants (id, meeting_id, name, persona, agenda, tier, provider_id, model_id, session_id, known_biases, communication_style, preferred_contribution_types)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
-    for (const p of input.participants) {
-      insertParticipant.run(
-        p.id,
-        this.#meetingId,
-        p.name,
-        p.persona,
-        p.agenda,
-        p.tier,
-        p.model?.providerID ?? null,
-        p.model?.modelID ?? null,
-        null,
-        p.known_biases ? JSON.stringify(p.known_biases) : null,
-        p.communication_style ?? null,
-        p.preferred_contribution_types ? JSON.stringify(p.preferred_contribution_types) : null,
-      );
+  /**
+   * Executes a function within a database transaction.
+   * @param {Function} fn - Function to execute, receives the database instance
+   * @returns {Promise<any>} Result of the function
+   */
+  async transaction(fn) {
+    this.#db.exec('BEGIN TRANSACTION');
+    try {
+      const result = await fn(this.#db);
+      this.#db.exec('COMMIT');
+      return result;
+    } catch (err) {
+      this.#db.exec('ROLLBACK');
+      throw err;
     }
   }
 
@@ -221,10 +272,16 @@ export class MeetingDatabase {
     return row?.round ?? 0;
   }
 
-  setRound(round) {
+   setRound(round) {
     this.#db
       .prepare("UPDATE meetings SET round = ?, updated_at = ? WHERE id = ?")
       .run(round, isoNow(), this.#meetingId);
+  }
+
+  setMaxRounds(maxRounds) {
+    this.#db
+      .prepare("UPDATE meetings SET max_rounds = ?, updated_at = ? WHERE id = ?")
+      .run(maxRounds, isoNow(), this.#meetingId);
   }
 
   getStatus() {
@@ -342,7 +399,7 @@ export class MeetingDatabase {
 
   setParticipantSessionId(participantId, sessionId) {
     this.#db
-      .prepare("UPDATE participants SET session_id = ? WHERE id = ? AND meeting_id = ?")
+      .prepare("UPDATE participants SET session_id = ?, session_version = session_version + 1 WHERE id = ? AND meeting_id = ?")
       .run(sessionId, participantId, this.#meetingId);
   }
 
@@ -368,11 +425,11 @@ export class MeetingDatabase {
   getAllParticipantsWithStatus() {
     return this.#db
       .prepare(
-        `SELECT id, name, persona, agenda, tier, provider_id, model_id, session_id, status, reflection, known_biases, communication_style, preferred_contribution_types
+        `SELECT id, name, persona, agenda, tier, provider_id, model_id, session_id, session_version, status, reflection, known_biases, communication_style, preferred_contribution_types
          FROM participants WHERE meeting_id = ?`,
       )
       .all(this.#meetingId)
-      .map((r) => ({
+       .map((r) => ({
         id: r.id,
         name: r.name,
         persona: r.persona,
@@ -381,6 +438,7 @@ export class MeetingDatabase {
         provider_id: r.provider_id,
         model_id: r.model_id,
         session_id: r.session_id,
+        session_version: r.session_version ?? 0,
         status: r.status,
         reflection: r.reflection,
         known_biases: safeParseJsonArray(r.known_biases),
@@ -434,8 +492,8 @@ export class MeetingDatabase {
   saveArtifact(artifact) {
     this.#db
       .prepare(
-        `INSERT INTO artifacts (meeting_id, content, decisions, action_items, dissent, open_questions, confidence, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO artifacts (meeting_id, content, decisions, action_items, dissent, open_questions, confidence, refusals, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(meeting_id) DO UPDATE SET
            content = excluded.content,
            decisions = excluded.decisions,
@@ -443,6 +501,7 @@ export class MeetingDatabase {
            dissent = excluded.dissent,
            open_questions = excluded.open_questions,
            confidence = excluded.confidence,
+           refusals = excluded.refusals,
            created_at = excluded.created_at`,
       )
       .run(
@@ -453,6 +512,7 @@ export class MeetingDatabase {
         artifact.dissent ? JSON.stringify(artifact.dissent) : null,
         artifact.open_questions ? JSON.stringify(artifact.open_questions) : null,
         artifact.confidence ?? null,
+        artifact.refusals ? JSON.stringify(artifact.refusals) : null,
         isoNow(),
       );
   }
@@ -460,7 +520,7 @@ export class MeetingDatabase {
   getArtifact(meetingId) {
     const row = this.#db
       .prepare(
-        `SELECT content, decisions, action_items, dissent, open_questions, confidence, created_at
+        `SELECT content, decisions, action_items, dissent, open_questions, confidence, refusals, created_at
          FROM artifacts WHERE meeting_id = ?`,
       )
       .get(meetingId);
@@ -480,6 +540,7 @@ export class MeetingDatabase {
       action_items: parse(row.action_items),
       dissent: parse(row.dissent),
       open_questions: parse(row.open_questions),
+      refusals: parse(row.refusals),
       confidence: row.confidence,
       created_at: row.created_at,
     };
@@ -644,7 +705,7 @@ export async function findMeetingBySessionId(directory, sessionId) {
   }
 
   const { Database: DBClass } = await import("bun:sqlite");
-  const meetingsDir = join(directory, ".opencode", "loom", "meetings");
+  const meetingsDir = join(getLoomBaseDir(directory), "meetings");
   if (!existsSync(meetingsDir)) return null;
   const files = readdirSync(meetingsDir).filter((f) => f.endsWith(".db"));
   for (const file of files) {
@@ -675,7 +736,7 @@ export async function findMeetingBySessionId(directory, sessionId) {
 }
 
 export function getDbPathForMeeting(directory, meetingId) {
-  const path = join(directory, ".opencode", "loom", "meetings", `${meetingId}.db`);
+  const path = join(getLoomBaseDir(directory), "meetings", `${meetingId}.db`);
   return existsSync(path) ? path : null;
 }
 
@@ -687,7 +748,7 @@ export function deleteMeetingFiles(dbPath) {
 }
 
 export function listMeetingFiles(directory) {
-  const dir = join(directory, ".opencode", "loom", "meetings");
+  const dir = join(getLoomBaseDir(directory), "meetings");
   if (!existsSync(dir)) return [];
   return readdirSync(dir).filter((f) => f.endsWith(".db"));
 }
@@ -710,7 +771,7 @@ export async function readSessionIdFromDbAsync(dbPath) {
 }
 
 export async function deleteMeetingsBySessionId(directory, sessionId) {
-  const meetingsDir = join(directory, ".opencode", "loom", "meetings");
+  const meetingsDir = join(getLoomBaseDir(directory), "meetings");
   if (!existsSync(meetingsDir)) return 0;
 
   let deleted = 0;

@@ -1,12 +1,31 @@
 import { generateRoundBriefs } from "./warp-manager.js";
 import { getPromptForTier } from "./shared.js";
+import { sanitizeForPrompt, sanitizeForDisplay } from "./utils/sanitize.js";
+
+/** Generates a unique delimiter that won't collide with content. */
+function makeDelimiter() {
+  return `<<<LOOM_DELIM_${crypto.randomUUID().replace(/-/g, '')}>>>`;
+}
+
+/**
+ * Wraps context in delimiter-protected sections to prevent prompt injection.
+ * Cheap hardening: delimiters make it easier for LLMs to parse boundaries
+ * and harder for injected content to override instructions.
+ */
+export function delimitContext(context, label) {
+  if (!context || !context.trim()) return '';
+  const delim = makeDelimiter();
+  return `${delim}BEGIN_${label.toUpperCase()}${delim}\n${context}\n${delim}END_${label.toUpperCase()}${delim}`;
+}
 
 /** Builds a prompt asking a listener to privately reflect on a speaker's contribution. */
 export function buildReflectionPrompt(listener, speakerName, contribution) {
+  const safeSpeaker = sanitizeForDisplay(speakerName);
+  const safeContribution = sanitizeForDisplay(contribution);
   return `## Private Reflection
 
-**${speakerName}** just said:
-"${contribution}"
+**${safeSpeaker}** just said:
+"${safeContribution}"
 
 You are **${listener.config.name}** (${listener.config.tier}). Your agenda: ${listener.config.agenda}
 
@@ -20,14 +39,16 @@ This is private — only you will see it.`;
 
 /** Builds a prompt that produces private reflections for all listeners in a single call. */
 export function buildBatchReflectionPrompt(speakerName, contribution, listeners) {
+  const safeSpeaker = sanitizeForDisplay(speakerName);
+  const safeContribution = sanitizeForDisplay(contribution);
   const listenerLines = listeners
     .map((l) => `  - ${l.config.name} (${l.config.tier}): ${l.config.agenda}`)
     .join("\n");
 
   return `## Batch Private Reflection
 
-**${speakerName}** just said:
-"${contribution}"
+**${safeSpeaker}** just said:
+"${safeContribution}"
 
 Generate a private 2-3 sentence reflection for EACH participant below. For each, answer:
 - Does this change their view? How?
@@ -43,13 +64,16 @@ Respond with ONLY a JSON object in this exact shape:
 
 /** Builds a prompt asking the current speaker to yield or contest an interjection attempt. */
 export function buildPushbackPrompt(participant, interjectorName, interjectorPriority, lastContribution, interjectorReason = "") {
+  const safeInterjector = sanitizeForDisplay(interjectorName);
+  const safeContribution = sanitizeForDisplay(lastContribution);
+  const safeReason = sanitizeForDisplay(interjectorReason);
   return `## Interjection Attempt
 
-**${interjectorName}** wants to interrupt you with priority ${interjectorPriority}.
-Reason: "${interjectorReason}"
+**${safeInterjector}** wants to interrupt you with priority ${interjectorPriority}.
+Reason: "${safeReason}"
 
 **Your current point was:**
-"${lastContribution.slice(0, 300)}"
+"${safeContribution.slice(0, 300)}"
 
 Do you:
 a) **[YIELD]** — let them speak now, you'll continue after
@@ -60,8 +84,9 @@ Respond with either "[YIELD]" or "[CONTEST] [your reason in one sentence]"`;
 
 /** Builds a prompt for the moderator to rule on deadlocks, circular arguments, or force convergence. */
 export function buildModeratorPrompt(situation, currentRound, maxRounds, totalContributions, lastThreeContributions) {
+  const safeSituation = sanitizeForDisplay(situation);
   const contributionsList = lastThreeContributions.map((c) =>
-    `  - ${c.content ? c.content.slice(0, 100) : "(no content)"}...`
+    `  - ${c.content ? sanitizeForDisplay(c.content.slice(0, 100)) : "(no content)"}...`
   ).join("\n");
 
   return `You are the MODERATOR of a structured multi-agent deliberation. You do NOT contribute opinions or domain knowledge. Your ONLY job is process governance.
@@ -80,7 +105,7 @@ export function buildModeratorPrompt(situation, currentRound, maxRounds, totalCo
 - Your rulings are final
 
 ## Situation Requiring Your Ruling
-${situation}
+${safeSituation}
 
 ## Deliberation State
 Round: ${currentRound}/${maxRounds}
@@ -100,6 +125,8 @@ IMPORTANT: Respond ONLY with the <ruling> block above. Do not include any other 
 
 /** Builds a prompt for synthesizing the final deliberation artifact from all contributions. */
 export function buildSynthesisPrompt(question, transcript, participants = [], domain = null) {
+  const safeQuestion = sanitizeForDisplay(question);
+  const safeTranscript = sanitizeForDisplay(transcript, 15000);
   const participantsSection = participants.length > 0
     ? `\n## Participants\n${participants.map((p) => `- ${p.config.name} (${p.config.tier}): ${p.contributions_count} contributions`).join("\n")}\n`
     : "";
@@ -109,10 +136,10 @@ export function buildSynthesisPrompt(question, transcript, participants = [], do
   return `You are the synthesizer. The deliberation is complete. Produce the final artifact.
 
 ## Original Question
-${question}
+${safeQuestion}
 ${domain ? `\n## Domain Context\nThis is a ${domain} question. ${domainGuidance}\n` : ""}
 ## Full Deliberation Transcript
-${transcript}
+${safeTranscript}
 ${participantsSection}
 ## Instructions
 Produce a comprehensive, well-structured response that:
@@ -180,6 +207,7 @@ export function buildAgentSystemPrompt(participant) {
 
   const priorityCap = isJunior ? 5 : tier === "mid" ? 7 : tier === "senior" ? 9 : 10;
   const interjectionRule = `5. To interject, add: [INTERJECT: Priority: <1-${priorityCap}>, Reason: "why you must speak now", Target: <optional contribution id like #12 or participant name>] — then write your interjection content immediately after on the same line`;
+  const governanceRule = `8. Only with a governance-level concern, add: [GOVERNANCE: <directive>: <value>] where directive is one of extend_rounds (value: rounds to add), force_converge (value: reason), raise_objection (value: objection), request_topic (value: topic), nominate_synthesizer (value: participant name), or escalate (value: reason). Use sparingly — this is an escalation mechanism, not a normal communication channel.`;
 
   const biases = Array.isArray(cfg.known_biases) && cfg.known_biases.length > 0
     ? cfg.known_biases.map((b) => `- ${b}`).join("\n")
@@ -213,10 +241,11 @@ ${tierGuidance}
 1. Read the shared context and recent contributions carefully
 2. If you have something meaningful to add, state it concisely (aim for under 200 words)
 3. If you have nothing to add, respond with exactly: [PASS]
-4. Tag your type: [PROPOSE], [CHALLENGE], [REFINE], [SUPPORT], [DISSENT], [SYNTHESIZE], or [QUESTION]
+4. Tag your type: [PROPOSE], [CHALLENGE], [REFINE], [SUPPORT], [DISSENT], [SYNTHESIZE], [QUESTION], or [REFUSE]
 ${interjectionRule}
 6. Stay in character — your persona and agenda shape your contributions
 7. Reference prior contributions using their stable ID from the Recent Contributions list, e.g. [#12]
+${governanceRule}
 
 ## Example Response
 [CHALLENGE] The proposed approach doesn't account for backward compatibility. In my experience, breaking changes typically require a migration period. Have we validated this with stakeholders?
@@ -224,7 +253,10 @@ ${interjectionRule}
 ## Example With Interjection
 [PROPOSE] We should adopt a phased migration over Q1 and Q2. This gives us time to validate each service migration before proceeding to the next.
 
-To interject on the current point: [INTERJECT: Priority: 8, Reason: "I have data showing the auth service migration alone will take 6 weeks, making Q1 unrealistic"] The auth service migration alone will take 6 weeks based on our last project timeline — Q1 is unrealistic without additional resources.`;
+To interject on the current point: [INTERJECT: Priority: 8, Reason: "I have data showing the auth service migration alone will take 6 weeks, making Q1 unrealistic"] The auth service migration alone will take 6 weeks based on our last project timeline — Q1 is unrealistic without additional resources.
+
+## Example With Refusal
+[REFUSE: I cannot engage with this premise because it assumes we have budget approval, which we do not] This discussion presupposes resources that haven't been allocated.`;
 }
 
 /**
@@ -244,24 +276,28 @@ export function buildAgentUserPrompt(participant, warp, weft, question, round, r
           .map((c) => {
             const id = c.id != null ? `[#${c.id}]` : "";
             const wasInterjection = c.type === "interjection" ? " [INTERJECTION]" : "";
-            return `- ${id} [${c.participant_id}] (${c.type})${wasInterjection}: ${c.content}`;
+            const safeContent = sanitizeForDisplay(c.content);
+            return `- ${id} [${c.participant_id}] (${c.type})${wasInterjection}: ${safeContent}`;
           })
           .join("\n");
 
-  const warpStr = firstRound && typeof warp === "string" ? warp : "";
-  const reflections = formatReflections(participant);
+  const warpDelimited = delimitContext(sanitizeForDisplay(warp, 8000), "WARP");
+  const briefsDelimited = delimitContext(briefs, "BRIEFS");
+  const transcriptDelimited = delimitContext(transcript, "CONTRIBUTIONS");
+  const safeQuestion = sanitizeForDisplay(question);
+  const safeDomain = domain ? sanitizeForDisplay(domain) : null;
 
   return `## Question
-${question}
-${domain ? `\n## Domain: ${domain}\n` : ""}
+${safeQuestion}
+${safeDomain ? `\n## Domain: ${safeDomain}\n` : ""}
 ## Round ${round}
 
-${briefs ? `## Prior Deliberation Brief\n${briefs}\n` : ""}
-${warpStr ? `## Shared Context (Warp)\n${warpStr}\n\n` : ""}
+${briefsDelimited ? `## Prior Deliberation Brief\n${briefsDelimited}\n` : ""}
+${firstRound && typeof warp === "string" ? `## Shared Context (Warp)\n${warpDelimited}\n\n` : ""}
 ## Recent Contributions (rounds ${Math.max(1, round - 1)}-${round})
-${transcript}
+${transcriptDelimited}
 
-${reflections}
+${formatReflections(participant)}
 ## Your Turn
 
 Read the context and contributions. Then make your contribution or pass.`;

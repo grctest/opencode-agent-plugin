@@ -1,6 +1,7 @@
+import { memo } from "react";
 import { WarpViewer, AgentPerspective } from "./Cards.jsx";
 
-export function WarpTab({ state, participants }) {
+function WarpTabBase({ state, participants }) {
   return (
     <div className="loom-main-content">
       <WarpViewer warp={state?.warp ?? ""} />
@@ -20,3 +21,6 @@ export function WarpTab({ state, participants }) {
     </div>
   );
 }
+
+const WarpTab = memo(WarpTabBase);
+export { WarpTab };

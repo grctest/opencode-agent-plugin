@@ -7,6 +7,18 @@ import {
 import { join, resolve } from "node:path";
 import { existsSync } from "node:fs";
 
+function getMeetingApi(url, directory) {
+  const meetingId = url.searchParams.get("meeting");
+  if (!meetingId || !isValidMeetingId(meetingId)) {
+    return { error: Response.json({ error: "valid meeting id required" }, { status: 400 }) };
+  }
+  const dbPath = getMeetingDbPath(directory, meetingId);
+  if (!dbPath) {
+    return { error: Response.json({ error: "not found" }, { status: 404 }) };
+  }
+  return { api: DashboardApi.get(dbPath), meetingId };
+}
+
 const HTML_SHELL = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -180,9 +192,13 @@ export function startDashboard(directory, port) {
           hadActivity = true;
         }
       } catch (err) {
-        console.error(
-          `[Loom dashboard] Poll error for meeting ${meetingId}: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[Loom dashboard] Poll error for meeting ${meetingId}:`, message);
+        broadcast(meetingId, {
+          type: "error",
+          data: { message, meetingId, phase: "poll" },
+          timestamp: new Date().toISOString(),
+        });
       }
     }
 
@@ -229,175 +245,113 @@ export function startDashboard(directory, port) {
         }
 
         if (url.pathname === "/api/meeting") {
-          const meetingId = url.searchParams.get("meeting");
-          if (!meetingId || !isValidMeetingId(meetingId)) {
-            return Response.json({ error: "valid meeting id required" }, { status: 400 });
-          }
-          const dbPath = getMeetingDbPath(directory, meetingId);
-          if (!dbPath) {
-            return Response.json({ error: "not found" }, { status: 404 });
-          }
-          const api = DashboardApi.get(dbPath);
+          const { api, error } = getMeetingApi(url, directory);
+          if (error) return error;
+          const limit = Math.min(Number(url.searchParams.get("limit")) || 200, 500);
+          const offset = Number(url.searchParams.get("offset")) || 0;
+          const contributions = api.getContributions(limit, offset);
+          const totalContributions = api.getContributionsCount();
           return Response.json({
             state: api.getState(),
             participants: api.getParticipants(),
-            contributions: api.getContributions(),
+            contributions,
             interjections: api.getInterjections(),
             agent_errors: api.getAgentErrors(),
             artifact: api.getArtifact(),
+            contributionsPagination: { total: totalContributions, limit, offset },
           });
         }
 
         if (url.pathname === "/api/artifact") {
-          const meetingId = url.searchParams.get("meeting");
-          if (!meetingId || !isValidMeetingId(meetingId)) {
-            return Response.json({ error: "valid meeting id required" }, { status: 400 });
-          }
-          const dbPath = getMeetingDbPath(directory, meetingId);
-          if (!dbPath) {
-            return Response.json({ error: "not found" }, { status: 404 });
-          }
-          const api = DashboardApi.get(dbPath);
+          const { api, error } = getMeetingApi(url, directory);
+          if (error) return error;
           return Response.json(api.getArtifact());
         }
 
         if (url.pathname === "/api/orchestrator_messages") {
-          const meetingId = url.searchParams.get("meeting");
-          if (!meetingId || !isValidMeetingId(meetingId)) {
-            return Response.json({ error: "valid meeting id required" }, { status: 400 });
-          }
-          const dbPath = getMeetingDbPath(directory, meetingId);
-          if (!dbPath) {
-            return Response.json({ error: "not found" }, { status: 404 });
-          }
-          const api = DashboardApi.get(dbPath);
+          const { api, meetingId, error } = getMeetingApi(url, directory);
+          if (error) return error;
           return Response.json({ messages: api.getOrchestratorMessages(meetingId) });
         }
 
         if (url.pathname === "/api/state") {
-          const meetingId = url.searchParams.get("meeting");
-          if (!meetingId || !isValidMeetingId(meetingId)) {
-            return Response.json({ error: "valid meeting id required" }, { status: 400 });
-          }
-          const dbPath = getMeetingDbPath(directory, meetingId);
-          if (!dbPath) {
-            return Response.json({ error: "not found" }, { status: 404 });
-          }
-          const api = DashboardApi.get(dbPath);
+          const { api, error } = getMeetingApi(url, directory);
+          if (error) return error;
           return Response.json(api.getState());
         }
 
         if (url.pathname === "/api/state_stats") {
-          const meetingId = url.searchParams.get("meeting");
-          if (!meetingId || !isValidMeetingId(meetingId)) {
-            return Response.json({ error: "valid meeting id required" }, { status: 400 });
-          }
-          const dbPath = getMeetingDbPath(directory, meetingId);
-          if (!dbPath) {
-            return Response.json({ error: "not found" }, { status: 404 });
-          }
-          const api = DashboardApi.get(dbPath);
+          const { api, error } = getMeetingApi(url, directory);
+          if (error) return error;
           return Response.json(api.getStateWithStats());
         }
 
         if (url.pathname === "/api/participants") {
-          const meetingId = url.searchParams.get("meeting");
-          if (!meetingId || !isValidMeetingId(meetingId)) {
-            return Response.json({ error: "valid meeting id required" }, { status: 400 });
-          }
-          const dbPath = getMeetingDbPath(directory, meetingId);
-          if (!dbPath) {
-            return Response.json({ error: "not found" }, { status: 404 });
-          }
-          const api = DashboardApi.get(dbPath);
+          const { api, error } = getMeetingApi(url, directory);
+          if (error) return error;
           return Response.json(api.getParticipants());
         }
 
         if (url.pathname === "/api/contributions") {
-          const meetingId = url.searchParams.get("meeting");
-          if (!meetingId || !isValidMeetingId(meetingId)) {
-            return Response.json({ error: "valid meeting id required" }, { status: 400 });
-          }
-          const dbPath = getMeetingDbPath(directory, meetingId);
-          if (!dbPath) {
-            return Response.json({ error: "not found" }, { status: 404 });
-          }
-          const api = DashboardApi.get(dbPath);
+          const { api, error } = getMeetingApi(url, directory);
+          if (error) return error;
           const since = Number(url.searchParams.get("since")) || 0;
           if (since > 0) {
             return Response.json(api.getContributionsSince(since));
           }
-          return Response.json(api.getContributions());
+          const limit = Math.min(Number(url.searchParams.get("limit")) || 100, 500);
+          const offset = Number(url.searchParams.get("offset")) || 0;
+          const contributions = api.getContributions(limit, offset);
+          const total = api.getContributionsCount();
+          return Response.json({ contributions, total, limit, offset });
         }
 
         if (url.pathname === "/api/interjections") {
-          const meetingId = url.searchParams.get("meeting");
-          if (!meetingId || !isValidMeetingId(meetingId)) {
-            return Response.json({ error: "valid meeting id required" }, { status: 400 });
-          }
-          const dbPath = getMeetingDbPath(directory, meetingId);
-          if (!dbPath) {
-            return Response.json({ error: "not found" }, { status: 404 });
-          }
-          const api = DashboardApi.get(dbPath);
+          const { api, error } = getMeetingApi(url, directory);
+          if (error) return error;
           return Response.json(api.getInterjections());
         }
 
         if (url.pathname === "/api/agent_errors") {
-          const meetingId = url.searchParams.get("meeting");
-          if (!meetingId || !isValidMeetingId(meetingId)) {
-            return Response.json({ error: "valid meeting id required" }, { status: 400 });
-          }
-          const dbPath = getMeetingDbPath(directory, meetingId);
-          if (!dbPath) {
-            return Response.json({ error: "not found" }, { status: 404 });
-          }
-          const api = DashboardApi.get(dbPath);
+          const { api, error } = getMeetingApi(url, directory);
+          if (error) return error;
           return Response.json(api.getAgentErrors());
         }
 
         if (url.pathname === "/api/agent_contexts") {
-          const meetingId = url.searchParams.get("meeting");
-          if (!meetingId || !isValidMeetingId(meetingId)) {
-            return Response.json({ error: "valid meeting id required" }, { status: 400 });
-          }
-          const dbPath = getMeetingDbPath(directory, meetingId);
-          if (!dbPath) {
-            return Response.json({ error: "not found" }, { status: 404 });
-          }
-          const api = DashboardApi.get(dbPath);
+          const { api, error } = getMeetingApi(url, directory);
+          if (error) return error;
           const meeting = api.getState();
           const participants = api.getParticipants();
           return Response.json({ meeting, participants });
         }
 
         if (url.pathname === "/api/agent_context") {
-          const meetingId = url.searchParams.get("meeting");
+          const { api, meetingId, error } = getMeetingApi(url, directory);
+          if (error) return error;
           const participantId = url.searchParams.get("participant");
-          if (!meetingId || !isValidMeetingId(meetingId)) {
-            return Response.json({ error: "valid meeting id required" }, { status: 400 });
-          }
           if (!participantId) {
             return Response.json({ error: "participant id required" }, { status: 400 });
           }
-          const dbPath = getMeetingDbPath(directory, meetingId);
-          if (!dbPath) {
-            return Response.json({ error: "not found" }, { status: 404 });
-          }
-          const api = DashboardApi.get(dbPath);
           return Response.json(api.getAgentContext(meetingId, participantId));
         }
 
         if (url.pathname === "/api/export") {
-          const meetingId = url.searchParams.get("meeting");
-          if (!meetingId || !isValidMeetingId(meetingId)) {
-            return Response.json({ error: "valid meeting id required" }, { status: 400 });
+          const { api, meetingId, error } = getMeetingApi(url, directory);
+          if (error) return error;
+          const format = url.searchParams.get("format") ?? "markdown";
+          
+          if (format === "json") {
+            const exportJson = api.exportJSON(meetingId);
+            const filename = `loom-${meetingId.slice(0, 8)}-${Date.now()}.json`;
+            return new Response(exportJson, {
+              headers: {
+                "Content-Type": "application/json; charset=utf-8",
+                "Content-Disposition": `attachment; filename="${filename}"`,
+              },
+            });
           }
-          const dbPath = getMeetingDbPath(directory, meetingId);
-          if (!dbPath) {
-            return Response.json({ error: "not found" }, { status: 404 });
-          }
-          const api = DashboardApi.get(dbPath);
+          
           const exportMarkdown = api.exportMarkdown(meetingId);
           const filename = `loom-${meetingId.slice(0, 8)}-${Date.now()}.md`;
           return new Response(exportMarkdown, {
@@ -408,15 +362,31 @@ export function startDashboard(directory, port) {
           });
         }
 
+        if (url.pathname === "/api/export/stream") {
+          const { api, meetingId, error } = getMeetingApi(url, directory);
+          if (error) return error;
+          const stream = new ReadableStream({
+            start(controller) {
+              const encoder = new TextEncoder();
+              for (const chunk of api.exportMarkdownStream(meetingId)) {
+                controller.enqueue(encoder.encode(chunk));
+              }
+              controller.close();
+            },
+          });
+          const filename = `loom-${meetingId.slice(0, 8)}-${Date.now()}.md`;
+          return new Response(stream, {
+            headers: {
+              "Content-Type": "text/markdown; charset=utf-8",
+              "Content-Disposition": `attachment; filename="${filename}"`,
+              "Cache-Control": "no-cache",
+            },
+          });
+        }
+
         if (url.pathname === "/api/stream") {
-          const meetingId = url.searchParams.get("meeting");
-          if (!meetingId || !isValidMeetingId(meetingId)) {
-            return Response.json({ error: "valid meeting id required" }, { status: 400 });
-          }
-          const dbPath = getMeetingDbPath(directory, meetingId);
-          if (!dbPath) {
-            return Response.json({ error: "not found" }, { status: 404 });
-          }
+          const { api, meetingId, error } = getMeetingApi(url, directory);
+          if (error) return error;
 
           const stream = new ReadableStream({
             start(controller) {

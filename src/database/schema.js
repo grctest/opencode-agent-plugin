@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 10;
 
 export function initSchema(db) {
   db.exec(`
@@ -27,8 +27,9 @@ export function initSchema(db) {
       tier TEXT NOT NULL,
       provider_id TEXT,
       model_id TEXT,
-      session_id TEXT,
-      status TEXT NOT NULL DEFAULT 'listening',
+       session_id TEXT,
+       session_version INTEGER NOT NULL DEFAULT 1,
+       status TEXT NOT NULL DEFAULT 'listening',
       reflection TEXT NOT NULL DEFAULT '',
       known_biases TEXT,
       communication_style TEXT,
@@ -107,6 +108,7 @@ export function initSchema(db) {
       dissent TEXT,
       open_questions TEXT,
       confidence TEXT,
+      refusals TEXT,
       created_at TEXT NOT NULL
     );
 
@@ -220,7 +222,17 @@ export function migrateSchema(db) {
     try { db.exec(`ALTER TABLE participants ADD COLUMN known_biases TEXT`); } catch { /* exists */ }
     try { db.exec(`ALTER TABLE participants ADD COLUMN communication_style TEXT`); } catch { /* exists */ }
     try { db.exec(`ALTER TABLE participants ADD COLUMN preferred_contribution_types TEXT`); } catch { /* exists */ }
-    db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '8')`);
+     db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '8')`);
+  }
+
+  if (currentVersion < 9) {
+    try { db.exec(`ALTER TABLE participants ADD COLUMN session_version INTEGER NOT NULL DEFAULT 1`); } catch { /* exists */ }
+    db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '9')`);
+  }
+
+  if (currentVersion < 10) {
+    try { db.exec(`ALTER TABLE artifacts ADD COLUMN refusals TEXT`); } catch { /* exists */ }
+    db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '10')`);
   }
 }
 

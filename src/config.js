@@ -20,7 +20,7 @@ const DEFAULT_CONFIG = {
   maxConcurrentPrompts: 7,
   convergence: {
     repetitionWindow: 5,
-    lowNoveltyCosineThreshold: 0.75,
+    lowNoveltyCosineThreshold: 0.45,
     diminishingReturnsWindow: 3,
     semanticConvergenceFromRound: 3,
     staleParticipantRatio: 0.34,
@@ -28,6 +28,12 @@ const DEFAULT_CONFIG = {
     moderatorForcesHalfActiveRound: 3,
   },
   defaultMeetingTimeoutMs: 900000,
+  enableLlmWarpCompaction: false,
+  modelDiversity: true,
+  circuitBreaker: {
+    failureThreshold: 3,
+    resetTimeoutMs: 300000,
+  },
 };
 
 const CONFIG_SCHEMA = {
@@ -46,6 +52,8 @@ const CONFIG_SCHEMA = {
   maxConcurrentPrompts: { type: 'number', min: 1, max: 20 },
   defaultMeetingTimeoutMs: { type: 'number', min: 60000, max: 3600000 },
   maxInterjectionsPerRound: { type: 'number', min: 1, max: 5 },
+  enableLlmWarpCompaction: { type: 'boolean' },
+  modelDiversity: { type: 'boolean' },
 };
 
 const NESTED_SCHEMA = {
@@ -59,6 +67,10 @@ const NESTED_SCHEMA = {
   'moderatorTrigger.minContributions': { type: 'number', min: 1, max: 10 },
   'moderatorTrigger.recentChallenges': { type: 'number', min: 1, max: 10 },
   'moderatorTrigger.lookbackWindow': { type: 'number', min: 2, max: 10 },
+  'interjectionThresholds.autoGrant': { type: 'number', min: 1, max: 10 },
+  'interjectionThresholds.pushback': { type: 'number', min: 1, max: 10 },
+  'circuitBreaker.failureThreshold': { type: 'number', min: 1, max: 10 },
+  'circuitBreaker.resetTimeoutMs': { type: 'number', min: 10000, max: 3600000 },
 };
 
 function deepMerge(target, source) {
@@ -100,6 +112,10 @@ function validateConfigKey(key, value) {
     if (schema.enum && !schema.enum.includes(value)) {
       return { valid: false, error: `"${key}" must be one of ${schema.enum.join(', ')}, got "${value}"` };
     }
+  } else if (schema.type === 'boolean') {
+    if (typeof value !== 'boolean') {
+      return { valid: false, error: `"${key}" must be a boolean, got ${typeof value}` };
+    }
   }
   return { valid: true };
 }
@@ -109,20 +125,28 @@ function findConfigFile(directory) {
     const projectConfig = join(directory, '.loomrc.json');
     if (existsSync(projectConfig)) return projectConfig;
   }
+  const homeLoomConfig = join(process.env.HOME || '/root', '.config', 'opencode', '.loomrc.json');
+  if (existsSync(homeLoomConfig)) return homeLoomConfig;
+
+  // Backward compat: check opencode.json with "loom" key
   const candidates = [
     join(process.env.HOME || '/root', '.config', 'opencode', 'opencode.json'),
     join(process.env.HOME || '/root', '.config', 'opencode', 'opencode.jsonc'),
   ];
   for (const candidate of candidates) {
-    if (existsSync(candidate)) return candidate;
+    if (existsSync(candidate)) {
+      try {
+        const content = readFileSync(candidate, 'utf-8');
+        const parsed = JSON.parse(content);
+        if (parsed && typeof parsed === 'object' && parsed.loom) {
+          return candidate;
+        }
+      } catch { /* ignore parse errors */ }
+    }
   }
+
   return null;
 }
-
-const configCache = new Map();
-let globalWarnings = [];
-let activeConfig = null;
-let activeConfigSource = null;
 
 function getNestedValue(obj, path) {
   let current = obj;
@@ -159,12 +183,9 @@ function buildConfig(directory) {
       const content = readFileSync(configFile, 'utf-8');
       const parsed = JSON.parse(content);
       if (parsed && typeof parsed === 'object') {
-        const isLoomRc = configFile.endsWith('.loomrc.json');
-        if (parsed.loom && typeof parsed.loom === 'object') {
-          userConfig = parsed.loom;
-        } else if (isLoomRc) {
-          userConfig = parsed;
-        }
+        // .loomrc.json: top-level keys, no wrapper
+        // opencode.json (legacy): "loom" key wrapper
+        userConfig = parsed.loom && typeof parsed.loom === 'object' ? parsed.loom : parsed;
       }
     } catch (err) {
       warnings.push(`Failed to read config from ${configFile}: ${err.message}`);
@@ -187,57 +208,111 @@ function buildConfig(directory) {
   return { config: merged, warnings, source: configFile ?? null };
 }
 
-export function loadConfig(directory) {
-  const key = directory || '__global__';
-  if (configCache.has(key)) {
-    const cached = configCache.get(key);
-    globalWarnings = cached.warnings;
-    activeConfig = cached.config;
-    activeConfigSource = cached.source;
-    return cached.config;
+export class Config {
+  #directory;
+  #config;
+  #warnings;
+  #source;
+  #watchInterval = null;
+  #watchCallback = null;
+
+  constructor(directory) {
+    this.#directory = directory;
+    const { config, warnings, source } = buildConfig(directory);
+    this.#config = config;
+    this.#warnings = warnings;
+    this.#source = source;
   }
 
-  const { config, warnings, source } = buildConfig(directory);
-  configCache.set(key, { config, warnings, source });
-  globalWarnings = warnings;
-  activeConfig = config;
-  activeConfigSource = source;
+  get() {
+    return this.#config;
+  }
+
+  getWarnings() {
+    return [...this.#warnings];
+  }
+
+  getSource() {
+    return this.#source;
+  }
+
+  getValue(key) {
+    return getNestedValue(this.#config, key);
+  }
+
+  watchForChanges(callback) {
+    if (this.#watchInterval) return;
+    this.#watchCallback = callback;
+    const configFile = findConfigFile(this.#directory);
+    if (!configFile) return;
+
+    this.#watchInterval = setInterval(() => {
+      try {
+        const content = readFileSync(configFile, 'utf-8');
+        const parsed = JSON.parse(content);
+        if (parsed && typeof parsed === 'object') {
+          const { config, warnings } = buildConfig(this.#directory);
+          const changed = JSON.stringify(config) !== JSON.stringify(this.#config);
+          if (changed) {
+            this.#config = config;
+            this.#warnings = warnings;
+            if (this.#watchCallback) {
+              this.#watchCallback(config, warnings);
+            }
+          }
+        }
+      } catch {
+        // Ignore parse errors during watch
+      }
+    }, 5000);
+  }
+
+  stopWatching() {
+    if (this.#watchInterval) {
+      clearInterval(this.#watchInterval);
+      this.#watchInterval = null;
+    }
+    this.#watchCallback = null;
+  }
+}
+
+const configCache = new Map();
+
+let defaultDirectory = null;
+
+export function setDefaultConfigDirectory(dir) {
+  defaultDirectory = dir;
+}
+
+export function getConfigSource() {
+  const config = createConfig(defaultDirectory);
+  return config.getSource();
+}
+
+export function createConfig(directory) {
+  const key = directory || '__global__';
+  if (configCache.has(key)) {
+    return configCache.get(key);
+  }
+  const config = new Config(directory);
+  configCache.set(key, config);
   return config;
 }
 
 export function getConfig(directory) {
-  if (directory) {
-    return loadConfig(directory);
-  }
-  if (activeConfig) {
-    return activeConfig;
-  }
-  if (configCache.has('__global__')) {
-    const cached = configCache.get('__global__');
-    activeConfig = cached.config;
-    activeConfigSource = cached.source;
-    return cached.config;
-  }
-  const { config, warnings, source } = buildConfig(null);
-  configCache.set('__global__', { config, warnings, source });
-  globalWarnings = warnings;
-  activeConfig = config;
-  activeConfigSource = source;
-  return config;
+  const dir = directory ?? defaultDirectory;
+  const config = createConfig(dir);
+  return config.get();
 }
 
-/** Returns the path of the config file that was loaded (null = defaults only). */
-export function getConfigSource() {
-  return activeConfigSource;
+export function getConfigInstance(directory) {
+  const dir = directory ?? defaultDirectory;
+  return createConfig(dir);
 }
 
-export function getConfigValidationWarnings() {
-  return [...globalWarnings];
-}
-
-export function resetConfig() {
+export function resetConfigCache() {
+  for (const config of configCache.values()) {
+    config.stopWatching();
+  }
   configCache.clear();
-  globalWarnings = [];
-  activeConfig = null;
-  activeConfigSource = null;
 }

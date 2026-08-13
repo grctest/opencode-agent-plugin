@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { cn } from "../utils.js";
 import { ParticipantCard } from "./Cards.jsx";
 
@@ -23,7 +24,7 @@ function ThemeToggle({ theme, setTheme }) {
   );
 }
 
-function RoundIndicator({ current, max }) {
+function RoundIndicator({ current, max, status }) {
   const pct = max > 0 ? (current / max) * 100 : 0;
   return (
     <div className="loom-card">
@@ -36,17 +37,21 @@ function RoundIndicator({ current, max }) {
       <div className="loom-progress-track">
         <div className="loom-progress-bar" style={{ width: `${pct}%` }} />
       </div>
+      {status && status !== "weaving" && status !== "initializing" && (
+        <span className="loom-text-xs loom-text-muted loom-mt-xs">Status: {status}</span>
+      )}
     </div>
   );
 }
 
-export function Sidebar({
+const Sidebar = memo(function Sidebar({
   state,
   participants,
   theme,
   setTheme,
   agentErrors,
   contributionsByParticipant,
+  selectedMeeting,
 }) {
   return (
     <aside className="loom-sidebar">
@@ -57,7 +62,38 @@ export function Sidebar({
 
       {state && (
         <div className="loom-sidebar-section">
-          <RoundIndicator current={state.round} max={state.max_rounds} />
+          <RoundIndicator current={state.round} max={state.max_rounds} status={state.status} />
+        </div>
+      )}
+
+      {selectedMeeting && (
+        <div className="loom-sidebar-section">
+          <div className="loom-flex loom-flex-between loom-mb-xs">
+            <span className="loom-title-sm">Export</span>
+          </div>
+          <div className="loom-space-xs">
+            <a
+              className="pure-button pure-button-small pure-button-secondary loom-export-stream-btn"
+              href={`/api/export/stream?meeting=${selectedMeeting}`}
+              download
+            >
+              📥 Stream Markdown
+            </a>
+            <a
+              className="pure-button pure-button-small pure-button-secondary"
+              href={`/api/export?meeting=${selectedMeeting}&format=markdown`}
+              download
+            >
+              ⬇ Export Markdown
+            </a>
+            <a
+              className="pure-button pure-button-small pure-button-secondary"
+              href={`/api/export?meeting=${selectedMeeting}&format=json`}
+              download
+            >
+              ⬇ Export JSON
+            </a>
+          </div>
         </div>
       )}
 
@@ -78,4 +114,6 @@ export function Sidebar({
       )}
     </aside>
   );
-}
+});
+
+export { Sidebar };

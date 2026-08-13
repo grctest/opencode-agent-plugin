@@ -42,7 +42,11 @@ function useSSE(meetingId, onEvent) {
             const data = await res.json();
             onEventRef.current({ type: "contributions", data, timestamp: new Date().toISOString() });
           }
-        } catch { /* ignore */ }
+        } catch (err) {
+          window.dispatchEvent(new CustomEvent("loom-sse-error", {
+            detail: { message: err.message, phase: "polling" }
+          }));
+        }
         if (!cancelled && fallbackPoll) {
           pollingRef.current = setTimeout(poll, POLLING_FALLBACK_INTERVAL);
         }
@@ -93,7 +97,11 @@ function useSSE(meetingId, onEvent) {
         try {
           const data = JSON.parse(event.data);
           onEventRef.current(data);
-        } catch { /* ignore */ }
+        } catch (err) {
+          window.dispatchEvent(new CustomEvent("loom-sse-error", {
+            detail: { message: `Failed to parse SSE message: ${err.message}`, phase: "parse" }
+          }));
+        }
       };
     }
 
@@ -224,7 +232,9 @@ function useMeetingsList() {
       if (res.ok) {
         setMeetings(await res.json());
       }
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.error("[Loom dashboard] Failed to fetch meetings:", err);
+    }
   }, []);
 
   useEffect(() => {
@@ -251,7 +261,6 @@ export function App() {
   const bannerTimeoutRef = useRef(null);
   const mainRef = useRef(null);
   const searchInputRef = useRef(null);
-  const contributionsRef = useRef([]);
 
   const meetings = useMeetingsList();
   const {
@@ -263,10 +272,6 @@ export function App() {
     artifact,
     error,
   } = useMeetingApi(selectedMeeting, true);
-
-  useEffect(() => {
-    contributionsRef.current = contributions;
-  }, [contributions]);
 
   const handleSSEEvent = useCallback((data) => {
     if (data.type === "contributions") {
@@ -308,7 +313,9 @@ export function App() {
             setOrchestratorMessages(msgs);
           }
         }
-      } catch { /* ignore */ }
+      } catch (err) {
+        console.error("[Loom dashboard] Failed to fetch orchestrator messages:", err);
+      }
     }, 2000);
     return () => clearInterval(interval);
   }, [selectedMeeting]);
@@ -408,7 +415,7 @@ export function App() {
     return Array.from(groups.entries()).sort((a, b) => a[0] - b[0]);
   }, [filteredContributions]);
 
-  const thinkingParticipants = useMemo(() => {
+   const thinkingParticipants = useMemo(() => {
     return participants.filter((p) => p.status === "speaking");
   }, [participants]);
 
@@ -439,7 +446,7 @@ export function App() {
   const isWeaving = state?.status === "weaving";
   const activeRound = state?.round ?? 0;
   const totalRounds = state?.max_rounds ?? 0;
-  const activeAgentCount = participants.filter((p) => p.status === "speaking").length;
+  const activeAgentCount = thinkingParticipants.length;
   const errorCount = agentErrors.length;
 
   return (
@@ -458,13 +465,14 @@ export function App() {
           </div>
         )}
 
-        <Sidebar
+         <Sidebar
           state={state}
           participants={participants}
           theme={theme}
           setTheme={setTheme}
           agentErrors={agentErrors}
           contributionsByParticipant={contributionsByParticipant}
+          selectedMeeting={selectedMeeting}
         />
 
         <main className="loom-main" ref={mainRef}>

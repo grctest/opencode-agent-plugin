@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo, memo } from "react";
 import { createPortal } from "react-dom";
 import { cn, tierClass, typeClass, relativeTime } from "../utils.js";
 import { marked } from "marked";
@@ -7,12 +7,23 @@ import { TierBadge, TypeBadge } from "./Badges.jsx";
 
 marked.setOptions({ breaks: true, gfm: true });
 
+const mdCache = new Map();
+
 export function renderMarkdown(content) {
+  if (!content) return "";
+  const cached = mdCache.get(content);
+  if (cached !== undefined) return cached;
   const raw = marked.parse(content, { async: false });
-  return DOMPurify.sanitize(raw, { USE_PROFILES: { html: true } });
+  const sanitized = DOMPurify.sanitize(raw, { USE_PROFILES: { html: true } });
+  mdCache.set(content, sanitized);
+  if (mdCache.size > 200) {
+    const firstKey = mdCache.keys().next().value;
+    mdCache.delete(firstKey);
+  }
+  return sanitized;
 }
 
-export function ContentDialog({ open, onClose, title, className, children }) {
+export const ContentDialog = memo(({ open, onClose, title, className, children }) => {
   if (!open) return null;
   return createPortal(
     <div className="loom-dialog-backdrop" onClick={onClose}>
@@ -26,13 +37,16 @@ export function ContentDialog({ open, onClose, title, className, children }) {
     </div>,
     document.body
   );
-}
+});
 
-export function ParticipantCard({ participant, error, contributionsByRound }) {
+export const ParticipantCard = memo(({ participant, error, contributionsByRound }) => {
   const [expanded, setExpanded] = useState(false);
-  const preview = participant.persona.slice(0, 200);
+  const preview = useMemo(() => participant.persona.slice(0, 200), [participant.persona]);
   const isLong = participant.persona.length > 200;
-  const totalContribs = Object.values(contributionsByRound).reduce((a, b) => a + b, 0);
+  const totalContribs = useMemo(
+    () => Object.values(contributionsByRound ?? {}).reduce((a, b) => a + b, 0),
+    [contributionsByRound]
+  );
 
   const statusIndicator = () => {
     if (error) {
@@ -83,26 +97,24 @@ export function ParticipantCard({ participant, error, contributionsByRound }) {
       )}
     </div>
   );
-}
+});
 
-export function ThinkingCard({ participant }) {
-  return (
-    <div className="loom-card loom-thinking-card">
-      <div className="loom-thinking-content">
-        <span className="loom-thinking-dots">
-          <span /><span /><span />
-        </span>
-        <span className="loom-text loom-text-muted">
-          {participant.name} ({participant.tier}) is thinking...
-        </span>
-      </div>
+export const ThinkingCard = memo(({ participant }) => (
+  <div className="loom-card loom-thinking-card">
+    <div className="loom-thinking-content">
+      <span className="loom-thinking-dots">
+        <span /><span /><span />
+      </span>
+      <span className="loom-text loom-text-muted">
+        {participant.name} ({participant.tier}) is thinking...
+      </span>
     </div>
-  );
-}
+  </div>
+));
 
-export function ContributionItem({ contribution, participantName, onDialogOpen }) {
+export const ContributionItem = memo(({ contribution, participantName, onDialogOpen }) => {
   const content = contribution.content ?? "";
-  const html = renderMarkdown(content);
+  const html = useMemo(() => renderMarkdown(content), [content]);
   const isLong = content.length > 300;
 
   return (
@@ -130,31 +142,38 @@ export function ContributionItem({ contribution, participantName, onDialogOpen }
       )}
     </div>
   );
-}
+});
 
-export function InterjectionItem({ interjection, participantName }) {
+export const InterjectionItem = memo(({ interjection, participantName }) => {
+  const resolvedClass = interjection.granted ? "loom-text-granted" : "loom-text-denied";
+  const resolvedLabel = interjection.granted ? "granted" : interjection.resolved === "contested" ? "contested" : "denied";
+
   return (
     <div className="loom-card loom-card-dashed">
       <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center loom-mb-xs">
         <span className="loom-title-sm">{participantName}</span>
         <span className="loom-badge loom-badge-interjection">interjection</span>
         <span className="loom-text-xs loom-text-muted">priority {interjection.priority}</span>
-        <span className={cn("loom-text-xs", interjection.granted ? "loom-text-granted" : "loom-text-denied")}>
-          {interjection.granted ? "granted" : "denied"}
+        <span className={cn("loom-text-xs", resolvedClass)}>
+          {resolvedLabel}
         </span>
+        {interjection.target_participant_id && (
+          <span className="loom-text-xs loom-text-muted">→ {interjection.target_participant_id}</span>
+        )}
         <span className="loom-text-xs loom-text-muted">{relativeTime(interjection.created_at)}</span>
       </div>
       <p className="loom-text loom-text-muted">{interjection.content}</p>
       {interjection.pushback && (
-        <p className="loom-text-xs loom-text-muted loom-mt-xs loom-italic">
-          pushback: {interjection.pushback}
-        </p>
+        <div className="loom-mt-xs loom-card loom-card-sm loom-card-warning">
+          <span className="loom-text-xs loom-text-bold">Pushback:</span>
+          <p className="loom-text-xs loom-text-muted">{interjection.pushback}</p>
+        </div>
       )}
     </div>
   );
-}
+});
 
-export function WarpViewer({ warp }) {
+export const WarpViewer = memo(({ warp }) => {
   if (!warp) {
     return (
       <div className="loom-card">
@@ -164,7 +183,7 @@ export function WarpViewer({ warp }) {
     );
   }
 
-  const sections = warp.split(/(?=## )/g).filter(Boolean);
+  const sections = useMemo(() => warp.split(/(?=## )/g).filter(Boolean), [warp]);
 
   return (
     <div className="loom-card">
@@ -193,10 +212,13 @@ export function WarpViewer({ warp }) {
       </div>
     </div>
   );
-}
+});
 
-export function AgentPerspective({ participant, meeting }) {
-  const warpPreview = meeting?.warp ? meeting.warp.slice(0, 500) : "";
+export const AgentPerspective = memo(({ participant, meeting }) => {
+  const warpPreview = useMemo(
+    () => (meeting?.warp ? meeting.warp.slice(0, 500) : ""),
+    [meeting?.warp]
+  );
 
   return (
     <div className="loom-card loom-agent-perspective">
@@ -228,4 +250,4 @@ export function AgentPerspective({ participant, meeting }) {
       </div>
     </div>
   );
-}
+});

@@ -1,7 +1,7 @@
-import { useMemo } from "react";
+import { useMemo, memo } from "react";
 import { cn } from "../utils.js";
 
-export function ParticipationMatrix({ participants, contributions, agentErrors, rounds }) {
+export const ParticipationMatrix = memo(function ParticipationMatrix({ participants, contributions, agentErrors, rounds }) {
   const roundData = useMemo(() => {
     const contribMap = new Map();
     for (const c of contributions) {
@@ -71,9 +71,9 @@ export function ParticipationMatrix({ participants, contributions, agentErrors, 
       </div>
     </div>
   );
-}
+});
 
-export function ContributionTypeChart({ contributions }) {
+export const ContributionTypeChart = memo(function ContributionTypeChart({ contributions }) {
   const data = useMemo(() => {
     const typeCounts = {};
     for (const c of contributions) {
@@ -140,9 +140,9 @@ export function ContributionTypeChart({ contributions }) {
       </div>
     </div>
   );
-}
+});
 
-export function ContributionTimeline({ contributions }) {
+export const ContributionTimeline = memo(function ContributionTimeline({ contributions }) {
   const data = useMemo(() => {
     const roundCounts = {};
     for (const c of contributions) {
@@ -194,4 +194,4 @@ export function ContributionTimeline({ contributions }) {
       </div>
     </div>
   );
-}
+});
