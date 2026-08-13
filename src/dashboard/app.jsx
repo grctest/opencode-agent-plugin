@@ -9,13 +9,20 @@ import { TimelineTab } from "./components/TimelineTab.jsx";
 import { WarpTab } from "./components/WarpTab.jsx";
 import { OutputTab } from "./components/OutputTab.jsx";
 import { ErrorBoundary } from "./ErrorBoundary.jsx";
-import { usePersistedState, useMeetingApi } from "./hooks.js";
+import { usePersistedState, useMeetingApi, useSSEReset } from "./hooks.js";
 
 const POLLING_FALLBACK_INTERVAL = 3000;
+
+const CONVERGENCE_LABELS = {
+  consensus: "Consensus",
+  majority: "Majority vote",
+  moderator_forces: "Moderator-forced",
+};
 
 function useSSE(meetingId, onEvent) {
   const [connected, setConnected] = useState(false);
   const [reconnectAttempt, setReconnectAttempt] = useState(0);
+  const [lastError, setLastError] = useState(null);
   const esRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
   const pollingRef = useRef(null);
@@ -33,14 +40,20 @@ function useSSE(meetingId, onEvent) {
       if (fallbackPoll) return;
       fallbackPoll = true;
       setConnected(false);
+      setLastError("Live updates unavailable — using periodic refresh.");
 
       const poll = async () => {
         if (cancelled || !fallbackPoll) return;
         try {
-          const res = await fetch(`/api/contributions?meeting=${meetingId}`);
+          const res = await fetch(`/api/meeting?meeting=${meetingId}&limit=500`);
           if (res.ok) {
             const data = await res.json();
-            onEventRef.current({ type: "contributions", data, timestamp: new Date().toISOString() });
+            const timestamp = new Date().toISOString();
+            const newContribs = Array.isArray(data) ? data : (data.contributions ?? []);
+            onEventRef.current({ type: "contributions", data: newContribs, timestamp });
+            if (data.state) onEventRef.current({ type: "state", data: data.state, timestamp });
+            if (data.participants) onEventRef.current({ type: "participants", data: data.participants, timestamp });
+            if (data.artifact) onEventRef.current({ type: "artifact", data: data.artifact, timestamp });
           }
         } catch (err) {
           window.dispatchEvent(new CustomEvent("loom-sse-error", {
@@ -53,6 +66,13 @@ function useSSE(meetingId, onEvent) {
       };
       pollingRef.current = setTimeout(poll, POLLING_FALLBACK_INTERVAL);
     }
+
+    const handleSSEError = (e) => {
+      if (e?.detail?.message) {
+        setLastError(e.detail.message);
+      }
+    };
+    window.addEventListener("loom-sse-error", handleSSEError);
 
     function connect() {
       if (cancelled) return;
@@ -71,6 +91,7 @@ function useSSE(meetingId, onEvent) {
         if (pollingRef.current) clearTimeout(pollingRef.current);
         setConnected(true);
         setReconnectAttempt(0);
+        setLastError(null);
         // Dispatch reset so the app re-fetches state from the server on reconnect
         window.dispatchEvent(new CustomEvent("loom-sse-reset"));
       };
@@ -86,6 +107,7 @@ function useSSE(meetingId, onEvent) {
             startPolling();
             return prev;
           }
+          setLastError(`Reconnecting to live updates (attempt ${prev + 1}/${maxReconnectAttempts}).`);
           const delay = Math.min(1000 * Math.pow(2, prev), 30000);
           reconnectTimeoutRef.current = setTimeout(connect, delay);
           return prev + 1;
@@ -110,6 +132,7 @@ function useSSE(meetingId, onEvent) {
     return () => {
       cancelled = true;
       fallbackPoll = false;
+      window.removeEventListener("loom-sse-error", handleSSEError);
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
       if (pollingRef.current) clearTimeout(pollingRef.current);
       if (esRef.current) {
@@ -119,7 +142,7 @@ function useSSE(meetingId, onEvent) {
     };
   }, [meetingId]);
 
-  return { connected, reconnectAttempt };
+  return { connected, reconnectAttempt, lastError };
 }
 
 function ThemeProvider({ theme, setTheme, children }) {
@@ -155,7 +178,7 @@ function MeetingHeader({ state, connected, reconnectAttempt, activeAgentCount, e
       <div className="loom-flex loom-flex-wrap loom-gap-md loom-items-center">
         <StatusBadge status={state.status} />
         <span className="loom-text-xs loom-text-muted">Round {state.round} / {state.max_rounds}</span>
-        <span className="loom-text-xs loom-text-muted">Convergence: {state.convergence}</span>
+        <span className="loom-text-xs loom-text-muted">Convergence: {CONVERGENCE_LABELS[state.convergence] ?? state.convergence}</span>
         <span className={cn("loom-text-xs", connected ? "loom-text-live" : "loom-text-muted")}>
           {connected ? "● live" : reconnectAttempt > 0 ? `○ reconnecting (${reconnectAttempt})` : "○ offline"}
         </span>
@@ -207,20 +230,21 @@ function ExtensionBanner({ banner, onDismiss }) {
   );
 }
 
-function KeyboardShortcuts() {
-  useEffect(() => {
-    const handleKey = (e) => {
-      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
-      if (e.key === "j") {
-        window.scrollBy(0, 200);
-      } else if (e.key === "k") {
-        window.scrollBy(0, -200);
-      }
-    };
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, []);
-  return null;
+function ConnectionBanner({ connected, reconnectAttempt, lastError }) {
+  const visible = !connected && (lastError != null || reconnectAttempt > 0);
+  if (!visible) return null;
+  return (
+    <div className="loom-card loom-connection-banner">
+      <span className="loom-connection-icon" aria-hidden="true">{lastError ? "⚠" : "⟳"}</span>
+      <div className="loom-connection-body">
+        <span className="loom-connection-title">
+          {lastError ? "Live updates interrupted" : "Reconnecting to live updates"}
+        </span>
+        {lastError && <span className="loom-connection-reason">{lastError}</span>}
+        <span className="loom-connection-hint">State keeps refreshing, but at a slower rate.</span>
+      </div>
+    </div>
+  );
 }
 
 function useMeetingsList() {
@@ -230,7 +254,12 @@ function useMeetingsList() {
     try {
       const res = await fetch("/api/meetings");
       if (res.ok) {
-        setMeetings(await res.json());
+        const newMeetings = await res.json();
+        setMeetings((prev) => {
+          if (prev.length !== newMeetings.length) return newMeetings;
+          const same = prev.every((m, i) => m.id === newMeetings[i].id && m.status === newMeetings[i].status);
+          return same ? prev : newMeetings;
+        });
       }
     } catch (err) {
       console.error("[Loom dashboard] Failed to fetch meetings:", err);
@@ -250,7 +279,6 @@ export function App() {
   const [selectedMeeting, setSelectedMeeting] = useState("");
   const [theme, setTheme] = useState(() => localStorage.getItem("loom-theme") ?? "system");
   const [activeTab, setActiveTab] = usePersistedState("active-tab", "overview");
-  const [searchQuery, setSearchQuery] = usePersistedState("search-query", "");
   const [activeType, setActiveType] = usePersistedState("active-type", "");
   const [collapsedRounds, setCollapsedRounds] = usePersistedState("collapsed-rounds", []);
   const [scrolledToBottom, setScrolledToBottom] = useState(true);
@@ -260,9 +288,11 @@ export function App() {
 
   const bannerTimeoutRef = useRef(null);
   const mainRef = useRef(null);
-  const searchInputRef = useRef(null);
+
+  const dismissExtensionBanner = useCallback(() => setExtensionBanner(null), []);
 
   const meetings = useMeetingsList();
+  const { resetKey } = useSSEReset(selectedMeeting);
   const {
     state,
     participants,
@@ -271,7 +301,7 @@ export function App() {
     agentErrors,
     artifact,
     error,
-  } = useMeetingApi(selectedMeeting, true);
+  } = useMeetingApi(selectedMeeting, resetKey);
 
   const handleSSEEvent = useCallback((data) => {
     if (data.type === "contributions") {
@@ -287,10 +317,20 @@ export function App() {
       window.dispatchEvent(new CustomEvent("loom-agent-error", { detail: data.data }));
     } else if (data.type === "artifact") {
       window.dispatchEvent(new CustomEvent("loom-artifact", { detail: data.data }));
+    } else if (data.type === "interjections") {
+      const newIjs = data.data;
+      if (newIjs && newIjs.length > 0) {
+        window.dispatchEvent(new CustomEvent("loom-new-interjections", { detail: newIjs }));
+      }
+    } else if (data.type === "orchestrator_messages") {
+      const newMsgs = data.data;
+      if (newMsgs && newMsgs.length > 0) {
+        window.dispatchEvent(new CustomEvent("loom-orchestrator-messages", { detail: newMsgs }));
+      }
     }
   }, []);
 
-  const { connected, reconnectAttempt } = useSSE(selectedMeeting, handleSSEEvent);
+  const { connected, reconnectAttempt, lastError } = useSSE(selectedMeeting, handleSSEEvent);
 
   useEffect(() => {
     if (!selectedMeeting && meetings.length > 0) {
@@ -367,10 +407,11 @@ export function App() {
   useEffect(() => {
     const handleKey = (e) => {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
-      if (e.key === "/") {
-        e.preventDefault();
-        searchInputRef.current?.focus();
-      }       else if (e.key === "o") setActiveTab("overview");
+      if (e.key === "j") {
+        window.scrollBy(0, 200);
+      } else if (e.key === "k") {
+        window.scrollBy(0, -200);
+      } else if (e.key === "o") setActiveTab("overview");
       else if (e.key === "r") setActiveTab("orchestrator");
       else if (e.key === "t") setActiveTab("timeline");
       else if (e.key === "w") setActiveTab("warp");
@@ -385,10 +426,13 @@ export function App() {
     }
   }, []);
 
-  const participantName = (id) => {
-    const p = participants.find((pp) => pp.id === id);
-    return p?.name ?? id;
-  };
+  const participantNameMap = useMemo(() => {
+    const map = new Map();
+    for (const p of participants) map.set(p.id, p.name);
+    return map;
+  }, [participants]);
+
+  const participantName = useCallback((id) => participantNameMap.get(id) ?? id, [participantNameMap]);
 
   const contributionTypes = useMemo(() => {
     const types = new Set();
@@ -397,14 +441,12 @@ export function App() {
   }, [contributions]);
 
   const filteredContributions = useMemo(() => {
-    const query = searchQuery.toLowerCase();
     const type = activeType;
     return contributions.filter((c) => {
       if (type && c.type !== type) return false;
-      if (query && !c.content.toLowerCase().includes(query)) return false;
       return true;
     });
-  }, [contributions, searchQuery, activeType]);
+  }, [contributions, activeType]);
 
   const groupedContributions = useMemo(() => {
     const groups = new Map();
@@ -419,14 +461,6 @@ export function App() {
     return participants.filter((p) => p.status === "speaking");
   }, [participants]);
 
-  const contributionStats = useMemo(() => {
-    const typeCounts = {};
-    for (const c of contributions) {
-      typeCounts[c.type] = (typeCounts[c.type] ?? 0) + 1;
-    }
-    return typeCounts;
-  }, [contributions]);
-
   const contributionsByParticipant = useMemo(() => {
     const map = {};
     for (const c of contributions) {
@@ -437,11 +471,11 @@ export function App() {
     return map;
   }, [contributions]);
 
-  const toggleRoundCollapse = (round) => {
+  const toggleRoundCollapse = useCallback((round) => {
     setCollapsedRounds((prev) =>
       prev.includes(round) ? prev.filter((r) => r !== round) : [...prev, round]
     );
-  };
+  }, [setCollapsedRounds]);
 
   const isWeaving = state?.status === "weaving";
   const activeRound = state?.round ?? 0;
@@ -452,7 +486,6 @@ export function App() {
   return (
     <ThemeProvider theme={theme} setTheme={setTheme}>
       <div className="loom-layout">
-        <KeyboardShortcuts />
         {error && (
           <div className="loom-card loom-card-error loom-layout-error">
             <p className="loom-text">{error}</p>
@@ -465,15 +498,17 @@ export function App() {
           </div>
         )}
 
-         <Sidebar
-          state={state}
-          participants={participants}
-          theme={theme}
-          setTheme={setTheme}
-          agentErrors={agentErrors}
-          contributionsByParticipant={contributionsByParticipant}
-          selectedMeeting={selectedMeeting}
-        />
+         <ErrorBoundary fallbackMessage="Failed to render sidebar" label="Sidebar">
+          <Sidebar
+            state={state}
+            participants={participants}
+            theme={theme}
+            setTheme={setTheme}
+            agentErrors={agentErrors}
+            contributionsByParticipant={contributionsByParticipant}
+            selectedMeeting={selectedMeeting}
+          />
+         </ErrorBoundary>
 
         <main className="loom-main" ref={mainRef}>
           {state && (
@@ -496,7 +531,15 @@ export function App() {
           <ErrorBoundary fallbackMessage="Failed to render extension banner">
             <ExtensionBanner
               banner={extensionBanner}
-              onDismiss={() => setExtensionBanner(null)}
+              onDismiss={dismissExtensionBanner}
+            />
+          </ErrorBoundary>
+
+          <ErrorBoundary fallbackMessage="Failed to render connection banner">
+            <ConnectionBanner
+              connected={connected}
+              reconnectAttempt={reconnectAttempt}
+              lastError={lastError}
             />
           </ErrorBoundary>
 
@@ -519,7 +562,6 @@ export function App() {
                 contributions={contributions}
                 interjections={interjections}
                 participants={participants}
-                contributionStats={contributionStats}
                 agentErrors={agentErrors}
                 participantName={participantName}
                 totalRounds={totalRounds}

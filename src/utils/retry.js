@@ -68,6 +68,9 @@ export async function withRetry(fn, options = {}) {
   } = options;
 
   let lastError;
+  if (maxAttempts < 1) {
+    throw new Error(`withRetry: maxAttempts must be >= 1, got ${maxAttempts}`);
+  }
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
       return await fn();
@@ -90,17 +93,6 @@ export async function withRetry(fn, options = {}) {
   }
   
   throw lastError;
-}
-
-/**
- * Creates a retryable version of a function.
- * @template T, Args
- * @param {Function} fn - Function to wrap
- * @param {Object} [options] - Retry options
- * @returns {Function} Wrapped function with retry logic
- */
-export function createRetryable(fn, options = {}) {
-  return (...args) => withRetry(() => fn(...args), options);
 }
 
 /**
@@ -129,7 +121,6 @@ export class CircuitBreaker {
 
     if (Date.now() > state.nextAttempt) {
       state.status = 'half-open';
-      state.halfOpenTried = false;
       return true;
     }
 
@@ -143,7 +134,7 @@ export class CircuitBreaker {
 
   recordFailure(model) {
     const key = CircuitBreaker.#getModelKey(model);
-    const state = this.#states.get(key) ?? { failures: 0, status: 'closed', nextAttempt: 0, halfOpenTried: false };
+    const state = this.#states.get(key) ?? { failures: 0, status: 'closed', nextAttempt: 0 };
     state.failures++;
     state.status = state.failures >= this.failureThreshold ? 'open' : 'closed';
     if (state.status === 'open') {

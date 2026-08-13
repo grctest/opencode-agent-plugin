@@ -2,6 +2,7 @@ import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Logger, extractErrorInfo } from "./logger.js";
+import { tokenize, computeIdf, cosineSimilarity } from "./utils/nlp.js";
 
 const __dirname = dirname(fileURLToPath(new URL(".", import.meta.url)));
 const composerLogger = new Logger();
@@ -91,10 +92,23 @@ function loadPersonasFromPath(base) {
   return result;
 }
 
-function loadPersonas() {
-  const result = loadPersonasFromPath(personasBasePath());
+let personaCache = null;
+let personaCachePath = null;
+let personaCacheTimestamp = 0;
+const PERSONA_CACHE_TTL_MS = 60000; // 1 minute
 
+function loadPersonas() {
+  const basePath = personasBasePath();
   const userPath = userPersonasPath();
+
+  // Cache invalidation: re-load if path changes, TTL expired, or no cache exists
+  const now = Date.now();
+  if (personaCache && personaCachePath === basePath && (now - personaCacheTimestamp) < PERSONA_CACHE_TTL_MS) {
+    return personaCache;
+  }
+
+  const result = loadPersonasFromPath(basePath);
+
   if (userPath) {
     const userPersonas = loadPersonasFromPath(userPath);
     for (const [tier, personas] of Object.entries(userPersonas)) {
@@ -110,14 +124,25 @@ function loadPersonas() {
     }
   }
 
+  personaCache = result;
+  personaCachePath = basePath;
+  personaCacheTimestamp = Date.now();
   return result;
 }
 
+let domainKeywordsCache = null;
+let domainKeywordsCacheTimestamp = 0;
+const DOMAIN_KEYWORDS_CACHE_TTL_MS = 60000;
+
 function loadDomainKeywords() {
+  const now = Date.now();
+  if (domainKeywordsCache && (now - domainKeywordsCacheTimestamp) < DOMAIN_KEYWORDS_CACHE_TTL_MS) return domainKeywordsCache;
   try {
     const path = join(personasBasePath(), "domains.json");
     const data = readFileSync(path, "utf-8");
-    return JSON.parse(data);
+    domainKeywordsCache = JSON.parse(data);
+    domainKeywordsCacheTimestamp = Date.now();
+    return domainKeywordsCache;
   } catch {
     return {};
   }
@@ -149,56 +174,16 @@ function createSeededRng(seed) {
   };
 }
 
-function tokenize(text) {
-  return text.toLowerCase().split(/\W+/).filter((w) => w.length > 3);
-}
-
-function computeIdf(corpus) {
-  const docCount = corpus.length;
-  const docFreq = {};
-  for (const doc of corpus) {
-    const terms = new Set(tokenize(doc));
-    for (const term of terms) {
-      docFreq[term] = (docFreq[term] || 0) + 1;
-    }
-  }
-  const idf = {};
-  for (const [term, freq] of Object.entries(docFreq)) {
-    idf[term] = Math.log((docCount + 1) / (freq + 1)) + 1;
-  }
-  return idf;
-}
-
-function cosineSimilarity(textA, textB, idf) {
+function personaSimilarity(a, b, idf) {
+  const textA = `${a.persona} ${a.agenda}`;
+  const textB = `${b.persona} ${b.agenda}`;
   const termsA = tokenize(textA);
   const termsB = tokenize(textB);
-
   const vecA = {};
   const vecB = {};
   for (const t of termsA) vecA[t] = (vecA[t] || 0) + (idf[t] || 1);
   for (const t of termsB) vecB[t] = (vecB[t] || 0) + (idf[t] || 1);
-
-  let dotProduct = 0;
-  let normA = 0;
-  let normB = 0;
-  const allTerms = new Set([...Object.keys(vecA), ...Object.keys(vecB)]);
-
-  for (const term of allTerms) {
-    const a = vecA[term] || 0;
-    const b = vecB[term] || 0;
-    dotProduct += a * b;
-    normA += a * a;
-    normB += b * b;
-  }
-
-  if (normA === 0 || normB === 0) return 0;
-  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
-}
-
-function personaSimilarity(a, b, idf) {
-  const textA = `${a.persona} ${a.agenda}`;
-  const textB = `${b.persona} ${b.agenda}`;
-  return cosineSimilarity(textA, textB, idf);
+  return cosineSimilarity(vecA, vecB);
 }
 
 function getPersonaDomains(persona) {
@@ -285,7 +270,7 @@ function analyzeQuestionComplexity(question) {
   const hasConditionals = /if|when|assuming|given that|depending on|considering/i.test(question);
   const hasStakeholders = /team|customer|user|client|stakeholder|executive|leadership|board/i.test(question);
   const domainKeywordCount = Object.values(getDomainKeywords()).flat().filter((kw) => {
-    if (kw.length < 4 && DOMAIN_STOPWORDS.has(kw)) return false;
+    if (kw.length < 4) return false;
     return new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(question);
   }).length;
 
@@ -355,7 +340,6 @@ function applySeniorityBoost(roles, boost) {
 
 export async function detectDomainsWithLLM(question, promptFn, getModel) {
   const keywords = getDomainKeywords();
-  const domainList = Object.keys(keywords).join(", ");
   const domainDescriptions = Object.entries(keywords)
     .map(([domain, kws]) => `- ${domain}: ${kws.slice(0, 5).join(", ")}...`)
     .join("\n");
@@ -378,89 +362,32 @@ Examples:
 
 JSON array:`;
 
-  try {
-    const model = getModel();
-    if (!model) return detectDomainsFallback(question);
-    const result = await promptFn(
-      "You are a domain classification expert. Analyze questions and return relevant domains as JSON.",
-      model,
-      prompt,
-    );
+  const model = getModel();
+  if (!model) {
+    composerLogger.warn("no_model_for_domain_detection", "No model available for LLM domain detection — defaulting to general");
+    return [];
+  }
 
-    const jsonMatch = result.match(/\[.*?\]/s);
-    if (jsonMatch) {
+  const result = await promptFn(
+    "You are a domain classification expert. Analyze questions and return relevant domains as JSON.",
+    model,
+    prompt,
+  );
+
+  const jsonMatch = result.match(/\[.*?\]/s);
+  if (jsonMatch) {
+    try {
       const parsed = JSON.parse(jsonMatch[0]);
       if (Array.isArray(parsed)) {
         const validDomains = parsed.filter((d) => Object.keys(keywords).includes(d));
         if (validDomains.length > 0) return validDomains;
       }
-    }
-  } catch (err) {
-    const info = extractErrorInfo(err);
-    composerLogger.warn("llm_domain_detection_failed", "LLM domain detection failed — using keyword fallback", info);
-  }
-
-  return detectDomainsFallback(question);
-}
-
-const DOMAIN_STOPWORDS = new Set([
-  "the", "and", "for", "are", "but", "not", "you", "all", "can", "had", "her",
-  "was", "one", "our", "out", "has", "his", "how", "its", "let", "may", "new",
-  "now", "old", "see", "way", "who", "did", "get", "got", "him", "hit", "man",
-  "run", "say", "she", "too", "use", "also", "been", "from", "have", "into",
-  "just", "like", "make", "many", "most", "only", "over", "such", "that", "then",
-  "they", "this", "what", "will", "with", "would", "your", "about", "after",
-  "back", "been", "before", "being", "call", "come", "could", "each", "find",
-  "first", "give", "here", "know", "last", "look", "made", "much", "must",
-  "name", "next", "other", "part", "said", "should", "some", "still", "take",
-  "than", "them", "there", "these", "think", "time", "very", "want", "well",
-  "when", "where", "which", "while", "work", "year", "does", "down", "even",
-  "good", "keep", "made", "need", "place", "same", "show", "tell", "through",
-  "turn", "upon", "used", "help", "high", "home", "house", "large", "life",
-  "long", "might", "off", "put", "set", "start", "still", "thought", "three",
-  "under", "water", "word", "world", "years", "always", "another", "because",
-  "between", "between", "change", "children", "country", "different", "example",
-  "family", "follow", "important", "important", "money", "morning", "number",
-  "often", "order", "point", "question", "right", "school", "second", "small",
-  "something", "state", "thing", "together", "until", "young",
-]);
-
-export function detectDomainsFallback(question) {
-  const q = question.toLowerCase();
-  const domainScores = [];
-
-  for (const [domain, keywords] of Object.entries(getDomainKeywords())) {
-    let score = 0;
-    const matchedPhrases = new Set();
-
-    const sortedKeywords = [...keywords].sort((a, b) => b.length - a.length);
-    let remaining = q;
-
-    for (const keyword of sortedKeywords) {
-      if (keyword.length < 4 && DOMAIN_STOPWORDS.has(keyword)) {
-        continue;
-      }
-      const regex = new RegExp(`\\b${keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
-      const matches = remaining.match(regex);
-      if (matches) {
-        score += matches.length;
-        matchedPhrases.add(keyword);
-        remaining = remaining.replace(regex, " ");
-      }
-    }
-
-    if (score >= 1) {
-      domainScores.push({ domain, score });
+    } catch {
+      composerLogger.warn("domain_parse_failed", "Failed to parse LLM domain detection response as JSON");
     }
   }
 
-  domainScores.sort((a, b) => b.score - a.score);
-  return domainScores.map((d) => d.domain);
-}
-
-export function composeRoom(question, desiredCount, seed) {
-  const domains = detectDomainsFallback(question);
-  return composeRoomWithDomains(question, desiredCount, domains, seed);
+  return [];
 }
 
 export function composeRoomWithDomains(question, desiredCount, domains, seed) {

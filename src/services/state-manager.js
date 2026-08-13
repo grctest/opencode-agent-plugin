@@ -1,5 +1,6 @@
 import { getTierConfig } from "../shared.js";
 import { Logger } from "../logger.js";
+import { getConfig } from "../config.js";
 
 /**
  * Manages in-memory meeting state with validated transitions.
@@ -38,10 +39,18 @@ export class StateManager {
   }
 
   getState() {
-    return Object.freeze({ ...this.#state });
+    // Deep-freeze to prevent callers from mutating nested arrays/objects
+    const frozen = Object.freeze({
+      ...this.#state,
+      participants: Object.freeze(this.#state.participants.map((p) => Object.freeze({ ...p }))),
+      weft: Object.freeze([...this.#state.weft]),
+      rounds: Object.freeze(this.#state.rounds.map((r) => Object.freeze({ ...r }))),
+    });
+    return frozen;
   }
 
   getMutableState() {
+    this.#logger.warn("deprecated_api", "getMutableState() is deprecated — use targeted mutators instead");
     return this.#state;
   }
 
@@ -123,19 +132,39 @@ export class StateManager {
 
   transitionTo(status) {
     const validTransitions = {
-      initializing: ["weaving", "cancelled"],
-      weaving: ["converged", "cancelled", "timeout", "max_rounds_reached"],
+      initializing: ["weaving", "cancelled", "aborted"],
+      weaving: ["converged", "cancelled", "timeout", "max_rounds_reached", "aborted", "deadlocked"],
       converged: [],
       cancelled: [],
       timeout: [],
       max_rounds_reached: [],
+      aborted: [],
+      deadlocked: [],
     };
     const current = this.#state.status;
-    if (validTransitions[current] && !validTransitions[current].includes(status)) {
-      this.#logger.warn("invalid_transition", `Invalid status transition: ${current} -> ${status}`);
+    if (current === status) {
+      this.#logger.debug("state_transition", `No-op transition (already ${status})`);
+      return;
+    }
+    const allowed = validTransitions[current];
+    if (!allowed || !allowed.includes(status)) {
+      this.#logger.error("invalid_transition", `Invalid status transition rejected: ${current} -> ${status}`);
+      throw new Error(`Invalid status transition: ${current} -> ${status}`);
     }
     this.#state.status = status;
     this.#logger.info("state_transition", `${current} -> ${status}`);
+  }
+
+  /**
+   * Applies a status change without transition validation.
+   * Reserved for explicit escape hatches (e.g. re-opening a terminal meeting).
+   * @param {string} status
+   */
+  forceTransitionTo(status) {
+    const current = this.#state.status;
+    if (current === status) return;
+    this.#state.status = status;
+    this.#logger.info("state_transition", `${current} -> ${status} (forced)`);
   }
 
   incrementRound() {
@@ -151,8 +180,30 @@ export class StateManager {
     this.#state.weft.push(contribution);
   }
 
+  /** Increments and returns the next contribution ID. */
+  nextContributionId() {
+    return ++this.#state.next_contribution_id;
+  }
+
+  /** Returns the current contribution ID without incrementing. */
+  getCurrentContributionId() {
+    return this.#state.next_contribution_id;
+  }
+
   addRound(round) {
     this.#state.rounds.push(round);
+  }
+
+  /** Replaces all rounds (used during restore). */
+  setRounds(rounds) {
+    this.#state.rounds = rounds;
+  }
+
+  /** Updates contribution counts for all participants from a count map. */
+  setParticipantContributionCounts(countMap) {
+    for (const p of this.#state.participants) {
+      p.contributions_count = countMap[p.config.id] ?? 0;
+    }
   }
 
   setWarp(warp) {
@@ -171,10 +222,30 @@ export class StateManager {
     this.#state.domain = domain;
   }
 
+  /**
+   * Restores all mutable state properties from a database-loaded meeting.
+   * Used by the orchestrator when resuming a persisted meeting.
+   */
+  restore({ participants, question, context, warp, max_rounds, convergence_mode, domain, current_round, status, weft, next_contribution_id }) {
+    if (participants !== undefined) this.#state.participants = participants;
+    if (question !== undefined) this.#state.question = question;
+    if (context !== undefined) this.#state.context = context;
+    if (warp !== undefined) this.#state.warp = warp;
+    if (max_rounds !== undefined) this.#state.max_rounds = max_rounds;
+    if (convergence_mode !== undefined) this.#state.convergence_mode = convergence_mode;
+    if (domain !== undefined) this.#state.domain = domain;
+    if (current_round !== undefined) this.#state.current_round = current_round;
+    if (status !== undefined) this.#state.status = status;
+    if (weft !== undefined) this.#state.weft = weft;
+    if (next_contribution_id !== undefined) this.#state.next_contribution_id = next_contribution_id;
+  }
+
   setParticipantStatus(participantId, status) {
     const p = this.getParticipant(participantId);
     if (p) {
       p.status = status;
+    } else {
+      this.#logger.warn("participant_not_found", `setParticipantStatus: unknown participant "${participantId}"`);
     }
   }
 
@@ -182,6 +253,8 @@ export class StateManager {
     const p = this.getParticipant(participantId);
     if (p) {
       p.session_id = sessionId;
+    } else {
+      this.#logger.warn("participant_not_found", `setParticipantSessionId: unknown participant "${participantId}"`);
     }
   }
 
@@ -189,6 +262,17 @@ export class StateManager {
     const p = this.getParticipant(participantId);
     if (p) {
       p.contributions_count++;
+    } else {
+      this.#logger.warn("participant_not_found", `incrementParticipantContributions: unknown participant "${participantId}"`);
+    }
+  }
+
+  setParticipantSessionVersion(participantId, version) {
+    const p = this.getParticipant(participantId);
+    if (p) {
+      p.session_version = version;
+    } else {
+      this.#logger.warn("participant_not_found", `setParticipantSessionVersion: unknown participant "${participantId}"`);
     }
   }
 
@@ -197,12 +281,10 @@ export class StateManager {
     if (p) {
       if (!Array.isArray(p.reflections)) p.reflections = [];
       p.reflections.push(reflection);
-      p.reflections = p.reflections.slice(-2); // MAX_REFLECTIONS
+      p.reflections = p.reflections.slice(-getConfig().maxReflectionsPerAgent);
+    } else {
+      this.#logger.warn("participant_not_found", `addParticipantReflection: unknown participant "${participantId}"`);
     }
-  }
-
-  getNextContributionId() {
-    return ++this.#state.next_contribution_id;
   }
 
   buildSharedState() {
@@ -221,13 +303,10 @@ export class StateManager {
    * @param {string} nextSpeakerId
    */
   reorderForNextSpeaker(nextSpeakerId) {
-    const active = this.getActiveParticipants();
-    const idx = active.findIndex(p => p.config.id === nextSpeakerId);
+    const idx = this.#state.participants.findIndex(p => p.config.id === nextSpeakerId);
     if (idx > 0) {
-      const [speaker] = active.splice(idx, 1);
-      // Rebuild the full participants array with reordered active participants
-      const passive = this.#state.participants.filter(p => p.status === "passed" || p.status === "failed");
-      this.#state.participants = [...active, ...passive];
+      const [speaker] = this.#state.participants.splice(idx, 1);
+      this.#state.participants.unshift(speaker);
     }
     this.#state.next_speaker_id = null;
   }

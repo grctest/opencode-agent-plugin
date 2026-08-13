@@ -26,10 +26,17 @@ const DEFAULT_CONFIG = {
     staleParticipantRatio: 0.34,
     moderatorForcesMinRound: 2,
     moderatorForcesHalfActiveRound: 3,
+    allPassedConfidence: 80,
+    stalemateConfidence: 60,
+    semanticConfidence: 80,
+    llmVerdictConfidence: 90,
   },
+  synthesisMaxRetries: 1,
   defaultMeetingTimeoutMs: 900000,
+  stallTimeoutMs: 300000,
   enableLlmWarpCompaction: false,
   modelDiversity: true,
+  maxReflectionsPerAgent: 2,
   circuitBreaker: {
     failureThreshold: 3,
     resetTimeoutMs: 300000,
@@ -51,9 +58,12 @@ const CONFIG_SCHEMA = {
   retryMaxDelayMs: { type: 'number', min: 1000, max: 60000 },
   maxConcurrentPrompts: { type: 'number', min: 1, max: 20 },
   defaultMeetingTimeoutMs: { type: 'number', min: 60000, max: 3600000 },
+  stallTimeoutMs: { type: 'number', min: 30000, max: 1800000 },
   maxInterjectionsPerRound: { type: 'number', min: 1, max: 5 },
   enableLlmWarpCompaction: { type: 'boolean' },
   modelDiversity: { type: 'boolean' },
+  synthesisMaxRetries: { type: 'number', min: 0, max: 5 },
+  maxReflectionsPerAgent: { type: 'number', min: 1, max: 10 },
 };
 
 const NESTED_SCHEMA = {
@@ -64,6 +74,12 @@ const NESTED_SCHEMA = {
   'convergence.staleParticipantRatio': { type: 'number', min: 0, max: 1 },
   'convergence.moderatorForcesMinRound': { type: 'number', min: 1, max: 5 },
   'convergence.moderatorForcesHalfActiveRound': { type: 'number', min: 2, max: 10 },
+  'convergence.allPassedConfidence': { type: 'number', min: 0, max: 100 },
+  'convergence.stalemateConfidence': { type: 'number', min: 0, max: 100 },
+  'convergence.semanticConfidence': { type: 'number', min: 0, max: 100 },
+  'convergence.llmVerdictConfidence': { type: 'number', min: 0, max: 100 },
+  'synthesisMaxRetries': { type: 'number', min: 0, max: 5 },
+  'maxReflectionsPerAgent': { type: 'number', min: 1, max: 10 },
   'moderatorTrigger.minContributions': { type: 'number', min: 1, max: 10 },
   'moderatorTrigger.recentChallenges': { type: 'number', min: 1, max: 10 },
   'moderatorTrigger.lookbackWindow': { type: 'number', min: 2, max: 10 },
@@ -194,12 +210,17 @@ function buildConfig(directory) {
 
   const merged = deepMerge(DEFAULT_CONFIG, userConfig);
 
+  const nestedParentKeys = new Set(Object.keys(NESTED_SCHEMA).map((p) => p.split('.')[0]));
+
   for (const key of Object.keys(userConfig)) {
     if (CONFIG_SCHEMA[key]) {
       const result = validateConfigKey(key, userConfig[key]);
       if (!result.valid) {
+        merged[key] = DEFAULT_CONFIG[key];
         warnings.push(`${result.error}. Using default: ${DEFAULT_CONFIG[key]}`);
       }
+    } else if (!nestedParentKeys.has(key)) {
+      warnings.push(`Unknown config key "${key}" ignored.`);
     }
   }
 
@@ -213,8 +234,6 @@ export class Config {
   #config;
   #warnings;
   #source;
-  #watchInterval = null;
-  #watchCallback = null;
 
   constructor(directory) {
     this.#directory = directory;
@@ -239,44 +258,11 @@ export class Config {
   getValue(key) {
     return getNestedValue(this.#config, key);
   }
-
-  watchForChanges(callback) {
-    if (this.#watchInterval) return;
-    this.#watchCallback = callback;
-    const configFile = findConfigFile(this.#directory);
-    if (!configFile) return;
-
-    this.#watchInterval = setInterval(() => {
-      try {
-        const content = readFileSync(configFile, 'utf-8');
-        const parsed = JSON.parse(content);
-        if (parsed && typeof parsed === 'object') {
-          const { config, warnings } = buildConfig(this.#directory);
-          const changed = JSON.stringify(config) !== JSON.stringify(this.#config);
-          if (changed) {
-            this.#config = config;
-            this.#warnings = warnings;
-            if (this.#watchCallback) {
-              this.#watchCallback(config, warnings);
-            }
-          }
-        }
-      } catch {
-        // Ignore parse errors during watch
-      }
-    }, 5000);
-  }
-
-  stopWatching() {
-    if (this.#watchInterval) {
-      clearInterval(this.#watchInterval);
-      this.#watchInterval = null;
-    }
-    this.#watchCallback = null;
-  }
 }
 
 const configCache = new Map();
+const CONFIG_CACHE_TTL_MS = 300000; // 5 minutes
+const CONFIG_CACHE_MAX_SIZE = 50;
 
 let defaultDirectory = null;
 
@@ -291,10 +277,17 @@ export function getConfigSource() {
 
 export function createConfig(directory) {
   const key = directory || '__global__';
-  if (configCache.has(key)) {
-    return configCache.get(key);
+  const cached = configCache.get(key);
+  if (cached && (Date.now() - cached._createdAt) < CONFIG_CACHE_TTL_MS) {
+    return cached;
+  }
+  // Evict oldest entries if cache is too large
+  if (configCache.size >= CONFIG_CACHE_MAX_SIZE) {
+    const oldestKey = configCache.keys().next().value;
+    configCache.delete(oldestKey);
   }
   const config = new Config(directory);
+  config._createdAt = Date.now();
   configCache.set(key, config);
   return config;
 }
@@ -308,11 +301,4 @@ export function getConfig(directory) {
 export function getConfigInstance(directory) {
   const dir = directory ?? defaultDirectory;
   return createConfig(dir);
-}
-
-export function resetConfigCache() {
-  for (const config of configCache.values()) {
-    config.stopWatching();
-  }
-  configCache.clear();
 }

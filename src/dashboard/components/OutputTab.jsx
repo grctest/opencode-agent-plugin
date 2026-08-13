@@ -36,7 +36,7 @@ function OutputTabBase({ artifact, participants }) {
           Confidence: {artifact.confidence ?? "unknown"}
         </span>
         <span className="loom-text-xs loom-text-muted">
-          Generated {new Date(artifact.created_at).toLocaleString()}
+          {artifact.created_at ? `Generated ${new Date(artifact.created_at).toLocaleString()}` : "Generated at unknown time"}
         </span>
       </div>
 
@@ -51,7 +51,7 @@ function OutputTabBase({ artifact, participants }) {
             {artifact.refusals.map((r, i) => (
               <li key={i} className="loom-text">
                 <span className="loom-text-xs loom-text-bold">— {r.participant_id}</span>
-                <div className="loom-text-muted">{renderMarkdown(String(r.content))}</div>
+                <div className="loom-prose" dangerouslySetInnerHTML={{ __html: renderMarkdown(String(r.content)) }} />
               </li>
             ))}
           </ul>

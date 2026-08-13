@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 
 export function usePersistedState(key, defaultValue) {
   const [value, setValue] = useState(() => {
@@ -17,19 +17,118 @@ export function usePersistedState(key, defaultValue) {
   return [value, setValue];
 }
 
-export function useDebouncedCallback(callback, delay) {
-  const timeoutRef = useRef(null);
-  return useCallback((...args) => {
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    timeoutRef.current = setTimeout(() => callback(...args), delay);
-  }, [callback, delay]);
+/**
+ * Subscribes to SSE reset events for a meeting and returns a resetKey
+ * that increments on reconnection (useful for triggering refetch).
+ */
+export function useSSEReset(meetingId) {
+  const [resetKey, setResetKey] = useState(0);
+
+  useEffect(() => {
+    if (!meetingId) return;
+
+    const handleReset = () => setResetKey((k) => k + 1);
+    window.addEventListener("loom-sse-reset", handleReset);
+    return () => window.removeEventListener("loom-sse-reset", handleReset);
+  }, [meetingId]);
+
+  return { resetKey };
 }
 
-export function useMeetingApi(meetingId, sseEvents) {
+/**
+ * Applies incremental SSE updates to meeting data state.
+ * Returns event handlers to attach to window.
+ */
+export function useSSEHandlers({ setContributions, setInterjections, setState, setParticipants, setAgentErrors, setArtifact, setOrchestratorMessages }) {
+  useEffect(() => {
+    const handleContributions = (e) => {
+      const newContribs = e.detail;
+      if (!newContribs || newContribs.length === 0) return;
+      setContributions((prev) => {
+        const seen = new Set(prev.map((c) => c.id));
+        const fresh = newContribs.filter((c) => c && c.id != null && !seen.has(c.id));
+        return fresh.length > 0 ? [...prev, ...fresh] : prev;
+      });
+    };
+
+    const handleInterjections = (e) => {
+      const newIjs = e.detail;
+      if (!newIjs || newIjs.length === 0) return;
+      setInterjections((prev) => {
+        const seen = new Set(prev.map((ij) => ij.id));
+        const fresh = newIjs.filter((ij) => ij && ij.id != null && !seen.has(ij.id));
+        return fresh.length > 0 ? [...prev, ...fresh] : prev;
+      });
+    };
+
+    const handleState = (e) => {
+      const stateData = e.detail;
+      if (stateData) {
+        setState((prev) => prev ? { ...prev, ...stateData } : stateData);
+      }
+    };
+
+    const handleParticipants = (e) => {
+      const partsData = e.detail;
+      if (partsData) {
+        setParticipants(partsData);
+      }
+    };
+
+    const handleAgentError = (e) => {
+      const errData = e.detail;
+      if (errData) {
+        setAgentErrors((prev) => {
+          const key = `${errData.participant_id}:${errData.round}:${errData.error_type}`;
+          const exists = prev.some((x) => `${x.participant_id}:${x.round}:${x.error_type}` === key);
+          return exists ? prev : [...prev, errData];
+        });
+      }
+    };
+
+    const handleArtifact = (e) => {
+      const artifactData = e.detail;
+      if (artifactData) {
+        setArtifact(artifactData);
+      }
+    };
+
+    const handleOrchestratorMessages = (e) => {
+      const newMsgs = e.detail;
+      if (!newMsgs || newMsgs.length === 0) return;
+      setOrchestratorMessages((prev) => {
+        const seen = new Set(prev.map((m) => m.id));
+        const fresh = newMsgs.filter((m) => m && m.id != null && !seen.has(m.id));
+        return fresh.length > 0 ? [...prev, ...fresh] : prev;
+      });
+    };
+
+    window.addEventListener("loom-new-contributions", handleContributions);
+    window.addEventListener("loom-new-interjections", handleInterjections);
+    window.addEventListener("loom-state-update", handleState);
+    window.addEventListener("loom-participants-update", handleParticipants);
+    window.addEventListener("loom-agent-error", handleAgentError);
+    window.addEventListener("loom-artifact", handleArtifact);
+    window.addEventListener("loom-orchestrator-messages", handleOrchestratorMessages);
+
+    return () => {
+      window.removeEventListener("loom-new-contributions", handleContributions);
+      window.removeEventListener("loom-new-interjections", handleInterjections);
+      window.removeEventListener("loom-state-update", handleState);
+      window.removeEventListener("loom-participants-update", handleParticipants);
+      window.removeEventListener("loom-agent-error", handleAgentError);
+      window.removeEventListener("loom-artifact", handleArtifact);
+      window.removeEventListener("loom-orchestrator-messages", handleOrchestratorMessages);
+    };
+  }, []);
+}
+
+export function useMeetingApi(meetingId, resetKey) {
   const [state, setState] = useState(null);
   const [participants, setParticipants] = useState([]);
   const [contributions, setContributions] = useState([]);
   const [interjections, setInterjections] = useState([]);
+  const [orchestratorMessages, setOrchestratorMessages] = useState([]);
   const [agentErrors, setAgentErrors] = useState([]);
   const [artifact, setArtifact] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -55,10 +154,28 @@ export function useMeetingApi(meetingId, sseEvents) {
       }
       setState(data.state);
       setParticipants(data.participants);
-      setContributions(data.contributions);
       setInterjections(data.interjections);
+      setOrchestratorMessages(data.orchestrator_messages ?? []);
       setAgentErrors(data.agent_errors);
       setArtifact(data.artifact ?? null);
+      const { total, limit, offset } = data.contributionsPagination ?? {};
+      let all = [...(data.contributions ?? [])];
+      if (typeof total === "number" && all.length < total) {
+        let nextOffset = (offset ?? 0) + (limit ?? all.length);
+        while (all.length < total && nextOffset < total) {
+          try {
+            const pres = await fetch(`/api/contributions?meeting=${id}&limit=${limit ?? 500}&offset=${nextOffset}`);
+            if (!pres.ok) break;
+            const pdata = await pres.json();
+            const batch = pdata.contributions ?? [];
+            all = all.concat(batch);
+            nextOffset += batch.length || (limit ?? 500);
+          } catch {
+            break;
+          }
+        }
+      }
+      setContributions(all);
       setError(null);
     } catch (e) {
       setError(e.message);
@@ -71,74 +188,16 @@ export function useMeetingApi(meetingId, sseEvents) {
     if (meetingId) {
       fetchMeetingData(meetingId);
     }
-  }, [meetingId, fetchMeetingData]);
+  }, [meetingId, fetchMeetingData, resetKey]);
 
-  useEffect(() => {
-    if (!meetingId || !sseEvents) return;
-
-    const handleContributions = (e) => {
-      const newContribs = e.detail;
-      if (newContribs && newContribs.length > 0) {
-        setContributions((prev) => [...prev, ...newContribs]);
-      }
-    };
-
-    const handleState = (e) => {
-      const stateData = e.detail;
-      if (stateData) {
-        setState((prev) => prev ? { ...prev, ...stateData } : stateData);
-      }
-    };
-
-    const handleParticipants = (e) => {
-      const partsData = e.detail;
-      if (partsData) {
-        setParticipants(partsData);
-      }
-    };
-
-    const handleAgentError = (e) => {
-      const errData = e.detail;
-      if (errData) {
-        setAgentErrors((prev) => [...prev, errData]);
-      }
-    };
-
-    const handleArtifact = (e) => {
-      const artifactData = e.detail;
-      if (artifactData) {
-        setArtifact(artifactData);
-      }
-    };
-
-    window.addEventListener("loom-new-contributions", handleContributions);
-    window.addEventListener("loom-state-update", handleState);
-    window.addEventListener("loom-participants-update", handleParticipants);
-    window.addEventListener("loom-agent-error", handleAgentError);
-    window.addEventListener("loom-artifact", handleArtifact);
-
-    const handleReset = () => {
-      if (meetingId) {
-        fetchMeetingData(meetingId);
-      }
-    };
-    window.addEventListener("loom-sse-reset", handleReset);
-
-    return () => {
-      window.removeEventListener("loom-new-contributions", handleContributions);
-      window.removeEventListener("loom-state-update", handleState);
-      window.removeEventListener("loom-participants-update", handleParticipants);
-      window.removeEventListener("loom-agent-error", handleAgentError);
-      window.removeEventListener("loom-artifact", handleArtifact);
-      window.removeEventListener("loom-sse-reset", handleReset);
-    };
-  }, [meetingId, sseEvents]);
+  useSSEHandlers({ setContributions, setInterjections, setState, setParticipants, setAgentErrors, setArtifact, setOrchestratorMessages });
 
   return {
     state,
     participants,
     contributions,
     interjections,
+    orchestratorMessages,
     agentErrors,
     artifact,
     loading,

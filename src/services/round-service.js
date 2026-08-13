@@ -52,12 +52,4 @@ export class RoundService {
 
     return { round, ijNotes };
   }
-
-  /**
-   * Gets call statistics from the round executor.
-   * @returns {Object}
-   */
-  getCallStats() {
-    return this.#roundExecutor.getCallStats();
-  }
 }

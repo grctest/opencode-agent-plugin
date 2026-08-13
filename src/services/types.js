@@ -54,7 +54,7 @@
  * @property {string} type
  * @property {string} content
  * @property {string|null} targets_which
- * @property {number} timestamp
+ * @property {string} created_at ISO-8601 timestamp
  */
 
 /**
@@ -74,6 +74,7 @@
  * @property {boolean} granted
  * @property {string|null} pushback
  * @property {'pending'|'granted'|'denied'|'contested'} resolved
+ * @property {string|null} content Alias of reason (database returns `reason`, interjector objects carry `content`)
  */
 
 /**
@@ -97,7 +98,7 @@
  * @property {Round[]} rounds
  * @property {number} current_round
  * @property {number} max_rounds
- * @property {'initializing'|'weaving'|'converged'|'cancelled'|'timeout'|'max_rounds_reached'} status
+ * @property {'initializing'|'weaving'|'converged'|'cancelled'|'timeout'|'max_rounds_reached'|'aborted'|'deadlocked'} status
  * @property {Object|null} artifact
  * @property {Object[]} objections
  * @property {'consensus'|'majority'|'moderator_forces'} convergence_mode

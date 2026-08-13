@@ -4,8 +4,8 @@ import { finalizeSynthesis, validateSynthesisSections, NEUTRAL_SYNTHESIZER_SYSTE
 import { extractText, withTimeout } from "./shared.js";
 import { getConfig } from "./config.js";
 import { extractErrorInfo } from "./logger.js";
+import { incrementKeyedCounter, recordLatency } from "./metrics.js";
 
-const MAX_SYNTHESIS_RETRIES = 2;
 const MAX_CRITIQUE_RETRIES = 2;
 const REQUIRED_SECTIONS = ["Decision", "Reasoning", "Action Items", "Dissenting Views", "Open Questions", "Confidence"];
 
@@ -30,7 +30,9 @@ export class SynthesisCoordinator {
   }
 
   async run(transcriptData, participants, objections, synthesizer, getParticipantModel, onStart, onComplete) {
-    if (!synthesizer) return "No participants available for synthesis.";
+    if (!synthesizer) {
+      return { output: "No participants available for synthesis.", artifact: null };
+    }
 
     if (onStart) onStart();
     await this.#sessionManager.postProgress("🔄 Synthesizing final output...");
@@ -54,17 +56,19 @@ export class SynthesisCoordinator {
     await this.#sessionManager.postProgress("✅ Synthesis complete");
 
     if (onComplete) onComplete(result.output);
-    return result.output;
+    return result;
   }
 
   async #promptWithRetry(sessionId, synthesizer, transcriptData, transcript, model, allParticipants) {
     let additionalFeedback = "";
+    const maxRetries = getConfig().synthesisMaxRetries;
 
-    for (let attempt = 0; attempt <= MAX_SYNTHESIS_RETRIES; attempt++) {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
       const userPrompt =
         buildSynthesisPrompt(transcriptData.question, transcript, allParticipants, transcriptData.domain ?? null) +
         additionalFeedback;
 
+      const llmStart = Date.now();
       const result = await withTimeout(
         this.#client.session.prompt({
           path: { id: sessionId },
@@ -78,6 +82,9 @@ export class SynthesisCoordinator {
         }),
         getConfig().synthesisTimeoutMs,
       );
+      const llmMs = Date.now() - llmStart;
+      incrementKeyedCounter("llm_calls_by_type", "synthesis");
+      recordLatency("synthesis_ms", llmMs);
 
       if (result.error) {
         throw new Error(result.error.message || JSON.stringify(result.error));
@@ -89,7 +96,7 @@ export class SynthesisCoordinator {
       }
 
       const missing = validateSynthesisSections(text);
-      if (missing.length === 0 || attempt === MAX_SYNTHESIS_RETRIES) {
+      if (missing.length === 0 || attempt === maxRetries) {
         return text;
       }
 
@@ -153,7 +160,7 @@ ${text.slice(0, 6000)}`;
         critiquePrompt = `${critiquePrompt}\n\nFeedback: ${feedback}`;
       } catch (err) {
         const info = extractErrorInfo(err);
-        this.#sessionManager.postProgress(`Synthesis critique failed: ${info.message}. Using the original draft.`);
+        await this.#sessionManager.postProgress(`Synthesis critique failed: ${info.message}. Using the original draft.`);
         return text;
       }
     }

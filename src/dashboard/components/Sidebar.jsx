@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useMemo } from "react";
 import { cn } from "../utils.js";
 import { ParticipantCard } from "./Cards.jsx";
 
@@ -16,6 +16,8 @@ function ThemeToggle({ theme, setTheme }) {
           key={opt.value}
           className={cn("pure-button loom-theme-btn", theme === opt.value && "pure-button-active")}
           onClick={() => setTheme(opt.value)}
+          aria-pressed={theme === opt.value}
+          aria-label={`${opt.label} theme`}
         >
           {opt.label}
         </button>
@@ -34,7 +36,7 @@ function RoundIndicator({ current, max, status }) {
           Round {current} / {max}
         </span>
       </div>
-      <div className="loom-progress-track">
+      <div className="loom-progress-track" role="progressbar" aria-valuenow={current} aria-valuemin={0} aria-valuemax={max} aria-label="Meeting progress">
         <div className="loom-progress-bar" style={{ width: `${pct}%` }} />
       </div>
       {status && status !== "weaving" && status !== "initializing" && (
@@ -53,6 +55,14 @@ const Sidebar = memo(function Sidebar({
   contributionsByParticipant,
   selectedMeeting,
 }) {
+  const errorByParticipant = useMemo(() => {
+    const map = new Map();
+    for (const e of agentErrors) {
+      if (!map.has(e.participant_id)) map.set(e.participant_id, e);
+    }
+    return map;
+  }, [agentErrors]);
+
   return (
     <aside className="loom-sidebar">
       <div className="loom-sidebar-section">
@@ -105,7 +115,7 @@ const Sidebar = memo(function Sidebar({
               <ParticipantCard
                 key={p.id}
                 participant={p}
-                error={agentErrors.find((e) => e.participant_id === p.id)}
+                error={errorByParticipant.get(p.id)}
                 contributionsByRound={contributionsByParticipant[p.id] ?? {}}
               />
             ))}

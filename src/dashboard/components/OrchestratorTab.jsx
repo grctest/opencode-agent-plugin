@@ -1,5 +1,6 @@
-import { useRef, useMemo, useCallback, memo } from "react";
+import { useMemo, useCallback, memo } from "react";
 import { List } from "react-window";
+import { cn } from "../utils.js";
 
 const TYPE_LABELS = {
   domain: "Domain Detection",
@@ -8,6 +9,7 @@ const TYPE_LABELS = {
   compaction: "Context Compaction",
   summary: "Round Summary",
   orchestrator: "Orchestrator",
+  governance: "Governance Directive",
 };
 
 const EXCHANGE_HEIGHT = 300;
@@ -22,8 +24,6 @@ function formatContent(content, role) {
 }
 
 const OrchestratorTabBase = ({ messages = [] }) => {
-  const listRef = useRef(null);
-
   const grouped = useMemo(() => {
     const groups = [];
     let i = 0;
@@ -47,7 +47,7 @@ const OrchestratorTabBase = ({ messages = [] }) => {
     return Math.min(MAX_LIST_HEIGHT, grouped.length * EXCHANGE_HEIGHT);
   }, [grouped.length]);
 
-  const renderRow = useCallback(({ index, style, grouped }) => {
+  const Row = useCallback(({ index, style }) => {
     const group = grouped[index];
     return (
       <div style={style} className="loom-vrow">
@@ -55,7 +55,7 @@ const OrchestratorTabBase = ({ messages = [] }) => {
           {group.query && (
             <div className="loom-orchestrator-query">
               <div className="loom-orchestrator-meta">
-                <span className="loom-orchestrator-type">
+                <span className={cn("loom-orchestrator-type", group.query.type === "governance" && "loom-orchestrator-type-governance")}>
                   {TYPE_LABELS[group.query.type] || group.query.type}
                 </span>
                 <span className="loom-text-xs loom-text-muted">Query</span>
@@ -78,11 +78,7 @@ const OrchestratorTabBase = ({ messages = [] }) => {
         </div>
       </div>
     );
-  }, []);
-
-  const rowProps = useMemo(() => ({
-    grouped,
-  }), [grouped]);
+  }, [grouped]);
 
   if (messages.length === 0) {
     return (
@@ -102,14 +98,13 @@ const OrchestratorTabBase = ({ messages = [] }) => {
     <div className="loom-main-content">
       <div className="loom-orchestrator-list">
         <List
-          ref={listRef}
           height={listHeight}
           rowCount={grouped.length}
           rowHeight={rowHeightFn}
-          rowComponent={renderRow}
-          rowProps={rowProps}
           width="100%"
-        />
+        >
+          {Row}
+        </List>
       </div>
     </div>
   );

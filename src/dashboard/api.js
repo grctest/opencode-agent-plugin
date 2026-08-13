@@ -1,12 +1,22 @@
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { existsSync, readdirSync, statSync } from "node:fs";
+import { resolveLoomBaseDir } from "../paths.js";
 
 const DB_CACHE_MAX = 10;
 
 const DB_REFRESH_INTERVAL_MS = 2000;
 
 const DB_TTL_MS = 5 * 60 * 1000;
+
+function parseReflections(raw) {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.filter((x) => typeof x === "string");
+  } catch { /* legacy plain text */ }
+  return [raw];
+}
 
 export class DashboardApi {
   /** @type {Database} */
@@ -107,23 +117,19 @@ export class DashboardApi {
          FROM meetings LIMIT 1`,
       )
       .get();
-    return row ?? null;
+    if (!row) return null;
+    if (row.stats) {
+      try {
+        row.stats = JSON.parse(row.stats);
+      } catch {
+        row.stats = {};
+      }
+    }
+    return row;
   }
 
   getStateWithStats() {
-    const row = this.getState();
-    if (!row) return null;
-    const stats = row.stats ? (typeof row.stats === "string" ? JSON.parse(row.stats) : row.stats) : {};
-    return { ...row, stats };
-  }
-
-  getCallStats() {
-    const row = this.#db
-      .prepare(`SELECT stats FROM meetings LIMIT 1`)
-      .get();
-    if (!row || !row.stats) return null;
-    const stats = typeof row.stats === "string" ? JSON.parse(row.stats) : row.stats;
-    return stats;
+    return this.getState();
   }
 
   getArtifact() {
@@ -156,12 +162,16 @@ export class DashboardApi {
   }
 
   getParticipants() {
-    return this.#db
+    const rows = this.#db
       .prepare(
-        `SELECT id, name, persona, agenda, tier, provider_id, model_id, session_id, status
+        `SELECT id, name, persona, agenda, tier, provider_id, model_id, session_id, status, reflection
          FROM participants ORDER BY tier ASC`,
       )
       .all();
+    return rows.map((r) => ({
+      ...r,
+      reflections: parseReflections(r.reflection),
+    }));
   }
 
   getAgentErrors() {
@@ -204,10 +214,40 @@ export class DashboardApi {
   getInterjections() {
     return this.#db
       .prepare(
-        `SELECT id, participant_id, target_participant_id, content, priority, granted, pushback, resolved, created_at
+        `SELECT id, participant_id, target_participant_id, round, content, priority, granted, pushback, resolved, created_at
          FROM interjections ORDER BY id ASC`,
       )
       .all();
+  }
+
+  getMaxInterjectionId() {
+    const row = this.#db.prepare(`SELECT MAX(id) as max_id FROM interjections`).get();
+    return row?.max_id ?? 0;
+  }
+
+  getInterjectionsSince(sinceId) {
+    return this.#db
+      .prepare(
+        `SELECT id, participant_id, target_participant_id, content, priority, granted, pushback, resolved, created_at
+         FROM interjections WHERE id > ? ORDER BY id ASC`,
+      )
+      .all(sinceId);
+  }
+
+  getOrchestratorMessagesSince(sinceId, meetingId) {
+    return this.#db
+      .prepare(
+        `SELECT id, msg_type, role, content, created_at
+         FROM orchestrator_messages WHERE id > ? AND meeting_id = ? ORDER BY id ASC`,
+      )
+      .all(sinceId, meetingId)
+      .map((r) => ({
+        id: r.id,
+        type: r.msg_type,
+        role: r.role,
+        content: r.content,
+        created_at: r.created_at,
+      }));
   }
 
   getOrchestratorMessages(meetingId) {
@@ -253,7 +293,7 @@ export class DashboardApi {
   exportMarkdown(meetingId) {
     const meeting = this.getState();
     const participants = this.getParticipants();
-    const contributions = this.getContributions();
+    const contributions = this.getContributions(500, 0);
     const interjections = this.getInterjections();
     const errors = this.getAgentErrors();
     const artifact = this.getArtifact();
@@ -333,7 +373,7 @@ export class DashboardApi {
   exportJSON(meetingId) {
     const meeting = this.getState();
     const participants = this.getParticipants();
-    const contributions = this.getContributions();
+    const contributions = this.getContributions(500, 0);
     const interjections = this.getInterjections();
     const errors = this.getAgentErrors();
     const artifact = this.getArtifact();
@@ -375,7 +415,7 @@ export class DashboardApi {
         targetParticipantId: ij.target_participant_id,
         round: ij.round,
         priority: ij.priority,
-        reason: ij.reason,
+        content: ij.content,
         granted: ij.granted,
         pushback: ij.pushback,
         resolved: ij.resolved,
@@ -488,11 +528,7 @@ export class DashboardApi {
 }
 
 export function listMeetings(directory) {
-  const home = process.env.HOME || process.env.USERPROFILE || "/root";
-  const baseDir = (directory && directory !== "/")
-    ? join(directory, ".opencode", "loom")
-    : join(home, ".config", "opencode", "loom");
-  const meetingsDir = join(baseDir, "meetings");
+  const meetingsDir = join(resolveLoomBaseDir(directory), "meetings");
   if (!existsSync(meetingsDir)) return [];
 
   const files = [];
@@ -550,10 +586,6 @@ export function isValidMeetingId(id) {
 
 export function getMeetingDbPath(directory, meetingId) {
   if (!isValidMeetingId(meetingId)) return null;
-  const home = process.env.HOME || process.env.USERPROFILE || "/root";
-  const baseDir = (directory && directory !== "/")
-    ? join(directory, ".opencode", "loom")
-    : join(home, ".config", "opencode", "loom");
-  const path = join(baseDir, "meetings", `${meetingId}.db`);
+  const path = join(resolveLoomBaseDir(directory), "meetings", `${meetingId}.db`);
   return existsSync(path) ? path : null;
 }

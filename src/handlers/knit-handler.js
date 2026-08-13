@@ -1,5 +1,5 @@
 import { MeetingOrchestrator } from "../orchestrator.js";
-import { composeRoomWithDomains, formatRoomPreview, detectDomainsFallback } from "../composer.js";
+import { composeRoomWithDomains, formatRoomPreview, detectDomainsWithLLM } from "../composer.js";
 import { createModelPlan, formatModelPlan } from "../model-discovery.js";
 import { findMeetingBySessionId, getDbPathForMeeting, MeetingDatabase } from "../database.js";
 import {
@@ -8,7 +8,8 @@ import {
 } from "../services/model-service.js";
 import { Logger, extractErrorInfo } from "../logger.js";
 import { getConfig } from "../config.js";
-import { unlinkSync, writeFileSync, mkdirSync, existsSync } from "fs";
+import { resolveLoomBaseDir } from "../paths.js";
+import { unlinkSync, writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
 import { sanitizeForPrompt } from "../utils/sanitize.js";
 
@@ -84,11 +85,8 @@ export function createKnitHandler(client, directory, activeLooms) {
    */
   function writeReportFile(meetingId, report) {
     try {
-      const home = process.env.HOME || process.env.USERPROFILE || "/root";
-    const baseDir = (directory && directory !== "/")
-      ? join(directory, ".opencode", "loom")
-      : join(home, ".config", "opencode", "loom");
-    const dir = join(baseDir, "meetings");
+      const baseDir = resolveLoomBaseDir(directory);
+      const dir = join(baseDir, "meetings");
       mkdirSync(dir, { recursive: true });
       const filePath = join(dir, `${meetingId}.md`);
       writeFileSync(filePath, report, "utf-8");
@@ -139,7 +137,11 @@ export function createKnitHandler(client, directory, activeLooms) {
       if (existingMeeting) {
         const extDbPath = getDbPathForMeeting(directory, existingMeeting.meetingId);
         if (extDbPath) {
-          try { unlinkSync(extDbPath); } catch {}
+          try { unlinkSync(extDbPath); } catch (err) {
+            if (err?.code !== 'ENOENT') {
+              logger.debug("fresh_delete_failed", "Failed to delete existing loom database", { error: err.message });
+            }
+          }
           logger.info("loom_fresh", "Cleared existing loom database for fresh start", { meetingId: existingMeeting.meetingId });
         }
       }
@@ -147,7 +149,7 @@ export function createKnitHandler(client, directory, activeLooms) {
 
     const existingMeeting = await findMeetingBySessionId(directory, sessionID);
 
-    if (existingMeeting && args.extend !== false && !args.dry_run && args.fresh !== true) {
+    if (existingMeeting && args.fresh !== true && !args.dry_run) {
       return handleExtend(existingMeeting, args, context, loomId, sessionID);
     }
 
@@ -191,7 +193,39 @@ export function createKnitHandler(client, directory, activeLooms) {
         preferred_contribution_types: p.preferred_contribution_types,
       }));
     } else {
-      detectedDomains = detectDomainsFallback(args.question);
+      // Create a temporary session for domain detection via LLM
+      let tempSessionId = null;
+      try {
+        const tempSession = await client.session.create({
+          body: { title: "Loom domain detection", parentID: sessionID },
+          query: { directory },
+        });
+        if (tempSession.error) throw new Error(JSON.stringify(tempSession.error));
+        tempSessionId = tempSession.data?.id;
+
+        const promptFn = async (system, model, message) => {
+          const result = await client.session.prompt({
+            path: { id: tempSessionId },
+            body: { system, model, tools: {}, parts: [{ type: "text", text: message }] },
+            query: { directory },
+          });
+          if (result.error) throw new Error(JSON.stringify(result.error));
+          return result.data?.parts?.[0]?.text ?? "";
+        };
+
+        detectedDomains = await detectDomainsWithLLM(
+          args.question,
+          promptFn,
+          () => sessionModel,
+        );
+      } catch (err) {
+        logger.warn("domain_detection_failed", "LLM domain detection failed — using general domain", extractErrorInfo(err));
+        detectedDomains = [];
+      } finally {
+        if (tempSessionId) {
+          try { await client.session.delete({ path: { id: tempSessionId }, query: { directory } }); } catch { /* cleanup */ }
+        }
+      }
 
       const seed = args.seed ?? Date.now();
       composedRoom = composeRoomWithDomains(args.question, undefined, detectedDomains, seed);

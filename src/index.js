@@ -3,9 +3,8 @@ import { isAgentSessionClient } from "./client-types.js";
 import { deleteMeetingFiles, deleteMeetingsBySessionId, findMeetingBySessionId, getDbPathForMeeting, getDatabasesBySessionId, loadSessionIndex } from "./database.js";
 import { startDashboard } from "./dashboard/server.js";
 import { createKnitHandler } from "./handlers/knit-handler.js";
-import { createConfig, getConfigSource } from "./config.js";
+import { createConfig, getConfigSource, setDefaultConfigDirectory } from "./config.js";
 import { Logger } from "./logger.js";
-import { setDefaultConfigDirectory } from "./config.js";
 
 export const Loom = async (input) => {
   const { client, directory } = input;
@@ -34,6 +33,40 @@ export const Loom = async (input) => {
 
   const activeLooms = new Map();
   let activeDashboard = null;
+
+  const markActiveMeetingsAborted = () => {
+    for (const [id, engine] of activeLooms) {
+      try {
+        const state = engine.getState();
+        if (state.status !== "converged" && state.status !== "cancelled" &&
+            state.status !== "timeout" && state.status !== "max_rounds_reached" &&
+            state.status !== "aborted" && state.status !== "deadlocked") {
+          engine.cancel();
+          logger.warn("process_exit", `Marking meeting ${id} as aborted due to process exit`);
+        }
+      } catch { /* best effort */ }
+    }
+  };
+
+  const originalExit = process.exit.bind(process);
+  const wrappedExit = (code) => {
+    markActiveMeetingsAborted();
+    return originalExit(code);
+  };
+
+  process.on("exit", () => markActiveMeetingsAborted());
+  process.on("SIGINT", () => { markActiveMeetingsAborted(); process.exit(130); });
+  process.on("SIGTERM", () => { markActiveMeetingsAborted(); process.exit(143); });
+  process.on("uncaughtException", (err) => {
+    logger.error("uncaught_exception", "Uncaught exception — aborting active meetings", { message: err.message, stack: err.stack });
+    markActiveMeetingsAborted();
+    process.exit(1);
+  });
+  process.on("unhandledRejection", (reason) => {
+    logger.error("unhandled_rejection", "Unhandled rejection — aborting active meetings", { reason: String(reason) });
+    markActiveMeetingsAborted();
+    process.exit(1);
+  });
 
   const { handleKnit, handleKnitModels } = createKnitHandler(client, directory, activeLooms);
 
@@ -329,11 +362,10 @@ export const Loom = async (input) => {
 };
 
 export { MeetingOrchestrator } from "./orchestrator.js";
-export { composeRoom, formatRoomPreview } from "./composer.js";
+export { formatRoomPreview } from "./composer.js";
 export {
   getTierConfig,
   splitModel,
-  can,
   getPromptForTier,
   getRightsForTier,
 } from "./shared.js";

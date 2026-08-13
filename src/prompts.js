@@ -1,27 +1,37 @@
 import { generateRoundBriefs } from "./warp-manager.js";
-import { getPromptForTier } from "./shared.js";
-import { sanitizeForPrompt, sanitizeForDisplay } from "./utils/sanitize.js";
+import { getPromptForTier, INTERJECTION_PRIORITY_CAP } from "./shared.js";
+import { sanitizeForDisplay } from "./utils/sanitize.js";
 
-/** Generates a unique delimiter that won't collide with content. */
-function makeDelimiter() {
-  return `<<<LOOM_DELIM_${crypto.randomUUID().replace(/-/g, '')}>>>`;
+/** Generates a stable delimiter that won't change across runs. */
+function makeDelimiter(label) {
+  return `<<<LOOM_${label}>>>`;
 }
 
 /**
  * Wraps context in delimiter-protected sections to prevent prompt injection.
- * Cheap hardening: delimiters make it easier for LLMs to parse boundaries
- * and harder for injected content to override instructions.
+ * Uses stable delimiters for reproducibility and debugging.
  */
 export function delimitContext(context, label) {
   if (!context || !context.trim()) return '';
-  const delim = makeDelimiter();
-  return `${delim}BEGIN_${label.toUpperCase()}${delim}\n${context}\n${delim}END_${label.toUpperCase()}${delim}`;
+  const delim = makeDelimiter(label);
+  return `${delim}_BEGIN_\n${context}\n${delim}_END_`;
 }
 
 /** Builds a prompt asking a listener to privately reflect on a speaker's contribution. */
 export function buildReflectionPrompt(listener, speakerName, contribution) {
   const safeSpeaker = sanitizeForDisplay(speakerName);
   const safeContribution = sanitizeForDisplay(contribution);
+  const tier = listener.config.tier;
+
+  const tierReflectionGuidance = {
+    junior: "React instinctively — what excites you, what feels wrong, what reminds you of something unrelated? Don't worry about being right.",
+    mid: "Evaluate the reasoning structure. Where does the logic hold? Where does it break? What evidence would change your mind?",
+    senior: "Assess risk and feasibility. What has worked before in similar situations? What assumptions are most dangerous to leave unchallenged?",
+    principal: "Determine if this contribution moves the deliberation forward or merely restates what's already known. Is it actionable?",
+  };
+
+  const guidance = tierReflectionGuidance[tier] || tierReflectionGuidance.mid;
+
   return `## Private Reflection
 
 **${safeSpeaker}** just said:
@@ -29,7 +39,9 @@ export function buildReflectionPrompt(listener, speakerName, contribution) {
 
 You are **${listener.config.name}** (${listener.config.tier}). Your agenda: ${listener.config.agenda}
 
-What is your honest reaction? Write 2-3 sentences:
+${guidance}
+
+Write 2-3 sentences:
 - Does this change your view? How?
 - What assumption would you challenge?
 - What are they missing from your perspective?
@@ -83,11 +95,15 @@ Respond with either "[YIELD]" or "[CONTEST] [your reason in one sentence]"`;
 }
 
 /** Builds a prompt for the moderator to rule on deadlocks, circular arguments, or force convergence. */
-export function buildModeratorPrompt(situation, currentRound, maxRounds, totalContributions, lastThreeContributions) {
+export function buildModeratorPrompt(situation, currentRound, maxRounds, totalContributions, recentContributions, previousRulings = []) {
   const safeSituation = sanitizeForDisplay(situation);
-  const contributionsList = lastThreeContributions.map((c) =>
+  const contributionsList = recentContributions.map((c) =>
     `  - ${c.content ? sanitizeForDisplay(c.content.slice(0, 100)) : "(no content)"}...`
   ).join("\n");
+
+  const rulingsSection = previousRulings.length > 0
+    ? `\n## Your Previous Rulings (for consistency)\n${previousRulings.map((r, i) => `  ${i + 1}. Round ${r.round}: ${r.decision} → ${r.next_speaker}`).join("\n")}\n`
+    : "";
 
   return `You are the MODERATOR of a structured multi-agent deliberation. You do NOT contribute opinions or domain knowledge. Your ONLY job is process governance.
 
@@ -103,7 +119,8 @@ export function buildModeratorPrompt(situation, currentRound, maxRounds, totalCo
 - Favor the participant whose point is more on-topic
 - When in doubt, let the original speaker continue
 - Your rulings are final
-
+- Be consistent with your previous rulings unless circumstances have changed materially
+${rulingsSection}
 ## Situation Requiring Your Ruling
 ${safeSituation}
 
@@ -200,12 +217,11 @@ function getDomainSynthesisGuidance(domain) {
 /** Builds the system prompt for an agent in the multi-session architecture (identity + rules). */
 export function buildAgentSystemPrompt(participant) {
   const tier = participant.config.tier;
-  const isJunior = tier === "junior";
   const cfg = participant.config;
 
   const tierGuidance = getPromptForTier(tier);
 
-  const priorityCap = isJunior ? 5 : tier === "mid" ? 7 : tier === "senior" ? 9 : 10;
+  const priorityCap = INTERJECTION_PRIORITY_CAP[tier] ?? 5;
   const interjectionRule = `5. To interject, add: [INTERJECT: Priority: <1-${priorityCap}>, Reason: "why you must speak now", Target: <optional contribution id like #12 or participant name>] — then write your interjection content immediately after on the same line`;
   const governanceRule = `8. Only with a governance-level concern, add: [GOVERNANCE: <directive>: <value>] where directive is one of extend_rounds (value: rounds to add), force_converge (value: reason), raise_objection (value: objection), request_topic (value: topic), nominate_synthesizer (value: participant name), or escalate (value: reason). Use sparingly — this is an escalation mechanism, not a normal communication channel.`;
 

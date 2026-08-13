@@ -41,6 +41,8 @@ const STATUS_COLORS = {
   max_rounds_reached: "loom-badge-max_rounds_reached",
   initializing: "loom-badge-initializing",
   aborted: "loom-badge-aborted",
+  cancelled: "loom-badge-aborted",
+  timeout: "loom-badge-timeout",
 };
 
 /** @param {string} tier */
@@ -61,6 +63,7 @@ export function statusClass(status) {
 /** @param {string} iso */
 export function relativeTime(iso) {
   const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return "—";
   const now = Date.now();
   const diff = now - then;
   if (diff < 60_000) return "just now";

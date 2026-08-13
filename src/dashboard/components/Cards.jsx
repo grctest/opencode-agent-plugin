@@ -1,4 +1,4 @@
-import { useState, useMemo, memo } from "react";
+import { useState, useRef, useEffect, useMemo, memo } from "react";
 import { createPortal } from "react-dom";
 import { cn, tierClass, typeClass, relativeTime } from "../utils.js";
 import { marked } from "marked";
@@ -24,13 +24,55 @@ export function renderMarkdown(content) {
 }
 
 export const ContentDialog = memo(({ open, onClose, title, className, children }) => {
+  const dialogRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const prevFocus = document.activeElement;
+    dialogRef.current?.focus?.();
+    const handleKey = (e) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose();
+      } else if (e.key === "Tab") {
+        const focusables = dialogRef.current?.querySelectorAll(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        );
+        if (!focusables || focusables.length === 0) return;
+        const list = Array.from(focusables);
+        const first = list[0];
+        const last = list[list.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("keydown", handleKey);
+      if (prevFocus && typeof prevFocus.focus === "function") prevFocus.focus();
+    };
+  }, [open, onClose]);
+
   if (!open) return null;
   return createPortal(
     <div className="loom-dialog-backdrop" onClick={onClose}>
-      <div className={cn("loom-dialog", className)} onClick={(e) => e.stopPropagation()}>
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title || "Dialog"}
+        className={cn("loom-dialog", className)}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="loom-dialog-header">
           <span className="loom-title-sm">{title}</span>
-          <button className="loom-dialog-close" onClick={onClose}>×</button>
+          <button className="loom-dialog-close" onClick={onClose} aria-label="Close dialog">×</button>
         </div>
         <div className="loom-dialog-body">{children}</div>
       </div>
@@ -117,10 +159,23 @@ export const ContributionItem = memo(({ contribution, participantName, onDialogO
   const html = useMemo(() => renderMarkdown(content), [content]);
   const isLong = content.length > 300;
 
+  const openDialog = () => isLong && onDialogOpen?.({ contribution, participantName });
+  const onKeyDown = (e) => {
+    if (!isLong) return;
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openDialog();
+    }
+  };
+
   return (
     <div
+      role={isLong ? "button" : undefined}
+      tabIndex={isLong ? 0 : undefined}
+      aria-expanded={isLong ? false : undefined}
       className={cn("loom-card", "loom-contribution-card", `loom-contrib-type-${contribution.type}`, isLong && "loom-contrib-clickable")}
-      onClick={() => isLong && onDialogOpen?.({ contribution, participantName })}
+      onClick={openDialog}
+      onKeyDown={onKeyDown}
     >
       <div className="loom-mb-sm">
         <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">
@@ -174,6 +229,8 @@ export const InterjectionItem = memo(({ interjection, participantName }) => {
 });
 
 export const WarpViewer = memo(({ warp }) => {
+  const sections = useMemo(() => (warp ? warp.split(/(?=## )/g).filter(Boolean) : []), [warp]);
+
   if (!warp) {
     return (
       <div className="loom-card">
@@ -182,8 +239,6 @@ export const WarpViewer = memo(({ warp }) => {
       </div>
     );
   }
-
-  const sections = useMemo(() => warp.split(/(?=## )/g).filter(Boolean), [warp]);
 
   return (
     <div className="loom-card">
@@ -243,7 +298,7 @@ export const AgentPerspective = memo(({ participant, meeting }) => {
           <div className="loom-agent-perspective-section">
             <span className="loom-agent-perspective-label">Shared Context (Warp)</span>
             <div className="loom-agent-perspective-warp">
-              {warpPreview}{meeting.warp.length > 500 ? "..." : ""}
+              {warpPreview}{warpPreview.length > 500 ? "..." : ""}
             </div>
           </div>
         )}

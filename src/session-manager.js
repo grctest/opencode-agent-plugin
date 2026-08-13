@@ -25,78 +25,52 @@ export class SessionManager {
     this.#orchestratorSessionId = sessionId;
   }
 
-  async createChildSession(participant) {
+  async #createSessionWithRetry(title, onRetry = null) {
     return withRetry(async () => {
       const result = await this.#client.session.create({
         body: {
           parentID: this.#parentSessionId,
-          title: `Loom · ${participant.config.name} (${participant.config.tier})`,
+          title,
         },
         query: { directory: this.#directory },
       });
 
       if (!result.data || result.error) {
-        throw new Error(`Failed to create session for ${participant.config.name}: ${result.error?.message || "unknown error"}`);
+        throw new Error(`Failed to create session "${title}": ${result.error?.message || "unknown error"}`);
       }
 
       return result.data.id;
     }, {
-      maxAttempts: 3,
-      baseDelayMs: 1000,
-      maxDelayMs: 5000,
+      maxAttempts: getConfig().maxRetryAttempts ?? 3,
+      baseDelayMs: getConfig().retryBaseDelayMs ?? 1000,
+      maxDelayMs: getConfig().retryMaxDelayMs ?? 5000,
       retryable: isRetryableError,
-      onRetry: (err, attempt, delay) => {
+      onRetry,
+    });
+  }
+
+  async createChildSession(participant) {
+    return this.#createSessionWithRetry(
+      `Loom · ${participant.config.name} (${participant.config.tier})`,
+      (err, attempt, delay) => {
         this.#logger?.warn("session_create_retry", `Retrying session creation for ${participant.config.name} (attempt ${attempt + 1})`, { delay, error: err.message });
       }
-    });
+    );
   }
 
   async createSynthesizerSession(synthesizer) {
-    return withRetry(async () => {
-      const result = await this.#client.session.create({
-        body: {
-          parentID: this.#parentSessionId,
-          title: `Loom · Synthesizer (${synthesizer.config.tier})`,
-        },
-        query: { directory: this.#directory },
-      });
-
-      if (!result.data || result.error) {
-        throw new Error(`Failed to create synthesizer session: ${result.error?.message || "unknown error"}`);
-      }
-
-      return result.data.id;
-    }, {
-      maxAttempts: 3,
-      baseDelayMs: 1000,
-      maxDelayMs: 5000,
-      retryable: isRetryableError,
-    });
+    return this.#createSessionWithRetry(`Loom · Synthesizer (${synthesizer.config.tier})`);
   }
 
   async createOrchestratorSession() {
-    return withRetry(async () => {
-      const result = await this.#client.session.create({
-        body: {
-          parentID: this.#parentSessionId,
-          title: "Loom · Orchestrator",
-        },
-        query: { directory: this.#directory },
-      });
-
-      if (!result.data || result.error) {
-        throw new Error(`Failed to create orchestrator session: ${result.error?.message || "unknown error"}`);
-      }
-
-      return result.data.id;
-    }, {
-      maxAttempts: 3,
-      baseDelayMs: 1000,
-      maxDelayMs: 5000,
-      retryable: isRetryableError,
-    });
+    return this.#createSessionWithRetry("Loom · Orchestrator");
   }
 
+  /**
+   * Prompts the orchestrator session. Resolves with { text, tokens } so callers can
+   * accumulate usage stats. tokens is undefined when the provider omits usage data.
+   * @returns {Promise<{ text: string, tokens?: { input: number; output: number } }>}
+   */
   async promptOrchestrator(system, model, message) {
     return withRetry(async () => {
       const result = await withTimeout(
@@ -108,7 +82,7 @@ export class SessionManager {
         getConfig().agentTimeoutMs,
       );
       if (result.error) throw new Error(JSON.stringify(result.error));
-      return extractText(result.data);
+      return { text: extractText(result.data), tokens: result.data?.tokens };
     }, {
       maxAttempts: getConfig().maxRetryAttempts,
       baseDelayMs: getConfig().retryBaseDelayMs,
@@ -119,6 +93,7 @@ export class SessionManager {
 
   async recreateSession(participant, db) {
     try {
+      const oldSessionId = participant.session_id;
       const newSessionId = await this.createChildSession(participant);
       participant.session_id = newSessionId;
       participant.session_version = (participant.session_version ?? 0) + 1;
@@ -129,6 +104,12 @@ export class SessionManager {
       if (db) {
         db.setParticipantStatus(participant.config.id, "listening");
       }
+      // Clean up old session to prevent leaks
+      if (oldSessionId) {
+        this.deleteSession(oldSessionId).catch((err) => {
+          this.#logger?.debug("session_delete_failed", `Failed to delete old session ${oldSessionId}`, extractErrorInfo(err));
+        });
+      }
       return true;
     } catch (err) {
       const info = extractErrorInfo(err);
@@ -137,26 +118,15 @@ export class SessionManager {
     }
   }
 
-  async promptParent(system, model, message, temperature) {
-    return withRetry(async () => {
-      const body = { system, model, tools: {}, parts: [{ type: "text", text: message }] };
-      if (temperature !== undefined) body.temperature = temperature;
-      const result = await withTimeout(
-        this.#client.session.prompt({
-          path: { id: this.#parentSessionId },
-          body,
-          query: { directory: this.#directory },
-        }),
-        getConfig().agentTimeoutMs,
-      );
-      if (result.error) throw new Error(JSON.stringify(result.error));
-      return extractText(result.data);
-    }, {
-      maxAttempts: getConfig().maxRetryAttempts,
-      baseDelayMs: getConfig().retryBaseDelayMs,
-      maxDelayMs: getConfig().retryMaxDelayMs,
-      retryable: isRetryableError,
-    });
+  async deleteSession(sessionId) {
+    try {
+      await this.#client.session.delete({
+        path: { id: sessionId },
+        query: { directory: this.#directory },
+      });
+    } catch {
+      // Best effort - session may already be deleted
+    }
   }
 
   postProgress(message) {
@@ -180,6 +150,13 @@ export class SessionManager {
         );
       } else {
         this.#logger?.warn("progress_post_failed", "Failed to post progress message", extractErrorInfo(err));
+      }
+      // Reset failure count after a successful interval to allow recovery
+      if (this.#progressFailureCount >= MAX_PROGRESS_FAILURES_BEFORE_ALERT) {
+        setTimeout(() => {
+          this.#progressFailureCount = 0;
+          this.#progressAlerted = false;
+        }, 60000);
       }
     });
   }

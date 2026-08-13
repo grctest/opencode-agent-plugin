@@ -1,0 +1,56 @@
+import { LoomError, extractErrorInfo } from "../logger.js";
+import { Logger } from "../logger.js";
+
+const EXTENSION_EXTRA_ROUNDS = 4;
+
+/**
+ * Handles meeting extension logic: warp update, round limit bump, session recreation.
+ * Extracted from MeetingOrchestrator for single responsibility.
+ */
+export class MeetingExtender {
+  /** @type {import("../logger.js").Logger} */
+  #logger;
+
+  constructor() {
+    this.#logger = new Logger();
+  }
+
+  /**
+   * Extends the meeting with new prompt and additional rounds.
+   * @returns {Promise<void>}
+   */
+  async extend(params) {
+    const {
+      database,
+      stateManager,
+      sessionManager,
+      roundExecutor,
+      newPrompt,
+    } = params;
+
+    if (!database) {
+      throw new LoomError("Cannot extend: database not available", { phase: "extension", recoverable: false });
+    }
+
+    const newWarp = `${database.getWarp()}\n\n**User Input:** ${newPrompt}`;
+    database.setWarp(newWarp);
+    stateManager.setWarp(newWarp);
+    stateManager.forceTransitionTo("weaving");
+    stateManager.setMaxRounds(stateManager.getMaxRounds() + EXTENSION_EXTRA_ROUNDS);
+    database.setRound(stateManager.getCurrentRound());
+
+    for (const p of stateManager.getParticipants()) {
+      if (p.status === "failed") {
+        await sessionManager.recreateSession(p, database);
+      } else {
+        stateManager.setParticipantStatus(p.config.id, "listening");
+        database.setParticipantStatus(p.config.id, "listening");
+      }
+    }
+
+    await sessionManager.postProgress(
+      `🧵 Extending loom — adding ${EXTENSION_EXTRA_ROUNDS} more rounds (now ${stateManager.getMaxRounds()} total)`
+    );
+    this.#logger.info("extended", "Meeting extended", { newMaxRounds: stateManager.getMaxRounds() });
+  }
+}

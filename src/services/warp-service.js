@@ -1,4 +1,4 @@
-import { evolveWarp, compactWarpWithLLM, compactWarpRuleBased, generateRoundBriefs } from "../warp-manager.js";
+import { evolveWarp, compactWarpWithLLM } from "../warp-manager.js";
 import { getConfig } from "../config.js";
 import { Logger } from "../logger.js";
 
@@ -21,7 +21,8 @@ export class WarpService {
    * @returns {Promise<string>} Updated warp
    */
   async evolve(warp, round, compactFn) {
-    return evolveWarp(warp, round, compactFn);
+    const result = await evolveWarp(warp, round, compactFn);
+    return result ?? warp ?? "";
   }
 
   /**
@@ -44,15 +45,5 @@ export class WarpService {
         model,
       );
     };
-  }
-
-  /**
-   * Generates round briefs for agent context.
-   * @param {string} warp
-   * @param {number} currentRound
-   * @returns {string}
-   */
-  generateBriefs(warp, currentRound) {
-    return generateRoundBriefs(warp, currentRound);
   }
 }

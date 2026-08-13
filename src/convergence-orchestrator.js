@@ -1,85 +1,8 @@
 import { getConfig } from "./config.js";
-import { LOOKBACK } from "./shared.js";
 import { Logger, extractErrorInfo } from "./logger.js";
+import { tokenizeMeaningful, computeTfidfVector, cosineSimilarity, buildIdf } from "./utils/nlp.js";
 
 const convergenceLogger = new Logger();
-
-const STOPWORDS = new Set([
-  "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
-  "have", "has", "had", "do", "does", "did", "will", "would", "could",
-  "should", "may", "might", "shall", "can", "need", "dare", "ought",
-  "to", "of", "in", "for", "on", "with", "at", "by", "from",
-  "as", "into", "through", "during", "before", "after", "above", "below",
-  "between", "out", "off", "over", "under", "again", "further", "then",
-  "once", "here", "there", "when", "where", "why", "how", "all", "both",
-  "each", "few", "more", "most", "other", "some", "such", "no", "nor",
-  "not", "only", "own", "same", "so", "than", "too", "very", "just",
-  "because", "but", "and", "or", "if", "while", "about", "up", "that",
-  "this", "these", "those", "it", "its", "i", "we", "you", "they", "he",
-  "she", "my", "your", "their", "our", "his", "her", "me", "them", "us",
-]);
-
-function fingerprint(text) {
-  const words = text.toLowerCase().replace(/[^a-z0-9\s]/g, "").split(/\s+/);
-  const meaningful = words.filter((w) => w.length > 3 && !STOPWORDS.has(w));
-  return new Set(meaningful);
-}
-
-function overlapFraction(setA, setB) {
-  if (setA.size === 0 || setB.size === 0) return 0;
-  let intersection = 0;
-  for (const item of setA) {
-    if (setB.has(item)) intersection++;
-  }
-  return intersection / Math.min(setA.size, setB.size);
-}
-
-function computeTfidfVector(text, idf) {
-  const words = text.toLowerCase().replace(/[^a-z0-9\s]/g, "").split(/\s+/);
-  const meaningful = words.filter((w) => w.length > 3 && !STOPWORDS.has(w));
-  const termFreq = {};
-  for (const w of meaningful) {
-    termFreq[w] = (termFreq[w] || 0) + 1;
-  }
-  const vec = {};
-  for (const [term, freq] of Object.entries(termFreq)) {
-    const idfVal = idf[term] || 1;
-    vec[term] = freq * idfVal;
-  }
-  return vec;
-}
-
-function cosineSimilarity(vecA, vecB) {
-  let dotProduct = 0;
-  let normA = 0;
-  let normB = 0;
-  const allTerms = new Set([...Object.keys(vecA), ...Object.keys(vecB)]);
-  for (const term of allTerms) {
-    const a = vecA[term] || 0;
-    const b = vecB[term] || 0;
-    dotProduct += a * b;
-    normA += a * a;
-    normB += b * b;
-  }
-  if (normA === 0 || normB === 0) return 0;
-  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
-}
-
-function buildIdf(contributions) {
-  const docCount = contributions.length;
-  const docFreq = {};
-  for (const c of contributions) {
-    const words = fingerprint(c.content);
-    for (const w of words) {
-      docFreq[w] = (docFreq[w] || 0) + 1;
-    }
-  }
-  const idf = {};
-  for (const [term, freq] of Object.entries(docFreq)) {
-    idf[term] = Math.log((docCount + 1) / (freq + 1)) + 1;
-  }
-  return idf;
-}
 
 /**
  * Detects stalled discussion: the LAST contribution of each of the last two rounds is
@@ -88,7 +11,6 @@ function buildIdf(contributions) {
  */
 function detectLowNoveltyAcrossRounds(rounds, windowSize, threshold) {
   if (rounds.length < 3) return false;
-  const checkRounds = rounds.slice(-2);
   const pool = [];
   let lowNoveltyRounds = 0;
 
@@ -116,7 +38,7 @@ function detectLowNoveltyAcrossRounds(rounds, windowSize, threshold) {
   return lowNoveltyRounds >= 2;
 }
 
-function detectContentDiversity(rounds, window) {
+function detectContentDiversity(rounds, window, threshold = 0.85) {
   if (rounds.length < window) return true;
 
   const recentRounds = rounds.slice(-window);
@@ -142,7 +64,7 @@ function detectContentDiversity(rounds, window) {
 
   const similarity = cosineSimilarity(recentVec, olderVec);
 
-  return similarity < 0.85;
+  return similarity < threshold;
 }
 
 function detectStaleParticipants(rounds, totalParticipants) {
@@ -160,7 +82,7 @@ function detectStaleParticipants(rounds, totalParticipants) {
   return activeParticipants.size <= Math.ceil(totalParticipants * ratio);
 }
 
-function detectDiminishingReturns(rounds) {
+function detectDiminishingReturns(rounds, multiplier = 0.5) {
   if (rounds.length < 3) return false;
 
   const counts = rounds.map((r) => r.contributions.length);
@@ -171,7 +93,7 @@ function detectDiminishingReturns(rounds) {
   const prevAvg = previous.reduce((a, b) => a + b, 0) / previous.length;
   const recentAvg = recent.reduce((a, b) => a + b, 0) / recent.length;
 
-  return prevAvg > 0 && recentAvg <= prevAvg * 0.5;
+  return prevAvg > 0 && recentAvg <= prevAvg * multiplier;
 }
 
 /**
@@ -179,7 +101,7 @@ function detectDiminishingReturns(rounds) {
  * { triggered: boolean, confidence: number, evidence?: any, reason?: string }
  * Confidence is 0-100 representing how sure we are this condition indicates convergence.
  */
-export const CONVERGENCE_CHECKS = [
+const CONVERGENCE_CHECKS = [
   {
     name: 'all_passed',
     weight: 1.0,
@@ -214,9 +136,10 @@ export const CONVERGENCE_CHECKS = [
       const activeCount = state.participants.filter(
         (p) => p.status !== "passed" && p.status !== "failed"
       ).length;
+      const confidence = getConfig().convergence.allPassedConfidence;
       return {
         triggered: passedCount >= activeCount && activeCount > 0 && state.current_round >= 2,
-        confidence: passedCount >= activeCount ? 80 : 0,
+        confidence: passedCount >= activeCount ? confidence : 0,
         evidence: { passedCount, activeCount },
       };
     },
@@ -232,7 +155,7 @@ export const CONVERGENCE_CHECKS = [
       );
       return {
         triggered,
-        confidence: triggered ? 80 : 0,
+        confidence: triggered ? config.semanticConfidence : 0,
         evidence: {
           repetitionWindow: config.repetitionWindow,
           threshold: config.lowNoveltyCosineThreshold,
@@ -252,7 +175,7 @@ export const CONVERGENCE_CHECKS = [
         !detectContentDiversity(state.rounds, config.diminishingReturnsWindow);
       return {
         triggered,
-        confidence: triggered ? 60 : 0,
+        confidence: triggered ? config.stalemateConfidence : 0,
         evidence: { window: config.diminishingReturnsWindow },
       };
     },
@@ -365,7 +288,7 @@ Guidelines:
           }
         }
 
-        const confidence = decision === "converge" ? 90 : 0;
+        const confidence = decision === "converge" ? getConfig().convergence.llmVerdictConfidence : 0;
         const shouldStop = decision === "converge";
         return {
           triggered: shouldStop,
@@ -396,9 +319,10 @@ export async function orchestrateConvergence(state, round, promptOrchestrator, g
   const triggered = [];
   let maxConfidence = 0;
   let semanticExtend = false;
+  let extendAmount = 0;
 
   for (const checkDef of CONVERGENCE_CHECKS) {
-    if (checkDef.alwaysRun === false && state.current_round < (checkDef.minRound || 2)) {
+    if (checkDef.minRound && state.current_round < checkDef.minRound) {
       continue;
     }
 
@@ -406,9 +330,9 @@ export async function orchestrateConvergence(state, round, promptOrchestrator, g
     if (checkDef.requiresLLM) {
       result = await checkDef.check(state, promptOrchestrator, getHighestTierModel);
       if (result.action === "extend" && state.max_rounds < 10) {
-        state.max_rounds += 1;
+        extendAmount = 1;
         semanticExtend = true;
-        convergenceLogger.info('semantic_extend', 'Semantic analysis recommends one more round', { newMax: state.max_rounds });
+        convergenceLogger.info('semantic_extend', 'Semantic analysis recommends one more round', { newMax: state.max_rounds + 1 });
       }
     } else {
       result = checkDef.check(state);
@@ -422,7 +346,7 @@ export async function orchestrateConvergence(state, round, promptOrchestrator, g
 
   const config = getConfig().convergence;
   const thresholds = {
-    consensus: 0.95,
+    consensus: config.llmVerdictConfidence / 100,
     majority: 0.7,
     moderator_forces: 0.6,
   };
@@ -430,12 +354,6 @@ export async function orchestrateConvergence(state, round, promptOrchestrator, g
 
   const normalizedScore = maxConfidence / 100;
   const shouldStop = normalizedScore >= threshold;
-
-  let status = state.status;
-  if (shouldStop && status === "weaving") {
-    status = "converged";
-    state.status = status;
-  }
 
   const reason = triggered.length > 0
     ? `Triggered by: ${triggered.join(", ")}`
@@ -456,16 +374,6 @@ export async function orchestrateConvergence(state, round, promptOrchestrator, g
     confidence: normalizedScore,
     triggeredBy: triggered,
     reason,
+    extendAmount,
   };
 }
-
-export {
-  detectLowNoveltyAcrossRounds,
-  detectContentDiversity,
-  detectStaleParticipants,
-  detectDiminishingReturns,
-  buildIdf,
-  computeTfidfVector,
-  cosineSimilarity,
-  fingerprint,
-};

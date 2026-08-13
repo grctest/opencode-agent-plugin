@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 11;
 
 export function initSchema(db) {
   db.exec(`
@@ -14,6 +14,8 @@ export function initSchema(db) {
       domain TEXT,
       parent_session_id TEXT,
       opencode_session_id TEXT,
+      next_speaker_id TEXT,
+      stats TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -114,24 +116,44 @@ export function initSchema(db) {
 
     CREATE INDEX IF NOT EXISTS idx_contributions_meeting_round ON contributions(meeting_id, round);
     CREATE INDEX IF NOT EXISTS idx_contributions_meeting ON contributions(meeting_id);
+    CREATE INDEX IF NOT EXISTS idx_contributions_participant ON contributions(participant_id);
     CREATE INDEX IF NOT EXISTS idx_interjections_meeting ON interjections(meeting_id);
+    CREATE INDEX IF NOT EXISTS idx_interjections_participant ON interjections(participant_id);
     CREATE INDEX IF NOT EXISTS idx_agent_errors_meeting ON agent_errors(meeting_id);
     CREATE INDEX IF NOT EXISTS idx_participants_meeting ON participants(meeting_id);
     CREATE INDEX IF NOT EXISTS idx_error_log_meeting ON error_log(meeting_id);
     CREATE INDEX IF NOT EXISTS idx_orchestrator_messages_meeting ON orchestrator_messages(meeting_id);
+    CREATE INDEX IF NOT EXISTS idx_meetings_opencode_session_id ON meetings(opencode_session_id);
+
+    CREATE TABLE IF NOT EXISTS meeting_metrics (
+      meeting_id TEXT PRIMARY KEY REFERENCES meetings(id) ON DELETE CASCADE,
+      counters TEXT NOT NULL DEFAULT '{}',
+      latencies TEXT NOT NULL DEFAULT '{}',
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      duration_ms INTEGER NOT NULL DEFAULT 0,
+      rounds INTEGER NOT NULL DEFAULT 0,
+      contributions INTEGER NOT NULL DEFAULT 0,
+      interjections INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_meeting_metrics_created ON meeting_metrics(created_at);
   `);
 }
 
 export function migrateSchema(db) {
   const currentVersion = getSchemaVersion(db);
+  if (currentVersion >= SCHEMA_VERSION) return;
 
-  if (currentVersion < 1) {
-    db.exec(`CREATE TABLE IF NOT EXISTS _loom_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
-    db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '1')`);
-    try { db.exec(`ALTER TABLE participants ADD COLUMN reflection TEXT NOT NULL DEFAULT ''`); } catch { /* exists */ }
-    try { db.exec(`ALTER TABLE meetings ADD COLUMN opencode_session_id TEXT`); } catch { /* exists */ }
-    try { db.exec(`ALTER TABLE interjections ADD COLUMN round INTEGER`); } catch { /* exists */ }
-  }
+  db.exec("BEGIN TRANSACTION");
+  try {
+    if (currentVersion < 1) {
+      db.exec(`CREATE TABLE IF NOT EXISTS _loom_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+      db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '1')`);
+      try { db.exec(`ALTER TABLE participants ADD COLUMN reflection TEXT NOT NULL DEFAULT ''`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE meetings ADD COLUMN opencode_session_id TEXT`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE interjections ADD COLUMN round INTEGER`); } catch { /* exists */ }
+    }
 
   if (currentVersion < 2) {
     try { db.exec(`DROP TABLE IF EXISTS agent_responses`); } catch { /* ignore */ }
@@ -233,6 +255,16 @@ export function migrateSchema(db) {
   if (currentVersion < 10) {
     try { db.exec(`ALTER TABLE artifacts ADD COLUMN refusals TEXT`); } catch { /* exists */ }
     db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '10')`);
+  }
+
+  if (currentVersion < 11) {
+    try { db.exec(`CREATE INDEX IF NOT EXISTS idx_interjections_participant ON interjections(participant_id)`); } catch { /* exists */ }
+    db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '11')`);
+    }
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
   }
 }
 

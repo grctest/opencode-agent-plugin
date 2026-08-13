@@ -3,12 +3,20 @@ import { Component } from "react";
 export class ErrorBoundary extends Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false, error: null };
+    this.state = { hasError: false, error: null, resetKey: 0 };
   }
 
   static getDerivedStateFromError(error) {
     return { hasError: true, error };
   }
+
+  componentDidCatch(error, errorInfo) {
+    console.error(`[Loom ErrorBoundary${this.props.label ? ` ${this.props.label}` : ""}]`, error, errorInfo.componentStack);
+  }
+
+  handleRetry = () => {
+    this.setState((s) => ({ hasError: false, error: null, resetKey: s.resetKey + 1 }));
+  };
 
   render() {
     if (this.state.hasError) {
@@ -25,13 +33,13 @@ export class ErrorBoundary extends Component {
           )}
           <button
             className="pure-button pure-button-primary loom-mt-sm"
-            onClick={() => this.setState({ hasError: false, error: null })}
+            onClick={this.handleRetry}
           >
             Try again
           </button>
         </div>
       );
     }
-    return this.props.children;
+    return <div key={this.state.resetKey}>{this.props.children}</div>;
   }
 }

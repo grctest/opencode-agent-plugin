@@ -1,6 +1,7 @@
 import { useRef, useMemo, useCallback, useState, memo } from "react";
 import { cn } from "../utils.js";
 import { ContributionItem, InterjectionItem, ThinkingCard, ContentDialog, renderMarkdown } from "./Cards.jsx";
+import { LoadingSkeleton } from "./Skeleton.jsx";
 import { List } from "react-window";
 
 const HEADER_HEIGHT = 48;
@@ -13,7 +14,11 @@ function getRowHeight(item) {
     return HEADER_HEIGHT + (item.showExtensionMarker ? EXTENSION_MARKER_HEIGHT : 0);
   }
   if (item.type === "interjection") return INTERJECTION_HEIGHT;
-  return CONTRIBUTION_HEIGHT;
+  // Dynamic height: base height + ~18px per line of content (60 chars/line at ~0.875rem)
+  const content = item.contribution?.content || "";
+  const estimatedLines = Math.max(1, Math.ceil(content.length / 60));
+  const contentHeight = estimatedLines * 18;
+  return Math.min(400, Math.max(CONTRIBUTION_HEIGHT, 80 + contentHeight));
 }
 
 const TimelineTabBase = ({
@@ -78,7 +83,7 @@ const TimelineTabBase = ({
     return item ? getRowHeight(item) : CONTRIBUTION_HEIGHT;
   }, [flatItems]);
 
-  const renderRow = useCallback(({ index, style, flatItems, participantName, onToggleCollapse, onDialogOpen }) => {
+  const renderRow = useCallback(({ index, style }) => {
     const item = flatItems[index];
     if (!item) return null;
     if (item.type === "header") {
@@ -87,7 +92,7 @@ const TimelineTabBase = ({
           {item.showExtensionMarker && (
             <div className="loom-extension-marker">
               <span className="loom-extension-marker-line" />
-              <span className="loom-extension-marker-label">🧵 Extended</span>
+              <span className="loom-extension-marker-label">Extended</span>
               <span className="loom-extension-marker-line" />
             </div>
           )}
@@ -107,7 +112,7 @@ const TimelineTabBase = ({
     if (item.type === "contribution") {
       return (
         <div style={style} className="loom-vrow">
-          <ContributionItem contribution={item.contribution} participantName={participantName(item.contribution.participant_id)} onDialogOpen={onDialogOpen} />
+          <ContributionItem contribution={item.contribution} participantName={participantName(item.contribution.participant_id)} onDialogOpen={setDialogContribution} />
         </div>
       );
     }
@@ -117,13 +122,6 @@ const TimelineTabBase = ({
       </div>
     );
   }, [flatItems, onToggleCollapse, participantName]);
-
-  const rowProps = useMemo(() => ({
-    flatItems,
-    participantName,
-    onToggleCollapse,
-    onDialogOpen: setDialogContribution,
-  }), [flatItems, participantName, onToggleCollapse]);
 
   const listHeight = useMemo(() => {
     return Math.min(600, flatItems.reduce((sum, item) => sum + getRowHeight(item), 0));
@@ -170,6 +168,9 @@ const TimelineTabBase = ({
           <p className="loom-text-xs loom-text-muted">Contributions will appear here in real-time</p>
         </div>
       )}
+      {groupedContributions.length === 0 && contributions.length === 0 && isWeaving && (
+        <LoadingSkeleton rounds={2} />
+      )}
       {flatItems.length > 0 && (
         <div className="loom-timeline-list">
           <List
@@ -177,10 +178,10 @@ const TimelineTabBase = ({
             height={listHeight}
             rowCount={flatItems.length}
             rowHeight={rowHeightFn}
-            rowComponent={renderRow}
-            rowProps={rowProps}
             width="100%"
-          />
+          >
+            {renderRow}
+          </List>
         </div>
       )}
       {filteredContributions.length === 0 && contributions.length > 0 && (

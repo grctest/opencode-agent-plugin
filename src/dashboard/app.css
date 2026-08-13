@@ -23,6 +23,7 @@
   --color-border: oklch(0.269 0 0);
   --color-input: oklch(0.269 0 0);
   --color-ring: oklch(0.439 0 0);
+  --color-background-secondary: oklch(0.18 0 0);
 }
 
 [data-theme="light"] {
@@ -43,6 +44,7 @@
   --color-border: oklch(0.85 0 0);
   --color-input: oklch(0.95 0 0);
   --color-ring: oklch(0.5 0.02 250);
+  --color-background-secondary: oklch(0.96 0 0);
 }
 
 * {
@@ -549,6 +551,47 @@ input {
   color: var(--color-foreground);
 }
 
+/* Connection banner */
+.loom-connection-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.625rem 0.875rem;
+  margin-bottom: 1rem;
+  background: color-mix(in oklch, #b45309 14%, var(--color-card));
+  border: 1px solid color-mix(in oklch, #b45309 35%, var(--color-border));
+  border-radius: var(--radius-md);
+}
+
+.loom-connection-icon {
+  font-size: 1rem;
+  line-height: 1.25;
+}
+
+.loom-connection-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.loom-connection-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #d97706;
+}
+
+.loom-connection-reason {
+  font-size: 0.75rem;
+  color: var(--color-foreground);
+}
+
+.loom-connection-hint {
+  font-size: 0.7rem;
+  color: var(--color-muted-foreground);
+}
+
 /* Extension marker in timeline */
 .loom-extension-marker {
   display: flex;
@@ -694,12 +737,6 @@ input {
   color: var(--color-primary-foreground);
 }
 
-/* Search */
-.loom-search-input {
-  height: 2.25rem;
-  font-size: 0.875rem;
-}
-
 /* Filter buttons */
 .loom-filter-btn {
   padding: 0.25rem 0.5rem;
@@ -815,6 +852,10 @@ input {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: #3b82f6;
+}
+
+.loom-orchestrator-type-governance {
+  color: #7c3aed;
 }
 
 .loom-orchestrator-content {
@@ -939,6 +980,28 @@ input {
 }
 
 .loom-error-participant { font-weight: 500; font-size: 0.875rem; }
+
+.loom-reflection-entry {
+  padding: 0.5rem;
+  background: var(--color-surface);
+  border-radius: var(--radius-sm);
+}
+
+.loom-reflection-name {
+  font-weight: 500;
+  font-size: 0.875rem;
+  margin-bottom: 0.25rem;
+}
+
+.loom-reflection-list {
+  margin: 0;
+  padding-left: 1rem;
+  list-style: disc;
+}
+
+.loom-reflection-list li {
+  margin-bottom: 0.125rem;
+}
 
 /* Participation Matrix */
 .loom-matrix-scroll {
@@ -1140,6 +1203,44 @@ input {
   gap: 1rem;
   min-height: 60vh;
   width: 100%;
+}
+
+.loom-skeleton {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+}
+
+.loom-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, color-mix(in oklch, var(--color-background) 50%, transparent), transparent);
+  animation: loom-skeleton-shimmer 1.5s ease-in-out infinite;
+}
+
+@keyframes loom-skeleton-shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.loom-skeleton-line {
+  height: 1rem;
+  border-radius: var(--radius-sm);
+}
+
+.loom-skeleton-line-short {
+  width: 60%;
+}
+
+.loom-skeleton-line-long {
+  width: 85%;
+}
+
+.loom-skeleton-card {
+  padding: 1rem;
+  margin-bottom: 0.5rem;
 }
 
 /* Content dialog */

@@ -42,7 +42,7 @@ export function parseModeratorRuling(text) {
  * Checks if moderator intervention is needed (circular arguments) and obtains a ruling.
  * Returns an action: continue, break (redirect to specific speaker), or converge (end meeting).
  */
-export async function checkModeratorIntervention(round, participants, weft, currentRound, maxRounds, promptFn, getHighestTierModel) {
+export async function checkModeratorIntervention(round, participants, weft, currentRound, maxRounds, promptFn, getHighestTierModel, previousRulings = []) {
   const trigger = getConfig().moderatorTrigger;
   if (round.contributions.length < trigger.minContributions) {
     return { action: "continue", nextSpeakerIdx: -1 };
@@ -72,7 +72,7 @@ export async function checkModeratorIntervention(round, participants, weft, curr
     }
   }
 
-  const lastThree = weft.slice(-3).map((c) => ({
+  const lastContributions = weft.slice(-7).map((c) => ({
     content: c.content || "",
     type: c.type,
     participant_id: c.participant_id,
@@ -83,7 +83,8 @@ export async function checkModeratorIntervention(round, participants, weft, curr
     currentRound,
     maxRounds,
     weft.length,
-    lastThree,
+    lastContributions,
+    previousRulings,
   );
   const principalModel = getHighestTierModel();
   if (!principalModel) return { action: "continue", nextSpeakerIdx: -1 };

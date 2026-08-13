@@ -1,4 +1,4 @@
-import { assignModelsByTier } from "../model-discovery.js";
+import { assignModelsByTier, sortModelsByQuality } from "../model-discovery.js";
 import { Logger, extractErrorInfo } from "../logger.js";
 
 /**
@@ -223,27 +223,6 @@ function getModelDiversity(available, participants, tierMap, overrideMap) {
   }
 
   return diversityMap;
-}
-
-/** Sorts models by quality score for deterministic assignment. */
-function sortModelsByQuality(models) {
-  const scoreModel = (model) => {
-    let score = 0;
-    if (model.status === "active") score += 20;
-    else if (model.status === "beta") score += 10;
-    else if (model.status === "deprecated") score -= 50;
-    score += model.limit?.context / 10000 || 0;
-    if (model.reasoning) score += 15;
-    return score;
-  };
-
-  return [...models].sort((a, b) => {
-    const diff = scoreModel(b) - scoreModel(a);
-    if (diff !== 0) return diff;
-    const aKey = `${a.providerID}/${a.modelID}`;
-    const bKey = `${b.providerID}/${b.modelID}`;
-    return aKey < bKey ? -1 : aKey > bKey ? 1 : 0;
-  });
 }
 
 /**

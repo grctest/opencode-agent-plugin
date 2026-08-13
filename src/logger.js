@@ -22,6 +22,11 @@ export class LoomError extends Error {
   }
 }
 
+function uuid() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}-${Math.random().toString(16).slice(2)}`;
+}
+
 export class Logger {
   #meetingId = null;
   #correlationId = null;
@@ -29,22 +34,11 @@ export class Logger {
 
   constructor(meetingId = null) {
     this.#meetingId = meetingId;
-    this.#correlationId = crypto.randomUUID();
+    this.#correlationId = uuid();
   }
 
   forMeeting(meetingId) {
     return new Logger(meetingId);
-  }
-
-  withCorrelationId(correlationId) {
-    const logger = new Logger(this.#meetingId);
-    logger.#correlationId = correlationId;
-    return logger;
-  }
-
-  setMinLevel(level) {
-    this.#minLevel = level;
-    return this;
   }
 
   debug(context, message, details = null) {
@@ -79,7 +73,12 @@ export class Logger {
       ...(details !== null ? { details } : {}),
       timestamp: new Date().toISOString(),
     };
-    const full = JSON.stringify(entry);
+    let full;
+    try {
+      full = JSON.stringify(entry);
+    } catch {
+      full = JSON.stringify({ level: entry.level, context: entry.context, message: entry.message, timestamp: entry.timestamp });
+    }
     if (level >= LogLevel.ERROR) {
       console.error(full);
     } else if (level === LogLevel.WARN) {

@@ -6,7 +6,7 @@ The Loom lets you convene a circle of AI agents with different expertise, senior
 
 ## How It Works
 
-You ask a question. The Loom detects the domain — engineering, finance, business, creative, executive, or operations — and composes a team of AI agents with relevant expertise. Each agent runs in its own isolated session with its own model.
+You ask a question. The Loom uses an LLM to detect the domain — engineering, finance, business, creative, executive, or operations — and composes a team of AI agents with relevant expertise. Each agent runs in its own isolated session with its own model.
 
 Agents deliberate in structured rounds: proposing ideas, challenging weak arguments, refining positions, and pushing back on assumptions. They can interject with priority when they have something urgent to say. When agents stall or go in circles, a **moderator** — a separate LLM call using the strongest available model — steps in to break the deadlock, redirect the conversation, or force convergence. Once deliberation ends, a **synthesizer** produces the final artifact: decisions, action items, unresolved dissent, and a confidence level.
 
@@ -99,7 +99,7 @@ The Loom ships with 35 personas across 6 domains, organized into four tiers:
 | senior | 8 | engineering, finance, business, creative, operations |
 | principal | 6 | engineering, executive, creative, business, finance, operations |
 
-When you ask a question, the Loom analyzes it for domain keywords and selects personas accordingly. For example, a finance question gets finance experts; an engineering question gets engineers.
+When you ask a question, the Loom uses an LLM to analyze the domain and select relevant personas. For example, a finance question gets finance experts; an engineering question gets engineers.
 
 | Question Type | Domains Selected |
 |---------------|------------------|
@@ -120,6 +120,17 @@ Run `/loom_viz` to start the real-time web dashboard. It auto-detects the most r
 - **Warp** — the evolving shared context and each agent's perspective (persona, agenda, model)
 
 The dashboard supports light, dark, and system themes. Export the current meeting as Markdown from the header.
+
+### Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| `j` | Scroll down |
+| `k` | Scroll up |
+| `o` | Overview tab |
+| `r` | Orchestrator tab |
+| `t` | Timeline tab |
+| `w` | Warp tab |
 
 ## Configuration
 
@@ -149,7 +160,19 @@ Project-level equivalent in `.loomrc.json` (same keys, no `"loom"` wrapper):
 }
 ```
 
-Other available options include agent and synthesis timeouts, word limits, interjection thresholds, moderator triggers, retry policy, max concurrency, and meeting timeout.
+Other available options include agent and synthesis timeouts, word limits, interjection thresholds, moderator triggers, retry policy, max concurrency, meeting timeout, and stall detection (`stallTimeoutMs`, default 5 min).
+
+## Known Limitations
+
+- Desktop-only webapp — not optimized for mobile viewports
+- No authentication or authorization on the dashboard API
+- SQLite-based persistence — not suitable for horizontal scaling
+- In-memory metrics are lost on process restart (meeting metrics are persisted to DB)
+- SSE reconnection uses exponential backoff but falls back to polling after 10 attempts
+- Warp compaction uses LLM for semantic compression; falls back to rule-based extraction on failure
+- Dashboard does not show historical meeting data by default (single-meeting view)
+- No PDF export capability
+- Agent reflection data is stored per-participant but not surfaced in all views
 
 ## License
 

@@ -1,22 +1,32 @@
-import { memo } from "react";
-import { cn, typeClass } from "../utils.js";
+import { memo, useMemo } from "react";
 import { ParticipationMatrix, ContributionTypeChart, ContributionTimeline } from "./Charts.jsx";
+
+const CALL_COUNTER_KEYS = [
+  "agent_prompts",
+  "reflection_calls",
+  "interjection_calls",
+  "orchestrator",
+  "domain",
+  "moderation",
+  "convergence",
+  "summary",
+  "compaction",
+  "synthesis",
+];
 
 export const OverviewTab = memo(({
   state,
   contributions,
   interjections,
   participants,
-  contributionStats,
   agentErrors,
   participantName,
   totalRounds,
 }) => {
   const stats = state?.stats ?? {};
-  const callStats = stats.calls ?? {};
-  const totalInputTokens = callStats.totalInputTokens ?? 0;
-  const totalOutputTokens = callStats.totalOutputTokens ?? 0;
-  const totalCalls = callStats.total ?? 0;
+  const totalCalls = useMemo(() => CALL_COUNTER_KEYS.reduce((sum, key) => sum + (Number(stats[key]) || 0), 0), [stats]);
+  const totalInputTokens = useMemo(() => Number(stats.input_tokens) || 0, [stats]);
+  const totalOutputTokens = useMemo(() => Number(stats.output_tokens) || 0, [stats]);
 
   return (
     <div className="loom-overview">
@@ -62,18 +72,6 @@ export const OverviewTab = memo(({
           rounds={totalRounds}
         />
       </div>
-      {Object.keys(contributionStats).length > 0 && (
-        <div className="loom-card loom-mt-sm">
-          <h3 className="loom-title-sm loom-mb-sm">Contribution Types</h3>
-          <div className="loom-stat-badges">
-            {Object.entries(contributionStats).map(([type, count]) => (
-              <span key={type} className={cn("loom-badge", typeClass(type))}>
-                {type}: {count}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
       <div className="loom-mt-sm">
         <ContributionTypeChart contributions={contributions} />
       </div>
@@ -89,6 +87,23 @@ export const OverviewTab = memo(({
                 <span className="loom-error-participant">{participantName(err.participant_id)}</span>
                 <span className="loom-error-type">{err.error_type}</span>
                 <span className="loom-error-message">{err.error_message}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {participants.some((p) => p.reflections?.length > 0) && (
+        <div className="loom-card loom-mt-sm">
+          <h3 className="loom-title-sm loom-mb-sm">Participant Reflections</h3>
+          <div className="loom-space-xs">
+            {participants.filter((p) => p.reflections?.length > 0).map((p) => (
+              <div key={p.id} className="loom-reflection-entry">
+                <div className="loom-reflection-name">{participantName(p.id)}</div>
+                <ul className="loom-reflection-list">
+                  {p.reflections.map((r, i) => (
+                    <li key={i} className="loom-text-xs loom-text-muted">{r}</li>
+                  ))}
+                </ul>
               </div>
             ))}
           </div>

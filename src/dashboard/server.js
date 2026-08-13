@@ -5,7 +5,20 @@ import {
   isValidMeetingId,
 } from "./api.js";
 import { join, resolve } from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { getMetricsSnapshot } from "../metrics.js";
+
+function getPackageVersion() {
+  try {
+    const pkgPath = resolve(import.meta.dir, "..", "..", "package.json");
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+    return pkg.version ?? "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+
+const PACKAGE_VERSION = getPackageVersion();
 
 function getMeetingApi(url, directory) {
   const meetingId = url.searchParams.get("meeting");
@@ -79,6 +92,7 @@ export function startDashboard(directory, port) {
   const sseClients = new Map();
   const lastContributionId = new Map();
   const lastOrchestratorMsgId = new Map();
+  const lastInterjectionId = new Map();
   const lastErrorId = new Map();
   const participantStatusCache = new Map();
 
@@ -143,10 +157,33 @@ export function startDashboard(directory, port) {
         const prevMsgId = lastOrchestratorMsgId.get(meetingId) ?? 0;
         if (maxMsgId > prevMsgId) {
           lastOrchestratorMsgId.set(meetingId, maxMsgId);
+          const newMessages = api.getOrchestratorMessagesSince(prevMsgId, meetingId);
+          if (newMessages.length > 0) {
+            broadcast(meetingId, {
+              type: "orchestrator_messages",
+              data: newMessages,
+              timestamp: new Date().toISOString(),
+            });
+          }
           hadActivity = true;
         }
 
-        const state = api.getState();
+        const maxIjId = api.getMaxInterjectionId();
+        const prevIjId = lastInterjectionId.get(meetingId) ?? 0;
+        if (maxIjId > prevIjId) {
+          lastInterjectionId.set(meetingId, maxIjId);
+          const newInterjections = api.getInterjectionsSince(prevIjId);
+          if (newInterjections.length > 0) {
+            broadcast(meetingId, {
+              type: "interjections",
+              data: newInterjections,
+              timestamp: new Date().toISOString(),
+            });
+          }
+          hadActivity = true;
+        }
+
+        const state = currentState;
         if (state) {
           const prevState = participantStatusCache.get(`state:${meetingId}`);
           const stateStr = JSON.stringify({ status: state.status, round: state.round, stats: state.stats });
@@ -215,6 +252,20 @@ export function startDashboard(directory, port) {
         restartPollTimer();
       }
     }
+
+    // Prune stale entries for meetings with no SSE clients
+    for (const meetingId of [...lastContributionId.keys()]) {
+      if (!sseClients.has(meetingId) || sseClients.get(meetingId).size === 0) {
+        lastContributionId.delete(meetingId);
+        lastOrchestratorMsgId.delete(meetingId);
+        lastInterjectionId.delete(meetingId);
+        lastErrorId.delete(meetingId);
+        participantStatusCache.delete(meetingId);
+        participantStatusCache.delete(`state:${meetingId}`);
+        participantStatusCache.delete(`terminal:${meetingId}`);
+        participantStatusCache.delete(`artifact:${meetingId}`);
+      }
+    }
   };
 
   const restartPollTimer = () => {
@@ -226,7 +277,7 @@ export function startDashboard(directory, port) {
 
   const server = Bun.serve({
     port,
-    fetch(req) {
+    async fetch(req) {
       try {
         const url = new URL(req.url);
 
@@ -235,6 +286,9 @@ export function startDashboard(directory, port) {
             headers: {
               "Content-Type": "text/html; charset=utf-8",
               "Cache-Control": "no-cache",
+              "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'",
+              "X-Content-Type-Options": "nosniff",
+              "X-Frame-Options": "DENY",
             },
           });
         }
@@ -245,7 +299,7 @@ export function startDashboard(directory, port) {
         }
 
         if (url.pathname === "/api/meeting") {
-          const { api, error } = getMeetingApi(url, directory);
+          const { api, meetingId, error } = getMeetingApi(url, directory);
           if (error) return error;
           const limit = Math.min(Number(url.searchParams.get("limit")) || 200, 500);
           const offset = Number(url.searchParams.get("offset")) || 0;
@@ -256,6 +310,7 @@ export function startDashboard(directory, port) {
             participants: api.getParticipants(),
             contributions,
             interjections: api.getInterjections(),
+            orchestrator_messages: api.getOrchestratorMessages(meetingId),
             agent_errors: api.getAgentErrors(),
             artifact: api.getArtifact(),
             contributionsPagination: { total: totalContributions, limit, offset },
@@ -284,6 +339,19 @@ export function startDashboard(directory, port) {
           const { api, error } = getMeetingApi(url, directory);
           if (error) return error;
           return Response.json(api.getStateWithStats());
+        }
+
+        if (url.pathname === "/api/health") {
+          return Response.json({
+            status: "ok",
+            uptime: process.uptime(),
+            timestamp: new Date().toISOString(),
+            version: PACKAGE_VERSION,
+          });
+        }
+
+        if (url.pathname === "/api/metrics") {
+          return Response.json(getMetricsSnapshot());
         }
 
         if (url.pathname === "/api/participants") {
@@ -449,6 +517,8 @@ export function startDashboard(directory, port) {
       }
       sseClients.clear();
       lastContributionId.clear();
+      lastOrchestratorMsgId.clear();
+      lastInterjectionId.clear();
       lastErrorId.clear();
       participantStatusCache.clear();
       DashboardApi.closeAll();

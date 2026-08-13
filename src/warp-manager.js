@@ -36,13 +36,43 @@ function compactWarpRuleBased(warp) {
   const recentRounds = roundSections.slice(-3);
   const olderRounds = roundSections.slice(0, -3);
 
-  const olderText = olderRounds.join("\n\n");
-  const condensed = `[Earlier rounds condensed: ${olderRounds.length} rounds covering ${olderText.length} characters]`;
+  const keyFacts = extractKeyFacts(olderRounds);
 
-  return `${condensed}\n\n${recentRounds.join("\n\n")}`;
+  return `## Compressed Context (from ${olderRounds.length} earlier rounds)\n${keyFacts}\n\n${recentRounds.join("\n\n")}`;
 }
 
-export { compactWarpRuleBased };
+function extractKeyFacts(roundSections) {
+  const facts = [];
+
+  for (const section of roundSections) {
+    const lines = section.split("\n").filter(Boolean);
+    const roundMatch = lines[0]?.match(/### Round (\d+)/);
+    if (!roundMatch) continue;
+
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i].trim().toLowerCase();
+      if (
+        line.includes("agreed") ||
+        line.includes("consensus") ||
+        line.includes("decision") ||
+        line.includes("disagree") ||
+        line.includes("concern") ||
+        line.includes("action item") ||
+        line.includes("key finding") ||
+        line.includes("important")
+      ) {
+        facts.push(lines[i].trim());
+      }
+    }
+  }
+
+  if (facts.length === 0) {
+    const allLines = roundSections.join("\n").split("\n").filter(Boolean);
+    return allLines.slice(0, 10).join("\n");
+  }
+
+  return facts.slice(0, 15).join("\n");
+}
 
 /** LLM-based compaction: compresses warp context into key facts. */
 export async function compactWarpWithLLM(warp, round, promptFn, model) {
@@ -68,7 +98,10 @@ Compressed context:`;
     if (compressed && compressed.trim().length > 50) {
       return compressed.trim();
     }
-  } catch { /* fall through */ }
+  } catch (err) {
+    const info = extractErrorInfo(err);
+    new Logger().debug("warp_llm_compress_failed", "LLM compression returned unusable output — falling back to rule-based", info);
+  }
 
   return compactWarpRuleBased(currentWarp);
 }
@@ -117,55 +150,4 @@ export function formatTranscriptFromData(data, participants) {
   }
 
   return lines.join("\n");
-}
-
-/**
- * Compaction v2: retains structured blocks (Decision/Reasoning/Action Items/
- * Dissenting Views/Open Questions/Confidence), the most recent 8000 chars of
- * raw transcript, and any per-participant context lines. This gives the
- * synthesizer a clear picture of key outcomes plus enough evidence to verify
- * that the summary faithfully represents the deliberation.
- */
-export function compactWarpRoundContext(transcriptData, maxLen = 8000) {
-  const structured = extractStructuredBlocks(transcriptData.rounds);
-  const recentText = extractRecentRawTranscript(transcriptData.rounds, maxLen);
-  const participantLines = extractPerParticipantContext(transcriptData.participants);
-  return [structured, recentText, participantLines].filter(Boolean).join("\n\n");
-}
-
-const STRUCTURED_BLOCK_RE = /^##\s+(Decision|Reasoning|Action Items|Dissenting Views|Open Questions|Confidence)\b/m;
-
-function extractStructuredBlocks(rounds) {
-  const parts = [];
-  for (const r of rounds) {
-    if (!r.summary) continue;
-    let m;
-    const re = /^(##\s+(Decision|Reasoning|Action Items|Dissenting Views|Open Questions|Confidence)\b[\s\S]*?)(?=^##\s+|\z)/gm;
-    while ((m = re.exec(r.summary)) !== null) {
-      parts.push(m[1].trimEnd());
-    }
-  }
-  return parts.length > 0 ? parts.join("\n\n") : "";
-}
-
-function extractRecentRawTranscript(rounds, maxLen) {
-  const chunks = [];
-  let len = 0;
-  for (let i = rounds.length - 1; i >= 0 && len < maxLen; i--) {
-    const r = rounds[i];
-    const chunk = r.contributions.map((c) => `[R${r.number}] ${c.participant_id}: ${c.content}`).join("\n");
-    if (len + chunk.length > maxLen) {
-      const remaining = maxLen - len;
-      chunks.unshift(chunk.slice(0, remaining));
-      break;
-    }
-    chunks.unshift(chunk);
-    len += chunk.length;
-  }
-  return chunks.join("\n") || "";
-}
-
-function extractPerParticipantContext(participants) {
-  if (!participants || participants.length === 0) return "";
-  return participants.map((p) => `- ${p.name} (${p.tier}): ${p.persona}`).join("\n");
 }

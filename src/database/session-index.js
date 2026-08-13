@@ -1,30 +1,21 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { Logger } from "../logger.js";
+import { resolveLoomBaseDir } from "../paths.js";
 
 const indexLogger = new Logger();
 const sessionIndex = new Map();
 let indexDir = null;
 
-function resolveIndexDir(directory) {
-  if (directory && directory !== "/" && directory.trim() !== "") {
-    return directory;
-  }
-  const home = process.env.HOME || process.env.USERPROFILE || "/root";
-  const userConfig = join(home, ".config", "opencode");
-  return userConfig;
-}
-
 function getIndexFilePath() {
   if (!indexDir) return null;
-  const dir = resolveIndexDir(indexDir);
-  return join(dir, "loom", "session-index.json");
+  return join(resolveLoomBaseDir(indexDir), "session-index.json");
 }
 
 export function loadSessionIndex(directory) {
   indexDir = directory;
-  const resolvedDir = resolveIndexDir(directory);
-  const filePath = join(resolvedDir, "loom", "session-index.json");
+  const filePath = getIndexFilePath();
+  if (!filePath) return;
   try {
     const data = readFileSync(filePath, "utf-8");
     const parsed = JSON.parse(data);
@@ -43,7 +34,10 @@ export function loadSessionIndex(directory) {
 
 function persistSessionIndex() {
   const filePath = getIndexFilePath();
-  if (!filePath) return;
+  if (!filePath) {
+    indexLogger.warn("session_index_not_loaded", "Skipping session index persistence — loadSessionIndex() was never called");
+    return;
+  }
   try {
     const obj = Object.fromEntries(sessionIndex);
     mkdirSync(dirname(filePath), { recursive: true });

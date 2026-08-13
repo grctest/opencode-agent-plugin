@@ -3,7 +3,7 @@ import { Logger } from "../logger.js";
 
 /**
  * Handles all database persistence operations for a meeting.
- * Provides transactional guarantees for multi-write operations.
+ * persistState() is transactional; single-row helpers are atomic by nature.
  */
 export class PersistenceService {
   /** @type {import("../database.js").MeetingDatabase} */

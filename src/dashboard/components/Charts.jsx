@@ -8,10 +8,12 @@ export const ParticipationMatrix = memo(function ParticipationMatrix({ participa
       contribMap.set(`${c.participant_id}:${c.round}`, true);
     }
     const errorMap = new Map();
+    const errorRounds = new Set();
     for (const e of agentErrors) {
       if (!errorMap.has(`${e.participant_id}:${e.round}`)) {
         errorMap.set(`${e.participant_id}:${e.round}`, true);
       }
+      errorRounds.add(e.round);
     }
 
     const data = [];
@@ -25,7 +27,7 @@ export const ParticipationMatrix = memo(function ParticipationMatrix({ participa
       }
       data.push({ round: r, participants: row });
     }
-    return data;
+    return { data, errorRounds };
   }, [participants, contributions, agentErrors, rounds]);
 
   if (rounds === 0 || participants.length === 0) return null;
@@ -47,8 +49,8 @@ export const ParticipationMatrix = memo(function ParticipationMatrix({ participa
             </tr>
           </thead>
           <tbody>
-            {roundData.map(({ round, participants: row }) => (
-              <tr key={round} className={cn(agentErrors.some((e) => e.round === round) && "loom-matrix-row-error")}>
+            {roundData.data.map(({ round, participants: row }) => (
+              <tr key={round} className={cn(roundData.errorRounds.has(round) && "loom-matrix-row-error")}>
                 <td className="loom-matrix-round-label">R{round}</td>
                 {participants.map((p) => {
                   const status = row[p.id];

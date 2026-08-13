@@ -1,4 +1,4 @@
-import { buildAgentSystemPrompt, buildAgentUserPrompt } from "./prompts.js";
+import { buildAgentSystemPrompt, buildAgentUserPrompt, buildPushbackPrompt } from "./prompts.js";
 import { generateRoundBriefs } from "./warp-manager.js";
 import { parseAgentResponse } from "./validation.js";
 import { withConcurrency } from "./concurrency.js";
@@ -6,8 +6,9 @@ import { getConfig } from "./config.js";
 import { extractText, truncate, withTimeout, getPriorityCap, enforceWordLimit } from "./shared.js";
 import { Logger, extractErrorInfo } from "./logger.js";
 import { runReflectionPhase as runReflections } from "./reflection-manager.js";
-import { sanitizeForPrompt, sanitizeForDisplay, sanitizeContribution } from "./utils/sanitize.js";
+import { sanitizeForPrompt, sanitizeForDisplay } from "./utils/sanitize.js";
 import { withRetry, isRetryableError, CircuitBreaker } from "./utils/retry.js";
+import { incrementKeyedCounter, recordLatency } from "./metrics.js";
 
 function isTimeoutError(err) {
   return err instanceof Error && /timed out after/i.test(err.message);
@@ -17,7 +18,7 @@ export class RoundExecutor {
   #client;
   #directory;
   #db;
-  #state;
+  #stateManager;
   #options;
   #promptParent;
   #getParticipantModel;
@@ -31,11 +32,11 @@ export class RoundExecutor {
   #callStats;
   #circuitBreaker;
 
-  constructor({ client, directory, db, state, options, promptParent, getParticipantModel, logError }) {
+  constructor({ client, directory, db, stateManager, options, promptParent, getParticipantModel, logError }) {
     this.#client = client;
     this.#directory = directory;
     this.#db = db;
-    this.#state = state;
+    this.#stateManager = stateManager;
     this.#options = options;
     this.#promptParent = promptParent;
     this.#getParticipantModel = getParticipantModel;
@@ -44,7 +45,7 @@ export class RoundExecutor {
     this.#modelFailureTimes = new Map();
     this.#logger = new Logger();
     this.#interjectionTracker = new Map();
-    this.#callStats = { agent_prompts: 0, reflection_calls: 0, interjection_calls: 0 };
+    this.#callStats = { agent_prompts: 0, reflection_calls: 0, interjection_calls: 0, input_tokens: 0, output_tokens: 0 };
     const cbConfig = getConfig().circuitBreaker;
     this.#circuitBreaker = new CircuitBreaker({
       failureThreshold: cbConfig.failureThreshold,
@@ -66,6 +67,17 @@ export class RoundExecutor {
     this.#failedInCurrentRound = 0;
   }
 
+  /**
+   * Returns the set of participant IDs whose sessions were marked dirty during
+   * this round (e.g. after a timeout) and clears the internal set. The caller
+   * (orchestrator) is responsible for recreating these sessions.
+   */
+  takeDirtySessions() {
+    const ids = [...this.#dirtySessions];
+    this.#dirtySessions.clear();
+    return ids;
+  }
+
   #modelKey(model) {
     return `${model.providerID}/${model.modelID}`;
   }
@@ -83,6 +95,13 @@ export class RoundExecutor {
     this.#circuitBreaker.recordSuccess(model);
   }
 
+  #recordTokens(result) {
+    const tokens = result?.data?.tokens;
+    if (!tokens) return;
+    this.#callStats.input_tokens += tokens.input ?? 0;
+    this.#callStats.output_tokens += tokens.output ?? 0;
+  }
+
   /**
    * Runs the prompt phase for a round. Modes:
    * - "sequential": agents speak one at a time; each sees all prior same-round contributions
@@ -93,7 +112,7 @@ export class RoundExecutor {
     const mode = turnMode ?? "sequential";
     this.#turnOrder = [];
 
-    const roundBriefs = generateRoundBriefs(this.#state.warp, round);
+    const roundBriefs = generateRoundBriefs(this.#stateManager.getWarp(), round);
 
     const speak = async (p) => {
       this.#turnOrder.push(p.config.id);
@@ -133,12 +152,12 @@ export class RoundExecutor {
       this.#failedInCurrentRound++;
       this.#db.setParticipantStatus(p.config.id, "failed");
       this.#db.recordAgentError(
-        this.#state.id, p.config.id, this.#state.current_round,
+        this.#stateManager.getMeetingId(), p.config.id, this.#stateManager.getCurrentRound(),
         "no_response", "Failed to get response after retries", 2,
       );
       round.token_path.push(p.config.id);
       this.#options.onProgress?.(`${p.config.name} (${p.config.tier}) — failed to respond, skipping`);
-      this.#options.onContribution?.(p.config.name, this.#state.current_round, "failed_no_response");
+      this.#options.onContribution?.(p.config.name, this.#stateManager.getCurrentRound(), "failed_no_response");
       return;
     }
 
@@ -147,7 +166,7 @@ export class RoundExecutor {
       this.#db.setParticipantStatus(p.config.id, "passed");
       round.token_path.push(p.config.id);
       this.#options.onProgress?.(`${p.config.name} (${p.config.tier}) — chose to pass`);
-      this.#options.onContribution?.(p.config.name, this.#state.current_round, "pass");
+      this.#options.onContribution?.(p.config.name, this.#stateManager.getCurrentRound(), "pass");
       return;
     }
 
@@ -159,6 +178,7 @@ export class RoundExecutor {
       if (!round.governance) round.governance = [];
       round.governance.push({ participant_id: p.config.id, directive: g.directive, value: g.value ?? null });
       this.#options.onProgress?.(`${p.config.name} (${p.config.tier}) — issued governance directive [GOVERNANCE: ${g.directive}${g.value !== undefined ? `: ${g.value}` : ""}]`);
+      this.#db.addOrchestratorMessage("governance", "user", `[GOVERNANCE: ${g.directive}${g.value !== undefined ? `: ${g.value}` : ""}] issued by ${p.config.name}`);
     }
 
     const truncated = truncate(result.content, 120);
@@ -204,6 +224,16 @@ export class RoundExecutor {
         ij.resolved = "granted";
         grantedCount++;
         this.#interjectionTracker.set(interjector.config.id, round.number);
+
+        // Send pushback prompt to the last contributor before the interjector speaks
+        const lastContributor = round.contributions.length > 0
+          ? activeParticipants.find((p) => p.config.id === round.contributions[round.contributions.length - 1].participant_id)
+          : null;
+        if (lastContributor && lastContributor.session_id) {
+          const lastContent = round.contributions[round.contributions.length - 1].content;
+          await this.#sendPushbackPrompt(lastContributor, interjector, ij, lastContent);
+        }
+
         await this.#promptInterjector(interjector, ij, round);
       } else {
         ij.resolved = "denied";
@@ -212,37 +242,33 @@ export class RoundExecutor {
   }
 
   #storeContribution(participant, result, round) {
-    const id = ++this.#state.next_contribution_id;
+    const id = this.#stateManager.nextContributionId();
     const safeContent = sanitizeForPrompt(result.content);
     const contribution = {
       id,
-      round: this.#state.current_round,
+      round: this.#stateManager.getCurrentRound(),
       participant_id: result.participant_id,
       content: safeContent,
       type: result.type,
       targets_which: null,
-      timestamp: Date.now(),
+      created_at: new Date().toISOString(),
     };
 
-    this.#state.weft.push(contribution);
+    this.#stateManager.addContribution(contribution);
     round.contributions.push(contribution);
     round.token_path.push(participant.config.id);
     participant.contributions_count++;
     participant.status = "listening";
     this.#db.setParticipantStatus(participant.config.id, "listening");
 
-    this.#db.addContribution(this.#state.id, {
-      ...contribution,
-      round: this.#state.current_round,
-    });
-
+    let interjection = null;
     if (result.interjection) {
       const priorityCap = getPriorityCap(participant.config.tier);
       const targetParticipantId = this.#resolveInterjectionTarget(participant, result.interjection);
-      const interjection = {
+      interjection = {
         participant_id: result.participant_id,
         target_participant_id: targetParticipantId,
-        round: this.#state.current_round,
+        round: this.#stateManager.getCurrentRound(),
         priority: Math.min(result.interjection.priority, priorityCap),
         reason: sanitizeForPrompt(result.interjection.reason),
         draft: result.interjection.draft ?? null,
@@ -251,10 +277,14 @@ export class RoundExecutor {
         resolved: "pending",
       };
       round.interjections.push(interjection);
-      this.#db.addInterjection(this.#state.id, interjection);
     }
 
-    this.#options.onContribution?.(participant.config.name, this.#state.current_round, result.type);
+    this.#db.addContributionWithInterjection(this.#stateManager.getMeetingId(), {
+      ...contribution,
+      round: this.#stateManager.getCurrentRound(),
+    }, interjection);
+
+    this.#options.onContribution?.(participant.config.name, this.#stateManager.getCurrentRound(), result.type);
   }
 
   /**
@@ -267,11 +297,11 @@ export class RoundExecutor {
     if (explicit) {
       const str = explicit.trim().replace(/^#/, "").toLowerCase();
       if (/^\d+$/.test(str)) {
-        const contrib = [...this.#state.weft].reverse().find((c) => c.id === parseInt(str, 10));
+        const contrib = [...this.#stateManager.getWeft()].reverse().find((c) => c.id === parseInt(str, 10));
         if (contrib) return contrib.participant_id;
         return null;
       }
-      const participant = this.#state.participants.find(
+      const participant = this.#stateManager.getParticipants().find(
         (pp) => pp.config.name.toLowerCase() === str || pp.config.id.toLowerCase() === str,
       );
       return participant?.config.id ?? null;
@@ -291,17 +321,9 @@ export class RoundExecutor {
       return null;
     }
 
-    // Capture session version before prompt to detect late responses from old sessions
+    // Capture session version AFTER any recreation settles, so the guard
+    // compares against the current (post-recreate) version.
     const sessionVersion = participant.session_version ?? 0;
-
-    if (this.#dirtySessions.has(participant.config.id)) {
-      this.#dirtySessions.delete(participant.config.id);
-      const recreated = await this.#options.recreateSession?.(participant);
-      if (recreated) {
-        this.#logger.info("session_recreated", `Recreated dirty session for ${participant.config.name}`);
-      }
-      if (!participant.session_id) return null;
-    }
 
     const model = this.#getParticipantModel(participant);
 
@@ -313,8 +335,10 @@ export class RoundExecutor {
 
     const config = getConfig();
     const baseTimeoutMs = config.agentTimeoutMs;
-    const totalParticipants = this.#state.participants.length;
-    const timeoutReductionFactor = Math.min(this.#failedInCurrentRound / totalParticipants, 0.5);
+    const totalParticipants = this.#stateManager.getParticipants().length;
+    const timeoutReductionFactor = totalParticipants > 0
+      ? Math.min(this.#failedInCurrentRound / totalParticipants, 0.5)
+      : 0;
     const timeoutMs = Math.floor(baseTimeoutMs * (1 - timeoutReductionFactor));
 
     const promptFn = async () => {
@@ -324,6 +348,7 @@ export class RoundExecutor {
       }
 
       this.#callStats.agent_prompts++;
+      const llmStart = Date.now();
       const result = await withTimeout(
         this.#client.session.prompt({
           path: { id: participant.session_id },
@@ -333,10 +358,10 @@ export class RoundExecutor {
             temperature: participant.tier_config.temperature,
             parts: [{ type: "text", text: buildAgentUserPrompt(
               participant,
-              this.#state.warp,
-              this.#state.weft,
-              this.#state.question,
-              this.#state.current_round,
+              this.#stateManager.getWarp(),
+              this.#stateManager.getWeft(),
+              this.#stateManager.getQuestion(),
+              this.#stateManager.getCurrentRound(),
               roundBriefs,
             ) }],
           },
@@ -344,6 +369,11 @@ export class RoundExecutor {
         }),
         timeoutMs,
       );
+      const llmMs = Date.now() - llmStart;
+      incrementKeyedCounter("llm_calls_by_type", "agent");
+      recordLatency("llm_prompt_ms", llmMs);
+
+      this.#recordTokens(result);
 
       if (result.error) {
         throw new Error(result.error.message || JSON.stringify(result.error));
@@ -381,11 +411,51 @@ export class RoundExecutor {
       this.#recordModelFailure(model);
       const info = extractErrorInfo(err);
       this.#db.recordAgentError(
-        this.#state.id, participant.config.id, this.#state.current_round,
+        this.#stateManager.getMeetingId(), participant.config.id, this.#stateManager.getCurrentRound(),
         "prompt_failed", info.message, config.maxRetryAttempts + 1,
       );
       this.#logger.error("participant_failed", `${participant.config.name} failed after ${config.maxRetryAttempts + 1} attempts`, info);
       return null;
+    }
+  }
+
+  async #sendPushbackPrompt(target, interjector, interjection, lastContent) {
+    const config = getConfig();
+    const model = this.#getParticipantModel(target);
+    const systemPrompt = buildAgentSystemPrompt(target);
+    const userPrompt = buildPushbackPrompt(
+      target,
+      interjector.config.name,
+      interjection.priority,
+      lastContent,
+      interjection.reason || "",
+    );
+
+    try {
+      const result = await withTimeout(
+        this.#client.session.prompt({
+          path: { id: target.session_id },
+          body: { system: systemPrompt, model, temperature: target.tier_config.temperature, parts: [{ type: "text", text: userPrompt }] },
+          query: { directory: this.#directory },
+        }),
+        config.agentTimeoutMs,
+      );
+
+      if (result.error) return;
+
+      const text = extractText(result.data);
+      if (!text) return;
+
+      const upper = text.toUpperCase();
+      if (upper.includes("[YIELD]")) {
+        interjection.resolution = "yielded";
+      } else if (upper.includes("[CONTEST]")) {
+        interjection.resolution = "contested";
+        const reasonMatch = text.match(/\[CONTEST\]\s*(.+)/i);
+        interjection.contestReason = reasonMatch?.[1] ?? "";
+      }
+    } catch {
+      // Pushback is best-effort — if it fails, the interjection proceeds normally
     }
   }
 
@@ -397,48 +467,24 @@ export class RoundExecutor {
     const config = getConfig();
     const draftContent = ij.draft;
 
-    if (draftContent && draftContent.trim().length > 0) {
-      const content = enforceWordLimit(sanitizeForPrompt(draftContent.trim()), config.maxInterjectionWords);
-      const contribution = {
-        id: ++this.#state.next_contribution_id,
-        round: this.#state.current_round,
-        participant_id: interjector.config.id,
-        content,
-        type: "interjection",
-        targets_which: ij.target_participant_id,
-        timestamp: Date.now(),
-      };
+    try {
+      if (draftContent && draftContent.trim().length > 0) {
+        const content = enforceWordLimit(sanitizeForPrompt(draftContent.trim()), config.maxInterjectionWords);
+        this.#storeInterjection(interjector, content, ij, round);
+        return;
+      }
 
-      this.#state.weft.push(contribution);
-      round.contributions.push(contribution);
-      round.token_path.push(interjector.config.id);
-      interjector.contributions_count++;
-
-      this.#db.addContribution(this.#state.id, {
-        ...contribution,
-        round: this.#state.current_round,
-      });
-
-      const truncated = truncate(content, 120);
-      this.#options.onProgress?.(`${interjector.config.name} (${interjector.config.tier}) — interjection: "${truncated}"`);
-      this.#options.onContribution?.(interjector.config.name, this.#state.current_round, "interjection");
-
-      interjector.status = "listening";
-      this.#db.setParticipantStatus(interjector.config.id, "listening");
-      return;
-    }
-
-    const model = this.#getParticipantModel(interjector);
-    const systemPrompt = buildAgentSystemPrompt(interjector);
-    const userPrompt = `## You Interjected
+      const model = this.#getParticipantModel(interjector);
+      const systemPrompt = buildAgentSystemPrompt(interjector);
+      const userPrompt = `## You Interjected
 
 You requested to interrupt with priority ${ij.priority}:
 "${sanitizeForDisplay(ij.reason)}"
 
 State your interjection now. Be direct and under 200 words.`;
 
-    try {
       this.#callStats.interjection_calls++;
+      const llmStart = Date.now();
       const result = await withTimeout(
         this.#client.session.prompt({
           path: { id: interjector.session_id },
@@ -447,6 +493,11 @@ State your interjection now. Be direct and under 200 words.`;
         }),
         config.agentTimeoutMs,
       );
+      const llmMs = Date.now() - llmStart;
+      incrementKeyedCounter("llm_calls_by_type", "interjection");
+      recordLatency("llm_prompt_ms", llmMs);
+
+      this.#recordTokens(result);
 
       if (result.error) {
         throw new Error(result.error.message || JSON.stringify(result.error));
@@ -456,29 +507,7 @@ State your interjection now. Be direct and under 200 words.`;
       if (!content) throw new Error("Empty interjection response");
 
       const safeContent = sanitizeForPrompt(content.replace(/^\[(\w+)\]\s*/, ""));
-      const contribution = {
-        id: ++this.#state.next_contribution_id,
-        round: this.#state.current_round,
-        participant_id: interjector.config.id,
-        content: safeContent,
-        type: "interjection",
-        targets_which: ij.target_participant_id,
-        timestamp: Date.now(),
-      };
-
-      this.#state.weft.push(contribution);
-      round.contributions.push(contribution);
-      round.token_path.push(interjector.config.id);
-      interjector.contributions_count++;
-
-      this.#db.addContribution(this.#state.id, {
-        ...contribution,
-        round: this.#state.current_round,
-      });
-
-      const truncated = truncate(contribution.content, 120);
-      this.#options.onProgress?.(`${interjector.config.name} (${interjector.config.tier}) — interjection: "${truncated}"`);
-      this.#options.onContribution?.(interjector.config.name, this.#state.current_round, "interjection");
+      this.#storeInterjection(interjector, safeContent, ij, round);
     } catch (err) {
       const info = extractErrorInfo(err);
       this.#logError(`interjection prompt for ${interjector.config.name}`, err);
@@ -488,5 +517,31 @@ State your interjection now. Be direct and under 200 words.`;
       interjector.status = "listening";
       this.#db.setParticipantStatus(interjector.config.id, "listening");
     }
+  }
+
+  #storeInterjection(interjector, content, ij, round) {
+    const contribution = {
+      id: this.#stateManager.nextContributionId(),
+      round: this.#stateManager.getCurrentRound(),
+      participant_id: interjector.config.id,
+      content,
+      type: "interjection",
+      targets_which: ij.target_participant_id,
+      created_at: new Date().toISOString(),
+    };
+
+    this.#stateManager.addContribution(contribution);
+    round.contributions.push(contribution);
+    round.token_path.push(interjector.config.id);
+    interjector.contributions_count++;
+
+    this.#db.addContribution(this.#stateManager.getMeetingId(), {
+      ...contribution,
+      round: this.#stateManager.getCurrentRound(),
+    });
+
+    const truncated = truncate(content, 120);
+    this.#options.onProgress?.(`${interjector.config.name} (${interjector.config.tier}) — interjection: "${truncated}"`);
+    this.#options.onContribution?.(interjector.config.name, this.#stateManager.getCurrentRound(), "interjection");
   }
 }

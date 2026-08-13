@@ -2,6 +2,7 @@ import { mkdirSync, existsSync, readdirSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { Logger, extractErrorInfo } from "./logger.js";
 import { initSchema, migrateSchema } from "./database/schema.js";
+import { resolveLoomBaseDir, getMeetingDbPath } from "./paths.js";
 import {
   loadSessionIndex,
   indexMeeting as _indexMeeting,
@@ -11,26 +12,7 @@ import {
 
 const dbLogger = new Logger();
 
-function getLoomBaseDir(directory) {
-  if (directory && directory !== "/" && directory.trim() !== "") {
-    return join(directory, ".opencode", "loom");
-  }
-  const home = process.env.HOME || process.env.USERPROFILE || "/root";
-  return join(home, ".config", "opencode", "loom");
-}
-
-function safeParseJsonArray(value) {
-  if (!value) return undefined;
-  if (Array.isArray(value)) return value;
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/** @type {new (path: string, options?: { readonly?: boolean }) => DBHandle} */
+// Single bun:sqlite import point — all DB access goes through this
 let DatabaseClass = null;
 let dbReady = null;
 
@@ -44,6 +26,19 @@ function ensureDb() {
   return dbReady;
 }
 
+function safeParseJsonArray(value) {
+  if (!value) return undefined;
+  if (Array.isArray(value)) return value;
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// findMeetingBySessionId uses DatabaseClass from ensureDb — no separate import needed
+
 function isoNow() {
   return new Date().toISOString();
 }
@@ -53,6 +48,8 @@ export { isoNow };
 export class MeetingDatabase {
   #db;
   #meetingId;
+
+  // ── Factory Methods ──────────────────────────────────────────────
 
   static async create(dbPath, meetingId) {
     await ensureDb();
@@ -110,7 +107,29 @@ export class MeetingDatabase {
     this.#db.exec("PRAGMA foreign_keys = ON");
     initSchema(this.#db);
     migrateSchema(this.#db);
+    this.#cleanupOldErrors();
+    this.#checkIntegrity();
   }
+
+  #checkIntegrity() {
+    try {
+      const result = this.#db.prepare("PRAGMA integrity_check").get();
+      if (result.integrity_check !== "ok") {
+        dbLogger.warn("integrity_check_failed", "Database integrity check failed", { result: result.integrity_check });
+      }
+    } catch (err) {
+      dbLogger.debug("integrity_check_error", "Integrity check could not run", extractErrorInfo(err));
+    }
+  }
+
+  #cleanupOldErrors() {
+    try {
+      this.#db.prepare("DELETE FROM agent_errors WHERE created_at < datetime('now', '-30 days')").run();
+      this.#db.prepare("DELETE FROM error_log WHERE created_at < datetime('now', '-30 days')").run();
+    } catch { /* non-critical */ }
+  }
+
+  // ── Write Operations ─────────────────────────────────────────────
 
   initializeMeeting(input) {
     const now = isoNow();
@@ -215,10 +234,16 @@ export class MeetingDatabase {
   }
 
   getWarp() {
-    const row = this.#db
-      .prepare("SELECT warp FROM meetings WHERE id = ?")
-      .get(this.#meetingId);
-    return row?.warp ?? "";
+    try {
+      const row = this.#db
+        .prepare("SELECT warp FROM meetings WHERE id = ?")
+        .get(this.#meetingId);
+      return row?.warp ?? "";
+    } catch (err) {
+      const info = extractErrorInfo(err);
+      dbLogger.warn("get_warp_failed", `Failed to get warp for meeting ${this.#meetingId}`, info);
+      return "";
+    }
   }
 
   setWarp(warp) {
@@ -260,16 +285,22 @@ export class MeetingDatabase {
 
   getMaxOrchestratorMessageId() {
     const row = this.#db
-      .prepare(`SELECT MAX(id) as maxId FROM orchestrator_messages`)
-      .get();
+      .prepare(`SELECT MAX(id) as maxId FROM orchestrator_messages WHERE meeting_id = ?`)
+      .get(this.#meetingId);
     return row.maxId ?? 0;
   }
 
   getRound() {
-    const row = this.#db
-      .prepare("SELECT round FROM meetings WHERE id = ?")
-      .get(this.#meetingId);
-    return row?.round ?? 0;
+    try {
+      const row = this.#db
+        .prepare("SELECT round FROM meetings WHERE id = ?")
+        .get(this.#meetingId);
+      return row?.round ?? 0;
+    } catch (err) {
+      const info = extractErrorInfo(err);
+      dbLogger.warn("get_round_failed", `Failed to get round for meeting ${this.#meetingId}`, info);
+      return 0;
+    }
   }
 
    setRound(round) {
@@ -285,10 +316,16 @@ export class MeetingDatabase {
   }
 
   getStatus() {
-    const row = this.#db
-      .prepare("SELECT status FROM meetings WHERE id = ?")
-      .get(this.#meetingId);
-    return row ? row.status : "initializing";
+    try {
+      const row = this.#db
+        .prepare("SELECT status FROM meetings WHERE id = ?")
+        .get(this.#meetingId);
+      return row ? row.status : "initializing";
+    } catch (err) {
+      const info = extractErrorInfo(err);
+      dbLogger.warn("get_status_failed", `Failed to get status for meeting ${this.#meetingId}`, info);
+      return "initializing";
+    }
   }
 
   setStatus(status) {
@@ -310,7 +347,7 @@ export class MeetingDatabase {
         contribution.type,
         contribution.content,
         contribution.targets_which ?? null,
-        new Date(contribution.timestamp).toISOString(),
+        contribution.created_at ?? isoNow(),
       );
   }
 
@@ -328,7 +365,7 @@ export class MeetingDatabase {
       content: r.content,
       type: r.type,
       targets_which: r.target_which ?? null,
-      timestamp: new Date(r.created_at).getTime(),
+      created_at: r.created_at,
     }));
   }
 
@@ -346,7 +383,7 @@ export class MeetingDatabase {
       content: r.content,
       type: r.type,
       targets_which: r.target_which ?? null,
-      timestamp: new Date(r.created_at).getTime(),
+      created_at: r.created_at,
     }));
   }
 
@@ -370,10 +407,59 @@ export class MeetingDatabase {
       );
   }
 
+  /**
+   * Atomically adds a contribution and its associated interjection (if present).
+   * Ensures both writes succeed or neither does, preventing orphaned records.
+   */
+  addContributionWithInterjection(meetingId, contribution, interjection) {
+    this.#db.exec('BEGIN TRANSACTION');
+    try {
+      this.#db
+        .prepare(
+          `INSERT INTO contributions (meeting_id, participant_id, round, type, content, target_which, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          meetingId,
+          contribution.participant_id,
+          contribution.round ?? this.getRound(),
+          contribution.type,
+          contribution.content,
+          contribution.targets_which ?? null,
+          contribution.created_at ?? isoNow(),
+        );
+
+      if (interjection) {
+        this.#db
+          .prepare(
+            `INSERT INTO interjections (meeting_id, participant_id, target_participant_id, round, content, priority, granted, pushback, resolved, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            meetingId,
+            interjection.participant_id,
+            interjection.target_participant_id ?? null,
+            interjection.round ?? null,
+            interjection.reason,
+            interjection.priority,
+            interjection.granted ? 1 : 0,
+            interjection.pushback ?? null,
+            interjection.resolved,
+            isoNow(),
+          );
+      }
+
+      this.#db.exec('COMMIT');
+    } catch (err) {
+      this.#db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
   getInterjections(meetingId) {
     const rows = this.#db
       .prepare(
-        `SELECT id, participant_id, target_participant_id, round, content as reason, priority, granted, pushback, resolved
+        `SELECT id, participant_id, target_participant_id, round, content as reason, priority, granted, pushback, resolved, created_at
          FROM interjections WHERE meeting_id = ? ORDER BY id ASC`,
       )
       .all(meetingId);
@@ -383,10 +469,12 @@ export class MeetingDatabase {
       target_participant_id: r.target_participant_id,
       round: r.round,
       priority: r.priority,
+      content: r.reason,
       reason: r.reason,
       granted: r.granted === 1,
       pushback: r.pushback,
       resolved: r.resolved,
+      created_at: r.created_at,
     }));
   }
 
@@ -572,6 +660,8 @@ export class MeetingDatabase {
       }));
   }
 
+  // ── Read-Only Queries (used by dashboard & synthesis) ────────────
+
   getTranscriptData(meetingId) {
     const meeting = this.#db
       .prepare("SELECT question, warp, domain FROM meetings WHERE id = ?")
@@ -605,7 +695,7 @@ export class MeetingDatabase {
         type: c.type,
         round: c.round,
         targets_which: c.target_which ?? null,
-        timestamp: new Date(c.created_at).getTime(),
+        created_at: c.created_at,
       });
     }
 
@@ -647,12 +737,55 @@ export class MeetingDatabase {
   close() {
     try {
       this.#db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-    } catch { /* ignore */ }
+    } catch (err) {
+      dbLogger.debug("wal_checkpoint_failed", "WAL checkpoint on close failed", extractErrorInfo(err));
+    }
     this.#db.close();
   }
 
   getDatabasePath() {
     return this.#db.filename ?? this.#db.name ?? "unknown";
+  }
+
+  /**
+   * Persists per-meeting metrics snapshot.
+   * @param {Object} metrics
+   */
+  saveMeetingMetrics(metrics) {
+    try {
+      this.#db.prepare(
+        `INSERT OR REPLACE INTO meeting_metrics
+         (meeting_id, counters, latencies, input_tokens, output_tokens, duration_ms, rounds, contributions, interjections, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        this.#meetingId,
+        JSON.stringify(metrics.counters ?? {}),
+        JSON.stringify(metrics.latencies ?? {}),
+        metrics.input_tokens ?? 0,
+        metrics.output_tokens ?? 0,
+        metrics.duration_ms ?? 0,
+        metrics.rounds ?? 0,
+        metrics.contributions ?? 0,
+        metrics.interjections ?? 0,
+        isoNow(),
+      );
+    } catch (err) {
+      dbLogger.debug("save_metrics_failed", "Failed to save meeting metrics", extractErrorInfo(err));
+    }
+  }
+
+  /**
+   * Returns recent meeting metrics for trend analysis.
+   * @param {number} limit
+   */
+  getRecentMeetingMetrics(limit = 20) {
+    try {
+      return this.#db.prepare(
+        `SELECT * FROM meeting_metrics ORDER BY created_at DESC LIMIT ?`
+      ).all(limit);
+    } catch {
+      return [];
+    }
   }
 
   getOpencodeSessionId() {
@@ -669,7 +802,9 @@ export class MeetingDatabase {
   checkpoint() {
     try {
       this.#db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-    } catch { /* ignore */ }
+    } catch (err) {
+      dbLogger.debug("wal_checkpoint_failed", "WAL checkpoint failed", extractErrorInfo(err));
+    }
   }
 }
 
@@ -677,14 +812,14 @@ export class MeetingDatabase {
 export { loadSessionIndex, _indexMeeting as indexMeeting, _unindexMeeting as unindexMeeting, _getDatabasesBySessionId as getDatabasesBySessionId };
 
 export async function findMeetingBySessionId(directory, sessionId) {
+  await ensureDb();
   const indexed = _getDatabasesBySessionId(sessionId);
   if (indexed.length > 0) {
     const { meetingId, dbPath } = indexed[indexed.length - 1];
     if (existsSync(dbPath)) {
-      const { Database: DBClass } = await import("bun:sqlite");
       let conn = null;
       try {
-        conn = new DBClass(dbPath, { readonly: true });
+        conn = new DatabaseClass(dbPath, { readonly: true });
         const row = conn
           .prepare(
             `SELECT id, question, status, round, max_rounds FROM meetings
@@ -704,15 +839,15 @@ export async function findMeetingBySessionId(directory, sessionId) {
     }
   }
 
-  const { Database: DBClass } = await import("bun:sqlite");
-  const meetingsDir = join(getLoomBaseDir(directory), "meetings");
+  const meetingsDir = join(resolveLoomBaseDir(directory), "meetings");
   if (!existsSync(meetingsDir)) return null;
+  await ensureDb();
   const files = readdirSync(meetingsDir).filter((f) => f.endsWith(".db"));
   for (const file of files) {
     const filePath = join(meetingsDir, file);
     let conn = null;
     try {
-      conn = new DBClass(filePath, { readonly: true });
+      conn = new DatabaseClass(filePath, { readonly: true });
       const row = conn
         .prepare(
           `SELECT id, question, status, round, max_rounds FROM meetings
@@ -721,7 +856,6 @@ export async function findMeetingBySessionId(directory, sessionId) {
         )
         .get(sessionId);
       if (row) {
-        conn.close();
         _indexMeeting(filePath, row.id, sessionId);
         return { meetingId: row.id, question: row.question, status: row.status, round: row.round, max_rounds: row.max_rounds, dbPath: filePath };
       }
@@ -736,7 +870,7 @@ export async function findMeetingBySessionId(directory, sessionId) {
 }
 
 export function getDbPathForMeeting(directory, meetingId) {
-  const path = join(getLoomBaseDir(directory), "meetings", `${meetingId}.db`);
+  const path = getMeetingDbPath(directory, meetingId);
   return existsSync(path) ? path : null;
 }
 
@@ -748,15 +882,15 @@ export function deleteMeetingFiles(dbPath) {
 }
 
 export function listMeetingFiles(directory) {
-  const dir = join(getLoomBaseDir(directory), "meetings");
+  const dir = join(resolveLoomBaseDir(directory), "meetings");
   if (!existsSync(dir)) return [];
   return readdirSync(dir).filter((f) => f.endsWith(".db"));
 }
 
 export async function readSessionIdFromDbAsync(dbPath) {
   try {
-    const { Database: DBClass } = await import("bun:sqlite");
-    const db = new DBClass(dbPath, { readonly: true });
+    await ensureDb();
+    const db = new DatabaseClass(dbPath, { readonly: true });
     try {
       const row = db.prepare("SELECT opencode_session_id FROM meetings LIMIT 1").get();
       return row?.opencode_session_id ?? null;
@@ -771,7 +905,7 @@ export async function readSessionIdFromDbAsync(dbPath) {
 }
 
 export async function deleteMeetingsBySessionId(directory, sessionId) {
-  const meetingsDir = join(getLoomBaseDir(directory), "meetings");
+  const meetingsDir = join(resolveLoomBaseDir(directory), "meetings");
   if (!existsSync(meetingsDir)) return 0;
 
   let deleted = 0;

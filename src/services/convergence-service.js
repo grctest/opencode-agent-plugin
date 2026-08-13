@@ -16,12 +16,12 @@ export class ConvergenceService {
   /**
    * Checks convergence using the unified protocol.
    * @param {Object} params
-   * @param {Object} params.state - Meeting state (will be mutated)
+   * @param {Object} params.state - Meeting state
    * @param {Object} params.round - Current round
    * @param {Function} params.promptOrchestrator
    * @param {Function} params.getHighestTierModel
-   * @param {Function} params.postProgress
-   * @returns {Promise<boolean>} Whether the meeting should stop
+   * @param {Function} [params.postProgress]
+   * @returns {Promise<{shouldStop: boolean, extendAmount: number}>} Whether the meeting should stop
    */
   async check(params) {
     const { state, round, promptOrchestrator, getHighestTierModel, postProgress } = params;
@@ -34,9 +34,6 @@ export class ConvergenceService {
     );
 
     if (result.shouldStop) {
-      if (state.status === "weaving") {
-        state.status = "converged";
-      }
       this.#logger.info("convergence_reached", "Convergence detected, ending meeting", {
         round: state.current_round,
         status: state.status,
@@ -45,10 +42,15 @@ export class ConvergenceService {
         reason: result.reason,
       });
       if (postProgress) {
-        await postProgress(`🧭 Convergence reached — synthesizing (${result.triggeredBy.join(", ")}).`);
+        const triggeredList = result.triggeredBy.join(", ");
+        const explanation = result.reason || `Triggered by: ${triggeredList}`;
+        await postProgress(`Convergence reached: ${explanation}`);
       }
     }
 
-    return result.shouldStop;
+    return {
+      shouldStop: result.shouldStop,
+      extendAmount: result.extendAmount ?? 0,
+    };
   }
 }

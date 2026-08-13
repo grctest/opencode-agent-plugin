@@ -26,7 +26,7 @@ Each item includes: current state, value assessment, feasibility, production ris
 
 **Files to modify:**
 - `src/validation.js` — parse `[REFUSE: reason]` from agent response
-- `src/types.js` — add `"refuse"` to `ContributionType`
+- `src/schemas.js` — add `"refuse"` to `ContributionType`
 - `src/orchestrator.js` — handle refusal as a distinct contribution type
 - `src/prompts.js` — document `[REFUSE]` directive in agent system prompt
 - `src/synthesizer.js` — handle `"refuse"` type in synthesis
