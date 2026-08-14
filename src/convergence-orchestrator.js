@@ -219,7 +219,7 @@ const CONVERGENCE_CHECKS = [
     requiresLLM: true,
     check: async (state, promptFn, getHighestTierModel) => {
       const config = getConfig().convergence;
-      const recentContribs = state.weft.slice(-Math.min(10, state.weft.length));
+      const recentContribs = state.weave.slice(-Math.min(10, state.weave.length));
       if (recentContribs.length < 4) {
         return { triggered: false, confidence: 0, reason: 'not_enough_contributions' };
       }
@@ -239,7 +239,7 @@ ${state.question}
 
 ## Deliberation State
 Round: ${state.current_round}/${state.max_rounds}
-Total contributions: ${state.weft.length}
+Total contributions: ${state.weave.length}
 
 ## Recent Round Summaries
 ${roundSummaries}
@@ -303,6 +303,35 @@ Guidelines:
       }
     },
   },
+  {
+    name: 'vector_novelty',
+    weight: 0.85,
+    minRound: 3,
+    requiresAsync: true,
+    check: async (state, _promptOrchestrator, _getHighestTierModel, vectorIndex) => {
+      if (!vectorIndex) return { triggered: false, confidence: 0, reason: 'no_vector_index' };
+      try {
+        const rounds = state.rounds;
+        if (rounds.length < 3) return { triggered: false, confidence: 0 };
+        const lastRound = rounds[rounds.length - 1];
+        const prevRound = rounds[rounds.length - 2];
+        if (lastRound.contributions.length === 0 || prevRound.contributions.length === 0) {
+          return { triggered: false, confidence: 0 };
+        }
+        const drift = await vectorIndex.computeSemanticDrift(prevRound.number, lastRound.number);
+        const threshold = 0.15;
+        const triggered = drift < threshold;
+        return {
+          triggered,
+          confidence: triggered ? 85 : 0,
+          evidence: { drift, threshold },
+          reason: triggered ? `Low semantic drift (${drift.toFixed(3)}) between rounds` : `Adequate drift (${drift.toFixed(3)})`,
+        };
+      } catch {
+        return { triggered: false, confidence: 0, reason: 'vector_check_failed' };
+      }
+    },
+  },
 ];
 
 /**
@@ -313,9 +342,10 @@ Guidelines:
  * @param {Object} round - Current round data
  * @param {Function} promptOrchestrator - Function to prompt the orchestrator LLM
  * @param {Function} getHighestTierModel - Function to get the highest tier model
+ * @param {Object} vectorIndex - Optional VectorIndex for vector-based checks
  * @returns {Promise<{shouldStop: boolean, confidence: number, triggeredBy: string[], reason: string}>}
  */
-export async function orchestrateConvergence(state, round, promptOrchestrator, getHighestTierModel) {
+export async function orchestrateConvergence(state, round, promptOrchestrator, getHighestTierModel, vectorIndex = null) {
   const triggered = [];
   let maxConfidence = 0;
   let semanticExtend = false;
@@ -334,6 +364,8 @@ export async function orchestrateConvergence(state, round, promptOrchestrator, g
         semanticExtend = true;
         convergenceLogger.info('semantic_extend', 'Semantic analysis recommends one more round', { newMax: state.max_rounds + 1 });
       }
+    } else if (checkDef.requiresAsync) {
+      result = await checkDef.check(state, promptOrchestrator, getHighestTierModel, vectorIndex);
     } else {
       result = checkDef.check(state);
     }

@@ -1,37 +1,37 @@
 import { getConfig } from "./config.js";
 import { Logger, extractErrorInfo } from "./logger.js";
 
-const MAX_WARP_CHARS = () => getConfig().maxWarpChars;
+const MAX_FABRIC_CHARS = () => getConfig().maxFabricChars;
 
-/** Appends a round summary to the warp context, compacting if it exceeds MAX_WARP_CHARS. */
-export async function evolveWarp(warp, round, compactFn) {
-  if (!round.summary) return warp ?? "";
+/** Appends a round summary to the fabric context, compacting if it exceeds MAX_FABRIC_CHARS. */
+export async function evolveFabric(fabric, round, compactFn) {
+  if (!round.summary) return fabric ?? "";
 
-  let currentWarp = warp ?? "";
+  let currentFabric = fabric ?? "";
   const newEntry = `### Round ${round.number}\n${round.summary}`;
-  currentWarp = currentWarp ? `${currentWarp}\n\n${newEntry}` : newEntry;
+  currentFabric = currentFabric ? `${currentFabric}\n\n${newEntry}` : newEntry;
 
-  if (currentWarp.length > MAX_WARP_CHARS()) {
+  if (currentFabric.length > MAX_FABRIC_CHARS()) {
     if (compactFn) {
       try {
-        const compactedStr = await compactFn(currentWarp, round);
-        if (compactedStr && compactedStr.length < currentWarp.length) {
+        const compactedStr = await compactFn(currentFabric, round);
+        if (compactedStr && compactedStr.length < currentFabric.length) {
           return compactedStr;
         }
       } catch (err) {
         const info = extractErrorInfo(err);
-        new Logger().warn("warp_compaction_failed", "LLM warp compaction failed — using rule-based compaction", info);
+        new Logger().warn("fabric_compaction_failed", "LLM fabric compaction failed — using rule-based compaction", info);
       }
     }
-    return compactWarpRuleBased(currentWarp);
+    return compactFabricRuleBased(currentFabric);
   }
 
-  return currentWarp;
+  return currentFabric;
 }
 
-function compactWarpRuleBased(warp) {
-  const roundSections = warp.split(/(?=### Round \d+)/g).filter(Boolean);
-  if (roundSections.length <= 3) return warp;
+function compactFabricRuleBased(fabric) {
+  const roundSections = fabric.split(/(?=### Round \d+)/g).filter(Boolean);
+  if (roundSections.length <= 3) return fabric;
 
   const recentRounds = roundSections.slice(-3);
   const olderRounds = roundSections.slice(0, -3);
@@ -74,20 +74,20 @@ function extractKeyFacts(roundSections) {
   return facts.slice(0, 15).join("\n");
 }
 
-/** LLM-based compaction: compresses warp context into key facts. */
-export async function compactWarpWithLLM(warp, round, promptFn, model) {
-  if (!round.summary) return warp ?? "";
+/** LLM-based compaction: compresses fabric context into key facts. */
+export async function compactFabricWithLLM(fabric, round, promptFn, model) {
+  if (!round.summary) return fabric ?? "";
 
-  const currentWarp = warp ?? "";
-  if (currentWarp.length + round.summary.length + 100 <= MAX_WARP_CHARS()) {
-    return evolveWarp(currentWarp, round, null);
+  const currentFabric = fabric ?? "";
+  if (currentFabric.length + round.summary.length + 100 <= MAX_FABRIC_CHARS()) {
+    return evolveFabric(currentFabric, round, null);
   }
 
   try {
     const prompt = `Compress the following deliberation context into a concise summary (max 400 words). Preserve all key decisions, agreements, disagreements, and open questions. Remove redundancy.
 
 Current context:
-${currentWarp.slice(0, 8000)}
+${currentFabric.slice(0, 8000)}
 
 New round summary:
 ${round.summary}
@@ -100,18 +100,18 @@ Compressed context:`;
     }
   } catch (err) {
     const info = extractErrorInfo(err);
-    new Logger().debug("warp_llm_compress_failed", "LLM compression returned unusable output — falling back to rule-based", info);
+    new Logger().debug("fabric_llm_compress_failed", "LLM compression returned unusable output — falling back to rule-based", info);
   }
 
-  return compactWarpRuleBased(currentWarp);
+  return compactFabricRuleBased(currentFabric);
 }
 
 /** Generates a structured brief of prior rounds for agent context. */
-export function generateRoundBriefs(warp, currentRound) {
+export function generateRoundBriefs(fabric, currentRound) {
   if (currentRound <= 1) return "";
-  if (!warp) return "";
+  if (!fabric) return "";
 
-  const roundSections = warp.split(/(?=### Round \d+)/g).filter(Boolean);
+  const roundSections = fabric.split(/(?=### Round \d+)/g).filter(Boolean);
   if (roundSections.length === 0) return "";
 
   return `## Prior Deliberation Summary\n\n${roundSections.join("\n\n")}`;

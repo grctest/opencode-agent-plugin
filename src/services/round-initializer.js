@@ -33,7 +33,7 @@ export class RoundInitializer {
     notifyUpdate();
 
     const sharedState = stateManager.buildSharedState();
-    database.setWarp(sharedState.warp);
+    database.setFabric(sharedState.fabric);
     database.setRound(sharedState.round);
 
     return round;
@@ -72,10 +72,10 @@ export class RoundInitializer {
     let activeParticipants = stateManager.getActiveParticipants();
 
     if (round.number >= SKIP_PASSED_MIN_ROUND) {
-      const weft = stateManager.getWeft();
+      const weave = stateManager.getWeave();
       const filtered = activeParticipants.filter((p) => {
         if (p.status !== "passed") return true;
-        const recentPasses = weft.slice(-SKIP_PASSED_LOOKBACK).filter(
+        const recentPasses = weave.slice(-SKIP_PASSED_LOOKBACK).filter(
           (c) => c.participant_id === p.config.id && c.type === "pass"
         );
         if (recentPasses.length === 0) return true;

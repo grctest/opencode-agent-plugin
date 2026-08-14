@@ -181,7 +181,7 @@ export const Loom = async (input) => {
             return "No active Loom found with that ID.";
           }
           const state = engine.getState();
-          return `**Loom Status:** ${state.status}\n**Round:** ${state.current_round}/${state.max_rounds}\n**Contributions:** ${state.weft.length}\n**Meeting ID:** ${engine.getMeetingId()}`;
+          return `**Loom Status:** ${state.status}\n**Round:** ${state.current_round}/${state.max_rounds}\n**Contributions:** ${state.weave.length}\n**Meeting ID:** ${engine.getMeetingId()}`;
         },
       }),
 
@@ -264,7 +264,7 @@ export const Loom = async (input) => {
         args: {
           loom_id: tool.schema.string().describe("The ID of the Loom session to inspect"),
           include: tool.schema
-            .array(tool.schema.enum(['state', 'participants', 'contributions', 'rounds', 'warp', 'orchestratorMessages']))
+            .array(tool.schema.enum(['state', 'participants', 'contributions', 'rounds', 'fabric', 'orchestratorMessages']))
             .optional()
             .describe("Which parts of the loom state to include (default: all)"),
         },
@@ -275,7 +275,7 @@ export const Loom = async (input) => {
           }
           
           const state = engine.getState();
-          const include = args.include || ['state', 'participants', 'contributions', 'rounds', 'warp', 'orchestratorMessages'];
+          const include = args.include || ['state', 'participants', 'contributions', 'rounds', 'fabric', 'orchestratorMessages'];
           
           const result = {};
           if (include.includes('state')) {
@@ -299,7 +299,7 @@ export const Loom = async (input) => {
             }));
           }
           if (include.includes('contributions')) {
-            result.contributions = state.weft.map(c => ({
+            result.contributions = state.weave.map(c => ({
               id: c.id,
               round: c.round,
               participantId: c.participant_id,
@@ -316,8 +316,8 @@ export const Loom = async (input) => {
               summary: r.summary,
             }));
           }
-          if (include.includes('warp')) {
-            result.warp = state.warp;
+          if (include.includes('fabric')) {
+            result.fabric = state.fabric;
           }
           if (include.includes('orchestratorMessages')) {
             result.orchestratorMessages = engine.getOrchestratorMessages().map(m => ({

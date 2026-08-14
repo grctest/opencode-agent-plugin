@@ -1,4 +1,4 @@
-/** Formats interjection resolution notes for the warp context. */
+/** Formats interjection resolution notes for the fabric context. */
 export function formatInterjectionNotes(round) {
   const granted = round.interjections.filter((ij) => ij.resolved === "granted");
   const denied = round.interjections.filter((ij) => ij.resolved === "denied" || ij.resolved === "contested");

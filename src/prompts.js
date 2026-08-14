@@ -1,4 +1,4 @@
-import { generateRoundBriefs } from "./warp-manager.js";
+import { generateRoundBriefs } from "./fabric-manager.js";
 import { getPromptForTier, INTERJECTION_PRIORITY_CAP } from "./shared.js";
 import { sanitizeForDisplay } from "./utils/sanitize.js";
 
@@ -277,14 +277,14 @@ To interject on the current point: [INTERJECT: Priority: 8, Reason: "I have data
 
 /**
  * Builds the user prompt for an agent's turn. Child sessions are persistent, so the prompt
- * only carries the delta: the question (round 1), the shared context warp (round 1 only),
+ * only carries the delta: the question (round 1), RAG-retrieved relevant context,
  * round briefs for everything prior, and contributions from the previous + current rounds.
  */
-export function buildAgentUserPrompt(participant, warp, weft, question, round, roundBriefs, domain = null) {
-  const briefs = roundBriefs ?? generateRoundBriefs(warp, round);
+export function buildAgentUserPrompt(participant, fabric, weave, question, round, roundBriefs, domain = null, ragContext = "") {
+  const briefs = roundBriefs ?? generateRoundBriefs(fabric, round);
   const firstRound = round <= 1;
 
-  const recentContributions = weft.filter((c) => c.round == null || c.round >= round - 1);
+  const recentContributions = weave.filter((c) => c.round == null || c.round >= round - 1);
   const transcript =
     recentContributions.length === 0
       ? "*(No contributions yet — you are the first to speak)*"
@@ -297,7 +297,7 @@ export function buildAgentUserPrompt(participant, warp, weft, question, round, r
           })
           .join("\n");
 
-  const warpDelimited = delimitContext(sanitizeForDisplay(warp, 8000), "WARP");
+  const ragDelimited = ragContext ? delimitContext(ragContext, "RELEVANT_PRIOR_CONTEXT") : "";
   const briefsDelimited = delimitContext(briefs, "BRIEFS");
   const transcriptDelimited = delimitContext(transcript, "CONTRIBUTIONS");
   const safeQuestion = sanitizeForDisplay(question);
@@ -308,8 +308,9 @@ ${safeQuestion}
 ${safeDomain ? `\n## Domain: ${safeDomain}\n` : ""}
 ## Round ${round}
 
+${ragDelimited ? `## Relevant Prior Context\n${ragDelimited}\n` : ""}
 ${briefsDelimited ? `## Prior Deliberation Brief\n${briefsDelimited}\n` : ""}
-${firstRound && typeof warp === "string" ? `## Shared Context (Warp)\n${warpDelimited}\n\n` : ""}
+${firstRound && !ragContext && typeof fabric === "string" ? `## Shared Context\n${delimitContext(sanitizeForDisplay(fabric, 8000), "FABRIC")}\n\n` : ""}
 ## Recent Contributions (rounds ${Math.max(1, round - 1)}-${round})
 ${transcriptDelimited}
 

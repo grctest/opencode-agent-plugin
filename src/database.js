@@ -12,6 +12,15 @@ import {
 
 const dbLogger = new Logger();
 
+// sqlite-vec extension loader — loaded once, reused across all databases
+let sqliteVecLoadFn = null;
+try {
+  const sqliteVec = await import("sqlite-vec");
+  sqliteVecLoadFn = sqliteVec.load;
+} catch {
+  dbLogger.info("sqlite_vec_not_available", "sqlite-vec package not found — vector search disabled");
+}
+
 // Single bun:sqlite import point — all DB access goes through this
 let DatabaseClass = null;
 let dbReady = null;
@@ -89,7 +98,7 @@ export class MeetingDatabase {
     const db = new DatabaseClass(dbPath, { readonly: true });
     try {
       const row = db.prepare(
-        `SELECT id, question, context, status, round, max_rounds, convergence, domain, warp
+        `SELECT id, question, context, status, round, max_rounds, convergence, domain, fabric
          FROM meetings LIMIT 1`
       ).get();
       return row ?? null;
@@ -105,10 +114,29 @@ export class MeetingDatabase {
     this.#db = db;
     this.#db.exec("PRAGMA journal_mode = WAL");
     this.#db.exec("PRAGMA foreign_keys = ON");
+    if (sqliteVecLoadFn) {
+      try { sqliteVecLoadFn(this.#db); } catch (err) {
+        dbLogger.debug("sqlite_vec_load_error", "Failed to load sqlite-vec on this connection", extractErrorInfo(err));
+      }
+    }
     initSchema(this.#db);
     migrateSchema(this.#db);
+    this.#initVectorTable();
     this.#cleanupOldErrors();
     this.#checkIntegrity();
+  }
+
+  #initVectorTable() {
+    try {
+      this.#db.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS vec_fabric_chunks USING vec0(
+          id INTEGER PRIMARY KEY,
+          embedding float[384]
+        )
+      `);
+    } catch (err) {
+      dbLogger.debug("vec_table_init_failed", "Could not create vector table — sqlite-vec may not be loaded", extractErrorInfo(err));
+    }
   }
 
   #checkIntegrity() {
@@ -134,7 +162,7 @@ export class MeetingDatabase {
   initializeMeeting(input) {
     const now = isoNow();
     const insertMeeting = this.#db.prepare(
-      `INSERT INTO meetings (id, question, context, status, round, warp, max_rounds, convergence, domain, parent_session_id, opencode_session_id, created_at, updated_at)
+      `INSERT INTO meetings (id, question, context, status, round, fabric, max_rounds, convergence, domain, parent_session_id, opencode_session_id, created_at, updated_at)
        VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     const insertParticipant = this.#db.prepare(
@@ -233,23 +261,23 @@ export class MeetingDatabase {
       }));
   }
 
-  getWarp() {
+  getFabric() {
     try {
       const row = this.#db
-        .prepare("SELECT warp FROM meetings WHERE id = ?")
+        .prepare("SELECT fabric FROM meetings WHERE id = ?")
         .get(this.#meetingId);
-      return row?.warp ?? "";
+      return row?.fabric ?? "";
     } catch (err) {
       const info = extractErrorInfo(err);
-      dbLogger.warn("get_warp_failed", `Failed to get warp for meeting ${this.#meetingId}`, info);
+      dbLogger.warn("get_fabric_failed", `Failed to get fabric for meeting ${this.#meetingId}`, info);
       return "";
     }
   }
 
-  setWarp(warp) {
+  setFabric(fabric) {
     this.#db
-      .prepare("UPDATE meetings SET warp = ?, updated_at = ? WHERE id = ?")
-      .run(warp, isoNow(), this.#meetingId);
+      .prepare("UPDATE meetings SET fabric = ?, updated_at = ? WHERE id = ?")
+      .run(fabric, isoNow(), this.#meetingId);
   }
 
   updateMeetingDomain(meetingId, domain) {
@@ -558,7 +586,7 @@ export class MeetingDatabase {
   getMeeting() {
     const row = this.#db
       .prepare(
-        `SELECT id, question, context, status, round, warp, max_rounds, convergence, domain, parent_session_id, opencode_session_id, next_speaker_id, stats, created_at
+        `SELECT id, question, context, status, round, fabric, max_rounds, convergence, domain, parent_session_id, opencode_session_id, next_speaker_id, stats, created_at
          FROM meetings WHERE id = ?`,
       )
       .get(this.#meetingId);
@@ -664,7 +692,7 @@ export class MeetingDatabase {
 
   getTranscriptData(meetingId) {
     const meeting = this.#db
-      .prepare("SELECT question, warp, domain FROM meetings WHERE id = ?")
+      .prepare("SELECT question, fabric, domain FROM meetings WHERE id = ?")
       .get(meetingId);
 
     const contributions = this.#db
@@ -720,7 +748,7 @@ export class MeetingDatabase {
 
     return {
       question: meeting?.question ?? "",
-      warp: meeting?.warp ?? "",
+      fabric: meeting?.fabric ?? "",
       domain: meeting?.domain ?? null,
       rounds,
     };
@@ -804,6 +832,77 @@ export class MeetingDatabase {
       this.#db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
     } catch (err) {
       dbLogger.debug("wal_checkpoint_failed", "WAL checkpoint failed", extractErrorInfo(err));
+    }
+  }
+
+  // ── Vector Storage (sqlite-vec) ─────────────────────────────────
+
+  /**
+   * Stores a text chunk and its embedding in the fabric vector index.
+   * @param {number} chunkId - fabric_chunks.id
+   * @param {Float32Array} embedding - 384-dim vector
+   */
+  storeFabricEmbedding(chunkId, embedding) {
+    try {
+      this.#db.prepare(
+        `INSERT INTO vec_fabric_chunks (id, embedding) VALUES (?, ?)`
+      ).run(chunkId, embedding);
+    } catch (err) {
+      dbLogger.debug("store_embedding_failed", "Failed to store fabric embedding", extractErrorInfo(err));
+    }
+  }
+
+  /**
+   * Stores a text chunk in the fabric_chunks table and returns its ID.
+   * @param {string} content - text content
+   * @param {number} round - round number
+   * @param {string} source - e.g. 'round_summary', 'contribution', 'context'
+   * @returns {number|null} chunk ID
+   */
+  storeFabricChunk(content, round, source = "round_summary") {
+    try {
+      const result = this.#db.prepare(
+        `INSERT INTO fabric_chunks (meeting_id, round, content, source, created_at) VALUES (?, ?, ?, ?, ?)`
+      ).run(this.#meetingId, round, content, source, isoNow());
+      return result.lastInsertRowid;
+    } catch (err) {
+      dbLogger.debug("store_chunk_failed", "Failed to store fabric chunk", extractErrorInfo(err));
+      return null;
+    }
+  }
+
+  /**
+   * Retrieves all fabric chunks for this meeting, ordered by round.
+   * @returns {Array<{id: number, round: number, content: string, source: string}>}
+   */
+  getFabricChunks() {
+    try {
+      return this.#db.prepare(
+        `SELECT id, round, chunk_index, content, source FROM fabric_chunks WHERE meeting_id = ? ORDER BY round ASC, chunk_index ASC`
+      ).all(this.#meetingId);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Performs a vector similarity search over fabric embeddings.
+   * @param {Float32Array} queryEmbedding - 384-dim query vector
+   * @param {number} topK - number of results
+   * @returns {Array<{id: number, distance: number, content: string, round: number, source: string}>}
+   */
+  searchFabricVectors(queryEmbedding, topK = 5) {
+    try {
+      return this.#db.prepare(`
+        SELECT v.id, v.distance, f.content, f.round, f.source
+        FROM vec_fabric_chunks v
+        JOIN fabric_chunks f ON f.id = v.id AND f.meeting_id = ?
+        WHERE v.embedding MATCH ?
+        ORDER BY v.distance
+        LIMIT ?
+      `).all(this.#meetingId, queryEmbedding, topK);
+    } catch {
+      return [];
     }
   }
 }

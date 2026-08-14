@@ -46,7 +46,7 @@ export class RoundService {
     // Summarize the round
     round.summary = await summarizeRound(round, params.state, promptOrchestrator, getHighestTierModel);
 
-    // Add interjection notes to warp
+    // Add interjection notes to fabric
     const ijNotes = formatInterjectionNotes(round);
 
     return { round, ijNotes };

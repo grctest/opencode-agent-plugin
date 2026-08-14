@@ -4,7 +4,7 @@ import { Logger } from "../logger.js";
 const EXTENSION_EXTRA_ROUNDS = 4;
 
 /**
- * Handles meeting extension logic: warp update, round limit bump, session recreation.
+ * Handles meeting extension logic: fabric update, round limit bump, session recreation.
  * Extracted from MeetingOrchestrator for single responsibility.
  */
 export class MeetingExtender {
@@ -32,9 +32,9 @@ export class MeetingExtender {
       throw new LoomError("Cannot extend: database not available", { phase: "extension", recoverable: false });
     }
 
-    const newWarp = `${database.getWarp()}\n\n**User Input:** ${newPrompt}`;
-    database.setWarp(newWarp);
-    stateManager.setWarp(newWarp);
+    const newFabric = `${database.getFabric()}\n\n**User Input:** ${newPrompt}`;
+    database.setFabric(newFabric);
+    stateManager.setFabric(newFabric);
     stateManager.forceTransitionTo("weaving");
     stateManager.setMaxRounds(stateManager.getMaxRounds() + EXTENSION_EXTRA_ROUNDS);
     database.setRound(stateManager.getCurrentRound());

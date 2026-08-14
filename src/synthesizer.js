@@ -4,12 +4,12 @@ function supplementMissingSections(text, missingSections) {
 }
 
 /** Derives a confidence level (high/medium/low) based on deliberation quality signals. */
-export function deriveConfidence(weft, dissentCount, totalParticipants = 0, activeParticipants = 0) {
-  const totalContribs = weft.length;
+export function deriveConfidence(weave, dissentCount, totalParticipants = 0, activeParticipants = 0) {
+  const totalContribs = weave.length;
   if (totalContribs === 0) return "low";
 
   const challengeRatio =
-    weft.filter((c) => c.type === "challenge" || c.type === "dissent").length /
+    weave.filter((c) => c.type === "challenge" || c.type === "dissent").length /
     Math.max(totalContribs, 1);
 
   const participationRate = totalParticipants > 0 ? activeParticipants / totalParticipants : 1;
@@ -90,8 +90,8 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, ob
   const objectionsText = unresolvedObjections.map((o) => `- ${o.content}`).join("\n");
   
   // Collect refusals from the transcript
-  const weft = transcriptData.rounds.flatMap((r) => r.contributions);
-  const refusals = weft.filter((c) => c.type === "refuse");
+  const weave = transcriptData.rounds.flatMap((r) => r.contributions);
+  const refusals = weave.filter((c) => c.type === "refuse");
   const refusalsText = refusals.map((r) => {
     const p = participants.find((pp) => pp.config.id === r.participant_id);
     return `${p?.config.name ?? r.participant_id}: ${r.content}`;
@@ -114,7 +114,7 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, ob
 
   const parsedConfidence = parseConfidence(finalOutput);
   const activeParticipants = participants.filter((p) => p.status !== "failed").length;
-  const heuristicConfidence = deriveConfidence(weft, unresolvedObjections.length, participants.length, activeParticipants);
+  const heuristicConfidence = deriveConfidence(weave, unresolvedObjections.length, participants.length, activeParticipants);
   const confidence = parsedConfidence ?? heuristicConfidence;
 
   const artifact = {

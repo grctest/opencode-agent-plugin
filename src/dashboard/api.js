@@ -113,7 +113,7 @@ export class DashboardApi {
   getState() {
     const row = this.#db
       .prepare(
-        `SELECT id as meeting_id, question, context, status, round, max_rounds, convergence, warp, domain, stats, created_at
+        `SELECT id as meeting_id, question, context, status, round, max_rounds, convergence, fabric, domain, stats, created_at
          FROM meetings LIMIT 1`,
       )
       .get();
@@ -282,7 +282,7 @@ export class DashboardApi {
 
   getAgentContext(meetingId, participantId) {
     const meeting = this.#db
-      .prepare(`SELECT warp, question FROM meetings WHERE id = ?`)
+      .prepare(`SELECT fabric, question FROM meetings WHERE id = ?`)
       .get(meetingId);
     const participant = this.#db
       .prepare(`SELECT name, persona, agenda, tier, provider_id, model_id FROM participants WHERE id = ? AND meeting_id = ?`)
@@ -360,10 +360,10 @@ export class DashboardApi {
       lines.push("");
     }
 
-    if (meeting?.warp) {
-      lines.push(`## Final Warp Context`);
+    if (meeting?.fabric) {
+      lines.push(`## Final Fabric Context`);
       lines.push("");
-      lines.push(meeting.warp);
+      lines.push(meeting.fabric);
       lines.push("");
     }
 
@@ -388,7 +388,7 @@ export class DashboardApi {
         maxRounds: meeting?.max_rounds ?? 0,
         convergence: meeting?.convergence ?? "Unknown",
         domain: meeting?.domain ?? null,
-        warp: meeting?.warp ?? "",
+        fabric: meeting?.fabric ?? "",
         createdAt: meeting?.created_at ?? null,
       },
       participants: participants.map(p => ({
@@ -516,8 +516,8 @@ export class DashboardApi {
       yield `\n`;
     }
 
-    if (meeting?.warp) {
-      yield `## Final Warp Context\n\n${meeting.warp}\n`;
+    if (meeting?.fabric) {
+      yield `## Final Fabric Context\n\n${meeting.fabric}\n`;
     }
   }
 

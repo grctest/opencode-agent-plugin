@@ -1,5 +1,5 @@
 import { buildSynthesisPrompt } from "./prompts.js";
-import { formatTranscriptFromData } from "./warp-manager.js";
+import { formatTranscriptFromData } from "./fabric-manager.js";
 import { finalizeSynthesis, validateSynthesisSections, NEUTRAL_SYNTHESIZER_SYSTEM } from "./synthesizer.js";
 import { extractText, withTimeout } from "./shared.js";
 import { getConfig } from "./config.js";

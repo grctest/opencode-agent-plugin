@@ -228,34 +228,34 @@ export const InterjectionItem = memo(({ interjection, participantName }) => {
   );
 });
 
-export const WarpViewer = memo(({ warp }) => {
-  const sections = useMemo(() => (warp ? warp.split(/(?=## )/g).filter(Boolean) : []), [warp]);
+export const FabricViewer = memo(({ fabric }) => {
+  const sections = useMemo(() => (fabric ? fabric.split(/(?=## )/g).filter(Boolean) : []), [fabric]);
 
-  if (!warp) {
+  if (!fabric) {
     return (
       <div className="loom-card">
-        <h3 className="loom-title-sm loom-mb-sm">Warp (Shared Context)</h3>
-        <span className="loom-italic loom-text-muted">No warp context yet</span>
+        <h3 className="loom-title-sm loom-mb-sm">Fabric (Shared Context)</h3>
+        <span className="loom-italic loom-text-muted">No fabric context yet</span>
       </div>
     );
   }
 
   return (
     <div className="loom-card">
-      <h3 className="loom-title-sm loom-mb-sm">Warp (Shared Context)</h3>
-      <div className="loom-warp-content">
+      <h3 className="loom-title-sm loom-mb-sm">Fabric (Shared Context)</h3>
+      <div className="loom-fabric-content">
         {sections.map((section, i) => {
           const lines = section.trim().split("\n");
           const heading = lines[0].replace(/^#+\s*/, "");
           const body = lines.slice(1).join("\n").trim();
 
           return (
-            <div key={i} className="loom-warp-section">
-              <h4 className="loom-warp-heading">{heading}</h4>
+            <div key={i} className="loom-fabric-section">
+              <h4 className="loom-fabric-heading">{heading}</h4>
               {body && body !== "(none yet)" && (
-                <div className="loom-warp-body">
+                <div className="loom-fabric-body">
                   {body.split("\n").map((line, j) => (
-                    <p key={j} className={cn("loom-text", line.startsWith("-") ? "loom-warp-bullet" : "loom-text-muted")}>
+                    <p key={j} className={cn("loom-text", line.startsWith("-") ? "loom-fabric-bullet" : "loom-text-muted")}>
                       {line.replace(/^-\s*/, "")}
                     </p>
                   ))}
@@ -270,9 +270,9 @@ export const WarpViewer = memo(({ warp }) => {
 });
 
 export const AgentPerspective = memo(({ participant, meeting }) => {
-  const warpPreview = useMemo(
-    () => (meeting?.warp ? meeting.warp.slice(0, 500) : ""),
-    [meeting?.warp]
+  const fabricPreview = useMemo(
+    () => (meeting?.fabric ? meeting.fabric.slice(0, 500) : ""),
+    [meeting?.fabric]
   );
 
   return (
@@ -294,11 +294,11 @@ export const AgentPerspective = memo(({ participant, meeting }) => {
           <span className="loom-agent-perspective-label">Model</span>
           <p className="loom-text-xs loom-text-muted">{participant.provider_id}/{participant.model_id}</p>
         </div>
-        {warpPreview && (
+        {fabricPreview && (
           <div className="loom-agent-perspective-section">
-            <span className="loom-agent-perspective-label">Shared Context (Warp)</span>
-            <div className="loom-agent-perspective-warp">
-              {warpPreview}{warpPreview.length > 500 ? "..." : ""}
+            <span className="loom-agent-perspective-label">Shared Context (Fabric)</span>
+            <div className="loom-agent-perspective-fabric">
+              {fabricPreview}{fabricPreview.length > 500 ? "..." : ""}
             </div>
           </div>
         )}

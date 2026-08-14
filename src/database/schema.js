@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 11;
+export const SCHEMA_VERSION = 13;
 
 export function initSchema(db) {
   db.exec(`
@@ -8,7 +8,7 @@ export function initSchema(db) {
       context TEXT,
       status TEXT NOT NULL,
       round INTEGER NOT NULL DEFAULT 0,
-      warp TEXT,
+      fabric TEXT,
       max_rounds INTEGER NOT NULL,
       convergence TEXT NOT NULL,
       domain TEXT,
@@ -138,6 +138,18 @@ export function initSchema(db) {
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_meeting_metrics_created ON meeting_metrics(created_at);
+
+    CREATE TABLE IF NOT EXISTS fabric_chunks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+      round INTEGER NOT NULL,
+      chunk_index INTEGER NOT NULL DEFAULT 0,
+      content TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'round_summary',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_fabric_chunks_meeting ON fabric_chunks(meeting_id);
+    CREATE INDEX IF NOT EXISTS idx_fabric_chunks_meeting_round ON fabric_chunks(meeting_id, round);
   `);
 }
 
@@ -260,8 +272,69 @@ export function migrateSchema(db) {
   if (currentVersion < 11) {
     try { db.exec(`CREATE INDEX IF NOT EXISTS idx_interjections_participant ON interjections(participant_id)`); } catch { /* exists */ }
     db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '11')`);
-    }
-    db.exec("COMMIT");
+  }
+
+  if (currentVersion < 12) {
+    try { db.exec(`
+      CREATE TABLE IF NOT EXISTS meeting_metrics (
+        meeting_id TEXT PRIMARY KEY REFERENCES meetings(id) ON DELETE CASCADE,
+        counters TEXT NOT NULL DEFAULT '{}',
+        latencies TEXT NOT NULL DEFAULT '{}',
+        input_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0,
+        duration_ms INTEGER NOT NULL DEFAULT 0,
+        rounds INTEGER NOT NULL DEFAULT 0,
+        contributions INTEGER NOT NULL DEFAULT 0,
+        interjections INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+      )
+    `); } catch { /* exists */ }
+    try { db.exec(`
+      CREATE TABLE IF NOT EXISTS warp_chunks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+        round INTEGER NOT NULL,
+        chunk_index INTEGER NOT NULL DEFAULT 0,
+        content TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'round_summary',
+        created_at TEXT NOT NULL
+      )
+    `); } catch { /* exists */ }
+    try { db.exec(`CREATE INDEX IF NOT EXISTS idx_warp_chunks_meeting ON warp_chunks(meeting_id)`); } catch { /* exists */ }
+    try { db.exec(`CREATE INDEX IF NOT EXISTS idx_warp_chunks_meeting_round ON warp_chunks(meeting_id, round)`); } catch { /* exists */ }
+    try { db.exec(`CREATE INDEX IF NOT EXISTS idx_meeting_metrics_created ON meeting_metrics(created_at)`); } catch { /* exists */ }
+    db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '12')`);
+  }
+
+  if (currentVersion < 13) {
+    try { db.exec(`ALTER TABLE meetings RENAME COLUMN warp TO fabric`); } catch { /* exists or already renamed */ }
+    try {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS fabric_chunks (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+          round INTEGER NOT NULL,
+          chunk_index INTEGER NOT NULL DEFAULT 0,
+          content TEXT NOT NULL,
+          source TEXT NOT NULL DEFAULT 'round_summary',
+          created_at TEXT NOT NULL
+        )
+      `);
+      db.exec(`INSERT OR IGNORE INTO fabric_chunks SELECT * FROM warp_chunks`);
+    } catch { /* exists */ }
+    try { db.exec(`DROP TABLE IF EXISTS warp_chunks`); } catch { /* already dropped */ }
+    try { db.exec(`CREATE INDEX IF NOT EXISTS idx_fabric_chunks_meeting ON fabric_chunks(meeting_id)`); } catch { /* exists */ }
+    try { db.exec(`CREATE INDEX IF NOT EXISTS idx_fabric_chunks_meeting_round ON fabric_chunks(meeting_id, round)`); } catch { /* exists */ }
+    try { db.exec(`DROP TABLE IF EXISTS vec_warp_chunks`); } catch { /* already dropped */ }
+    try {
+      db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS vec_fabric_chunks USING vec0(
+        id INTEGER PRIMARY KEY,
+        embedding float[384]
+      )`);
+    } catch { /* sqlite-vec not loaded */ }
+    db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '13')`);
+  }
+  db.exec("COMMIT");
   } catch (err) {
     db.exec("ROLLBACK");
     throw err;

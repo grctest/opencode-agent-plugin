@@ -134,7 +134,7 @@ These items require foundational features to exist first or carry significant pr
 - **Stable contribution IDs** — contributions get persistent database row ids; agents reference `[#id]` instead of the unreliable round-position scheme
 - **Meeting extension in place** — re-running `/knit` resumes the same meeting (same id, same database, same child sessions) and appends new input instead of forking
 - **Moderator break honored** — the moderator's `next_speaker` ruling reorders the next round instead of being ignored
-- **Round summaries persisted** — `rounds` table stores per-round summaries; warp compaction is now non-destructive because full summaries survive in the DB
+- **Round summaries persisted** — `rounds` table stores per-round summaries; fabric compaction is now non-destructive because full summaries survive in the DB
 - **Final artifact persisted** — synthesis output (decisions, action items, dissent, open questions, confidence) saved to the DB and surfaced in the dashboard's Output tab and Markdown export
 - **Config pipeline fixed** — project `.loomrc.json` overrides actually reach consumers; config source is logged at startup
 - **Sequential interjection** — post-contribution interjection with pushback (`round-executor.js`)

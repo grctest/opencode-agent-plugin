@@ -42,7 +42,7 @@ export function parseModeratorRuling(text) {
  * Checks if moderator intervention is needed (circular arguments) and obtains a ruling.
  * Returns an action: continue, break (redirect to specific speaker), or converge (end meeting).
  */
-export async function checkModeratorIntervention(round, participants, weft, currentRound, maxRounds, promptFn, getHighestTierModel, previousRulings = []) {
+export async function checkModeratorIntervention(round, participants, weave, currentRound, maxRounds, promptFn, getHighestTierModel, previousRulings = []) {
   const trigger = getConfig().moderatorTrigger;
   if (round.contributions.length < trigger.minContributions) {
     return { action: "continue", nextSpeakerIdx: -1 };
@@ -58,8 +58,8 @@ export async function checkModeratorIntervention(round, participants, weft, curr
 
   let situation = `Circular argument detected: ${challengeCount} challenges/dissents in the last ${trigger.lookbackWindow} contributions within a single round. The deliberation appears to be going in circles.`;
 
-  if (weft.length >= LOOKBACK.SENDER_HISTORY) {
-    const lastSix = weft.slice(-LOOKBACK.SENDER_HISTORY);
+  if (weave.length >= LOOKBACK.SENDER_HISTORY) {
+    const lastSix = weave.slice(-LOOKBACK.SENDER_HISTORY);
     const challengeCounts = {};
     for (const c of lastSix) {
       if (c.type === "challenge" || c.type === "dissent") {
@@ -72,7 +72,7 @@ export async function checkModeratorIntervention(round, participants, weft, curr
     }
   }
 
-  const lastContributions = weft.slice(-7).map((c) => ({
+  const lastContributions = weave.slice(-7).map((c) => ({
     content: c.content || "",
     type: c.type,
     participant_id: c.participant_id,
@@ -82,7 +82,7 @@ export async function checkModeratorIntervention(round, participants, weft, curr
     situation,
     currentRound,
     maxRounds,
-    weft.length,
+    weave.length,
     lastContributions,
     previousRulings,
   );

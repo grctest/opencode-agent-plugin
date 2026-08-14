@@ -1,11 +1,11 @@
-import { evolveWarp, compactWarpWithLLM } from "../warp-manager.js";
+import { evolveFabric, compactFabricWithLLM } from "../fabric-manager.js";
 import { getConfig } from "../config.js";
 import { Logger } from "../logger.js";
 
 /**
- * Handles warp context evolution and compaction.
+ * Handles fabric context evolution and compaction.
  */
-export class WarpService {
+export class FabricService {
   /** @type {import("../logger.js").Logger} */
   #logger;
 
@@ -14,15 +14,15 @@ export class WarpService {
   }
 
   /**
-   * Evolves the warp with a new round summary.
-   * @param {string} warp - Current warp
+   * Evolves the fabric with a new round summary.
+   * @param {string} fabric - Current fabric
    * @param {Object} round - Round data with summary
    * @param {Function} [compactFn] - Optional LLM compaction function
-   * @returns {Promise<string>} Updated warp
+   * @returns {Promise<string>} Updated fabric
    */
-  async evolve(warp, round, compactFn) {
-    const result = await evolveWarp(warp, round, compactFn);
-    return result ?? warp ?? "";
+  async evolve(fabric, round, compactFn) {
+    const result = await evolveFabric(fabric, round, compactFn);
+    return result ?? fabric ?? "";
   }
 
   /**
@@ -32,14 +32,14 @@ export class WarpService {
    * @returns {Function|null} Compaction function or null if disabled
    */
   createCompactionFunction(promptOrchestrator, getHighestTierModel) {
-    if (!getConfig().enableLlmWarpCompaction) {
+    if (!getConfig().enableLlmFabricCompaction) {
       return null;
     }
-    return async (warp, round) => {
+    return async (fabric, round) => {
       const model = getHighestTierModel();
       if (!model) return null;
-      return compactWarpWithLLM(
-        warp,
+      return compactFabricWithLLM(
+        fabric,
         round,
         async (system, m, message) => promptOrchestrator(system, m, message, "compaction"),
         model,

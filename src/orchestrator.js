@@ -15,12 +15,13 @@ import { PersistenceService } from "./services/persistence-service.js";
 import { ModeratorService } from "./services/moderator-service.js";
 import { ConvergenceService } from "./services/convergence-service.js";
 import { SynthesisCoordinator } from "./synthesis-coordinator.js";
-import { WarpService } from "./services/warp-service.js";
+import { FabricService } from "./services/fabric-service.js";
 import { RoundService } from "./services/round-service.js";
 import { RoundExecutor } from "./round-executor.js";
 import { StallWatchdog } from "./services/stall-watchdog.js";
 import { RoundInitializer } from "./services/round-initializer.js";
 import { MeetingExtender } from "./services/meeting-extender.js";
+import { VectorIndex } from "./services/vector-index.js";
 
 // Named constants for magic numbers
 const SUMMARY_TRUNCATE_LEN = 200;
@@ -33,11 +34,12 @@ export class MeetingOrchestrator {
   #moderatorService;
   #convergenceService;
   #synthesisCoordinator;
-  #warpService;
+  #fabricService;
   #roundService;
   #roundInitializer;
   #meetingExtender;
   #stallWatchdog;
+  #vectorIndex;
   #options;
   #client;
   #directory;
@@ -78,8 +80,8 @@ export class MeetingOrchestrator {
         reflections: [],
         contributions_count: 0,
       })),
-      warp: options.context,
-      weft: [],
+      fabric: options.context,
+      weave: [],
       rounds: [],
       current_round: 0,
       max_rounds: options.maxRounds,
@@ -95,7 +97,7 @@ export class MeetingOrchestrator {
     this.#stateManager = new StateManager(initialState);
     this.#moderatorService = new ModeratorService();
     this.#convergenceService = new ConvergenceService();
-    this.#warpService = new WarpService();
+    this.#fabricService = new FabricService();
     this.#roundInitializer = new RoundInitializer();
     this.#meetingExtender = new MeetingExtender();
     this.#stallWatchdog = new StallWatchdog({
@@ -168,6 +170,11 @@ export class MeetingOrchestrator {
   }
 
   async #promptOrchestrator(system, model, message, type = "orchestrator") {
+    const fastPathModel = getConfig().fastPathModel;
+    const useModel = (fastPathModel && (type === "moderation" || type === "compaction" || type === "summary"))
+      ? fastPathModel
+      : model;
+
     this.#callStats[type] = (this.#callStats[type] ?? 0) + 1;
     if (this.#orchestratorMessages.length >= MAX_ORCHESTRATOR_MESSAGES) {
       this.#orchestratorMessages.shift();
@@ -176,7 +183,7 @@ export class MeetingOrchestrator {
     if (this.#database) {
       this.#database.addOrchestratorMessage(type, "user", message);
     }
-    const { text: response, tokens } = await this.#sessionManager.promptOrchestrator(system, model, message);
+    const { text: response, tokens } = await this.#sessionManager.promptOrchestrator(system, useModel, message);
     if (tokens) {
       this.#callStats.input_tokens += tokens.input ?? 0;
       this.#callStats.output_tokens += tokens.output ?? 0;
@@ -203,6 +210,8 @@ export class MeetingOrchestrator {
       const db = await MeetingDatabase.create(dbPath, this.#meetingId);
       this.#database = db;
       this.#persistenceService = new PersistenceService(db, this.#meetingId);
+      this.#vectorIndex = new VectorIndex(db);
+      this.#convergenceService.setVectorIndex(this.#vectorIndex);
 
       this.#sessionManager = new SessionManager(this.#client, this.#directory, this.#parentSessionId, this.#logger);
       this.#synthesisCoordinator = new SynthesisCoordinator(this.#client, this.#directory, this.#sessionManager);
@@ -260,11 +269,16 @@ export class MeetingOrchestrator {
       await this.#persistState();
       this.#stateManager.transitionTo("weaving");
 
+      if (!this.#resume && this.#options.context) {
+        this.#vectorIndex.indexContext(this.#options.context).catch(() => {});
+      }
+
       this.#roundExecutor = new RoundExecutor({
         client: this.#client,
         directory: this.#directory,
         db,
         stateManager: this.#stateManager,
+        vectorIndex: this.#vectorIndex,
         options: {
           onAgentComplete: this.#options.onAgentComplete,
           onContribution: (...args) => {
@@ -411,16 +425,22 @@ export class MeetingOrchestrator {
       this.#database.setRoundSummary(updatedRound.number, updatedRound.summary);
 
       if (ijNotes) {
-        this.#stateManager.setWarp(this.#stateManager.getWarp() + ijNotes);
+        this.#stateManager.setFabric(this.#stateManager.getFabric() + ijNotes);
       }
 
-      const compactFn = this.#warpService.createCompactionFunction(
+      const compactFn = this.#fabricService.createCompactionFunction(
         async (system, model, message) => this.#promptOrchestrator(system, model, message, "compaction"),
         () => this.#getHighestTierModel(),
       );
-      const newWarp = await this.#warpService.evolve(this.#stateManager.getWarp(), updatedRound, compactFn);
-      this.#stateManager.setWarp(newWarp);
-      this.#database.setWarp(newWarp);
+      const newFabric = await this.#fabricService.evolve(this.#stateManager.getFabric(), updatedRound, compactFn);
+      this.#stateManager.setFabric(newFabric);
+      this.#database.setFabric(newFabric);
+
+      this.#vectorIndex.indexRound(
+        updatedRound.number,
+        updatedRound.summary,
+        updatedRound.contributions,
+      ).catch(() => {});
 
       const contribCount = updatedRound.contributions.length;
       const ijCount = updatedRound.interjections.length;
@@ -437,7 +457,7 @@ export class MeetingOrchestrator {
       const modResult = await this.#moderatorService.checkAndProcess({
         round: updatedRound,
         participants: this.#stateManager.getParticipants(),
-        weft: this.#stateManager.getWeft(),
+        weave: this.#stateManager.getWeave(),
         currentRound: this.#stateManager.getCurrentRound(),
         maxRounds: this.#stateManager.getMaxRounds(),
         promptOrchestrator: async (system, model, message) => this.#promptOrchestrator(system, model, message, "moderation"),
@@ -536,7 +556,7 @@ export class MeetingOrchestrator {
       return output;
     }
 
-    const totalContributions = this.#stateManager.getWeft().length;
+    const totalContributions = this.#stateManager.getWeave().length;
     if (totalContributions === 0) {
       const output = `# Deliberation Output\n\n## Decision\nNo output could be generated — all participants passed without contributing.\n\n## Reasoning\nAll ${this.#stateManager.getParticipants().length} participants chose to pass. This may indicate the question was unclear or participants had nothing to add.\n\n## Action Items\n- Rephrase the question with more specific context\n- Add participants with more targeted expertise\n\n## Confidence\nLow (no contributions received)`;
       this.#saveArtifact({ content: output, format: "markdown", decisions: [], action_items: [], dissent: [], open_questions: [], confidence: "low" });
@@ -600,7 +620,7 @@ export class MeetingOrchestrator {
     if (!this.#database) return;
     try {
       const stats = this.#getMergedStats();
-      const weft = this.#stateManager.getWeft();
+      const weave = this.#stateManager.getWeave();
       const allInterjections = this.#stateManager.getRounds().flatMap((r) => r.interjections);
       this.#database.saveMeetingMetrics({
         counters: stats,
@@ -609,7 +629,7 @@ export class MeetingOrchestrator {
         output_tokens: stats.output_tokens ?? 0,
         duration_ms: Date.now() - this.#startTime,
         rounds: this.#stateManager.getCurrentRound(),
-        contributions: weft.length,
+        contributions: weave.length,
         interjections: allInterjections.length,
       });
     } catch { /* non-critical */ }

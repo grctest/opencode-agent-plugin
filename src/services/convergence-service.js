@@ -8,9 +8,16 @@ import { Logger } from "../logger.js";
 export class ConvergenceService {
   /** @type {import("../logger.js").Logger} */
   #logger;
+  /** @type {import("./vector-index.js").VectorIndex|null} */
+  #vectorIndex;
 
-  constructor() {
+  constructor({ vectorIndex = null } = {}) {
     this.#logger = new Logger();
+    this.#vectorIndex = vectorIndex;
+  }
+
+  setVectorIndex(vectorIndex) {
+    this.#vectorIndex = vectorIndex;
   }
 
   /**
@@ -31,6 +38,7 @@ export class ConvergenceService {
       round,
       promptOrchestrator,
       getHighestTierModel,
+      this.#vectorIndex,
     );
 
     if (result.shouldStop) {

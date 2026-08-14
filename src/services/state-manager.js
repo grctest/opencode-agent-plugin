@@ -18,8 +18,8 @@ export class StateManager {
    * @param {string} initialState.question
    * @param {string} initialState.context
    * @param {Array} initialState.participants
-   * @param {string} initialState.warp
-   * @param {Array} initialState.weft
+   * @param {string} initialState.fabric
+   * @param {Array} initialState.weave
    * @param {Array} initialState.rounds
    * @param {number} initialState.current_round
    * @param {number} initialState.max_rounds
@@ -43,7 +43,7 @@ export class StateManager {
     const frozen = Object.freeze({
       ...this.#state,
       participants: Object.freeze(this.#state.participants.map((p) => Object.freeze({ ...p }))),
-      weft: Object.freeze([...this.#state.weft]),
+      weave: Object.freeze([...this.#state.weave]),
       rounds: Object.freeze(this.#state.rounds.map((r) => Object.freeze({ ...r }))),
     });
     return frozen;
@@ -90,12 +90,12 @@ export class StateManager {
     return this.#state.status;
   }
 
-  getWarp() {
-    return this.#state.warp;
+  getFabric() {
+    return this.#state.fabric;
   }
 
-  getWeft() {
-    return this.#state.weft;
+  getWeave() {
+    return this.#state.weave;
   }
 
   getRounds() {
@@ -177,7 +177,7 @@ export class StateManager {
   }
 
   addContribution(contribution) {
-    this.#state.weft.push(contribution);
+    this.#state.weave.push(contribution);
   }
 
   /** Increments and returns the next contribution ID. */
@@ -206,8 +206,8 @@ export class StateManager {
     }
   }
 
-  setWarp(warp) {
-    this.#state.warp = warp;
+  setFabric(fabric) {
+    this.#state.fabric = fabric;
   }
 
   setArtifact(artifact) {
@@ -226,17 +226,17 @@ export class StateManager {
    * Restores all mutable state properties from a database-loaded meeting.
    * Used by the orchestrator when resuming a persisted meeting.
    */
-  restore({ participants, question, context, warp, max_rounds, convergence_mode, domain, current_round, status, weft, next_contribution_id }) {
+  restore({ participants, question, context, fabric, max_rounds, convergence_mode, domain, current_round, status, weave, next_contribution_id }) {
     if (participants !== undefined) this.#state.participants = participants;
     if (question !== undefined) this.#state.question = question;
     if (context !== undefined) this.#state.context = context;
-    if (warp !== undefined) this.#state.warp = warp;
+    if (fabric !== undefined) this.#state.fabric = fabric;
     if (max_rounds !== undefined) this.#state.max_rounds = max_rounds;
     if (convergence_mode !== undefined) this.#state.convergence_mode = convergence_mode;
     if (domain !== undefined) this.#state.domain = domain;
     if (current_round !== undefined) this.#state.current_round = current_round;
     if (status !== undefined) this.#state.status = status;
-    if (weft !== undefined) this.#state.weft = weft;
+    if (weave !== undefined) this.#state.weave = weave;
     if (next_contribution_id !== undefined) this.#state.next_contribution_id = next_contribution_id;
   }
 
@@ -291,9 +291,9 @@ export class StateManager {
     return {
       meeting_id: this.#state.id,
       round: this.#state.current_round,
-      warp: this.#state.warp,
+      fabric: this.#state.fabric,
       question: this.#state.question,
-      contributions: this.#state.weft,
+      contributions: this.#state.weave,
       status: this.#state.status,
     };
   }

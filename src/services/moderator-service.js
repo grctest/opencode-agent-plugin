@@ -24,7 +24,7 @@ export class ModeratorService {
    * @param {Object} params
    * @param {Object} params.round - Current round data
    * @param {Array} params.participants - All participants
-   * @param {Array} params.weft - All contributions
+   * @param {Array} params.weave - All contributions
    * @param {number} params.currentRound
    * @param {number} params.maxRounds
    * @param {Function} params.promptOrchestrator - Function to prompt the orchestrator LLM
@@ -36,7 +36,7 @@ export class ModeratorService {
     const {
       round,
       participants,
-      weft,
+      weave,
       currentRound,
       maxRounds,
       promptOrchestrator,
@@ -47,7 +47,7 @@ export class ModeratorService {
     const modDecision = await checkModeratorIntervention(
       round,
       participants,
-      weft,
+      weave,
       currentRound,
       maxRounds,
       promptOrchestrator,

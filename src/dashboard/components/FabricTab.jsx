@@ -1,10 +1,10 @@
 import { memo } from "react";
-import { WarpViewer, AgentPerspective } from "./Cards.jsx";
+import { FabricViewer, AgentPerspective } from "./Cards.jsx";
 
-function WarpTabBase({ state, participants }) {
+function FabricTabBase({ state, participants }) {
   return (
     <div className="loom-main-content">
-      <WarpViewer warp={state?.warp ?? ""} />
+      <FabricViewer fabric={state?.fabric ?? ""} />
       {participants.length > 0 && (
         <div className="loom-mt-sm">
           <h3 className="loom-title-sm loom-mb-sm">Agent Perspectives</h3>
@@ -22,5 +22,5 @@ function WarpTabBase({ state, participants }) {
   );
 }
 
-const WarpTab = memo(WarpTabBase);
-export { WarpTab };
+const FabricTab = memo(FabricTabBase);
+export { FabricTab };

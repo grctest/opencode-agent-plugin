@@ -31,8 +31,8 @@ export class PersistenceService {
    */
    async persistState(sharedState, nextSpeakerId, stats) {
     await this.#db.transaction(async (db) => {
-      db.prepare("UPDATE meetings SET warp = ?, updated_at = ? WHERE id = ?")
-        .run(sharedState.warp, isoNow(), this.#meetingId);
+      db.prepare("UPDATE meetings SET fabric = ?, updated_at = ? WHERE id = ?")
+        .run(sharedState.fabric, isoNow(), this.#meetingId);
       db.prepare("UPDATE meetings SET round = ?, updated_at = ? WHERE id = ?")
         .run(sharedState.round, isoNow(), this.#meetingId);
       db.prepare("UPDATE meetings SET status = ?, updated_at = ? WHERE id = ?")

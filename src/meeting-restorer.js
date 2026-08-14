@@ -53,13 +53,13 @@ export function restoreStateFromDb({ db, stateManager, meetingId, options }) {
     participants,
     question: meeting.question,
     context: meeting.context ?? "",
-    warp: meeting.warp ?? "",
+    fabric: meeting.fabric ?? "",
     max_rounds: meeting.max_rounds,
     convergence_mode: meeting.convergence,
     domain: meeting.domain,
     current_round: meeting.round,
     status: "weaving",
-    weft: contributions.map((c) => ({
+    weave: contributions.map((c) => ({
       id: c.id,
       participant_id: c.participant_id,
       content: c.content,

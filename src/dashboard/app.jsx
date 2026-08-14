@@ -6,7 +6,7 @@ import { Sidebar } from "./components/Sidebar.jsx";
 import { OverviewTab } from "./components/OverviewTab.jsx";
 import { OrchestratorTab } from "./components/OrchestratorTab.jsx";
 import { TimelineTab } from "./components/TimelineTab.jsx";
-import { WarpTab } from "./components/WarpTab.jsx";
+import { FabricTab } from "./components/FabricTab.jsx";
 import { OutputTab } from "./components/OutputTab.jsx";
 import { ErrorBoundary } from "./ErrorBoundary.jsx";
 import { usePersistedState, useMeetingApi, useSSEReset } from "./hooks.js";
@@ -361,12 +361,12 @@ export function App() {
   }, [selectedMeeting]);
 
   useEffect(() => {
-    if (!state?.warp) return;
-    const warp = state.warp;
+    if (!state?.fabric) return;
+    const fabric = state.fabric;
     const extensionRegex = /\*\*User Input:\*\*\s*([^\n]+(?:\n(?!\*\*User Input:\*\*)[^\n]*)*)/g;
     const found = [];
     let match;
-    while ((match = extensionRegex.exec(warp)) !== null) {
+    while ((match = extensionRegex.exec(fabric)) !== null) {
       found.push(match[1].trim());
     }
     if (found.length > extensions.length) {
@@ -378,7 +378,7 @@ export function App() {
     } else if (found.length !== extensions.length) {
       setExtensions(found);
     }
-  }, [state?.warp, extensions.length]);
+  }, [state?.fabric, extensions.length]);
 
   useEffect(() => {
     return () => {
@@ -414,7 +414,7 @@ export function App() {
       } else if (e.key === "o") setActiveTab("overview");
       else if (e.key === "r") setActiveTab("orchestrator");
       else if (e.key === "t") setActiveTab("timeline");
-      else if (e.key === "w") setActiveTab("warp");
+      else if (e.key === "w") setActiveTab("fabric");
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
@@ -545,7 +545,7 @@ export function App() {
 
           <div className="pure-menu pure-menu-horizontal loom-tabs">
             <ul className="pure-menu-list">
-              {["overview", "orchestrator", "timeline", "output", "warp"].map((tab) => (
+              {["overview", "orchestrator", "timeline", "output", "fabric"].map((tab) => (
                 <li key={tab} className={cn("pure-menu-item", activeTab === tab && "pure-menu-selected")}>
                   <button className="pure-menu-link" onClick={() => setActiveTab(tab)}>
                     {tab.charAt(0).toUpperCase() + tab.slice(1)}
@@ -604,9 +604,9 @@ export function App() {
             )}
           </ErrorBoundary>
 
-          <ErrorBoundary fallbackMessage="Failed to render the warp tab">
-            {activeTab === "warp" && (
-              <WarpTab state={state} participants={participants} />
+          <ErrorBoundary fallbackMessage="Failed to render the fabric tab">
+            {activeTab === "fabric" && (
+              <FabricTab state={state} participants={participants} />
             )}
           </ErrorBoundary>
 

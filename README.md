@@ -23,7 +23,7 @@ A real-time web dashboard shows every agent contributing as it happens. If you r
 - **Auto-composed rooms** — persona selection based on your question's domain
 - **Model discovery** — finds available models from your opencode providers, assigns per tier
 - **Custom rooms** — bring your own participants, models, convergence mode, and round limits
-- **Real-time dashboard** — five tabs: Overview, Orchestrator, Timeline, Output, and Warp
+- **Real-time dashboard** — five tabs: Overview, Orchestrator, Timeline, Output, and Fabric
 - **Markdown export** — download the full transcript from the dashboard
 - **Configurable** — tune timeouts, word limits, convergence, and more via config
 
@@ -117,7 +117,7 @@ Run `/loom_viz` to start the real-time web dashboard. It auto-detects the most r
 - **Orchestrator** — internal feed showing domain detection, moderation, convergence checks, and round summaries
 - **Timeline** — per-round contributions and interjections; click any contribution card to view the full output in a dialog
 - **Output** — the final synthesis artifact: decisions, action items, open questions, dissent, confidence, and full text
-- **Warp** — the evolving shared context and each agent's perspective (persona, agenda, model)
+- **Fabric** — the evolving shared context and each agent's perspective (persona, agenda, model)
 
 The dashboard supports light, dark, and system themes. Export the current meeting as Markdown from the header.
 
@@ -130,7 +130,7 @@ The dashboard supports light, dark, and system themes. Export the current meetin
 | `o` | Overview tab |
 | `r` | Orchestrator tab |
 | `t` | Timeline tab |
-| `w` | Warp tab |
+| `w` | Fabric tab |
 
 ## Configuration
 
@@ -169,7 +169,7 @@ Other available options include agent and synthesis timeouts, word limits, inter
 - SQLite-based persistence — not suitable for horizontal scaling
 - In-memory metrics are lost on process restart (meeting metrics are persisted to DB)
 - SSE reconnection uses exponential backoff but falls back to polling after 10 attempts
-- Warp compaction uses LLM for semantic compression; falls back to rule-based extraction on failure
+- Fabric compaction uses LLM for semantic compression; falls back to rule-based extraction on failure
 - Dashboard does not show historical meeting data by default (single-meeting view)
 - No PDF export capability
 - Agent reflection data is stored per-participant but not surfaced in all views

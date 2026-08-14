@@ -1,5 +1,5 @@
 import { buildAgentSystemPrompt, buildAgentUserPrompt, buildPushbackPrompt } from "./prompts.js";
-import { generateRoundBriefs } from "./warp-manager.js";
+import { generateRoundBriefs } from "./fabric-manager.js";
 import { parseAgentResponse } from "./validation.js";
 import { getConfig } from "./config.js";
 import { extractText, truncate, withTimeout, getPriorityCap, enforceWordLimit } from "./shared.js";
@@ -18,6 +18,7 @@ export class RoundExecutor {
   #directory;
   #db;
   #stateManager;
+  #vectorIndex;
   #options;
   #promptParent;
   #getParticipantModel;
@@ -31,11 +32,12 @@ export class RoundExecutor {
   #callStats;
   #circuitBreaker;
 
-  constructor({ client, directory, db, stateManager, options, promptParent, getParticipantModel, logError }) {
+  constructor({ client, directory, db, stateManager, vectorIndex, options, promptParent, getParticipantModel, logError }) {
     this.#client = client;
     this.#directory = directory;
     this.#db = db;
     this.#stateManager = stateManager;
+    this.#vectorIndex = vectorIndex;
     this.#options = options;
     this.#promptParent = promptParent;
     this.#getParticipantModel = getParticipantModel;
@@ -108,7 +110,7 @@ export class RoundExecutor {
   async runPromptPhase(round, activeParticipants) {
     this.#turnOrder = [];
 
-    const roundBriefs = generateRoundBriefs(this.#stateManager.getWarp(), round);
+    const roundBriefs = generateRoundBriefs(this.#stateManager.getFabric(), round);
 
     for (const p of activeParticipants) {
       this.#turnOrder.push(p.config.id);
@@ -270,7 +272,7 @@ export class RoundExecutor {
     if (explicit) {
       const str = explicit.trim().replace(/^#/, "").toLowerCase();
       if (/^\d+$/.test(str)) {
-        const contrib = [...this.#stateManager.getWeft()].reverse().find((c) => c.id === parseInt(str, 10));
+        const contrib = [...this.#stateManager.getWeave()].reverse().find((c) => c.id === parseInt(str, 10));
         if (contrib) return contrib.participant_id;
         return null;
       }
@@ -314,6 +316,19 @@ export class RoundExecutor {
       : 0;
     const timeoutMs = Math.floor(baseTimeoutMs * (1 - timeoutReductionFactor));
 
+    // Build RAG context from vector index
+    const currentRound = this.#stateManager.getCurrentRound();
+    const currentContribs = this.#stateManager.getWeave().filter((c) => c.round === currentRound);
+    const queryText = currentContribs.length > 0
+      ? currentContribs.map((c) => c.content).join("\n")
+      : this.#stateManager.getQuestion();
+    const ragChunks = this.#vectorIndex
+      ? await this.#vectorIndex.retrieveRelevant(queryText, 5, currentRound)
+      : [];
+    const ragContext = ragChunks.length > 0
+      ? ragChunks.map((c) => `[Round ${c.round}] ${c.content}`).join("\n\n")
+      : "";
+
     const promptFn = async () => {
       // Verify session version hasn't changed (prevents late responses from old sessions)
       if ((participant.session_version ?? 0) !== sessionVersion) {
@@ -331,11 +346,13 @@ export class RoundExecutor {
             temperature: participant.tier_config.temperature,
             parts: [{ type: "text", text: buildAgentUserPrompt(
               participant,
-              this.#stateManager.getWarp(),
-              this.#stateManager.getWeft(),
+              this.#stateManager.getFabric(),
+              this.#stateManager.getWeave(),
               this.#stateManager.getQuestion(),
-              this.#stateManager.getCurrentRound(),
+              currentRound,
               roundBriefs,
+              this.#stateManager.getDomain(),
+              ragContext,
             ) }],
           },
           query: { directory: this.#directory },

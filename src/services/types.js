@@ -93,8 +93,8 @@
  * @property {string} question
  * @property {string} context
  * @property {ParticipantState[]} participants
- * @property {string} warp
- * @property {Contribution[]} weft
+ * @property {string} fabric
+ * @property {Contribution[]} weave
  * @property {Round[]} rounds
  * @property {number} current_round
  * @property {number} max_rounds
