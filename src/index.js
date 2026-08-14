@@ -164,10 +164,6 @@ export const Loom = async (input) => {
             .boolean()
             .optional()
             .describe("Force a fresh loom even if a previous meeting exists. Default: false"),
-          turn_mode: tool.schema
-            .string()
-            .optional()
-            .describe("Turn mode for agent coordination: sequential (default), staged (2-at-a-time batched), or parallel (all concurrently)."),
         },
         execute: handleKnit,
       }),

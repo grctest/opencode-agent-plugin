@@ -43,7 +43,6 @@ export class MeetingOrchestrator {
   #directory;
   #parentSessionId;
   #database = null;
-  #turnMode;
   #roundExecutor = null;
   #cancelled = false;
   #startTime = 0;
@@ -61,7 +60,6 @@ export class MeetingOrchestrator {
     this.#client = options.client;
     this.#directory = options.directory;
     this.#parentSessionId = options.parentSessionId;
-    this.#turnMode = options.turnMode ?? getConfig().turnMode ?? "sequential";
     this.#meetingTimeoutMs = options.meetingTimeoutMs ?? getConfig().defaultMeetingTimeoutMs;
 
     this.#logger = new Logger().forMeeting(this.#meetingId);
@@ -399,7 +397,6 @@ export class MeetingOrchestrator {
     const { round: updatedRound, ijNotes } = await this.#roundService.runRound({
       round,
       activeParticipants,
-      turnMode: this.#turnMode,
       allowInterjections: this.#options.allowInterjections !== false,
       promptOrchestrator: async (system, model, message, type) => this.#promptOrchestrator(system, model, message, type),
       getHighestTierModel: () => this.#getHighestTierModel(),

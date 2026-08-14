@@ -26,18 +26,17 @@ export class RoundService {
    * @param {Object} params
    * @param {Object} params.round - Round object to populate
    * @param {Array} params.activeParticipants
-   * @param {string} params.turnMode
    * @param {boolean} params.allowInterjections
    * @param {Function} params.promptOrchestrator
    * @param {Function} params.getHighestTierModel
    * @returns {Promise<Object>} Updated round with summary
    */
    async runRound(params) {
-    const { round, activeParticipants, turnMode, allowInterjections, promptOrchestrator, getHighestTierModel } = params;
+    const { round, activeParticipants, allowInterjections, promptOrchestrator, getHighestTierModel } = params;
 
     this.#roundExecutor.resetRoundStats();
 
-    await this.#roundExecutor.runPromptPhase(round, activeParticipants, turnMode);
+    await this.#roundExecutor.runPromptPhase(round, activeParticipants);
     await this.#roundExecutor.runReflectionPhase(round, activeParticipants);
 
     if (allowInterjections !== false) {

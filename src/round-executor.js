@@ -1,7 +1,6 @@
 import { buildAgentSystemPrompt, buildAgentUserPrompt, buildPushbackPrompt } from "./prompts.js";
 import { generateRoundBriefs } from "./warp-manager.js";
 import { parseAgentResponse } from "./validation.js";
-import { withConcurrency } from "./concurrency.js";
 import { getConfig } from "./config.js";
 import { extractText, truncate, withTimeout, getPriorityCap, enforceWordLimit } from "./shared.js";
 import { Logger, extractErrorInfo } from "./logger.js";
@@ -103,46 +102,20 @@ export class RoundExecutor {
   }
 
   /**
-   * Runs the prompt phase for a round. Modes:
-   * - "sequential": agents speak one at a time; each sees all prior same-round contributions
-   * - "staged": small batches in turn order (partial same-round awareness, faster)
-   * - "parallel": all agents at once (fastest, no same-round awareness)
+   * Runs the prompt phase for a round. Agents speak sequentially — each sees
+   * all prior same-round contributions before responding.
    */
-  async runPromptPhase(round, activeParticipants, turnMode) {
-    const mode = turnMode ?? "sequential";
+  async runPromptPhase(round, activeParticipants) {
     this.#turnOrder = [];
 
     const roundBriefs = generateRoundBriefs(this.#stateManager.getWarp(), round);
 
-    const speak = async (p) => {
+    for (const p of activeParticipants) {
       this.#turnOrder.push(p.config.id);
       this.#db.setParticipantStatus(p.config.id, "speaking");
       this.#options.onProgress?.(`${p.config.name} (${p.config.tier}) is thinking...`);
       const result = await this.#promptChildSession(p, roundBriefs);
       await this.#handlePromptResult(p, result, round);
-    };
-
-    const tasks = activeParticipants.map((p) => () => speak(p));
-
-    if (mode === "parallel") {
-      for (const p of activeParticipants) {
-        this.#db.setParticipantStatus(p.config.id, "speaking");
-      }
-      this.#options.onProgress?.(`${activeParticipants.length} participants thinking...`);
-      const config = getConfig();
-      const limit = Math.min(activeParticipants.length, config.maxConcurrentPrompts);
-      await withConcurrency(tasks, limit);
-    } else if (mode === "staged") {
-      const config = getConfig();
-      const batchSize = Math.max(2, config.stagedBatchSize ?? 2);
-      for (let i = 0; i < tasks.length; i += batchSize) {
-        const batch = tasks.slice(i, i + batchSize);
-        await withConcurrency(batch.map((t) => () => t()), batch.length);
-      }
-    } else {
-      for (const task of tasks) {
-        await task();
-      }
     }
   }
 

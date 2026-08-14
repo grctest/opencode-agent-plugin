@@ -279,7 +279,6 @@ export function createKnitHandler(client, directory, activeLooms) {
       meetingTimeoutMs: args.meeting_timeout,
       domain: primaryDomain,
       detectDomains: true,
-      turnMode: args.turn_mode,
       ...meetingCallbacks,
     });
 
