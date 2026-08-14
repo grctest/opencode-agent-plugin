@@ -114,45 +114,11 @@ export function formatStateOfPlay(sections, question, domain) {
   return lines.join("\n\n");
 }
 
-/** Formats transcript data from the database into a string for the synthesizer. */
-export function formatTranscriptFromData(data, participants) {
+/** Formats a single round's contributions and turn requests into markdown lines. */
+function formatRoundLines(round, participants) {
   const lines = [];
-
-  for (const round of data.rounds) {
-    lines.push(`### Round ${round.number}`);
-
-    for (const c of round.contributions) {
-      const participant = participants.find((p) => p.config.id === c.participant_id);
-      const name = participant?.config.name ?? c.participant_id;
-      const tier = participant?.config.tier ?? "mid";
-      lines.push(`**[${name}]** (${tier}, ${c.type}): ${c.content}`);
-    }
-
-    if (round.turn_requests.length > 0) {
-      lines.push(`  **Turn Requests:**`);
-      for (const tr of round.turn_requests) {
-        const name = participants.find((p) => p.config.id === tr.participant_id)?.config.name ?? tr.participant_id;
-        lines.push(`  - [${name}] P${tr.priority} → ${tr.target}: ${tr.reason}`);
-      }
-    }
-
-    if (round.summary) {
-      lines.push(`  *Summary:* ${round.summary}`);
-    }
-
-    lines.push("");
-  }
-
-  return lines.join("\n");
-}
-
-/** Formats only the final round's transcript for synthesis (reduces token usage). */
-export function formatFinalRoundTranscript(data, participants) {
-  if (!data.rounds || data.rounds.length === 0) return "";
-  const round = data.rounds[data.rounds.length - 1];
-  const lines = [];
-
-  lines.push(`### Round ${round.number} (Final)`);
+  const isFinal = round.number === undefined;
+  lines.push(`### Round ${isFinal ? "(Final)" : round.number}${isFinal ? "" : ""}`);
 
   for (const c of round.contributions) {
     const participant = participants.find((p) => p.config.id === c.participant_id);
@@ -173,5 +139,14 @@ export function formatFinalRoundTranscript(data, participants) {
     lines.push(`  *Summary:* ${round.summary}`);
   }
 
+  return lines;
+}
+
+/** Formats only the final round's transcript for synthesis (reduces token usage). */
+export function formatFinalRoundTranscript(data, participants) {
+  if (!data.rounds || data.rounds.length === 0) return "";
+  const round = data.rounds[data.rounds.length - 1];
+  const lines = formatRoundLines(round, participants);
+  lines[0] = `### Round ${round.number} (Final)`;
   return lines.join("\n");
 }

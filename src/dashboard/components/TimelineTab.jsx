@@ -102,7 +102,7 @@ const TimelineTabBase = ({
               <span className="loom-round-title">Round {item.round}</span>
               <span className="loom-round-count">{item.contribsCount} contribution{item.contribsCount !== 1 ? "s" : ""}</span>
               {item.errorsCount > 0 && (
-                <span className="loom-round-errors">⚠ {item.errorsCount}</span>
+                <span className="loom-round-errors"><span aria-hidden="true">⚠</span> {item.errorsCount}</span>
               )}
             </button>
           </div>
@@ -163,7 +163,7 @@ const TimelineTabBase = ({
       )}
       {groupedContributions.length === 0 && contributions.length === 0 && !isWeaving && (
         <div className="loom-empty-state">
-          <div className="loom-empty-icon">🧵</div>
+          <div className="loom-empty-icon" aria-hidden="true">🧵</div>
           <p className="loom-text loom-text-muted">Waiting for agents to respond...</p>
           <p className="loom-text-xs loom-text-muted">Contributions will appear here in real-time</p>
         </div>

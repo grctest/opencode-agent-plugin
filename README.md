@@ -2,19 +2,19 @@
 
 > A multi-agent deliberation protocol for opencode — a knitting machine for AI agents.
 
-The Loom lets you convene a circle of AI agents with different expertise, seniority levels, and agendas. Each agent runs in its own child session. They take structured turns, interject with priority, challenge each other, and collaboratively weave complex artifacts through deliberation with governed convergence.
+The Loom lets you convene a circle of AI agents with different expertise, seniority levels, and agendas. Each agent runs in its own child session. They take structured turns, request turns with priority, challenge each other, and collaboratively weave complex artifacts through deliberation with governed convergence.
 
 ## How It Works
 
 You ask a question. The Loom uses an LLM to detect the domain — engineering, finance, business, creative, executive, or operations — and composes a team of AI agents with relevant expertise. Each agent runs in its own isolated session with its own model.
 
-Agents deliberate in structured rounds: proposing ideas, challenging weak arguments, refining positions, and pushing back on assumptions. They can interject with priority when they have something urgent to say. When agents stall or go in circles, a **moderator** — a separate LLM call using the strongest available model — steps in to break the deadlock, redirect the conversation, or force convergence. Once deliberation ends, a **synthesizer** produces the final artifact: decisions, action items, unresolved dissent, and a confidence level.
+Agents deliberate in structured rounds: proposing ideas, challenging weak arguments, refining positions, and pushing back on assumptions. They can request turns with priority when they have something urgent to say. When agents stall or go in circles, a **moderator** — a separate LLM call using the strongest available model — steps in to break the deadlock, redirect the conversation, or force convergence. Once deliberation ends, a **synthesizer** produces the final artifact: decisions, action items, unresolved dissent, and a confidence level.
 
 A real-time web dashboard shows every agent contributing as it happens. If you run `/knit` again in the same session, it extends the existing deliberation rather than starting fresh.
 
 ## Features
 
-- **Structured turn-taking** with priority interjection
+- **Structured turn-taking** with priority turn requests
 - **Tier-based roles** — junior to principal, each with escalating expectations and rights
 - **Moderator agent** — spawned on demand to break deadlocks and force convergence
 - **Semi-automatic convergence** — detects repetition, diminishing returns, and semantic agreement
@@ -81,7 +81,6 @@ loom_viz
 | `max_rounds` | Maximum deliberation rounds (1–10) | `3` |
 | `convergence` | `consensus`, `majority`, or `moderator_forces` | `moderator_forces` |
 | `models` | Per-tier model assignments (use `/knit_models` to discover) | auto-assigned |
-| `allow_interjections` | Allow agents to interject during others' turns | `true` |
 | `meeting_timeout` | Maximum meeting duration in ms (60000–1800000) | `900000` (15 min) |
 | `seed` | Random seed for room composition | current time |
 | `dry_run` | Preview the composed room without deliberating (only if explicitly requested) | `false` |
@@ -115,7 +114,7 @@ Run `/loom_viz` to start the real-time web dashboard. It auto-detects the most r
 
 - **Overview** — stats, participation matrix, contribution types, and timeline chart
 - **Orchestrator** — internal feed showing domain detection, moderation, convergence checks, and round summaries
-- **Timeline** — per-round contributions and interjections; click any contribution card to view the full output in a dialog
+- **Timeline** — per-round contributions and turn requests; click any contribution card to view the full output in a dialog
 - **Output** — the final synthesis artifact: decisions, action items, open questions, dissent, confidence, and full text
 - **Fabric** — the evolving shared context and each agent's perspective (persona, agenda, model)
 
@@ -130,6 +129,7 @@ The dashboard supports light, dark, and system themes. Export the current meetin
 | `o` | Overview tab |
 | `r` | Orchestrator tab |
 | `t` | Timeline tab |
+| `u` | Output tab |
 | `w` | Fabric tab |
 
 ## Configuration
@@ -140,9 +140,9 @@ The Loom can be configured via a `"loom"` key in your `opencode.json` or via a p
 {
   "loom": {
     "maxContributionWords": 250,
-    "maxInterjectionWords": 200,
+    "maxTurnRequestWords": 200,
     "defaultMaxRounds": 3,
-    "maxInterjectionsPerRound": 3,
+    "maxTurnRequestsPerRound": 3,
     "convergence": {
       "repetitionOverlapThreshold": 0.45,
       "semanticConvergenceFromRound": 3
@@ -160,7 +160,7 @@ Project-level equivalent in `.loomrc.json` (same keys, no `"loom"` wrapper):
 }
 ```
 
-Other available options include agent and synthesis timeouts, word limits, interjection thresholds, moderator triggers, retry policy, max concurrency, meeting timeout, and stall detection (`stallTimeoutMs`, default 5 min).
+Other available options include agent and synthesis timeouts, word limits, turn request thresholds, moderator triggers, retry policy, max concurrency, meeting timeout, and stall detection (`stallTimeoutMs`, default 5 min).
 
 ## Known Limitations
 

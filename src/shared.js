@@ -4,13 +4,11 @@
 export { extractText, truncate, enforceWordLimit, withTimeout } from "./utils/text.js";
 export {
   LOOKBACK,
-  INTERJECTION_PRIORITY_CAP,
+  TURN_REQUEST_PRIORITY_CAP,
   getPriorityCap,
-  BASE_RIGHTS,
-  getRightsForTier,
-  getDefaultTemperatureForTier,
   getPromptForTier,
-  splitModel,
   getTierConfig,
+  splitModel,
+  getRightsForTier,
 } from "./utils/tier.js";
 export { parseReflections, parseStats } from "./utils/db-parsing.js";

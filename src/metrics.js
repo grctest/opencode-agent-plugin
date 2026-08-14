@@ -32,13 +32,6 @@ const gauges = {
   active_sessions: 0,
 };
 
-/** Records a counter increment. */
-export function incrementCounter(name, amount = 1) {
-  if (typeof counters[name] === 'number') {
-    counters[name] += amount;
-  }
-}
-
 /** Records a counter increment for a keyed sub-counter (e.g., llm_calls_by_type.orchestrator). */
 export function incrementKeyedCounter(category, key, amount = 1) {
   if (counters[category]) {
@@ -53,27 +46,6 @@ export function recordLatency(bucket, ms) {
   if (latencies[bucket].length > 100) {
     latencies[bucket].shift();
   }
-}
-
-/** Sets a gauge value. */
-export function setGauge(name, value) {
-  gauges[name] = value;
-}
-
-/** Increments a gauge. */
-export function incrementGauge(name, amount = 1) {
-  gauges[name] = (gauges[name] ?? 0) + amount;
-}
-
-/** Decrements a gauge. */
-export function decrementGauge(name, amount = 1) {
-  gauges[name] = Math.max(0, (gauges[name] ?? 0) - amount);
-}
-
-/** Records token usage. */
-export function recordTokens(input, output) {
-  counters.input_tokens += input ?? 0;
-  counters.output_tokens += output ?? 0;
 }
 
 /** Computes summary stats for a latency bucket. */
@@ -105,21 +77,4 @@ export function getMetricsSnapshot() {
     gauges: { ...gauges },
     timestamp: new Date().toISOString(),
   };
-}
-
-/** Resets all metrics (for testing). */
-export function resetMetrics() {
-  for (const key of Object.keys(counters)) {
-    if (typeof counters[key] === 'number') {
-      counters[key] = 0;
-    } else {
-      counters[key] = {};
-    }
-  }
-  for (const key of Object.keys(latencies)) {
-    latencies[key] = [];
-  }
-  for (const key of Object.keys(gauges)) {
-    gauges[key] = 0;
-  }
 }

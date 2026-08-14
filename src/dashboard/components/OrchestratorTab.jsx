@@ -84,7 +84,7 @@ const OrchestratorTabBase = ({ messages = [] }) => {
     return (
       <div className="loom-main-content">
         <div className="loom-empty-state">
-          <div className="loom-empty-icon">🎯</div>
+          <div className="loom-empty-icon" aria-hidden="true">🎯</div>
           <p className="loom-text loom-text-muted">No orchestrator activity yet</p>
           <p className="loom-text-xs loom-text-muted">
             Domain detection, moderation, and convergence checks will appear here

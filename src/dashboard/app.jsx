@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { createRoot } from "react-dom/client";
-import { cn, statusClass } from "./utils.js";
+import { cn } from "./utils.js";
 import { StatusBadge } from "./components/Badges.jsx";
 import { Sidebar } from "./components/Sidebar.jsx";
 import { OverviewTab } from "./components/OverviewTab.jsx";
@@ -184,12 +184,12 @@ function MeetingHeader({ state, connected, reconnectAttempt, activeAgentCount, e
         </span>
         {activeAgentCount > 0 && (
           <span className="loom-text-xs loom-text-active">
-            ⏳ {activeAgentCount} active
+            <span aria-hidden="true">⏳</span> {activeAgentCount} active
           </span>
         )}
         {errorCount > 0 && (
           <span className="loom-text-xs loom-text-agent-errors">
-            ⚠ {errorCount} error{errorCount > 1 ? "s" : ""}
+            <span aria-hidden="true">⚠</span> {errorCount} error{errorCount > 1 ? "s" : ""}
           </span>
         )}
         <a
@@ -220,7 +220,7 @@ function ExtensionBanner({ banner, onDismiss }) {
   if (!banner) return null;
   return (
     <div className="loom-extension-banner">
-      <span className="loom-extension-icon">🧵</span>
+      <span className="loom-extension-icon" aria-hidden="true">🧵</span>
       <div className="loom-extension-content">
         <span className="loom-extension-title">Loom Extended</span>
         <span className="loom-extension-prompt">{banner.prompt}</span>
@@ -257,7 +257,7 @@ function useMeetingsList() {
         const newMeetings = await res.json();
         setMeetings((prev) => {
           if (prev.length !== newMeetings.length) return newMeetings;
-          const same = prev.every((m, i) => m.id === newMeetings[i].id && m.status === newMeetings[i].status);
+          const same = prev.every((m, i) => m.meeting_id === newMeetings[i].meeting_id && m.status === newMeetings[i].status);
           return same ? prev : newMeetings;
         });
       }
@@ -284,7 +284,6 @@ export function App() {
   const [scrolledToBottom, setScrolledToBottom] = useState(true);
   const [extensions, setExtensions] = useState([]);
   const [extensionBanner, setExtensionBanner] = useState(null);
-  const [orchestratorMessages, setOrchestratorMessages] = useState([]);
 
   const bannerTimeoutRef = useRef(null);
   const mainRef = useRef(null);
@@ -298,6 +297,7 @@ export function App() {
     participants,
     contributions,
     turnRequests,
+    orchestratorMessages,
     agentErrors,
     artifact,
     error,
@@ -322,11 +322,6 @@ export function App() {
       if (newTrs && newTrs.length > 0) {
         window.dispatchEvent(new CustomEvent("loom-new-turn-requests", { detail: newTrs }));
       }
-    } else if (data.type === "orchestrator_messages") {
-      const newMsgs = data.data;
-      if (newMsgs && newMsgs.length > 0) {
-        window.dispatchEvent(new CustomEvent("loom-orchestrator-messages", { detail: newMsgs }));
-      }
     }
   }, []);
 
@@ -337,28 +332,6 @@ export function App() {
       setSelectedMeeting(meetings[0].meeting_id);
     }
   }, [meetings, selectedMeeting]);
-
-  useEffect(() => {
-    if (!selectedMeeting) return;
-    let lastMaxId = 0;
-    const interval = setInterval(async () => {
-      try {
-        const res = await fetch(`/api/orchestrator_messages?meeting=${selectedMeeting}`);
-        if (res.ok) {
-          const data = await res.json();
-          const msgs = data.messages || [];
-          const newMaxId = msgs.length > 0 ? Math.max(...msgs.map((m) => m.id)) : 0;
-          if (newMaxId > lastMaxId) {
-            lastMaxId = newMaxId;
-            setOrchestratorMessages(msgs);
-          }
-        }
-      } catch (err) {
-        console.error("[Loom dashboard] Failed to fetch orchestrator messages:", err);
-      }
-    }, 2000);
-    return () => clearInterval(interval);
-  }, [selectedMeeting]);
 
   useEffect(() => {
     if (!state?.fabric) return;
@@ -414,6 +387,7 @@ export function App() {
       } else if (e.key === "o") setActiveTab("overview");
       else if (e.key === "r") setActiveTab("orchestrator");
       else if (e.key === "t") setActiveTab("timeline");
+      else if (e.key === "u") setActiveTab("output");
       else if (e.key === "w") setActiveTab("fabric");
     };
     window.addEventListener("keydown", handleKey);
@@ -543,11 +517,17 @@ export function App() {
             />
           </ErrorBoundary>
 
-          <div className="pure-menu pure-menu-horizontal loom-tabs">
+          <div className="pure-menu pure-menu-horizontal loom-tabs" role="tablist" aria-label="Meeting views">
             <ul className="pure-menu-list">
               {["overview", "orchestrator", "timeline", "output", "fabric"].map((tab) => (
-                <li key={tab} className={cn("pure-menu-item", activeTab === tab && "pure-menu-selected")}>
-                  <button className="pure-menu-link" onClick={() => setActiveTab(tab)}>
+                <li key={tab} className={cn("pure-menu-item", activeTab === tab && "pure-menu-selected")} role="presentation">
+                  <button
+                    className="pure-menu-link"
+                    role="tab"
+                    aria-selected={activeTab === tab}
+                    aria-controls={`panel-${tab}`}
+                    onClick={() => setActiveTab(tab)}
+                  >
                     {tab.charAt(0).toUpperCase() + tab.slice(1)}
                   </button>
                 </li>
@@ -557,61 +537,71 @@ export function App() {
 
           <ErrorBoundary fallbackMessage="Failed to render the overview tab">
             {activeTab === "overview" && state && (
-              <OverviewTab
-                state={state}
-                contributions={contributions}
-                turnRequests={turnRequests}
-                participants={participants}
-                agentErrors={agentErrors}
-                participantName={participantName}
-                totalRounds={totalRounds}
-              />
+              <div id="panel-overview" role="tabpanel" aria-label="Overview">
+                <OverviewTab
+                  state={state}
+                  contributions={contributions}
+                  turnRequests={turnRequests}
+                  participants={participants}
+                  agentErrors={agentErrors}
+                  participantName={participantName}
+                  totalRounds={totalRounds}
+                />
+              </div>
             )}
           </ErrorBoundary>
 
           <ErrorBoundary fallbackMessage="Failed to render the orchestrator tab">
             {activeTab === "orchestrator" && (
-              <OrchestratorTab messages={orchestratorMessages} />
+              <div id="panel-orchestrator" role="tabpanel" aria-label="Orchestrator">
+                <OrchestratorTab messages={orchestratorMessages} />
+              </div>
             )}
           </ErrorBoundary>
 
           <ErrorBoundary fallbackMessage="Failed to render the timeline tab">
             {activeTab === "timeline" && (
-              <TimelineTab
-                contributions={contributions}
-                groupedContributions={groupedContributions}
-                filteredContributions={filteredContributions}
-                isWeaving={isWeaving}
-                thinkingParticipants={thinkingParticipants}
-                activeType={activeType}
-                onActiveTypeChange={setActiveType}
-                contributionTypes={contributionTypes}
-                collapsedRounds={collapsedRounds}
-                onToggleCollapse={toggleRoundCollapse}
-                agentErrors={agentErrors}
-                participantName={participantName}
-                turnRequests={turnRequests}
-                extensions={extensions}
-                activeRound={activeRound}
-                maxRounds={state?.max_rounds}
-              />
+              <div id="panel-timeline" role="tabpanel" aria-label="Timeline">
+                <TimelineTab
+                  contributions={contributions}
+                  groupedContributions={groupedContributions}
+                  filteredContributions={filteredContributions}
+                  isWeaving={isWeaving}
+                  thinkingParticipants={thinkingParticipants}
+                  activeType={activeType}
+                  onActiveTypeChange={setActiveType}
+                  contributionTypes={contributionTypes}
+                  collapsedRounds={collapsedRounds}
+                  onToggleCollapse={toggleRoundCollapse}
+                  agentErrors={agentErrors}
+                  participantName={participantName}
+                  turnRequests={turnRequests}
+                  extensions={extensions}
+                  activeRound={activeRound}
+                  maxRounds={state?.max_rounds}
+                />
+              </div>
             )}
           </ErrorBoundary>
 
           <ErrorBoundary fallbackMessage="Failed to render the output tab">
             {activeTab === "output" && (
-              <OutputTab artifact={artifact} participants={participants} />
+              <div id="panel-output" role="tabpanel" aria-label="Output">
+                <OutputTab artifact={artifact} participants={participants} />
+              </div>
             )}
           </ErrorBoundary>
 
           <ErrorBoundary fallbackMessage="Failed to render the fabric tab">
             {activeTab === "fabric" && (
-              <FabricTab state={state} participants={participants} />
+              <div id="panel-fabric" role="tabpanel" aria-label="Fabric">
+                <FabricTab state={state} participants={participants} />
+              </div>
             )}
           </ErrorBoundary>
 
           {!scrolledToBottom && (
-            <button className="loom-scroll-bottom" onClick={scrollToBottom}>
+            <button className="loom-scroll-bottom" onClick={scrollToBottom} aria-label="Scroll to new contributions">
               ↓ New contributions
             </button>
           )}
@@ -623,5 +613,9 @@ export function App() {
 
 const rootEl = document.getElementById("root");
 if (rootEl) {
-  createRoot(rootEl).render(<App />);
+  createRoot(rootEl).render(
+    <ErrorBoundary fallbackMessage="The Loom dashboard encountered a fatal error" label="Root">
+      <App />
+    </ErrorBoundary>
+  );
 }

@@ -29,7 +29,7 @@
  * @property {number} temperature
  * @property {Object} rights
  * @property {boolean} rights.contribute
- * @property {boolean} rights.interject
+ * @property {boolean} rights.request_turn
  * @property {boolean} rights.call_vote
  * @property {boolean} rights.veto
  * @property {boolean} rights.force_end

@@ -3,23 +3,23 @@ export const LOOKBACK = {
   SENDER_HISTORY: 6,
 };
 
-/** Priority caps per tier for interjection self-reporting. */
-export const INTERJECTION_PRIORITY_CAP = {
+/** Priority caps per tier for turn request self-reporting. */
+export const TURN_REQUEST_PRIORITY_CAP = {
   junior: 5,
   mid: 7,
   senior: 9,
   principal: 10,
 };
 
-/** Gets the maximum interjection priority a tier can self-report. */
+/** Gets the maximum turn request priority a tier can self-report. */
 export function getPriorityCap(tier) {
-  return INTERJECTION_PRIORITY_CAP[tier] ?? 5;
+  return TURN_REQUEST_PRIORITY_CAP[tier] ?? 5;
 }
 
 /** Default rights configuration for tiers. */
 export const BASE_RIGHTS = {
   contribute: true,
-  interject: true,
+  request_turn: true,
   call_vote: false,
   veto: false,
   force_end: false,
@@ -37,7 +37,7 @@ export function getRightsForTier(tier) {
     case "principal":
       return { ...BASE_RIGHTS, call_vote: true, veto: true, force_end: true };
     default:
-      return { contribute: true, interject: false, call_vote: false, veto: false, force_end: false };
+      return { contribute: true, request_turn: false, call_vote: false, veto: false, force_end: false };
   }
 }
 

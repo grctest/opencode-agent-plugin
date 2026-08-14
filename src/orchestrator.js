@@ -260,7 +260,9 @@ export class MeetingOrchestrator {
       this.#stateManager.transitionTo("weaving");
 
       if (!this.#resume && this.#options.context) {
-        this.#vectorIndex.indexContext(this.#options.context).catch(() => {});
+        this.#vectorIndex.indexContext(this.#options.context).catch((err) => {
+          this.#logger.warn("vector_index_context_failed", "Failed to index context for vector search", extractErrorInfo(err));
+        });
       }
 
       this.#roundExecutor = new RoundExecutor({
@@ -432,7 +434,9 @@ export class MeetingOrchestrator {
         updatedRound.number,
         updatedRound.summary,
         updatedRound.contributions,
-      ).catch(() => {});
+      ).catch((err) => {
+        this.#logger.warn("vector_index_round_failed", `Failed to index round ${updatedRound.number} for vector search`, extractErrorInfo(err));
+      });
 
       const contribCount = updatedRound.contributions.length;
       const turnRequestCount = (updatedRound.turn_requests || []).length;

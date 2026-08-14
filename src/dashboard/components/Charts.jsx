@@ -37,6 +37,7 @@ export const ParticipationMatrix = memo(function ParticipationMatrix({ participa
       <h3 className="loom-title-sm loom-mb-sm">Participation</h3>
       <div className="loom-matrix-scroll">
         <table className="loom-matrix">
+          <caption className="sr-only">Agent participation by round</caption>
           <thead>
             <tr>
               <th className="loom-matrix-round-label">Round</th>
@@ -124,7 +125,7 @@ export const ContributionTypeChart = memo(function ContributionTypeChart({ contr
                   y={chartHeight + 12}
                   textAnchor="middle"
                   fontSize="8"
-                  fill="var(--color-text-muted)"
+                  fill="var(--color-muted-foreground)"
                 >
                   {d.type.slice(0, 5)}
                 </text>

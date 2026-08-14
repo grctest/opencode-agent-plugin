@@ -7,79 +7,12 @@
  */
 
 import { existsSync, mkdirSync, cpSync, rmSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { detectOpencodeDir, isLoomCommand, findOpencodeJson, logInfo, logWarn, logError } from "./utils.mjs";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, "..");
-
-const RED = "\x1b[31m";
-const GREEN = "\x1b[32m";
-const YELLOW = "\x1b[33m";
-const RESET = "\x1b[0m";
-
-const logInfo = (msg) => console.log(`${GREEN}[INFO]${RESET}  ${msg}`);
-const logWarn = (msg) => console.log(`${YELLOW}[WARN]${RESET}  ${msg}`);
-const logError = (msg) => console.log(`${RED}[ERROR]${RESET} ${msg}`);
-
-// ─── Detect opencode config directory ─────────────────────────────────────────
-
-function detectOpencodeDir() {
-  const candidates = [];
-
-  // Explicit env override
-  if (process.env.OPENCODE_CONFIG_DIR) {
-    candidates.push(process.env.OPENCODE_CONFIG_DIR);
-  }
-
-  // Standard locations
-  candidates.push(join(homedir(), ".config", "opencode"));
-  candidates.push(join(homedir(), ".opencode"));
-
-  // WSL: check for Windows opencode config
-  if (process.platform === "linux" && isWSL()) {
-    const winHome = getWSLWindowsHome();
-    if (winHome) {
-      candidates.push(join(winHome, ".config", "opencode"));
-      candidates.push(join(winHome, ".opencode"));
-    }
-  }
-
-  for (const dir of candidates) {
-    if (existsSync(dir)) {
-      return dir;
-    }
-  }
-
-  return null;
-}
-
-function isWSL() {
-  try {
-    const procVersion = readFileSync("/proc/version", "utf-8");
-    return /microsoft|wsl/i.test(procVersion);
-  } catch {
-    return false;
-  }
-}
-
-function getWSLWindowsHome() {
-  try {
-    const result = spawnSync("wslpath", ["$(wslvar USERPROFILE)"], {
-      shell: true,
-      encoding: "utf-8",
-    });
-    if (result.status === 0 && result.stdout) {
-      return result.stdout.trim();
-    }
-  } catch {
-    // Fall through
-  }
-
-  return null;
-}
 
 // ─── Install files ────────────────────────────────────────────────────────────
 
@@ -188,27 +121,7 @@ function installFiles(opencodeDir) {
   }
 }
 
-function isLoomCommand(filename) {
-  const loomCommands = ["knit.md", "knit_models.md"];
-  return loomCommands.includes(filename);
-}
-
 // ─── Configure opencode.json ──────────────────────────────────────────────────
-
-function findOpencodeJson(opencodeDir) {
-  const candidates = [
-    join(opencodeDir, "opencode.json"),
-    join(opencodeDir, "opencode.jsonc"),
-  ];
-
-  for (const file of candidates) {
-    if (existsSync(file)) {
-      return file;
-    }
-  }
-
-  return null;
-}
 
 function configureOpencodeJson(opencodeDir) {
   const configFile = findOpencodeJson(opencodeDir);

@@ -111,12 +111,12 @@ Only one session is created at meeting start: the **orchestrator session** for s
 
 Four tiers determine agent behavior, authority, and LLM parameters:
 
-| Tier | Temperature | Interjection Cap | Rights |
+| Tier | Temperature | Turn Request Cap | Rights |
 |------|------------|-----------------|--------|
-| junior | 0.7 | Priority 5 | contribute, interject |
-| mid | 0.5 | Priority 7 | contribute, interject, call_vote |
-| senior | 0.3 | Priority 9 | contribute, interject, call_vote, veto |
-| principal | 0.2 | Priority 10 | contribute, interject, call_vote, veto, force_end |
+| junior | 0.7 | Priority 5 | contribute, request_turn |
+| mid | 0.5 | Priority 7 | contribute, request_turn, call_vote |
+| senior | 0.3 | Priority 9 | contribute, request_turn, call_vote, veto |
+| principal | 0.2 | Priority 10 | contribute, request_turn, call_vote, veto, force_end |
 
 **Behavioral guidance injected into system prompts:**
 
@@ -162,7 +162,7 @@ Each agent is loaded from a JSON persona file. Example structure:
     temperature: 0.3,
     reasoning_effort: null,
     system_prompt_addendum: "Prioritize accuracy and risk assessment...",
-    rights: { contribute: true, interject: true, call_vote: true, veto: true, force_end: false }
+    rights: { contribute: true, request_turn: true, call_vote: true, veto: true, force_end: false }
   },
   session_id: "",           // unused in ephemeral mode — reserved for future use
   status: "listening",      // listening | speaking | passed | failed | timed_out
@@ -763,7 +763,7 @@ Round: 4/6
 Total contributions: 14
 
 ## Recent Round Summaries
-Round 2: 3 proposals, 2 challenges. Interjections granted on timeline concerns.
+Round 2: 3 proposals, 2 challenges. Turn requests granted on timeline concerns.
 Round 3: 2 supports, 1 challenge. Junior developer raised refresh token security.
 Round 4: 1 propose, 2 challenges. Circular argument on revocation vs statelessness.
 
@@ -1319,7 +1319,7 @@ Text is split into chunks suitable for embedding:
 1. Chunks the round summary → stores each chunk in `fabric_chunks` → embeds each chunk → stores vector in `vec_fabric_chunks`
 2. For each contribution: prefixes with `[participant_id] (type)`, chunks, stores, and embeds
 
-Both operations run asynchronously (`.catch(() => {})`) — vector indexing is best-effort and doesn't block the weaving loop.
+Both operations run asynchronously (`.catch((err) => logger.warn(...))`) — vector indexing is best-effort and doesn't block the weaving loop.
 
 ### Retrieval Flow
 

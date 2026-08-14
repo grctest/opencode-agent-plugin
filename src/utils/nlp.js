@@ -19,12 +19,12 @@ const STOPWORDS = new Set([
 ]);
 
 export function tokenize(text) {
-  return text.toLowerCase().split(/\W+/).filter((w) => w.length > 3);
+  return text.toLowerCase().split(/\W+/).filter((w) => w.length >= 2);
 }
 
 export function tokenizeMeaningful(text) {
   const words = text.toLowerCase().replace(/[^a-z0-9\s]/g, "").split(/\s+/);
-  return words.filter((w) => w.length > 3 && !STOPWORDS.has(w));
+  return words.filter((w) => w.length >= 2 && !STOPWORDS.has(w));
 }
 
 /**

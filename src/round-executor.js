@@ -8,10 +8,6 @@ import { sanitizeForPrompt, sanitizeForDisplay } from "./utils/sanitize.js";
 import { withRetry, isRetryableError, CircuitBreaker } from "./utils/retry.js";
 import { incrementKeyedCounter, recordLatency } from "./metrics.js";
 
-function isTimeoutError(err) {
-  return err instanceof Error && /timed out after/i.test(err.message);
-}
-
 export class RoundExecutor {
   #client;
   #directory;
@@ -301,7 +297,9 @@ export class RoundExecutor {
       return null;
     } finally {
       if (ephemeralSessionIdToDelete) {
-        this.#options.deleteEphemeralSession(ephemeralSessionIdToDelete).catch(() => {});
+        this.#options.deleteEphemeralSession(ephemeralSessionIdToDelete).catch((err) => {
+          this.#logger.warn("ephemeral_session_delete_failed", "Failed to clean up ephemeral session", extractErrorInfo(err));
+        });
       }
     }
   }

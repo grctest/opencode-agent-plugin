@@ -87,21 +87,21 @@ const Sidebar = memo(function Sidebar({
               href={`/api/export/stream?meeting=${selectedMeeting}`}
               download
             >
-              📥 Stream Markdown
+              <span aria-hidden="true">📥</span> Stream Markdown
             </a>
             <a
               className="pure-button pure-button-small pure-button-secondary"
               href={`/api/export?meeting=${selectedMeeting}&format=markdown`}
               download
             >
-              ⬇ Export Markdown
+              <span aria-hidden="true">⬇</span> Export Markdown
             </a>
             <a
               className="pure-button pure-button-small pure-button-secondary"
               href={`/api/export?meeting=${selectedMeeting}&format=json`}
               download
             >
-              ⬇ Export JSON
+              <span aria-hidden="true">⬇</span> Export JSON
             </a>
           </div>
         </div>

@@ -55,7 +55,7 @@ function sortModelsByQuality(models) {
   });
 }
 
-export { sortModelsByQuality, scoreModel };
+export { sortModelsByQuality };
 
 /**
  * Single model-assignment engine: quality-sorted and deterministic.

@@ -1,8 +1,5 @@
 import { z } from 'zod';
-import { Logger } from './logger.js';
 import { getPriorityCap } from './shared.js';
-
-const schemaLogger = new Logger();
 
 /**
  * Zod schemas for validating all agent I/O and internal data structures.
@@ -43,26 +40,6 @@ export const AgentResponseSchema = z.object({
   request_next: RequestNextSchema,
   governance: GovernanceDirectiveSchema.optional(),
 });
-
-// Validates and returns parsed result or null
-export function parseAgentResponseSafe(participantId, response, tier) {
-  // First parse the type prefix and interjection directive
-  const parsed = parseAgentResponseRaw(response, tier);
-  if (!parsed) return null;
-
-  const result = AgentResponseSchema.safeParse({
-    participant_id: participantId,
-    ...parsed,
-  });
-
-  if (result.success) {
-    return result.data;
-  }
-
-  // Log validation failure for debugging
-  schemaLogger.warn("response_schema_failed", "Agent response failed schema validation", result.error.flatten());
-  return null;
-}
 
 // Raw parsing (extracted from validation.js) - EXPORTED for reuse
 export function parseAgentResponseRaw(response, tier) {

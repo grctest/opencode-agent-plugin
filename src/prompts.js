@@ -1,4 +1,4 @@
-import { getPromptForTier, INTERJECTION_PRIORITY_CAP } from "./shared.js";
+import { getPromptForTier, TURN_REQUEST_PRIORITY_CAP } from "./shared.js";
 import { sanitizeForDisplay } from "./utils/sanitize.js";
 
 /** Generates a stable delimiter that won't change across runs. */
@@ -252,7 +252,7 @@ export function buildAgentSystemPrompt(participant) {
 
   const tierGuidance = getPromptForTier(tier);
 
-  const priorityCap = INTERJECTION_PRIORITY_CAP[tier] ?? 5;
+  const priorityCap = TURN_REQUEST_PRIORITY_CAP[tier] ?? 5;
   const requestNextRule = `5. To request priority for the next round, add: [REQUEST_NEXT: Priority: <1-${priorityCap}>, Reason: "why you must speak next round"] — place this at the end of your response`;
   const governanceRule = `8. Only with a governance-level concern, add: [GOVERNANCE: <directive>: <value>] where directive is one of extend_rounds (value: rounds to add), force_converge (value: reason), raise_objection (value: objection), request_topic (value: topic), nominate_synthesizer (value: participant name), or escalate (value: reason). Use sparingly — this is an escalation mechanism, not a normal communication channel.`;
 
@@ -318,9 +318,8 @@ export function buildAgentUserPrompt(participant, stateOfPlay, ragContext, recen
       : recentContributions
           .map((c) => {
             const id = c.id != null ? `[#${c.id}]` : "";
-            const wasInterjection = c.type === "interjection" ? " [INTERJECTION]" : "";
             const safeContent = sanitizeForDisplay(c.content);
-            return `- ${id} [${c.participant_id}] (${c.type})${wasInterjection}: ${safeContent}`;
+            return `- ${id} [${c.participant_id}] (${c.type}): ${safeContent}`;
           })
           .join("\n");
 

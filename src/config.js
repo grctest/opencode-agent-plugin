@@ -42,7 +42,7 @@ const CONFIG_SCHEMA = {
   agentTimeoutMs: { type: 'number', min: 10000, max: 600000 },
   synthesisTimeoutMs: { type: 'number', min: 10000, max: 600000 },
   maxContributionWords: { type: 'number', min: 50, max: 2000 },
-  maxInterjectionWords: { type: 'number', min: 20, max: 1000 },
+  maxTurnRequestWords: { type: 'number', min: 20, max: 1000 },
   defaultMaxRounds: { type: 'number', min: 1, max: 10 },
   minRounds: { type: 'number', min: 1, max: 5 },
   fastPathModel: { type: 'string' },
@@ -51,7 +51,7 @@ const CONFIG_SCHEMA = {
   retryMaxDelayMs: { type: 'number', min: 1000, max: 60000 },
   defaultMeetingTimeoutMs: { type: 'number', min: 60000, max: 3600000 },
   stallTimeoutMs: { type: 'number', min: 30000, max: 1800000 },
-  maxInterjectionsPerRound: { type: 'number', min: 1, max: 5 },
+  maxTurnRequestsPerRound: { type: 'number', min: 1, max: 5 },
   modelDiversity: { type: 'boolean' },
   synthesisMaxRetries: { type: 'number', min: 0, max: 5 },
 };

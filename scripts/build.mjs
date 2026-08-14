@@ -99,7 +99,8 @@ if (WATCH) {
         await ctx.watch();
         contexts.push(ctx);
       }
-    } catch {
+    } catch (err) {
+      console.error(`\n❌ ${name} failed:`, err.message || err);
       failed = true;
       break;
     }
@@ -126,7 +127,8 @@ if (WATCH) {
       } else {
         await step();
       }
-    } catch {
+    } catch (err) {
+      console.error(`\n❌ ${name} failed:`, err.message || err);
       failed = true;
       break;
     }

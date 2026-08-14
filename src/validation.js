@@ -1,6 +1,6 @@
 import { getConfig } from "./config.js";
 import { enforceWordLimit, getPriorityCap } from "./shared.js";
-import { AgentResponseSchema, ContributionTypeSchema, parseAgentResponseRaw } from "./schemas.js";
+import { AgentResponseSchema, parseAgentResponseRaw } from "./schemas.js";
 import { Logger } from "./logger.js";
 
 const validationLogger = new Logger();
