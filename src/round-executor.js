@@ -1,5 +1,4 @@
 import { buildAgentSystemPrompt, buildAgentUserPrompt, buildPushbackPrompt } from "./prompts.js";
-import { generateRoundBriefs } from "./fabric-manager.js";
 import { parseAgentResponse } from "./validation.js";
 import { getConfig } from "./config.js";
 import { extractText, truncate, withTimeout, getPriorityCap, enforceWordLimit } from "./shared.js";
@@ -28,7 +27,6 @@ export class RoundExecutor {
   #logger;
   #interjectionTracker;
   #turnOrder = [];
-  #dirtySessions = new Set();
   #callStats;
   #circuitBreaker;
 
@@ -68,17 +66,6 @@ export class RoundExecutor {
     this.#failedInCurrentRound = 0;
   }
 
-  /**
-   * Returns the set of participant IDs whose sessions were marked dirty during
-   * this round (e.g. after a timeout) and clears the internal set. The caller
-   * (orchestrator) is responsible for recreating these sessions.
-   */
-  takeDirtySessions() {
-    const ids = [...this.#dirtySessions];
-    this.#dirtySessions.clear();
-    return ids;
-  }
-
   #modelKey(model) {
     return `${model.providerID}/${model.modelID}`;
   }
@@ -110,13 +97,11 @@ export class RoundExecutor {
   async runPromptPhase(round, activeParticipants) {
     this.#turnOrder = [];
 
-    const roundBriefs = generateRoundBriefs(this.#stateManager.getFabric(), round);
-
     for (const p of activeParticipants) {
       this.#turnOrder.push(p.config.id);
       this.#db.setParticipantStatus(p.config.id, "speaking");
       this.#options.onProgress?.(`${p.config.name} (${p.config.tier}) is thinking...`);
-      const result = await this.#promptChildSession(p, roundBriefs);
+      const result = await this.#promptChildSession(p);
       await this.#handlePromptResult(p, result, round);
     }
   }
@@ -289,16 +274,8 @@ export class RoundExecutor {
     return null;
   }
 
-  async #promptChildSession(participant, roundBriefs) {
+  async #promptChildSession(participant) {
     participant.status = "speaking";
-
-    if (!participant.session_id) {
-      return null;
-    }
-
-    // Capture session version AFTER any recreation settles, so the guard
-    // compares against the current (post-recreate) version.
-    const sessionVersion = participant.session_version ?? 0;
 
     const model = this.#getParticipantModel(participant);
 
@@ -316,11 +293,12 @@ export class RoundExecutor {
       : 0;
     const timeoutMs = Math.floor(baseTimeoutMs * (1 - timeoutReductionFactor));
 
-    // Build RAG context from vector index
     const currentRound = this.#stateManager.getCurrentRound();
-    const currentContribs = this.#stateManager.getWeave().filter((c) => c.round === currentRound);
-    const queryText = currentContribs.length > 0
-      ? currentContribs.map((c) => c.content).join("\n")
+
+    // Build RAG context from vector index using persona-aware query
+    const recentContribs = this.#stateManager.getWeave().filter((c) => c.round != null && c.round >= currentRound - 1);
+    const queryText = recentContribs.length > 0
+      ? recentContribs.map((c) => c.content).join("\n")
       : this.#stateManager.getQuestion();
     const ragChunks = this.#vectorIndex
       ? await this.#vectorIndex.retrieveRelevant(queryText, 5, currentRound)
@@ -329,30 +307,32 @@ export class RoundExecutor {
       ? ragChunks.map((c) => `[Round ${c.round}] ${c.content}`).join("\n\n")
       : "";
 
-    const promptFn = async () => {
-      // Verify session version hasn't changed (prevents late responses from old sessions)
-      if ((participant.session_version ?? 0) !== sessionVersion) {
-        throw new Error("Session version changed — discarding stale response");
-      }
+    // Golden Sandwich: recent 3-4 contributions from current + previous round
+    const recentForPrompt = this.#stateManager.getWeave().filter(
+      (c) => c.round != null && c.round >= currentRound - 1,
+    ).slice(-4);
 
+    const ephemeralSessionId = await this.#options.createEphemeralSession(participant);
+    let ephemeralSessionIdToDelete = ephemeralSessionId;
+
+    try {
       this.#callStats.agent_prompts++;
       const llmStart = Date.now();
       const result = await withTimeout(
         this.#client.session.prompt({
-          path: { id: participant.session_id },
+          path: { id: ephemeralSessionId },
           body: {
             system: buildAgentSystemPrompt(participant),
             model,
             temperature: participant.tier_config.temperature,
             parts: [{ type: "text", text: buildAgentUserPrompt(
               participant,
-              this.#stateManager.getFabric(),
-              this.#stateManager.getWeave(),
-              this.#stateManager.getQuestion(),
-              currentRound,
-              roundBriefs,
-              this.#stateManager.getDomain(),
+              this.#stateManager.getStateOfPlay(),
               ragContext,
+              recentForPrompt,
+              currentRound,
+              this.#stateManager.getQuestion(),
+              this.#stateManager.getDomain(),
             ) }],
           },
           query: { directory: this.#directory },
@@ -378,25 +358,8 @@ export class RoundExecutor {
 
       this.#recordModelSuccess(model);
       this.#options.onAgentComplete?.(participant.config.id, response.content);
+      ephemeralSessionIdToDelete = null;
       return response;
-    };
-
-    try {
-      const adjustedMaxAttempts = Math.max(1, config.maxRetryAttempts - this.#failedInCurrentRound);
-      return await withRetry(promptFn, {
-        maxAttempts: adjustedMaxAttempts,
-        baseDelayMs: config.retryBaseDelayMs,
-        maxDelayMs: config.retryMaxDelayMs,
-        jitterMs: 500,
-        retryable: (err) => isRetryableError(err) || isTimeoutError(err),
-        onRetry: (err, attempt, delay) => {
-          if (isTimeoutError(err)) {
-            this.#dirtySessions.add(participant.config.id);
-            this.#logger.warn("session_dirty", `Marking ${participant.config.name}'s session dirty after timeout — will recreate before next prompt`);
-          }
-          this.#logger.warn("prompt_retry", `Retrying prompt for ${participant.config.name} (attempt ${attempt + 1}/${adjustedMaxAttempts})`, { delay, error: err.message });
-        },
-      });
     } catch (err) {
       this.#recordModelFailure(model);
       const info = extractErrorInfo(err);
@@ -406,6 +369,10 @@ export class RoundExecutor {
       );
       this.#logger.error("participant_failed", `${participant.config.name} failed after ${config.maxRetryAttempts + 1} attempts`, info);
       return null;
+    } finally {
+      if (ephemeralSessionIdToDelete) {
+        this.#options.deleteEphemeralSession(ephemeralSessionIdToDelete).catch(() => {});
+      }
     }
   }
 
@@ -421,10 +388,11 @@ export class RoundExecutor {
       interjection.reason || "",
     );
 
+    const ephemeralSessionId = await this.#options.createEphemeralSession(target);
     try {
       const result = await withTimeout(
         this.#client.session.prompt({
-          path: { id: target.session_id },
+          path: { id: ephemeralSessionId },
           body: { system: systemPrompt, model, temperature: target.tier_config.temperature, parts: [{ type: "text", text: userPrompt }] },
           query: { directory: this.#directory },
         }),
@@ -446,6 +414,8 @@ export class RoundExecutor {
       }
     } catch {
       // Pushback is best-effort — if it fails, the interjection proceeds normally
+    } finally {
+      this.#options.deleteEphemeralSession(ephemeralSessionId).catch(() => {});
     }
   }
 
@@ -473,31 +443,36 @@ You requested to interrupt with priority ${ij.priority}:
 
 State your interjection now. Be direct and under 200 words.`;
 
-      this.#callStats.interjection_calls++;
-      const llmStart = Date.now();
-      const result = await withTimeout(
-        this.#client.session.prompt({
-          path: { id: interjector.session_id },
-          body: { system: systemPrompt, model, temperature: interjector.tier_config.temperature, parts: [{ type: "text", text: userPrompt }] },
-          query: { directory: this.#directory },
-        }),
-        config.agentTimeoutMs,
-      );
-      const llmMs = Date.now() - llmStart;
-      incrementKeyedCounter("llm_calls_by_type", "interjection");
-      recordLatency("llm_prompt_ms", llmMs);
+      const ephemeralSessionId = await this.#options.createEphemeralSession(interjector);
+      try {
+        this.#callStats.interjection_calls++;
+        const llmStart = Date.now();
+        const result = await withTimeout(
+          this.#client.session.prompt({
+            path: { id: ephemeralSessionId },
+            body: { system: systemPrompt, model, temperature: interjector.tier_config.temperature, parts: [{ type: "text", text: userPrompt }] },
+            query: { directory: this.#directory },
+          }),
+          config.agentTimeoutMs,
+        );
+        const llmMs = Date.now() - llmStart;
+        incrementKeyedCounter("llm_calls_by_type", "interjection");
+        recordLatency("llm_prompt_ms", llmMs);
 
-      this.#recordTokens(result);
+        this.#recordTokens(result);
 
-      if (result.error) {
-        throw new Error(result.error.message || JSON.stringify(result.error));
+        if (result.error) {
+          throw new Error(result.error.message || JSON.stringify(result.error));
+        }
+
+        const content = extractText(result.data);
+        if (!content) throw new Error("Empty interjection response");
+
+        const safeContent = sanitizeForPrompt(content.replace(/^\[(\w+)\]\s*/, ""));
+        this.#storeInterjection(interjector, safeContent, ij, round);
+      } finally {
+        this.#options.deleteEphemeralSession(ephemeralSessionId).catch(() => {});
       }
-
-      const content = extractText(result.data);
-      if (!content) throw new Error("Empty interjection response");
-
-      const safeContent = sanitizeForPrompt(content.replace(/^\[(\w+)\]\s*/, ""));
-      this.#storeInterjection(interjector, safeContent, ij, round);
     } catch (err) {
       const info = extractErrorInfo(err);
       this.#logError(`interjection prompt for ${interjector.config.name}`, err);

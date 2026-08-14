@@ -4,7 +4,7 @@ import { Logger } from "../logger.js";
 const EXTENSION_EXTRA_ROUNDS = 4;
 
 /**
- * Handles meeting extension logic: fabric update, round limit bump, session recreation.
+ * Handles meeting extension logic: fabric update, round limit bump.
  * Extracted from MeetingOrchestrator for single responsibility.
  */
 export class MeetingExtender {
@@ -24,7 +24,6 @@ export class MeetingExtender {
       database,
       stateManager,
       sessionManager,
-      roundExecutor,
       newPrompt,
     } = params;
 
@@ -40,12 +39,8 @@ export class MeetingExtender {
     database.setRound(stateManager.getCurrentRound());
 
     for (const p of stateManager.getParticipants()) {
-      if (p.status === "failed") {
-        await sessionManager.recreateSession(p, database);
-      } else {
-        stateManager.setParticipantStatus(p.config.id, "listening");
-        database.setParticipantStatus(p.config.id, "listening");
-      }
+      stateManager.setParticipantStatus(p.config.id, "listening");
+      database.setParticipantStatus(p.config.id, "listening");
     }
 
     await sessionManager.postProgress(

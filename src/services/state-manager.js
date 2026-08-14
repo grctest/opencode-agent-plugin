@@ -122,6 +122,10 @@ export class StateManager {
     return this.#state.domain;
   }
 
+  getStateOfPlay() {
+    return this.#state.state_of_play ?? "";
+  }
+
   getNextSpeakerId() {
     return this.#state.next_speaker_id;
   }
@@ -222,11 +226,15 @@ export class StateManager {
     this.#state.domain = domain;
   }
 
+  setStateOfPlay(stateOfPlay) {
+    this.#state.state_of_play = stateOfPlay;
+  }
+
   /**
    * Restores all mutable state properties from a database-loaded meeting.
    * Used by the orchestrator when resuming a persisted meeting.
    */
-  restore({ participants, question, context, fabric, max_rounds, convergence_mode, domain, current_round, status, weave, next_contribution_id }) {
+  restore({ participants, question, context, fabric, max_rounds, convergence_mode, domain, current_round, status, weave, next_contribution_id, state_of_play }) {
     if (participants !== undefined) this.#state.participants = participants;
     if (question !== undefined) this.#state.question = question;
     if (context !== undefined) this.#state.context = context;
@@ -238,6 +246,7 @@ export class StateManager {
     if (status !== undefined) this.#state.status = status;
     if (weave !== undefined) this.#state.weave = weave;
     if (next_contribution_id !== undefined) this.#state.next_contribution_id = next_contribution_id;
+    if (state_of_play !== undefined) this.#state.state_of_play = state_of_play;
   }
 
   setParticipantStatus(participantId, status) {
@@ -295,6 +304,7 @@ export class StateManager {
       question: this.#state.question,
       contributions: this.#state.weave,
       status: this.#state.status,
+      state_of_play: this.#state.state_of_play ?? "",
     };
   }
 

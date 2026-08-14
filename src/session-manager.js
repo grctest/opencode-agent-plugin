@@ -67,6 +67,33 @@ export class SessionManager {
   }
 
   /**
+   * Creates a short-lived ephemeral session for a single agent turn.
+   * The caller is responsible for deleting it after use.
+   */
+  async createEphemeralSession(participant) {
+    return this.#createSessionWithRetry(
+      `Loom · Ephemeral · ${participant.config.name}`,
+      (err, attempt, delay) => {
+        this.#logger?.warn("ephemeral_session_retry", `Retrying ephemeral session for ${participant.config.name} (attempt ${attempt + 1})`, { delay, error: err.message });
+      }
+    );
+  }
+
+  /**
+   * Best-effort deletion of an ephemeral session.
+   */
+  async deleteEphemeralSession(sessionId) {
+    try {
+      await this.#client.session.delete({
+        path: { id: sessionId },
+        query: { directory: this.#directory },
+      });
+    } catch {
+      // Best effort — session may already be deleted
+    }
+  }
+
+  /**
    * Prompts the orchestrator session. Resolves with { text, tokens } so callers can
    * accumulate usage stats. tokens is undefined when the provider omits usage data.
    * @returns {Promise<{ text: string, tokens?: { input: number; output: number } }>}
@@ -89,33 +116,6 @@ export class SessionManager {
       maxDelayMs: getConfig().retryMaxDelayMs,
       retryable: isRetryableError,
     });
-  }
-
-  async recreateSession(participant, db) {
-    try {
-      const oldSessionId = participant.session_id;
-      const newSessionId = await this.createChildSession(participant);
-      participant.session_id = newSessionId;
-      participant.session_version = (participant.session_version ?? 0) + 1;
-      if (db) {
-        db.setParticipantSessionId(participant.config.id, newSessionId);
-      }
-      participant.status = "listening";
-      if (db) {
-        db.setParticipantStatus(participant.config.id, "listening");
-      }
-      // Clean up old session to prevent leaks
-      if (oldSessionId) {
-        this.deleteSession(oldSessionId).catch((err) => {
-          this.#logger?.debug("session_delete_failed", `Failed to delete old session ${oldSessionId}`, extractErrorInfo(err));
-        });
-      }
-      return true;
-    } catch (err) {
-      const info = extractErrorInfo(err);
-      this.#logger?.error("session_recreate_failed", `Failed to recreate session for ${participant.config.name}`, info);
-      return false;
-    }
   }
 
   async deleteSession(sessionId) {

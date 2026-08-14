@@ -280,6 +280,23 @@ export class MeetingDatabase {
       .run(fabric, isoNow(), this.#meetingId);
   }
 
+  getStateOfPlay() {
+    try {
+      const row = this.#db
+        .prepare("SELECT state_of_play FROM meetings WHERE id = ?")
+        .get(this.#meetingId);
+      return row?.state_of_play ?? "";
+    } catch {
+      return "";
+    }
+  }
+
+  setStateOfPlay(stateOfPlay) {
+    this.#db
+      .prepare("UPDATE meetings SET state_of_play = ?, updated_at = ? WHERE id = ?")
+      .run(stateOfPlay, isoNow(), this.#meetingId);
+  }
+
   updateMeetingDomain(meetingId, domain) {
     this.#db
       .prepare("UPDATE meetings SET domain = ?, updated_at = ? WHERE id = ?")
@@ -586,7 +603,7 @@ export class MeetingDatabase {
   getMeeting() {
     const row = this.#db
       .prepare(
-        `SELECT id, question, context, status, round, fabric, max_rounds, convergence, domain, parent_session_id, opencode_session_id, next_speaker_id, stats, created_at
+        `SELECT id, question, context, status, round, fabric, max_rounds, convergence, domain, parent_session_id, opencode_session_id, next_speaker_id, state_of_play, stats, created_at
          FROM meetings WHERE id = ?`,
       )
       .get(this.#meetingId);

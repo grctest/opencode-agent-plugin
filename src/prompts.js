@@ -1,4 +1,3 @@
-import { generateRoundBriefs } from "./fabric-manager.js";
 import { getPromptForTier, INTERJECTION_PRIORITY_CAP } from "./shared.js";
 import { sanitizeForDisplay } from "./utils/sanitize.js";
 
@@ -276,15 +275,11 @@ To interject on the current point: [INTERJECT: Priority: 8, Reason: "I have data
 }
 
 /**
- * Builds the user prompt for an agent's turn. Child sessions are persistent, so the prompt
- * only carries the delta: the question (round 1), RAG-retrieved relevant context,
- * round briefs for everything prior, and contributions from the previous + current rounds.
+ * Builds the user prompt for an agent's turn using the Golden Sandwich pattern:
+ * System Prompt + State of Play + Vector RAG + Recent Contributions.
+ * Each turn is stateless — fresh ephemeral session carries no prior history.
  */
-export function buildAgentUserPrompt(participant, fabric, weave, question, round, roundBriefs, domain = null, ragContext = "") {
-  const briefs = roundBriefs ?? generateRoundBriefs(fabric, round);
-  const firstRound = round <= 1;
-
-  const recentContributions = weave.filter((c) => c.round == null || c.round >= round - 1);
+export function buildAgentUserPrompt(participant, stateOfPlay, ragContext, recentContributions, round, question, domain = null) {
   const transcript =
     recentContributions.length === 0
       ? "*(No contributions yet — you are the first to speak)*"
@@ -298,7 +293,7 @@ export function buildAgentUserPrompt(participant, fabric, weave, question, round
           .join("\n");
 
   const ragDelimited = ragContext ? delimitContext(ragContext, "RELEVANT_PRIOR_CONTEXT") : "";
-  const briefsDelimited = delimitContext(briefs, "BRIEFS");
+  const stateOfPlayDelimited = stateOfPlay ? delimitContext(stateOfPlay, "STATE_OF_PLAY") : "";
   const transcriptDelimited = delimitContext(transcript, "CONTRIBUTIONS");
   const safeQuestion = sanitizeForDisplay(question);
   const safeDomain = domain ? sanitizeForDisplay(domain) : null;
@@ -308,16 +303,15 @@ ${safeQuestion}
 ${safeDomain ? `\n## Domain: ${safeDomain}\n` : ""}
 ## Round ${round}
 
+${stateOfPlayDelimited ? `## State of Play\n${stateOfPlayDelimited}\n` : ""}
 ${ragDelimited ? `## Relevant Prior Context\n${ragDelimited}\n` : ""}
-${briefsDelimited ? `## Prior Deliberation Brief\n${briefsDelimited}\n` : ""}
-${firstRound && !ragContext && typeof fabric === "string" ? `## Shared Context\n${delimitContext(sanitizeForDisplay(fabric, 8000), "FABRIC")}\n\n` : ""}
-## Recent Contributions (rounds ${Math.max(1, round - 1)}-${round})
+## Recent Contributions (last 3-4)
 ${transcriptDelimited}
 
 ${formatReflections(participant)}
 ## Your Turn
 
-Read the context and contributions. Then make your contribution or pass.`;
+Read the state of play, relevant context, and recent contributions. Then make your contribution or pass.`;
 }
 
 function formatReflections(participant) {

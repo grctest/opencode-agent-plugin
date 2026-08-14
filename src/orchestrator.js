@@ -15,7 +15,7 @@ import { PersistenceService } from "./services/persistence-service.js";
 import { ModeratorService } from "./services/moderator-service.js";
 import { ConvergenceService } from "./services/convergence-service.js";
 import { SynthesisCoordinator } from "./synthesis-coordinator.js";
-import { FabricService } from "./services/fabric-service.js";
+import { updateStateOfPlay } from "./fabric-manager.js";
 import { RoundService } from "./services/round-service.js";
 import { RoundExecutor } from "./round-executor.js";
 import { StallWatchdog } from "./services/stall-watchdog.js";
@@ -34,7 +34,6 @@ export class MeetingOrchestrator {
   #moderatorService;
   #convergenceService;
   #synthesisCoordinator;
-  #fabricService;
   #roundService;
   #roundInitializer;
   #meetingExtender;
@@ -92,12 +91,12 @@ export class MeetingOrchestrator {
       convergence_mode: options.convergence,
       domain: options.domain ?? null,
       next_contribution_id: 0,
+      state_of_play: "",
     };
 
     this.#stateManager = new StateManager(initialState);
     this.#moderatorService = new ModeratorService();
     this.#convergenceService = new ConvergenceService();
-    this.#fabricService = new FabricService();
     this.#roundInitializer = new RoundInitializer();
     this.#meetingExtender = new MeetingExtender();
     this.#stallWatchdog = new StallWatchdog({
@@ -236,15 +235,6 @@ export class MeetingOrchestrator {
           opencodeSessionId: this.#options.opencodeSessionId ?? this.#options.parentSessionId,
           participants: this.#stateManager.getParticipants().map((p) => p.config),
         });
-
-        for (const p of this.#stateManager.getParticipants()) {
-          if (!p.session_id) {
-            const sessionId = await this.#sessionManager.createChildSession(p);
-            this.#stateManager.setParticipantSessionId(p.config.id, sessionId);
-            this.#stateManager.setParticipantSessionVersion(p.config.id, 1);
-            db.setParticipantSessionId(p.config.id, sessionId);
-          }
-        }
       }
 
       const orchestratorSessionId = await this.#sessionManager.createOrchestratorSession();
@@ -286,7 +276,8 @@ export class MeetingOrchestrator {
             this.#options.onContribution?.(...args);
           },
           onProgress: async (message) => this.#sessionManager.postProgress(message),
-          recreateSession: async (participant) => this.#sessionManager.recreateSession(participant, db),
+          createEphemeralSession: async (participant) => this.#sessionManager.createEphemeralSession(participant),
+          deleteEphemeralSession: async (sessionId) => this.#sessionManager.deleteEphemeralSession(sessionId),
         },
         promptParent: async (system, model, message) => this.#promptOrchestrator(system, model, message),
         getParticipantModel: (participant) => this.#getParticipantModel(participant, true),
@@ -336,7 +327,6 @@ export class MeetingOrchestrator {
       database: this.#database,
       stateManager: this.#stateManager,
       sessionManager: this.#sessionManager,
-      roundExecutor: this.#roundExecutor,
       newPrompt,
     });
 
@@ -396,7 +386,6 @@ export class MeetingOrchestrator {
     }
 
     const round = this.#roundInitializer.initializeRound(this.#stateManager, this.#database, () => this.#notifyUpdate());
-    await this.#roundInitializer.recreateDirtySessions(this.#stateManager, this.#sessionManager, this.#database, this.#roundExecutor);
     const activeParticipants = this.#roundInitializer.filterActiveParticipants(this.#stateManager, round);
 
     if (activeParticipants.length === 0) {
@@ -428,13 +417,13 @@ export class MeetingOrchestrator {
         this.#stateManager.setFabric(this.#stateManager.getFabric() + ijNotes);
       }
 
-      const compactFn = this.#fabricService.createCompactionFunction(
-        async (system, model, message) => this.#promptOrchestrator(system, model, message, "compaction"),
-        () => this.#getHighestTierModel(),
+      const newStateOfPlay = updateStateOfPlay(
+        this.#stateManager.getWeave(),
+        this.#stateManager.getQuestion(),
+        this.#stateManager.getDomain(),
       );
-      const newFabric = await this.#fabricService.evolve(this.#stateManager.getFabric(), updatedRound, compactFn);
-      this.#stateManager.setFabric(newFabric);
-      this.#database.setFabric(newFabric);
+      this.#stateManager.setStateOfPlay(newStateOfPlay);
+      this.#database.setStateOfPlay(newStateOfPlay);
 
       this.#vectorIndex.indexRound(
         updatedRound.number,

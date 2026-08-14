@@ -49,7 +49,6 @@ The Loom can be configured via your `opencode.json` file under a `"loom"` key:
 {
   "loom": {
     "agentTimeoutMs": 120000,
-    "maxFabricChars": 12000,
     "defaultMaxRounds": 3,
     "maxInterjectionsPerRound": 3,
     "convergence": {

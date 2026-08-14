@@ -1,120 +1,66 @@
-import { getConfig } from "./config.js";
 import { Logger, extractErrorInfo } from "./logger.js";
 
-const MAX_FABRIC_CHARS = () => getConfig().maxFabricChars;
+/**
+ * Derives a structured state-of-play summary from the weave (contributions).
+ * Captures decisions, agreements, disagreements, open questions, and key facts
+ * so agents have a compact, accurate running context without O(N²) token growth.
+ */
+export function updateStateOfPlay(weave, question, domain) {
+  if (!weave || weave.length === 0) return "";
 
-/** Appends a round summary to the fabric context, compacting if it exceeds MAX_FABRIC_CHARS. */
-export async function evolveFabric(fabric, round, compactFn) {
-  if (!round.summary) return fabric ?? "";
+  const decisions = [];
+  const agreements = [];
+  const disagreements = [];
+  const openQuestions = [];
+  const keyFacts = [];
 
-  let currentFabric = fabric ?? "";
-  const newEntry = `### Round ${round.number}\n${round.summary}`;
-  currentFabric = currentFabric ? `${currentFabric}\n\n${newEntry}` : newEntry;
+  for (const c of weave) {
+    if (c.type === "pass") continue;
+    const content = (c.content ?? "").trim();
+    if (!content) continue;
+    const lower = content.toLowerCase();
 
-  if (currentFabric.length > MAX_FABRIC_CHARS()) {
-    if (compactFn) {
-      try {
-        const compactedStr = await compactFn(currentFabric, round);
-        if (compactedStr && compactedStr.length < currentFabric.length) {
-          return compactedStr;
-        }
-      } catch (err) {
-        const info = extractErrorInfo(err);
-        new Logger().warn("fabric_compaction_failed", "LLM fabric compaction failed — using rule-based compaction", info);
-      }
-    }
-    return compactFabricRuleBased(currentFabric);
-  }
-
-  return currentFabric;
-}
-
-function compactFabricRuleBased(fabric) {
-  const roundSections = fabric.split(/(?=### Round \d+)/g).filter(Boolean);
-  if (roundSections.length <= 3) return fabric;
-
-  const recentRounds = roundSections.slice(-3);
-  const olderRounds = roundSections.slice(0, -3);
-
-  const keyFacts = extractKeyFacts(olderRounds);
-
-  return `## Compressed Context (from ${olderRounds.length} earlier rounds)\n${keyFacts}\n\n${recentRounds.join("\n\n")}`;
-}
-
-function extractKeyFacts(roundSections) {
-  const facts = [];
-
-  for (const section of roundSections) {
-    const lines = section.split("\n").filter(Boolean);
-    const roundMatch = lines[0]?.match(/### Round (\d+)/);
-    if (!roundMatch) continue;
-
-    for (let i = 1; i < lines.length; i++) {
-      const line = lines[i].trim().toLowerCase();
-      if (
-        line.includes("agreed") ||
-        line.includes("consensus") ||
-        line.includes("decision") ||
-        line.includes("disagree") ||
-        line.includes("concern") ||
-        line.includes("action item") ||
-        line.includes("key finding") ||
-        line.includes("important")
-      ) {
-        facts.push(lines[i].trim());
-      }
+    if (lower.includes("[propose]") || lower.includes("decision") || lower.includes("we should")) {
+      decisions.push(content.replace(/^\[(?:PROPOSE|CHALLENGE|REFINE|SUPPORT|DISSENT|SYNTHESIZE|QUESTION|REFUSE)\]\s*/i, ""));
+    } else if (lower.includes("[support]") || lower.includes("agree") || lower.includes("consensus")) {
+      agreements.push(content.replace(/^\[(?:PROPOSE|CHALLENGE|REFINE|SUPPORT|DISSENT|SYNTHESIZE|QUESTION|REFUSE)\]\s*/i, ""));
+    } else if (lower.includes("[dissent]") || lower.includes("[challenge]") || lower.includes("disagree") || lower.includes("concern")) {
+      disagreements.push(content.replace(/^\[(?:PROPOSE|CHALLENGE|REFINE|SUPPORT|DISSENT|SYNTHESIZE|QUESTION|REFUSE)\]\s*/i, ""));
+    } else if (lower.includes("[question]") || lower.includes("?")) {
+      openQuestions.push(content.replace(/^\[(?:PROPOSE|CHALLENGE|REFINE|SUPPORT|DISSENT|SYNTHESIZE|QUESTION|REFUSE)\]\s*/i, ""));
+    } else {
+      keyFacts.push(content.replace(/^\[(?:PROPOSE|CHALLENGE|REFINE|SUPPORT|DISSENT|SYNTHESIZE|QUESTION|REFUSE)\]\s*/i, ""));
     }
   }
 
-  if (facts.length === 0) {
-    const allLines = roundSections.join("\n").split("\n").filter(Boolean);
-    return allLines.slice(0, 10).join("\n");
-  }
-
-  return facts.slice(0, 15).join("\n");
+  return formatStateOfPlay({ decisions, agreements, disagreements, openQuestions, keyFacts }, question, domain);
 }
 
-/** LLM-based compaction: compresses fabric context into key facts. */
-export async function compactFabricWithLLM(fabric, round, promptFn, model) {
-  if (!round.summary) return fabric ?? "";
+/**
+ * Formats structured state-of-play sections into a concise markdown summary.
+ */
+export function formatStateOfPlay(sections, question, domain) {
+  const lines = [];
+  if (question) lines.push(`## Question\n${question}`);
+  if (domain) lines.push(`## Domain\n${domain}`);
 
-  const currentFabric = fabric ?? "";
-  if (currentFabric.length + round.summary.length + 100 <= MAX_FABRIC_CHARS()) {
-    return evolveFabric(currentFabric, round, null);
+  if (sections.decisions.length > 0) {
+    lines.push(`## Decisions & Proposals\n${sections.decisions.slice(-5).map((d) => `- ${d.slice(0, 300)}`).join("\n")}`);
+  }
+  if (sections.agreements.length > 0) {
+    lines.push(`## Agreements\n${sections.agreements.slice(-5).map((a) => `- ${a.slice(0, 300)}`).join("\n")}`);
+  }
+  if (sections.disagreements.length > 0) {
+    lines.push(`## Disagreements & Concerns\n${sections.disagreements.slice(-5).map((d) => `- ${d.slice(0, 300)}`).join("\n")}`);
+  }
+  if (sections.openQuestions.length > 0) {
+    lines.push(`## Open Questions\n${sections.openQuestions.slice(-5).map((q) => `- ${q.slice(0, 300)}`).join("\n")}`);
+  }
+  if (sections.keyFacts.length > 0) {
+    lines.push(`## Key Facts\n${sections.keyFacts.slice(-5).map((f) => `- ${f.slice(0, 300)}`).join("\n")}`);
   }
 
-  try {
-    const prompt = `Compress the following deliberation context into a concise summary (max 400 words). Preserve all key decisions, agreements, disagreements, and open questions. Remove redundancy.
-
-Current context:
-${currentFabric.slice(0, 8000)}
-
-New round summary:
-${round.summary}
-
-Compressed context:`;
-
-    const compressed = await promptFn("You are a deliberation context compressor.", model, prompt);
-    if (compressed && compressed.trim().length > 50) {
-      return compressed.trim();
-    }
-  } catch (err) {
-    const info = extractErrorInfo(err);
-    new Logger().debug("fabric_llm_compress_failed", "LLM compression returned unusable output — falling back to rule-based", info);
-  }
-
-  return compactFabricRuleBased(currentFabric);
-}
-
-/** Generates a structured brief of prior rounds for agent context. */
-export function generateRoundBriefs(fabric, currentRound) {
-  if (currentRound <= 1) return "";
-  if (!fabric) return "";
-
-  const roundSections = fabric.split(/(?=### Round \d+)/g).filter(Boolean);
-  if (roundSections.length === 0) return "";
-
-  return `## Prior Deliberation Summary\n\n${roundSections.join("\n\n")}`;
+  return lines.join("\n\n");
 }
 
 /** Formats transcript data from the database into a string for the synthesizer. */

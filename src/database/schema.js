@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 13;
+export const SCHEMA_VERSION = 14;
 
 export function initSchema(db) {
   db.exec(`
@@ -15,6 +15,7 @@ export function initSchema(db) {
       parent_session_id TEXT,
       opencode_session_id TEXT,
       next_speaker_id TEXT,
+      state_of_play TEXT,
       stats TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -333,6 +334,11 @@ export function migrateSchema(db) {
       )`);
     } catch { /* sqlite-vec not loaded */ }
     db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '13')`);
+  }
+
+  if (currentVersion < 14) {
+    try { db.exec(`ALTER TABLE meetings ADD COLUMN state_of_play TEXT`); } catch { /* exists */ }
+    db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '14')`);
   }
   db.exec("COMMIT");
   } catch (err) {

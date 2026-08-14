@@ -69,6 +69,7 @@ export function restoreStateFromDb({ db, stateManager, meetingId, options }) {
       created_at: c.created_at,
     })),
     next_contribution_id: db.getMaxContributionId(),
+    state_of_play: meeting.state_of_play ?? "",
   });
 
   const summaries = db.getRoundSummaries(meetingId);

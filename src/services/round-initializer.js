@@ -5,7 +5,7 @@ const SKIP_PASSED_LOOKBACK = 10;
 const SKIP_PASSED_WINDOW = 2;
 
 /**
- * Handles round initialization, session recreation, and participant filtering.
+ * Handles round initialization and participant filtering.
  * Extracted from MeetingOrchestrator for single responsibility.
  */
 export class RoundInitializer {
@@ -37,31 +37,6 @@ export class RoundInitializer {
     database.setRound(sharedState.round);
 
     return round;
-  }
-
-  /**
-   * Recreates sessions for participants with dirty, missing, or failed sessions.
-   */
-  async recreateDirtySessions(stateManager, sessionManager, database, roundExecutor) {
-    const dirtyIds = new Set(roundExecutor?.takeDirtySessions() ?? []);
-    const needsRecreate = stateManager.getParticipants().filter(
-      (p) => !p.session_id || p.status === "failed" || dirtyIds.has(p.config.id),
-    );
-    for (const p of needsRecreate) {
-      const recreated = await sessionManager.recreateSession(p, database);
-      if (recreated) {
-        if (p.status === "failed") {
-          stateManager.setParticipantStatus(p.config.id, "listening");
-          database.setParticipantStatus(p.config.id, "listening");
-          this.#logger.info("session_retry", `Recreated session for ${p.config.name}, rejoining deliberation`);
-        } else {
-          this.#logger.info("session_recreated", `Recreated session for ${p.config.name}`);
-        }
-      } else if (!p.session_id) {
-        stateManager.setParticipantStatus(p.config.id, "failed");
-        database.setParticipantStatus(p.config.id, "failed");
-      }
-    }
   }
 
   /**

@@ -4,7 +4,6 @@ import { join } from "node:path";
 const DEFAULT_CONFIG = {
   agentTimeoutMs: 120000,
   synthesisTimeoutMs: 180000,
-  maxFabricChars: 12000,
   maxContributionWords: 250,
   maxInterjectionWords: 200,
   defaultMaxRounds: 3,
@@ -32,7 +31,6 @@ const DEFAULT_CONFIG = {
   synthesisMaxRetries: 1,
   defaultMeetingTimeoutMs: 900000,
   stallTimeoutMs: 300000,
-  enableLlmFabricCompaction: false,
   modelDiversity: true,
   maxReflectionsPerAgent: 2,
   circuitBreaker: {
@@ -44,7 +42,6 @@ const DEFAULT_CONFIG = {
 const CONFIG_SCHEMA = {
   agentTimeoutMs: { type: 'number', min: 10000, max: 600000 },
   synthesisTimeoutMs: { type: 'number', min: 10000, max: 600000 },
-  maxFabricChars: { type: 'number', min: 1000, max: 50000 },
   maxContributionWords: { type: 'number', min: 50, max: 2000 },
   maxInterjectionWords: { type: 'number', min: 20, max: 1000 },
   defaultMaxRounds: { type: 'number', min: 1, max: 10 },
@@ -56,7 +53,6 @@ const CONFIG_SCHEMA = {
   defaultMeetingTimeoutMs: { type: 'number', min: 60000, max: 3600000 },
   stallTimeoutMs: { type: 'number', min: 30000, max: 1800000 },
   maxInterjectionsPerRound: { type: 'number', min: 1, max: 5 },
-  enableLlmFabricCompaction: { type: 'boolean' },
   modelDiversity: { type: 'boolean' },
   synthesisMaxRetries: { type: 'number', min: 0, max: 5 },
   maxReflectionsPerAgent: { type: 'number', min: 1, max: 10 },
