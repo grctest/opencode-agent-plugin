@@ -297,7 +297,7 @@ export function App() {
     state,
     participants,
     contributions,
-    interjections,
+    turnRequests,
     agentErrors,
     artifact,
     error,
@@ -317,10 +317,10 @@ export function App() {
       window.dispatchEvent(new CustomEvent("loom-agent-error", { detail: data.data }));
     } else if (data.type === "artifact") {
       window.dispatchEvent(new CustomEvent("loom-artifact", { detail: data.data }));
-    } else if (data.type === "interjections") {
-      const newIjs = data.data;
-      if (newIjs && newIjs.length > 0) {
-        window.dispatchEvent(new CustomEvent("loom-new-interjections", { detail: newIjs }));
+    } else if (data.type === "turn_requests") {
+      const newTrs = data.data;
+      if (newTrs && newTrs.length > 0) {
+        window.dispatchEvent(new CustomEvent("loom-new-turn-requests", { detail: newTrs }));
       }
     } else if (data.type === "orchestrator_messages") {
       const newMsgs = data.data;
@@ -560,7 +560,7 @@ export function App() {
               <OverviewTab
                 state={state}
                 contributions={contributions}
-                interjections={interjections}
+                turnRequests={turnRequests}
                 participants={participants}
                 agentErrors={agentErrors}
                 participantName={participantName}
@@ -590,7 +590,7 @@ export function App() {
                 onToggleCollapse={toggleRoundCollapse}
                 agentErrors={agentErrors}
                 participantName={participantName}
-                interjections={interjections}
+                turnRequests={turnRequests}
                 extensions={extensions}
                 activeRound={activeRound}
                 maxRounds={state?.max_rounds}

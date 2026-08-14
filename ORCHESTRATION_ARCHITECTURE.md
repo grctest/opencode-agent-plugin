@@ -14,7 +14,7 @@ A complete technical reference for how the Loom multi-agent deliberation system 
 6. [Turn Ordering](#6-turn-ordering)
 7. [LLM Session Architecture](#7-llm-session-architecture)
 8. [Moderator System](#8-moderator-system)
-9. [Interjection System](#9-interjection-system)
+9. [Turn Order System](#9-turn-order-system)
 10. [Convergence Detection](#10-convergence-detection)
 11. [State of Play](#11-state-of-play)
 12. [Reflection System](#12-reflection-system)
@@ -38,9 +38,9 @@ When a user types `/knit` with a question, this is what happens:
 3. **Model assignment** — Each agent is assigned an LLM model, with higher-tier agents getting the best available models.
 4. **Orchestrator session created** — A single orchestrator session is created for system-level calls (moderation, summarization, convergence, domain detection). No persistent per-agent sessions are created.
 5. **Rounds execute** — Each round has three phases:
-   - **Prompt phase**: Agents speak sequentially, each via a fresh ephemeral session. Each sees the state of play, vector-RAG context, recent contributions, and their own reflections.
+   - **Prompt phase**: Agents speak sequentially, each via a fresh ephemeral session. Each sees the state of play, vector-RAG context, recent contributions, and their own reflection.
    - **Reflection phase**: After a challenge or dissent, agents privately reflect on what they heard.
-   - **Interjection phase**: Agents can interrupt with priority-based interjections (also via ephemeral sessions).
+   - **Turn order planning**: At end of round, moderator plans next round's turn order based on `[REQUEST_NEXT]` tags.
 6. **State of play update** — After each round, a structured summary of decisions, agreements, disagreements, and open questions is derived from all contributions.
 7. **Moderator checks** — After each round, if there are signs of deadlock or circular argument, the moderator intervenes.
 8. **Convergence check** — After each round, 9 statistical and LLM-based checks (including a vector novelty check) determine whether to stop.
@@ -167,7 +167,7 @@ Each agent is loaded from a JSON persona file. Example structure:
   session_id: "",           // unused in ephemeral mode — reserved for future use
   status: "listening",      // listening | speaking | passed | failed | timed_out
   session_version: 0,       // unused in ephemeral mode
-  reflections: ["The JWT migration makes sense, but token revocation is unsolved."],
+  reflection: "The JWT migration makes sense, but token revocation is unsolved.",
   contributions_count: 2
 }
 ```
@@ -213,9 +213,8 @@ decisions.
 3. If you have nothing to add, respond with exactly: [PASS]
 4. Tag your type: [PROPOSE], [CHALLENGE], [REFINE], [SUPPORT], [DISSENT],
    [SYNTHESIZE], [QUESTION], or [REFUSE]
-5. To interject, add: [INTERJECT: Priority: <1-9>, Reason: "why you must speak
-   now", Target: <optional contribution id like #12 or participant name>] — then
-   write your interjection content immediately after on the same line
+5. To request the next turn, add: [REQUEST_NEXT: Target: <participant|Self>,
+   Priority: <1-9>, Reason: "why you (or they) must speak next"]
 6. Stay in character — your persona and agenda shape your contributions
 7. Reference prior contributions using their stable ID from the Recent
    Contributions list, e.g. [#12]
@@ -228,13 +227,13 @@ decisions.
 In my experience, breaking changes typically require a migration period. Have
 we validated this with stakeholders?
 
-## Example With Interjection
+## Example With Turn Request
 [PROPOSE] We should adopt a phased migration over Q1 and Q2.
 
-To interject on the current point: [INTERJECT: Priority: 8, Reason: "I have
-data showing the auth service migration alone will take 6 weeks, making Q1
-unrealistic"] The auth service migration alone will take 6 weeks based on our
-last project timeline — Q1 is unrealistic without additional resources.
+[REQUEST_NEXT: Target: Self, Priority: 8, Reason: "I have data showing the
+auth service migration alone will take 6 weeks, making Q1 unrealistic"] The
+auth service migration alone will take 6 weeks based on our last project
+timeline — Q1 is unrealistic without additional resources.
 
 ## Example With Refusal
 [REFUSE: I cannot engage with this premise because it assumes we have budget
@@ -303,7 +302,7 @@ Note the structure:
 - **State of Play**: A structured summary of decisions, agreements, disagreements, and open questions derived from ALL prior contributions. This is the primary running context.
 - **Relevant Prior Context**: Semantically retrieved prior contributions via vector RAG (sqlite-vec). Bounded to 5 results.
 - **Recent Contributions**: The last 3–4 contributions from the current and previous rounds, with stable IDs like `[#4]`.
-- **Reflections**: The agent's own private reflections from prior rounds.
+- **Reflection**: The agent's own private reflection from prior rounds.
 - **Delimiters**: `<<<LOOM_*_BEGIN_>>>` / `<<<LOOM_*_END_>>>` blocks prevent prompt injection.
 
 ### What Agents Produce
@@ -322,7 +321,7 @@ An agent response is a text string. The system parses it for structured directiv
 - `[PASS]` — nothing to add
 
 **Optional directives:**
-- `[INTERJECT: Priority: N, Reason: "...", Target: #id]` — request to interrupt
+- `[REQUEST_NEXT: Target: <participant|Self>, Priority: N, Reason: "..."]` — request next turn
 - `[GOVERNANCE: extend_rounds: 2]` — system-level escalation
 
 **Content** follows the tag. Example full response:
@@ -340,7 +339,7 @@ The system parses this into:
 {
   type: "challenge",
   content: "The short-expiry-with-refresh approach assumes...",
-  interjection: null,
+  request_next: null,
   governance: null,
   word_count: 52
 }
@@ -350,7 +349,7 @@ The system parses this into:
 
 ## 5. Round Execution
 
-Each round proceeds through three sequential phases:
+Each round proceeds through two sequential phases:
 
 ### Phase 1: Prompt Phase
 
@@ -366,69 +365,57 @@ For each agent, the system:
 6. Wraps with retry logic (2 attempts, exponential backoff: 1s → 2s → 4s → 8s, 500ms jitter).
 7. Extracts text from the LLM response.
 8. Sanitizes content to prevent prompt injection (preserves known directives, strips other brackets/HTML).
-9. Parses the response for type tags, interjections, and governance directives.
+9. Parses the response for type tags, `[REQUEST_NEXT]` turn order requests, and governance directives.
 10. Enforces word limit (default 250 words).
 11. Validates against a Zod schema; falls back to type "challenge" on validation failure.
 12. Stores the contribution in state and database.
 13. Deletes the ephemeral session (cleanup).
 
+**Intra-round queue jumping:** If an agent tags `[REQUEST_NEXT: Priority: 9+]` during their turn, the system immediately moves that agent to position 0 of the *remaining* speakers in the current round. No LLM calls — pure programmatic array reorder.
+
 ### Phase 2: Reflection Phase
 
 If any contribution in the round was a "challenge" or "dissent", the reflection phase runs.
 
-**Batch approach (tried first):** All listeners' reflections are generated in a single LLM call:
+Each listener generates a reflection in **parallel** via `Promise.allSettled()`. Each reflection supersedes any prior one — the agent produces a single evolved belief state, not an accumulated list.
 
-```
-## Batch Private Reflection
-
-**Security Engineer** just said:
-"The short-expiry-with-refresh approach assumes refresh tokens can't be stolen..."
-
-Generate a private 2-3 sentence reflection for EACH participant below. For each, answer:
-- Does this change their view? How?
-- What assumption would they challenge?
-- What are they missing from their perspective?
-
-Participants:
-  - Architect Lead (senior): Drive long-term technical vision and coherence
-  - Junior Developer (junior): Bring fresh perspectives and challenge groupthink
-
-Respond with ONLY a JSON object in this exact shape:
-{"reflections":[{"name":"<participant name>","reflection":"<their 2-3 sentence reflection>"}]}
-```
-
-**Per-listener fallback:** If batch fails, each listener gets an individual prompt with tier-specific guidance:
+**Reflection prompt includes:**
+1. The agent's previous reflection (if any)
+2. The triggering challenge/dissent
+3. The agent's own last 2 contributions (avoids repetition)
 
 ```
 ## Private Reflection
 
-**Security Engineer** just said:
-"The short-expiry-with-refresh approach assumes refresh tokens can't be stolen..."
-
 You are **Architect Lead** (senior). Your agenda: Drive long-term technical vision
+
+Your recent contributions:
+- "We should adopt a phased migration starting with the auth service"
+
+Your previous reflection:
+"Token revocation is a concern, but the phased approach mitigates risk."
+
+Now **Security Engineer** said:
+"The short-expiry-with-refresh approach assumes refresh tokens can't be stolen..."
 
 Assess risk and feasibility. What has worked before in similar situations?
 What assumptions are most dangerous to leave unchallenged?
 
-Write 2-3 sentences:
-- Does this change your view? How?
-- What assumption would you challenge?
-- What are they missing from their perspective?
-
-This is private — only you will see it.
+Write 2-3 sentences that UPDATE your previous reflection.
+Keep what still holds, revise what has changed, add what's new.
+Output a single coherent paragraph — this replaces your prior reflection.
 ```
 
-Each agent keeps at most 2 reflections (oldest evicted).
+Each agent maintains a single `reflection` string. The prompt instructs the LLM to produce a coherent paragraph that evolves the prior belief state.
 
-### Phase 3: Interjection Phase
+### Post-Phase: Turn Order Planning + Round Summarization
 
-Agents who declared interjections during the prompt phase are processed. (See Section 9 for full details.)
+After the prompt and reflection phases, two things happen:
 
-### Post-Phase: Round Summarization
+1. **Turn Order Planning:** The moderator plans turn order for the next round based on `[REQUEST_NEXT]` tags. (See Section 9 for full details.)
+2. **Round Summarization:** A round summary is generated.
 
-After all three phases, a round summary is generated.
-
-**Heuristic first:** "Round contributions (4): 1 propose, 2 challenge, 1 support. 1 interjection(s)."
+**Heuristic first:** "Round contributions (4): 1 propose, 2 challenge, 1 support. 1 turn request(s)."
 
 **LLM semantic summary (if conflict exists in moderator_forces mode):**
 
@@ -451,22 +438,17 @@ The summary is stored in the database but is NOT appended to any running context
 
 ## 6. Turn Ordering
 
-Turn order is deterministic within a round. Agents are processed in the order they appear in the state's participants array, which is the order they were composed in. There is no randomization of turn order.
+**Default order:** Agents speak in composition order (the order they appear in the state's participants array). There is no randomization.
 
-**Moderator reordering:** If the moderator sets a `next_speaker_id` (via a "break" ruling), that participant is moved to position 0 using splice + unshift:
+**Turn request override:** At the end of each round, if any agent emitted `[REQUEST_NEXT]` tags, the moderator plans turn order for the next round via `planTurnOrder()` (see Section 9). The planned order is stored in state and applied by `RoundInitializer.filterActiveParticipants()` at the start of the next round.
 
-```javascript
-reorderForNextSpeaker(nextSpeakerId) {
-    const idx = this.#state.participants.findIndex(p => p.config.id === nextSpeakerId);
-    if (idx > 0) {
-      const [speaker] = this.#state.participants.splice(idx, 1);
-      this.#state.participants.unshift(speaker);
-    }
-    this.#state.next_speaker_id = null;
-  }
-```
+**Intra-round queue jumps:** If an agent tags `[REQUEST_NEXT: Priority: 9+]` during their turn, the system immediately moves them to position 0 of the remaining speakers in the current round (pure array swap, no LLM call).
 
-**Skip-passed logic:** Starting from round 3, if a participant passed within the last 2 rounds and has no new reflections since their last pass, they are excluded from the active participant list for the next round. This prevents agents from being prompted when they have nothing new to say.
+**Moderator break ruling:** If the moderator detects circular arguments, it can force a specific participant to speak next via `setNextSpeakerId()`. This overrides any planned turn order.
+
+**Skip-passed logic:** Starting from round 3, if a participant passed within the last 2 rounds and has no reflection since their last pass, they are excluded from the active participant list for the next round.
+
+**When no turn requests exist:** No LLM call is made. The default composition order is preserved (or the moderator's break ruling applies).
 
 ---
 
@@ -549,11 +531,15 @@ client.session.prompt({
 
 ### When the Moderator Is Consulted
 
-The moderator is NOT called every round. It is only triggered when:
+The `checkAndProcess()` function is called every round, but the LLM-based ruling is **gated by thresholds** — it short-circuits without spending tokens when conditions aren't met:
 
-1. At least 3 contributions exist in the current round (configurable `minContributions`).
-2. At least 2 of the last 4 contributions are challenges or dissents (configurable `recentChallenges` and `lookbackWindow`).
-3. OR a single participant has challenged/dissented 3+ times in their last 6 contributions across rounds (circular argument detection).
+1. Fewer than 3 contributions in the current round → returns `{ action: "continue" }` immediately.
+2. Fewer than 2 challenges/dissents in the last 4 contributions → returns `{ action: "continue" }` immediately.
+
+When thresholds are exceeded, the moderator LLM evaluates whether to:
+- **continue** — the deliberation is still productive
+- **break** — force a specific participant to speak next (circular argument detected)
+- **converge** — the deliberation has reached a natural conclusion
 
 ### The Moderator Prompt
 
@@ -579,6 +565,29 @@ contribute opinions or domain knowledge. Your ONLY job is process governance.
 ## Your Previous Rulings (for consistency)
   1. Round 2: break → junior_backend_dev
   2. Round 4: continue → continue
+
+## Current State of Play
+## Question
+Should we migrate our authentication service to JWT tokens?
+
+## Decisions & Proposals
+- We should adopt a phased migration over Q1 and Q2, starting with the auth service
+
+## Agreements
+- Short-lived access tokens (5 min) are essential
+- Stateless auth reduces session store overhead
+
+## Disagreements & Concerns
+- Token revocation remains unsolved — blocklists defeat statelessness
+- Refresh tokens stored client-side are a high-value target
+
+## Open Questions
+- How will existing sessions be handled during the transition?
+- What's the actual downtime budget?
+
+Use this to distinguish between:
+- Circular arguments (revisiting settled points with no new evidence)
+- Legitimate disputes (unresolved disagreements that need more discussion)
 
 ## Situation Requiring Your Ruling
 Circular argument detected: Security Engineer has challenged 3 times in the
@@ -619,68 +628,98 @@ The moderator can rule:
 
 ---
 
-## 9. Interjection System
+## 9. Turn Order System
 
-### How Interjections Work
+### How Turn Requests Work
 
-During the prompt phase, an agent can embed an interjection directive in its response:
+During the prompt phase, an agent can embed a `[REQUEST_NEXT]` tag to request the next speaking turn for themselves or another participant:
 
 ```
 [PROPOSE] We should use short-lived JWTs with refresh tokens.
 
-[INTERJECT: Priority: 8, Reason: "I have data showing the auth service
-migration alone will take 6 weeks, making Q1 unrealistic"]
+[REQUEST_NEXT: Target: Senior Architect, Priority: 9, Reason: "They have
+domain expertise on auth migrations and need to validate this approach"]
 ```
 
-### Interjection Resolution
-
-After the prompt phase, the system processes all pending interjections:
-
-1. **Sort by priority** descending (principal=10, senior=9, mid=7, junior=5).
-2. **Max per round:** 3 interjections per round. Excess are denied.
-3. **Cooldown:** An agent cannot interject in consecutive rounds.
-4. **Auto-grant threshold:** Priority ≥ 9 is automatically granted.
-5. **Below threshold:** All interjections are denied (the priority cap acts as a soft filter — agents self-select what's worth interrupting for).
-
-### Target Resolution
-
-If the interjection specifies a target (e.g., `Target: #3` or `Target: Architect Lead`), the system resolves it to the participant who made that contribution. If no target is specified, the target defaults to the participant immediately before the interjector in the round's turn order.
-
-### Pushback Mechanism
-
-When an interjection is granted, the **last contributor** in the round receives a pushback prompt via an ephemeral session:
+Or a self-request:
 
 ```
-## Interjection Attempt
-
-**Security Engineer** wants to interrupt you with priority 8.
-Reason: "I have data showing the auth service migration alone will take 6 weeks"
-
-**Your current point was:**
-"We should adopt a phased migration over Q1 and Q2. This gives us time to
-validate each service migration..."
-
-Do you:
-a) **[YIELD]** — let them speak now, you'll continue after
-b) **[CONTEST]** — your point must be heard now because [reason]
-
-Respond with either "[YIELD]" or "[CONTEST] [your reason in one sentence]"
+[REQUEST_NEXT: Target: Self, Priority: 8, Reason: "I need to respond to
+the security concerns raised — I have concrete mitigations"]
 ```
 
-Pushback is best-effort — if the LLM fails or times out, the interjection proceeds normally.
+### Turn Request Resolution
 
-### Interjector Prompt
+At the end of each round (after prompt + reflection phases), the moderator plans turn order for the next round:
 
-If the interjection includes draft content (the agent wrote it inline), it is used directly (enforced to word limit). Otherwise, the interjector is prompted via an ephemeral session to state their interjection in ≤200 words.
+1. **Collect all turn requests** from the round's contributions.
+2. **Resolve priorities** using the requesting agent's tier:
+   - Principal = 10
+   - Senior = 9
+   - Mid = 7
+   - Junior = 5
+3. **Sort by priority** descending.
+4. **Tie-breaking:** When priorities are equal, the moderator considers:
+   - Persona seniority (tier)
+   - Who spoke least recently (to balance participation)
+5. **Max per round:** 3 turn requests per round. Excess are denied.
+6. **Cooldown:** An agent cannot request in consecutive rounds (they must wait their turn).
+7. **Auto-grant threshold:** Priority ≥ 9 is automatically granted (intra-round queue jump if during round, or first in next round if at end of round).
 
-### Interjection Notes
+### Intra-Round Queue Jumping
 
-After the interjection phase, all granted and denied interjections are formatted as notes and appended to the fabric context:
+If an agent tags `[REQUEST_NEXT: Priority: 9+]` **during their turn** in the prompt phase, the system immediately moves that agent to position 0 of the *remaining* speakers in the current round. This is a pure array swap — no LLM calls.
+
+Example:
+- Original queue: `[A, B, C, D]` — A is currently speaking
+- A tags `[REQUEST_NEXT: Priority: 9]`
+- New queue: `[A, B, D, C]` — C moved to end, B stays at position 1
+
+### Inter-Agent Reordering (Planned for Future)
+
+For Priority < 9, if Agent B requests Agent A and the LLM agrees A should go next, the system can reorder within the current round's remaining speakers. This requires an LLM evaluation but uses the same fast-path model.
+
+### Turn Order Planning
+
+After the round completes, the moderator plans turn order for the next round:
 
 ```
-**Interjections (Round 3):**
-- GRANTED: Security Engineer (P8) → Architect Lead: "Auth migration will take 6 weeks..."
+You are planning turn order for the next round of a multi-agent deliberation.
+
+## Current State of Play
+{state_of_play}
+
+## Turn Requests (Round {n})
+- {agent_a} requested {target} (Priority: {p}, Reason: "{reason}")
+- {agent_b} requested {target} (Priority: {p}, Reason: "{reason}")
+
+## Available Participants
+- {participant_1} ({tier}): {last_contribution_summary}
+- {participant_2} ({tier}): {last_contribution_summary}
+
+## Task
+Plan the turn order for the next round. Consider:
+- Priority scores (higher = go first)
+- Who has spoken less recently (balance participation)
+- Persona seniority for tie-breaking
+- Reasonableness of the requested order
+
+Respond with:
+1. Ordered list of participant IDs
+2. Brief reasoning for the ordering
+```
+
+The planning runs via `fastPathModel` (e.g., Claude Haiku) — a single LLM call per round end.
+
+### Turn Order Notes
+
+After turn order planning, the planned order and any denied requests are formatted as notes and appended to the fabric context:
+
+```
+**Turn Order (Round 3 → 4):**
+- Planned order: Security Engineer → Architect Lead → Junior Developer
 - DENIED: Junior Developer (P5): Priority too low
+- DENIED: Architect Lead (P7): Cooldown (requested last round)
 ```
 
 All agents see these notes in subsequent rounds via the state of play.
@@ -800,17 +839,20 @@ engineering
 
 ### How It's Derived
 
-After each round finalization, the orchestrator calls `updateStateOfPlay(weave, question, domain)` which scans ALL contributions and categorizes them:
+After each round finalization, the orchestrator calls `updateStateOfPlay(weave, question, domain)` which categorizes contributions using **the parsed type tag** (`c.type`) as the primary signal:
 
-| Signal | Category |
-|--------|----------|
-| Content contains `[PROPOSE]`, "decision", or "we should" | Decisions & Proposals |
-| Content contains `[SUPPORT]`, "agree", or "consensus" | Agreements |
-| Content contains `[DISSENT]`, `[CHALLENGE]`, "disagree", or "concern" | Disagreements & Concerns |
-| Content contains `[QUESTION]` or `?` | Open Questions |
-| Everything else | Key Facts |
+| `c.type` | Category |
+|-----------|----------|
+| `propose`, `refine` | Decisions & Proposals |
+| `support` | Agreements |
+| `challenge`, `dissent` | Disagreements & Concerns |
+| `question` | Open Questions |
+| `synthesize`, `refuse`, `pass` | (excluded) |
+| unknown/missing | Fallback keyword matching |
 
-Each section is capped at the 5 most recent items. Each item is truncated to 300 characters.
+**Fallback keyword matching** (for contributions with missing/unknown type tags) uses word-boundary-aware regex to avoid substring false positives (e.g., `\bwe should\b` instead of `.includes("we should")`).
+
+Each section is capped at the 5 most recent items. Each item is truncated to 300 characters. The content is cleaned of `[REQUEST_NEXT]`, `[GOVERNANCE]`, and type tags before inclusion.
 
 ### How It Appears in Agent Prompts
 
@@ -849,34 +891,44 @@ The state of play solves both: it's derived from the full weave (no information 
 
 ## 12. Reflection System
 
-Reflections are private notes agents write to themselves after hearing a challenge or dissent. They are NOT visible to other agents.
+Reflections are private, evolving belief states that agents maintain across rounds. Each reflection supersedes any prior one — the agent produces a single coherent paragraph that captures its current thinking, not a list of disconnected notes.
 
 ### When Reflections Trigger
 
-After the prompt phase, if any contribution was a "challenge" or "dissent", the reflection phase runs.
+After the prompt phase, if any contribution was a "challenge" or "dissent", every other active participant generates a reflection. Reflections run in parallel via `Promise.allSettled()`.
 
-### What a Reflection Contains
+### How Reflections Evolve
 
-Each agent writes 2–3 sentences answering:
-- Does this change your view? How?
-- What assumption would you challenge?
-- What are they missing from your perspective?
+Each agent maintains a single `reflection` string (not an array). When generating a new reflection, the agent sees:
+1. Its previous reflection (if any)
+2. The triggering challenge/dissent
+3. The agent's own recent contributions
 
-### Tier-Specific Guidance
+The agent produces a 2–3 sentence paragraph that **updates** its prior reflection:
+- Keep what still holds
+- Revise what has changed
+- Add what's new
 
-- **junior**: "React instinctively — what excites you, what feels wrong, what reminds you of something unrelated? Don't worry about being right."
-- **mid**: "Evaluate the reasoning structure. Where does the logic hold? Where does it break? What evidence would change your mind?"
-- **senior**: "Assess risk and feasibility. What has worked before in similar situations? What assumptions are most dangerous to leave unchallenged?"
-- **principal**: "Determine if this contribution moves the deliberation forward or merely restates what's already known. Is it actionable?"
+This creates a narrative of evolving thought: *"Initially concerned about token theft, but after seeing the phased migration proposal, the bigger concern is..."*
+
+### Context-Aware Prompts
+
+Reflection prompts are composed from three axes:
+- **Tier** — analytical lens (junior: instinctive, mid: structural, senior: risk/feasibility, principal: actionability)
+- **Persona** — the agent's role and agenda
+- **Recency** — the agent's own last 2 contributions (avoids repetition)
 
 ### Storage
 
-Each agent keeps at most 2 reflections. Older ones are evicted via `slice(-2)`. Reflections are persisted to the database and appear in subsequent agent prompts as:
+Each participant has a single `reflection` field (string). The reflection is persisted to the database and appears in subsequent agent prompts as:
 
 ```
 ## Your Reflection
-The JWT migration makes sense, but token revocation is unsolved.
+Initially concerned about token theft, but after seeing the phased
+migration proposal, the bigger concern is refresh token rotation...
 ```
+
+When the agent has no prior reflection, the prompt notes: *(No prior reflection — this is your first)*.
 
 ---
 
@@ -886,14 +938,14 @@ After each round, a summary is generated for display and persistence purposes.
 
 ### Heuristic Summary (always generated)
 
-Counts contribution types: "Round contributions (4): 1 propose, 2 challenge, 1 support. 1 interjection(s)."
+Counts contribution types: "Round contributions (4): 1 propose, 2 challenge, 1 support. 1 turn request(s)."
 
 ### LLM Semantic Summary (conditional)
 
 Only generated when:
 - Convergence mode is `moderator_forces`
 - There are >2 contributions
-- There are conflict signals (challenges, dissents, or interjections)
+- There are conflict signals (challenges, dissents, or turn requests)
 
 The prompt:
 
@@ -926,6 +978,8 @@ Priority: principal > senior > any non-failed > last participant.
 
 ### The Synthesis Prompt
 
+The synthesis prompt now uses the **State of Play** as its primary context, with the transcript as supporting detail. This gives the synthesizer a structured view of what was decided, agreed upon, and left unresolved.
+
 ```
 You are the synthesizer. The deliberation is complete. Produce the final artifact.
 
@@ -937,7 +991,34 @@ This is an engineering question. Focus on technical tradeoffs, implementation
 feasibility, and risk mitigation. Prioritize solutions that balance correctness
 with pragmatism.
 
-## Full Deliberation Transcript
+## State of Play (Final)
+## Question
+Should we migrate our authentication service to JWT tokens?
+
+## Decisions & Proposals
+- We should adopt a phased migration over Q1 and Q2, starting with the auth service
+- Use short-lived JWTs (5 min expiry) with refresh tokens
+
+## Agreements
+- Short-lived access tokens are essential
+- Stateless auth reduces session store overhead
+- Phased approach reduces risk
+
+## Disagreements & Concerns
+- Token revocation remains unsolved — blocklists defeat statelessness
+- Refresh tokens stored client-side are a high-value target
+- Server-side refresh tokens reinvent stateful auth
+
+## Open Questions
+- How will existing sessions be handled during the transition?
+- What's the actual downtime budget?
+- Is the revocation problem solvable without returning to stateful auth?
+
+## Unresolved Objections
+- Security Engineer: Server-side refresh tokens are just session tokens with extra steps (Round 2)
+- Junior Developer: What's the actual downtime budget? (Round 3)
+
+## Deliberation Transcript
 ### Round 1
 **[Architect Lead]** (senior, propose): [PROPOSE] We should migrate to JWT for
 stateless auth...
@@ -963,6 +1044,10 @@ Produce a comprehensive, well-structured response that:
 3. Notes any unresolved disagreements
 4. Provides clear, actionable conclusions
 5. Identifies remaining risks or open questions
+
+Use the State of Play as your primary reference for what was decided, agreed
+upon, and left unresolved. The transcript provides supporting detail and
+attribution.
 
 Format as markdown with these exact sections:
 ## Decision
@@ -1054,7 +1139,7 @@ Low (synthesis interrupted)
     {
       number: 1,
       contributions: [/* contribution objects */],
-      interjections: [/* interjection objects */],
+      turn_requests: [/* turn request objects */],
       token_path: [/* token usage */],
       summary: "Round contributions (4): 2 propose, 1 challenge, 1 support."
     }
@@ -1356,9 +1441,9 @@ async #promptOrchestrator(system, model, message, type = "orchestrator") {
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `maxContributionWords` | 250 | Max words per agent contribution |
-| `maxInterjectionWords` | 200 | Max words per interjection |
+| `maxTurnRequestWords` | 200 | Max words per turn request reason |
 | `defaultMaxRounds` | 3 | Default meeting length |
-| `maxInterjectionsPerRound` | 3 | Cap on interjections per round |
+| `maxTurnRequestsPerRound` | 3 | Cap on turn requests per round |
 | `agentTimeoutMs` | 120,000 | Per-agent LLM call timeout |
 | `maxRetryAttempts` | 2 | Retries per agent call |
 | `retryBaseDelayMs` | 1,000 | Base retry delay |

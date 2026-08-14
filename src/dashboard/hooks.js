@@ -39,7 +39,7 @@ export function useSSEReset(meetingId) {
  * Applies incremental SSE updates to meeting data state.
  * Returns event handlers to attach to window.
  */
-export function useSSEHandlers({ setContributions, setInterjections, setState, setParticipants, setAgentErrors, setArtifact, setOrchestratorMessages }) {
+export function useSSEHandlers({ setContributions, setTurnRequests, setState, setParticipants, setAgentErrors, setArtifact, setOrchestratorMessages }) {
   useEffect(() => {
     const handleContributions = (e) => {
       const newContribs = e.detail;
@@ -51,12 +51,12 @@ export function useSSEHandlers({ setContributions, setInterjections, setState, s
       });
     };
 
-    const handleInterjections = (e) => {
-      const newIjs = e.detail;
-      if (!newIjs || newIjs.length === 0) return;
-      setInterjections((prev) => {
-        const seen = new Set(prev.map((ij) => ij.id));
-        const fresh = newIjs.filter((ij) => ij && ij.id != null && !seen.has(ij.id));
+    const handleTurnRequests = (e) => {
+      const newTrs = e.detail;
+      if (!newTrs || newTrs.length === 0) return;
+      setTurnRequests((prev) => {
+        const seen = new Set(prev.map((tr) => `${tr.participant_id}:${tr.target}`));
+        const fresh = newTrs.filter((tr) => tr && !seen.has(`${tr.participant_id}:${tr.target}`));
         return fresh.length > 0 ? [...prev, ...fresh] : prev;
       });
     };
@@ -104,7 +104,7 @@ export function useSSEHandlers({ setContributions, setInterjections, setState, s
     };
 
     window.addEventListener("loom-new-contributions", handleContributions);
-    window.addEventListener("loom-new-interjections", handleInterjections);
+    window.addEventListener("loom-new-turn-requests", handleTurnRequests);
     window.addEventListener("loom-state-update", handleState);
     window.addEventListener("loom-participants-update", handleParticipants);
     window.addEventListener("loom-agent-error", handleAgentError);
@@ -113,7 +113,7 @@ export function useSSEHandlers({ setContributions, setInterjections, setState, s
 
     return () => {
       window.removeEventListener("loom-new-contributions", handleContributions);
-      window.removeEventListener("loom-new-interjections", handleInterjections);
+      window.removeEventListener("loom-new-turn-requests", handleTurnRequests);
       window.removeEventListener("loom-state-update", handleState);
       window.removeEventListener("loom-participants-update", handleParticipants);
       window.removeEventListener("loom-agent-error", handleAgentError);
@@ -127,7 +127,7 @@ export function useMeetingApi(meetingId, resetKey) {
   const [state, setState] = useState(null);
   const [participants, setParticipants] = useState([]);
   const [contributions, setContributions] = useState([]);
-  const [interjections, setInterjections] = useState([]);
+  const [turnRequests, setTurnRequests] = useState([]);
   const [orchestratorMessages, setOrchestratorMessages] = useState([]);
   const [agentErrors, setAgentErrors] = useState([]);
   const [artifact, setArtifact] = useState(null);
@@ -154,7 +154,7 @@ export function useMeetingApi(meetingId, resetKey) {
       }
       setState(data.state);
       setParticipants(data.participants);
-      setInterjections(data.interjections);
+      setTurnRequests(data.turn_requests ?? []);
       setOrchestratorMessages(data.orchestrator_messages ?? []);
       setAgentErrors(data.agent_errors);
       setArtifact(data.artifact ?? null);
@@ -190,13 +190,13 @@ export function useMeetingApi(meetingId, resetKey) {
     }
   }, [meetingId, fetchMeetingData, resetKey]);
 
-  useSSEHandlers({ setContributions, setInterjections, setState, setParticipants, setAgentErrors, setArtifact, setOrchestratorMessages });
+  useSSEHandlers({ setContributions, setTurnRequests, setState, setParticipants, setAgentErrors, setArtifact, setOrchestratorMessages });
 
   return {
     state,
     participants,
     contributions,
-    interjections,
+    turnRequests,
     orchestratorMessages,
     agentErrors,
     artifact,

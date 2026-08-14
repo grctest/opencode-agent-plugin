@@ -275,7 +275,6 @@ export function createKnitHandler(client, directory, activeLooms) {
       participants,
       maxRounds,
       convergence: args.convergence ?? "moderator_forces",
-      allowInterjections: args.allow_interjections !== false,
       meetingTimeoutMs: args.meeting_timeout,
       domain: primaryDomain,
       detectDomains: true,
@@ -360,7 +359,6 @@ export function createKnitHandler(client, directory, activeLooms) {
         })),
         maxRounds: existingMeeting.max_rounds,
         convergence: args.convergence ?? "moderator_forces",
-        allowInterjections: args.allow_interjections !== false,
         meetingTimeoutMs: args.meeting_timeout,
         ...meetingCallbacks,
       });

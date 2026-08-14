@@ -199,31 +199,18 @@ export const ContributionItem = memo(({ contribution, participantName, onDialogO
   );
 });
 
-export const InterjectionItem = memo(({ interjection, participantName }) => {
-  const resolvedClass = interjection.granted ? "loom-text-granted" : "loom-text-denied";
-  const resolvedLabel = interjection.granted ? "granted" : interjection.resolved === "contested" ? "contested" : "denied";
-
+export const TurnRequestItem = memo(({ turnRequest, participantName }) => {
   return (
     <div className="loom-card loom-card-dashed">
       <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center loom-mb-xs">
         <span className="loom-title-sm">{participantName}</span>
-        <span className="loom-badge loom-badge-interjection">interjection</span>
-        <span className="loom-text-xs loom-text-muted">priority {interjection.priority}</span>
-        <span className={cn("loom-text-xs", resolvedClass)}>
-          {resolvedLabel}
-        </span>
-        {interjection.target_participant_id && (
-          <span className="loom-text-xs loom-text-muted">→ {interjection.target_participant_id}</span>
+        <span className="loom-badge loom-badge-interjection">turn request</span>
+        <span className="loom-text-xs loom-text-muted">priority {turnRequest.priority}</span>
+        {turnRequest.target && (
+          <span className="loom-text-xs loom-text-muted">→ {turnRequest.target}</span>
         )}
-        <span className="loom-text-xs loom-text-muted">{relativeTime(interjection.created_at)}</span>
       </div>
-      <p className="loom-text loom-text-muted">{interjection.content}</p>
-      {interjection.pushback && (
-        <div className="loom-mt-xs loom-card loom-card-sm loom-card-warning">
-          <span className="loom-text-xs loom-text-bold">Pushback:</span>
-          <p className="loom-text-xs loom-text-muted">{interjection.pushback}</p>
-        </div>
-      )}
+      <p className="loom-text loom-text-muted">{turnRequest.reason}</p>
     </div>
   );
 });

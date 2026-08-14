@@ -24,7 +24,7 @@ export class RoundInitializer {
     const round = {
       number: stateManager.getCurrentRound(),
       contributions: [],
-      interjections: [],
+      turn_requests: [],
       token_path: [],
       summary: "",
     };
@@ -57,10 +57,8 @@ export class RoundInitializer {
         const lastPassRound = recentPasses[recentPasses.length - 1].round;
         const roundsSincePass = round.number - lastPassRound;
         if (roundsSincePass > SKIP_PASSED_WINDOW) return true;
-        const recentReflections = (p.reflections || []).filter(
-          (r) => r.round > lastPassRound
-        );
-        return recentReflections.length > 0;
+        const hasReflection = !!p.reflection;
+        return hasReflection;
       });
       if (filtered.length > 0 && filtered.length < activeParticipants.length) {
         this.#logger.info("skip_passed", `Skipping ${activeParticipants.length - filtered.length} passed agents with no new reflections`);
@@ -68,7 +66,31 @@ export class RoundInitializer {
       }
     }
 
-    if (stateManager.getNextSpeakerId()) {
+    // Apply planned turn order if available
+    const plannedOrder = stateManager.getPlannedTurnOrder();
+    if (plannedOrder.length > 0) {
+      // Reorder active participants based on planned order
+      const ordered = [];
+      const remaining = [...activeParticipants];
+      
+      for (const id of plannedOrder) {
+        const idx = remaining.findIndex(p => p.config.id === id);
+        if (idx !== -1) {
+          ordered.push(remaining.splice(idx, 1)[0]);
+        }
+      }
+      
+      // Add any remaining participants not in the planned order
+      ordered.push(...remaining);
+      
+      if (ordered.length > 0) {
+        this.#logger.info("turn_order", `Applied planned turn order: ${plannedOrder.join(', ')}`);
+        activeParticipants = ordered;
+      }
+      
+      // Clear the planned order after applying
+      stateManager.setPlannedTurnOrder([]);
+    } else if (stateManager.getNextSpeakerId()) {
       stateManager.reorderForNextSpeaker(stateManager.getNextSpeakerId());
     }
 

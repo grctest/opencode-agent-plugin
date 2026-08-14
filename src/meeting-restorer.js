@@ -44,7 +44,7 @@ export function restoreStateFromDb({ db, stateManager, meetingId, options }) {
     session_id: r.session_id,
     session_version: r.session_version ?? 1,
     status: r.status,
-    reflections: parseReflections(r.reflection),
+    reflection: parseReflections(r.reflection),
     contributions_count: 0,
   }));
 
@@ -76,7 +76,7 @@ export function restoreStateFromDb({ db, stateManager, meetingId, options }) {
   const roundMap = new Map();
   for (const c of contributions) {
     if (!roundMap.has(c.round)) {
-      roundMap.set(c.round, { number: c.round, contributions: [], interjections: [], summary: summaries[c.round] ?? "" });
+      roundMap.set(c.round, { number: c.round, contributions: [], turn_requests: [], summary: summaries[c.round] ?? "" });
     }
     roundMap.get(c.round).contributions.push({
       id: c.id,
@@ -93,16 +93,13 @@ export function restoreStateFromDb({ db, stateManager, meetingId, options }) {
   for (const ij of interjections) {
     const roundNum = ij.round ?? 1;
     if (!roundMap.has(roundNum)) {
-      roundMap.set(roundNum, { number: roundNum, contributions: [], interjections: [], summary: summaries[roundNum] ?? "" });
+      roundMap.set(roundNum, { number: roundNum, contributions: [], turn_requests: [], summary: summaries[roundNum] ?? "" });
     }
-    roundMap.get(roundNum).interjections.push({
+    roundMap.get(roundNum).turn_requests.push({
       participant_id: ij.participant_id,
-      target_participant_id: ij.target_participant_id,
+      target: ij.target_participant_id ?? "",
       priority: ij.priority,
       reason: ij.reason,
-      granted: ij.granted,
-      pushback: ij.pushback,
-      resolved: ij.resolved,
     });
   }
 

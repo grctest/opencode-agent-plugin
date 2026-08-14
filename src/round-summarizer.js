@@ -19,13 +19,13 @@ export async function summarizeRound(round, state, promptOrchestrator, getHighes
   const typeSummary = Object.entries(typeCounts).map(([t, c]) => `${c} ${t}`).join(", ");
 
   let summary = `Round contributions (${contribCount}): ${typeSummary}.`;
-  if (round.interjections.length > 0) {
-    summary += ` ${round.interjections.length} interjection(s).`;
+  if (round.turn_requests.length > 0) {
+    summary += ` ${round.turn_requests.length} turn request(s).`;
   }
 
   const hasConflictSignals =
     round.contributions.some((c) => c.type === "challenge" || c.type === "dissent") ||
-    round.interjections.length > 0;
+    round.turn_requests.length > 0;
 
   if (
     state.convergence_mode === "moderator_forces" &&

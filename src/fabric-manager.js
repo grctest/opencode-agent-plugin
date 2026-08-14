@@ -1,9 +1,24 @@
 import { Logger, extractErrorInfo } from "./logger.js";
 
+const TAG_STRIP_RE = /^\[(?:PROPOSE|CHALLENGE|REFINE|SUPPORT|DISSENT|SYNTHESIZE|QUESTION|REFUSE)\]\s*/i;
+const REQUEST_NEXT_RE = /\[REQUEST_NEXT:[^\]]*\]/gi;
+const GOVERNANCE_RE = /\[GOVERNANCE:[^\]]*\]/gi;
+
+function cleanContent(content) {
+  return content
+    .replace(TAG_STRIP_RE, "")
+    .replace(REQUEST_NEXT_RE, "")
+    .replace(GOVERNANCE_RE, "")
+    .trim();
+}
+
 /**
  * Derives a structured state-of-play summary from the weave (contributions).
  * Captures decisions, agreements, disagreements, open questions, and key facts
  * so agents have a compact, accurate running context without O(N²) token growth.
+ *
+ * Classification uses the parsed contribution type tag (c.type) as the primary
+ * signal. Falls back to keyword matching only when c.type is missing or unknown.
  */
 export function updateStateOfPlay(weave, question, domain) {
   if (!weave || weave.length === 0) return "";
@@ -16,24 +31,60 @@ export function updateStateOfPlay(weave, question, domain) {
 
   for (const c of weave) {
     if (c.type === "pass") continue;
-    const content = (c.content ?? "").trim();
+    const raw = (c.content ?? "").trim();
+    if (!raw) continue;
+    const content = cleanContent(raw);
     if (!content) continue;
-    const lower = content.toLowerCase();
 
-    if (lower.includes("[propose]") || lower.includes("decision") || lower.includes("we should")) {
-      decisions.push(content.replace(/^\[(?:PROPOSE|CHALLENGE|REFINE|SUPPORT|DISSENT|SYNTHESIZE|QUESTION|REFUSE)\]\s*/i, ""));
-    } else if (lower.includes("[support]") || lower.includes("agree") || lower.includes("consensus")) {
-      agreements.push(content.replace(/^\[(?:PROPOSE|CHALLENGE|REFINE|SUPPORT|DISSENT|SYNTHESIZE|QUESTION|REFUSE)\]\s*/i, ""));
-    } else if (lower.includes("[dissent]") || lower.includes("[challenge]") || lower.includes("disagree") || lower.includes("concern")) {
-      disagreements.push(content.replace(/^\[(?:PROPOSE|CHALLENGE|REFINE|SUPPORT|DISSENT|SYNTHESIZE|QUESTION|REFUSE)\]\s*/i, ""));
-    } else if (lower.includes("[question]") || lower.includes("?")) {
-      openQuestions.push(content.replace(/^\[(?:PROPOSE|CHALLENGE|REFINE|SUPPORT|DISSENT|SYNTHESIZE|QUESTION|REFUSE)\]\s*/i, ""));
-    } else {
-      keyFacts.push(content.replace(/^\[(?:PROPOSE|CHALLENGE|REFINE|SUPPORT|DISSENT|SYNTHESIZE|QUESTION|REFUSE)\]\s*/i, ""));
+    const bucket = classifyContribution(c.type, content);
+    switch (bucket) {
+      case "decisions": decisions.push(content); break;
+      case "agreements": agreements.push(content); break;
+      case "disagreements": disagreements.push(content); break;
+      case "openQuestions": openQuestions.push(content); break;
+      default: keyFacts.push(content); break;
     }
   }
 
   return formatStateOfPlay({ decisions, agreements, disagreements, openQuestions, keyFacts }, question, domain);
+}
+
+/**
+ * Classifies a contribution into a state-of-play bucket.
+ * Primary: use the parsed type tag. Fallback: keyword matching on content.
+ */
+function classifyContribution(type, content) {
+  switch (type) {
+    case "propose":
+    case "refine":
+      return "decisions";
+    case "support":
+      return "agreements";
+    case "challenge":
+    case "dissent":
+      return "disagreements";
+    case "question":
+      return "openQuestions";
+    case "synthesize":
+    case "refuse":
+      return null;
+    default:
+      return classifyByKeywords(content);
+  }
+}
+
+/**
+ * Fallback keyword-based classification for contributions with unknown/missing type tags.
+ * Uses word-boundary-aware matching to avoid substring false positives.
+ */
+function classifyByKeywords(content) {
+  const lower = content.toLowerCase();
+
+  if (/\bwe should\b/.test(lower) || /\bdecision\b/.test(lower)) return "decisions";
+  if (/\bagree\b/.test(lower) || /\bconsensus\b/.test(lower)) return "agreements";
+  if (/\bdisagree\b/.test(lower) || /\bconcern\b/.test(lower)) return "disagreements";
+  if (/\?/.test(content)) return "openQuestions";
+  return "keyFacts";
 }
 
 /**
@@ -77,14 +128,11 @@ export function formatTranscriptFromData(data, participants) {
       lines.push(`**[${name}]** (${tier}, ${c.type}): ${c.content}`);
     }
 
-    if (round.interjections.length > 0) {
-      lines.push(`  **Interjections:**`);
-      for (const ij of round.interjections) {
-        const name = participants.find((p) => p.config.id === ij.participant_id)?.config.name ?? ij.participant_id;
-        lines.push(`  - [${name}] P${ij.priority}: ${ij.reason} → ${ij.resolved}`);
-        if (ij.pushback) {
-          lines.push(`    Pushback: ${ij.pushback}`);
-        }
+    if (round.turn_requests.length > 0) {
+      lines.push(`  **Turn Requests:**`);
+      for (const tr of round.turn_requests) {
+        const name = participants.find((p) => p.config.id === tr.participant_id)?.config.name ?? tr.participant_id;
+        lines.push(`  - [${name}] P${tr.priority} → ${tr.target}: ${tr.reason}`);
       }
     }
 

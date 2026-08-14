@@ -1,7 +1,7 @@
-import { buildAgentSystemPrompt, buildAgentUserPrompt, buildPushbackPrompt } from "./prompts.js";
+import { buildAgentSystemPrompt, buildAgentUserPrompt } from "./prompts.js";
 import { parseAgentResponse } from "./validation.js";
 import { getConfig } from "./config.js";
-import { extractText, truncate, withTimeout, getPriorityCap, enforceWordLimit } from "./shared.js";
+import { extractText, truncate, withTimeout, enforceWordLimit } from "./shared.js";
 import { Logger, extractErrorInfo } from "./logger.js";
 import { runReflectionPhase as runReflections } from "./reflection-manager.js";
 import { sanitizeForPrompt, sanitizeForDisplay } from "./utils/sanitize.js";
@@ -25,7 +25,6 @@ export class RoundExecutor {
   #failureCounts;
   #modelFailureTimes;
   #logger;
-  #interjectionTracker;
   #turnOrder = [];
   #callStats;
   #circuitBreaker;
@@ -43,8 +42,7 @@ export class RoundExecutor {
     this.#failureCounts = new Map();
     this.#modelFailureTimes = new Map();
     this.#logger = new Logger();
-    this.#interjectionTracker = new Map();
-    this.#callStats = { agent_prompts: 0, reflection_calls: 0, interjection_calls: 0, input_tokens: 0, output_tokens: 0 };
+    this.#callStats = { agent_prompts: 0, reflection_calls: 0, input_tokens: 0, output_tokens: 0 };
     const cbConfig = getConfig().circuitBreaker;
     this.#circuitBreaker = new CircuitBreaker({
       failureThreshold: cbConfig.failureThreshold,
@@ -93,16 +91,32 @@ export class RoundExecutor {
   /**
    * Runs the prompt phase for a round. Agents speak sequentially — each sees
    * all prior same-round contributions before responding.
+   * Supports intra-round queue jumping: Priority 9+ moves agent to position 0.
    */
   async runPromptPhase(round, activeParticipants) {
     this.#turnOrder = [];
+    const remainingSpeakers = [...activeParticipants];
 
-    for (const p of activeParticipants) {
+    while (remainingSpeakers.length > 0) {
+      const p = remainingSpeakers.shift();
       this.#turnOrder.push(p.config.id);
       this.#db.setParticipantStatus(p.config.id, "speaking");
       this.#options.onProgress?.(`${p.config.name} (${p.config.tier}) is thinking...`);
       const result = await this.#promptChildSession(p);
       await this.#handlePromptResult(p, result, round);
+
+      // Intra-round queue jumping: Priority 9+ moves next speaker to position 0
+      if (result?.request_next && result.request_next.priority >= 9 && remainingSpeakers.length > 0) {
+        const nextRequest = result.request_next;
+        const jumpIdx = remainingSpeakers.findIndex((sp) => {
+          const nextResult = round.turn_requests?.find((tr) => tr.participant_id === sp.config.id);
+          return nextResult && nextResult.priority >= 9;
+        });
+        if (jumpIdx > 0) {
+          const [jumped] = remainingSpeakers.splice(jumpIdx, 1);
+          remainingSpeakers.unshift(jumped);
+        }
+      }
     }
   }
 
@@ -149,58 +163,6 @@ export class RoundExecutor {
     await runReflections(round, activeParticipants, this.#promptParent, this.#getParticipantModel, this.#db, this.#logError);
   }
 
-  async runInterjectionPhase(round, activeParticipants) {
-    const config = getConfig();
-    const maxInterjections = config.maxInterjectionsPerRound ?? 2;
-    const threshold = config.interjectionThresholds?.autoGrant ?? 8;
-    const pendingInterjections = round.interjections.filter((ij) => ij.resolved === "pending");
-    if (pendingInterjections.length === 0) return;
-
-    pendingInterjections.sort((a, b) => b.priority - a.priority);
-
-    let grantedCount = 0;
-
-    for (const ij of pendingInterjections) {
-      if (ij.resolved !== "pending") continue;
-      if (grantedCount >= maxInterjections) {
-        ij.resolved = "denied";
-        continue;
-      }
-
-      const interjector = activeParticipants.find((p) => p.config.id === ij.participant_id);
-      if (!interjector) {
-        ij.resolved = "denied";
-        continue;
-      }
-
-      const lastInterjection = this.#interjectionTracker.get(interjector.config.id);
-      if (lastInterjection && lastInterjection >= round.number - 1) {
-        ij.resolved = "denied";
-        continue;
-      }
-
-      if (ij.priority >= threshold) {
-        ij.granted = true;
-        ij.resolved = "granted";
-        grantedCount++;
-        this.#interjectionTracker.set(interjector.config.id, round.number);
-
-        // Send pushback prompt to the last contributor before the interjector speaks
-        const lastContributor = round.contributions.length > 0
-          ? activeParticipants.find((p) => p.config.id === round.contributions[round.contributions.length - 1].participant_id)
-          : null;
-        if (lastContributor && lastContributor.session_id) {
-          const lastContent = round.contributions[round.contributions.length - 1].content;
-          await this.#sendPushbackPrompt(lastContributor, interjector, ij, lastContent);
-        }
-
-        await this.#promptInterjector(interjector, ij, round);
-      } else {
-        ij.resolved = "denied";
-      }
-    }
-  }
-
   #storeContribution(participant, result, round) {
     const id = this.#stateManager.nextContributionId();
     const safeContent = sanitizeForPrompt(result.content);
@@ -221,57 +183,25 @@ export class RoundExecutor {
     participant.status = "listening";
     this.#db.setParticipantStatus(participant.config.id, "listening");
 
-    let interjection = null;
-    if (result.interjection) {
-      const priorityCap = getPriorityCap(participant.config.tier);
-      const targetParticipantId = this.#resolveInterjectionTarget(participant, result.interjection);
-      interjection = {
+    // Store turn order request (replaces interjection)
+    let turnRequest = null;
+    if (result.request_next) {
+      turnRequest = {
         participant_id: result.participant_id,
-        target_participant_id: targetParticipantId,
         round: this.#stateManager.getCurrentRound(),
-        priority: Math.min(result.interjection.priority, priorityCap),
-        reason: sanitizeForPrompt(result.interjection.reason),
-        draft: result.interjection.draft ?? null,
-        granted: false,
-        pushback: null,
-        resolved: "pending",
+        priority: result.request_next.priority,
+        reason: sanitizeForPrompt(result.request_next.reason),
       };
-      round.interjections.push(interjection);
+      if (!round.turn_requests) round.turn_requests = [];
+      round.turn_requests.push(turnRequest);
     }
 
     this.#db.addContributionWithInterjection(this.#stateManager.getMeetingId(), {
       ...contribution,
       round: this.#stateManager.getCurrentRound(),
-    }, interjection);
+    }, turnRequest);
 
     this.#options.onContribution?.(participant.config.name, this.#stateManager.getCurrentRound(), result.type);
-  }
-
-  /**
-   * Resolves who an interjection targets. An explicit Target (contribution id or name) wins;
-   * otherwise the interjector targets the participant immediately before them in the round's
-   * turn order — deterministic in every turn mode, unlike completion order.
-   */
-  #resolveInterjectionTarget(interjector, interjection) {
-    const explicit = interjection.target;
-    if (explicit) {
-      const str = explicit.trim().replace(/^#/, "").toLowerCase();
-      if (/^\d+$/.test(str)) {
-        const contrib = [...this.#stateManager.getWeave()].reverse().find((c) => c.id === parseInt(str, 10));
-        if (contrib) return contrib.participant_id;
-        return null;
-      }
-      const participant = this.#stateManager.getParticipants().find(
-        (pp) => pp.config.name.toLowerCase() === str || pp.config.id.toLowerCase() === str,
-      );
-      return participant?.config.id ?? null;
-    }
-
-    const myIdx = this.#turnOrder.indexOf(interjector.config.id);
-    if (myIdx > 0) {
-      return this.#turnOrder[myIdx - 1];
-    }
-    return null;
   }
 
   async #promptChildSession(participant) {
@@ -374,139 +304,5 @@ export class RoundExecutor {
         this.#options.deleteEphemeralSession(ephemeralSessionIdToDelete).catch(() => {});
       }
     }
-  }
-
-  async #sendPushbackPrompt(target, interjector, interjection, lastContent) {
-    const config = getConfig();
-    const model = this.#getParticipantModel(target);
-    const systemPrompt = buildAgentSystemPrompt(target);
-    const userPrompt = buildPushbackPrompt(
-      target,
-      interjector.config.name,
-      interjection.priority,
-      lastContent,
-      interjection.reason || "",
-    );
-
-    const ephemeralSessionId = await this.#options.createEphemeralSession(target);
-    try {
-      const result = await withTimeout(
-        this.#client.session.prompt({
-          path: { id: ephemeralSessionId },
-          body: { system: systemPrompt, model, temperature: target.tier_config.temperature, parts: [{ type: "text", text: userPrompt }] },
-          query: { directory: this.#directory },
-        }),
-        config.agentTimeoutMs,
-      );
-
-      if (result.error) return;
-
-      const text = extractText(result.data);
-      if (!text) return;
-
-      const upper = text.toUpperCase();
-      if (upper.includes("[YIELD]")) {
-        interjection.resolution = "yielded";
-      } else if (upper.includes("[CONTEST]")) {
-        interjection.resolution = "contested";
-        const reasonMatch = text.match(/\[CONTEST\]\s*(.+)/i);
-        interjection.contestReason = reasonMatch?.[1] ?? "";
-      }
-    } catch {
-      // Pushback is best-effort — if it fails, the interjection proceeds normally
-    } finally {
-      this.#options.deleteEphemeralSession(ephemeralSessionId).catch(() => {});
-    }
-  }
-
-  async #promptInterjector(interjector, ij, round) {
-    interjector.status = "speaking";
-    this.#db.setParticipantStatus(interjector.config.id, "speaking");
-    this.#options.onProgress?.(`${interjector.config.name} (${interjector.config.tier}) — interjecting...`);
-
-    const config = getConfig();
-    const draftContent = ij.draft;
-
-    try {
-      if (draftContent && draftContent.trim().length > 0) {
-        const content = enforceWordLimit(sanitizeForPrompt(draftContent.trim()), config.maxInterjectionWords);
-        this.#storeInterjection(interjector, content, ij, round);
-        return;
-      }
-
-      const model = this.#getParticipantModel(interjector);
-      const systemPrompt = buildAgentSystemPrompt(interjector);
-      const userPrompt = `## You Interjected
-
-You requested to interrupt with priority ${ij.priority}:
-"${sanitizeForDisplay(ij.reason)}"
-
-State your interjection now. Be direct and under 200 words.`;
-
-      const ephemeralSessionId = await this.#options.createEphemeralSession(interjector);
-      try {
-        this.#callStats.interjection_calls++;
-        const llmStart = Date.now();
-        const result = await withTimeout(
-          this.#client.session.prompt({
-            path: { id: ephemeralSessionId },
-            body: { system: systemPrompt, model, temperature: interjector.tier_config.temperature, parts: [{ type: "text", text: userPrompt }] },
-            query: { directory: this.#directory },
-          }),
-          config.agentTimeoutMs,
-        );
-        const llmMs = Date.now() - llmStart;
-        incrementKeyedCounter("llm_calls_by_type", "interjection");
-        recordLatency("llm_prompt_ms", llmMs);
-
-        this.#recordTokens(result);
-
-        if (result.error) {
-          throw new Error(result.error.message || JSON.stringify(result.error));
-        }
-
-        const content = extractText(result.data);
-        if (!content) throw new Error("Empty interjection response");
-
-        const safeContent = sanitizeForPrompt(content.replace(/^\[(\w+)\]\s*/, ""));
-        this.#storeInterjection(interjector, safeContent, ij, round);
-      } finally {
-        this.#options.deleteEphemeralSession(ephemeralSessionId).catch(() => {});
-      }
-    } catch (err) {
-      const info = extractErrorInfo(err);
-      this.#logError(`interjection prompt for ${interjector.config.name}`, err);
-      this.#logger.warn("interjection_failed", `Interjection failed for ${interjector.config.name}`, info);
-      this.#options.onProgress?.(`${interjector.config.name} (${interjector.config.tier}) — interjection failed`);
-    } finally {
-      interjector.status = "listening";
-      this.#db.setParticipantStatus(interjector.config.id, "listening");
-    }
-  }
-
-  #storeInterjection(interjector, content, ij, round) {
-    const contribution = {
-      id: this.#stateManager.nextContributionId(),
-      round: this.#stateManager.getCurrentRound(),
-      participant_id: interjector.config.id,
-      content,
-      type: "interjection",
-      targets_which: ij.target_participant_id,
-      created_at: new Date().toISOString(),
-    };
-
-    this.#stateManager.addContribution(contribution);
-    round.contributions.push(contribution);
-    round.token_path.push(interjector.config.id);
-    interjector.contributions_count++;
-
-    this.#db.addContribution(this.#stateManager.getMeetingId(), {
-      ...contribution,
-      round: this.#stateManager.getCurrentRound(),
-    });
-
-    const truncated = truncate(content, 120);
-    this.#options.onProgress?.(`${interjector.config.name} (${interjector.config.tier}) — interjection: "${truncated}"`);
-    this.#options.onContribution?.(interjector.config.name, this.#stateManager.getCurrentRound(), "interjection");
   }
 }

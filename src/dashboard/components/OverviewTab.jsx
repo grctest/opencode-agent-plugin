@@ -4,7 +4,7 @@ import { ParticipationMatrix, ContributionTypeChart, ContributionTimeline } from
 const CALL_COUNTER_KEYS = [
   "agent_prompts",
   "reflection_calls",
-  "interjection_calls",
+  "turn_request_calls",
   "orchestrator",
   "domain",
   "moderation",
@@ -17,7 +17,7 @@ const CALL_COUNTER_KEYS = [
 export const OverviewTab = memo(({
   state,
   contributions,
-  interjections,
+  turnRequests,
   participants,
   agentErrors,
   participantName,
@@ -40,8 +40,8 @@ export const OverviewTab = memo(({
           <span className="loom-stat-label">Contributions</span>
         </div>
         <div className="loom-stat-card">
-          <span className="loom-stat-value">{interjections.length}</span>
-          <span className="loom-stat-label">Interjections</span>
+          <span className="loom-stat-value">{turnRequests.length}</span>
+          <span className="loom-stat-label">Turn Requests</span>
         </div>
         <div className="loom-stat-card">
           <span className="loom-stat-value">{participants.length}</span>
@@ -92,18 +92,14 @@ export const OverviewTab = memo(({
           </div>
         </div>
       )}
-      {participants.some((p) => p.reflections?.length > 0) && (
+      {participants.some((p) => p.reflection) && (
         <div className="loom-card loom-mt-sm">
           <h3 className="loom-title-sm loom-mb-sm">Participant Reflections</h3>
           <div className="loom-space-xs">
-            {participants.filter((p) => p.reflections?.length > 0).map((p) => (
+            {participants.filter((p) => p.reflection).map((p) => (
               <div key={p.id} className="loom-reflection-entry">
                 <div className="loom-reflection-name">{participantName(p.id)}</div>
-                <ul className="loom-reflection-list">
-                  {p.reflections.map((r, i) => (
-                    <li key={i} className="loom-text-xs loom-text-muted">{r}</li>
-                  ))}
-                </ul>
+                <p className="loom-text-xs loom-text-muted">{p.reflection}</p>
               </div>
             ))}
           </div>

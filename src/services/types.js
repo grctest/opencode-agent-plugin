@@ -42,7 +42,7 @@
  * @property {string} session_id
  * @property {number} [session_version]
  * @property {'listening'|'speaking'|'passed'|'failed'} status
- * @property {string[]} reflections
+ * @property {string} reflection - Single evolving belief state (replaces prior reflection each round)
  * @property {number} contributions_count
  */
 
@@ -65,23 +65,18 @@
  */
 
 /**
- * @typedef {Object} Interjection
+ * @typedef {Object} TurnRequest
  * @property {string} participant_id
- * @property {string|null} target_participant_id
- * @property {number} round
+ * @property {string} target - Target participant ID or "Self"
  * @property {number} priority
  * @property {string} reason
- * @property {boolean} granted
- * @property {string|null} pushback
- * @property {'pending'|'granted'|'denied'|'contested'} resolved
- * @property {string|null} content Alias of reason (database returns `reason`, interjector objects carry `content`)
  */
 
 /**
  * @typedef {Object} Round
  * @property {number} number
  * @property {Contribution[]} contributions
- * @property {Interjection[]} interjections
+ * @property {TurnRequest[]} turn_requests
  * @property {GovernanceDirective[]} [governance]
  * @property {string[]} token_path
  * @property {string} summary

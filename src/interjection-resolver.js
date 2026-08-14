@@ -1,21 +1,40 @@
-/** Formats interjection resolution notes for the fabric context. */
-export function formatInterjectionNotes(round) {
-  const granted = round.interjections.filter((ij) => ij.resolved === "granted");
-  const denied = round.interjections.filter((ij) => ij.resolved === "denied" || ij.resolved === "contested");
+/**
+ * Turn order resolver — collects [REQUEST_NEXT] tags from the round
+ * and returns them for moderator planning.
+ */
 
-  if (granted.length === 0 && denied.length === 0) return "";
+/**
+ * Collects all turn order requests from a round's contributions.
+ * @param {Object} round - The round object with turn_requests array
+ * @returns {Array} Array of turn request objects
+ */
+export function collectTurnRequests(round) {
+  return round.turn_requests || [];
+}
 
-  let notes = "\n\n### Interjection Results";
-  if (granted.length > 0) {
-    notes += "\nGranted:";
-    for (const ij of granted) {
-      notes += `\n- ${ij.participant_id}: "${ij.reason}"`;
+/**
+ * Formats turn order notes for the fabric context (State of Play).
+ * @param {Object} round - The round object
+ * @param {Array} orderedParticipants - The planned turn order for next round
+ * @returns {string} Formatted notes
+ */
+export function formatTurnOrderNotes(round, orderedParticipants) {
+  const requests = collectTurnRequests(round);
+  if (requests.length === 0 && (!orderedParticipants || orderedParticipants.length === 0)) return "";
+
+  let notes = "\n\n### Turn Order";
+  
+  if (requests.length > 0) {
+    notes += "\nRequests:";
+    for (const req of requests) {
+      notes += `\n- ${req.participant_id}: Priority ${req.priority} — "${req.reason}"`;
     }
   }
-  if (denied.length > 0) {
-    notes += "\nDenied:";
-    for (const ij of denied) {
-      notes += `\n- ${ij.participant_id}: "${ij.reason}"${ij.pushback ? ` (${ij.pushback})` : ""}`;
+
+  if (orderedParticipants && orderedParticipants.length > 0) {
+    notes += "\nNext round order:";
+    for (let i = 0; i < orderedParticipants.length; i++) {
+      notes += `\n  ${i + 1}. ${orderedParticipants[i]}`;
     }
   }
 

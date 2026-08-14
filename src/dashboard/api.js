@@ -170,7 +170,7 @@ export class DashboardApi {
       .all();
     return rows.map((r) => ({
       ...r,
-      reflections: parseReflections(r.reflection),
+      reflection: parseReflections(r.reflection),
     }));
   }
 
@@ -220,15 +220,30 @@ export class DashboardApi {
       .all();
   }
 
-  getMaxInterjectionId() {
+  getTurnRequests() {
+    return this.#db
+      .prepare(
+        `SELECT participant_id, target_participant_id, round, content as reason, priority
+         FROM interjections ORDER BY id ASC`,
+      )
+      .all()
+      .map((r) => ({
+        participant_id: r.participant_id,
+        target: r.target_participant_id ?? "",
+        priority: r.priority,
+        reason: r.reason,
+      }));
+  }
+
+  getMaxTurnRequestId() {
     const row = this.#db.prepare(`SELECT MAX(id) as max_id FROM interjections`).get();
     return row?.max_id ?? 0;
   }
 
-  getInterjectionsSince(sinceId) {
+  getTurnRequestsSince(sinceId) {
     return this.#db
       .prepare(
-        `SELECT id, participant_id, target_participant_id, content, priority, granted, pushback, resolved, created_at
+        `SELECT participant_id, target_participant_id, content as reason, priority
          FROM interjections WHERE id > ? ORDER BY id ASC`,
       )
       .all(sinceId);

@@ -5,12 +5,12 @@ const DEFAULT_CONFIG = {
   agentTimeoutMs: 120000,
   synthesisTimeoutMs: 180000,
   maxContributionWords: 250,
-  maxInterjectionWords: 200,
+  maxTurnRequestWords: 200,
   defaultMaxRounds: 3,
   minRounds: 2,
   fastPathModel: "",
-  interjectionThresholds: { autoGrant: 9, pushback: 7 },
-  maxInterjectionsPerRound: 3,
+  turnRequestThresholds: { autoGrant: 9 },
+  maxTurnRequestsPerRound: 3,
   moderatorTrigger: { minContributions: 3, recentChallenges: 2, lookbackWindow: 4 },
   maxRetryAttempts: 2,
   retryBaseDelayMs: 1000,
@@ -32,7 +32,6 @@ const DEFAULT_CONFIG = {
   defaultMeetingTimeoutMs: 900000,
   stallTimeoutMs: 300000,
   modelDiversity: true,
-  maxReflectionsPerAgent: 2,
   circuitBreaker: {
     failureThreshold: 3,
     resetTimeoutMs: 300000,
@@ -55,7 +54,6 @@ const CONFIG_SCHEMA = {
   maxInterjectionsPerRound: { type: 'number', min: 1, max: 5 },
   modelDiversity: { type: 'boolean' },
   synthesisMaxRetries: { type: 'number', min: 0, max: 5 },
-  maxReflectionsPerAgent: { type: 'number', min: 1, max: 10 },
 };
 
 const NESTED_SCHEMA = {
@@ -71,12 +69,10 @@ const NESTED_SCHEMA = {
   'convergence.semanticConfidence': { type: 'number', min: 0, max: 100 },
   'convergence.llmVerdictConfidence': { type: 'number', min: 0, max: 100 },
   'synthesisMaxRetries': { type: 'number', min: 0, max: 5 },
-  'maxReflectionsPerAgent': { type: 'number', min: 1, max: 10 },
   'moderatorTrigger.minContributions': { type: 'number', min: 1, max: 10 },
   'moderatorTrigger.recentChallenges': { type: 'number', min: 1, max: 10 },
   'moderatorTrigger.lookbackWindow': { type: 'number', min: 2, max: 10 },
-  'interjectionThresholds.autoGrant': { type: 'number', min: 1, max: 10 },
-  'interjectionThresholds.pushback': { type: 'number', min: 1, max: 10 },
+  'turnRequestThresholds.autoGrant': { type: 'number', min: 1, max: 10 },
   'circuitBreaker.failureThreshold': { type: 'number', min: 1, max: 10 },
   'circuitBreaker.resetTimeoutMs': { type: 'number', min: 10000, max: 3600000 },
 };

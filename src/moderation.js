@@ -1,4 +1,4 @@
-import { buildModeratorPrompt } from "./prompts.js";
+import { buildModeratorPrompt, buildTurnOrderPrompt } from "./prompts.js";
 import { getConfig } from "./config.js";
 import { LOOKBACK } from "./shared.js";
 import { Logger, extractErrorInfo } from "./logger.js";
@@ -42,7 +42,7 @@ export function parseModeratorRuling(text) {
  * Checks if moderator intervention is needed (circular arguments) and obtains a ruling.
  * Returns an action: continue, break (redirect to specific speaker), or converge (end meeting).
  */
-export async function checkModeratorIntervention(round, participants, weave, currentRound, maxRounds, promptFn, getHighestTierModel, previousRulings = []) {
+export async function checkModeratorIntervention(round, participants, weave, currentRound, maxRounds, promptFn, getHighestTierModel, previousRulings = [], stateOfPlay = "") {
   const trigger = getConfig().moderatorTrigger;
   if (round.contributions.length < trigger.minContributions) {
     return { action: "continue", nextSpeakerIdx: -1 };
@@ -85,6 +85,7 @@ export async function checkModeratorIntervention(round, participants, weave, cur
     weave.length,
     lastContributions,
     previousRulings,
+    stateOfPlay,
   );
   const principalModel = getHighestTierModel();
   if (!principalModel) return { action: "continue", nextSpeakerIdx: -1 };
@@ -124,4 +125,110 @@ export async function checkModeratorIntervention(round, participants, weave, cur
     new Logger().warn("moderator_prompt_failed", "Moderator prompt failed — continuing deliberation", info);
     return { action: "continue", nextSpeakerIdx: -1 };
   }
+}
+
+/**
+ * Plans turn order for the next round based on agent [REQUEST_NEXT] tags.
+ * Uses the moderator via fastPathModel to order participants.
+ *
+ * @param {Object} params
+ * @param {string} params.stateOfPlay - Current state of play
+ * @param {string} params.roundSummary - Summary of the completed round
+ * @param {Array} params.turnRequests - Array of {participant_id, priority, reason}
+ * @param {Array} params.participants - All participants
+ * @param {Function} params.promptFn - Function to prompt the orchestrator LLM
+ * @param {Function} params.getHighestTierModel - Function to get the highest tier model
+ * @returns {Promise<string[]>} Ordered array of participant IDs
+ */
+export async function planTurnOrder({ stateOfPlay, roundSummary, turnRequests, participants, promptFn, getHighestTierModel }) {
+  const config = getConfig();
+  
+  // If no requests, return default order (active participants)
+  if (!turnRequests || turnRequests.length === 0) {
+    return participants
+      .filter((p) => p.status !== "failed")
+      .map((p) => p.config.id);
+  }
+
+  // Filter to only valid requests (participant must exist and not be failed)
+  const validRequests = turnRequests.filter((req) => {
+    const p = participants.find((pp) => pp.config.id === req.participant_id);
+    return p && p.status !== "failed";
+  });
+
+  if (validRequests.length === 0) {
+    return participants
+      .filter((p) => p.status !== "failed")
+      .map((p) => p.config.id);
+  }
+
+  // Check if fast-path model is available for turn order planning
+  const fastPathModel = config.fastPathModel;
+  const model = fastPathModel || getHighestTierModel();
+  if (!model) {
+    // Fallback: sort by priority descending, then by tier
+    return fallbackTurnOrder(validRequests, participants);
+  }
+
+  const prompt = buildTurnOrderPrompt(stateOfPlay, roundSummary, validRequests, participants);
+
+  try {
+    const result = await promptFn(
+      "You are a turn order planner. Return only a JSON array of participant IDs.",
+      model,
+      prompt,
+    );
+
+    // Parse JSON array from response
+    const arrayMatch = result.match(/\[.*?\]/s);
+    if (arrayMatch) {
+      const parsed = JSON.parse(arrayMatch[0]);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        // Validate all IDs exist
+        const validIds = participants
+          .filter((p) => p.status !== "failed")
+          .map((p) => p.config.id);
+        const ordered = parsed.filter((id) => validIds.includes(id));
+        // Add any missing participants at the end
+        for (const id of validIds) {
+          if (!ordered.includes(id)) {
+            ordered.push(id);
+          }
+        }
+        return ordered;
+      }
+    }
+  } catch (err) {
+    const info = extractErrorInfo(err);
+    new Logger().warn("turn_order_planning_failed", "Turn order planning failed — using fallback", info);
+  }
+
+  // Fallback: sort by priority, then tier
+  return fallbackTurnOrder(validRequests, participants);
+}
+
+/**
+ * Fallback turn order when LLM planning fails.
+ * Sorts by priority descending, then by tier (principal > senior > mid > junior).
+ */
+function fallbackTurnOrder(turnRequests, participants) {
+  const tierOrder = { principal: 0, senior: 1, mid: 2, junior: 3 };
+  
+  // Sort requests by priority descending, then tier
+  const sorted = [...turnRequests].sort((a, b) => {
+    if (b.priority !== a.priority) return b.priority - a.priority;
+    const pA = participants.find((p) => p.config.id === a.participant_id);
+    const pB = participants.find((p) => p.config.id === b.participant_id);
+    const tierA = tierOrder[pA?.config.tier] ?? 3;
+    const tierB = tierOrder[pB?.config.tier] ?? 3;
+    return tierA - tierB;
+  });
+
+  // Build ordered list: requested participants first, then remaining
+  const ordered = sorted.map((r) => r.participant_id);
+  const remaining = participants
+    .filter((p) => p.status !== "failed" && !ordered.includes(p.config.id))
+    .map((p) => p.config.id);
+  
+  return [...ordered, ...remaining];
 }

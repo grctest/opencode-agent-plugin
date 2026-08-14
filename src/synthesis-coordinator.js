@@ -29,7 +29,7 @@ export class SynthesisCoordinator {
     );
   }
 
-  async run(transcriptData, participants, objections, synthesizer, getParticipantModel, onStart, onComplete) {
+  async run(transcriptData, participants, objections, synthesizer, getParticipantModel, onStart, onComplete, stateOfPlay = "") {
     if (!synthesizer) {
       return { output: "No participants available for synthesis.", artifact: null };
     }
@@ -42,13 +42,13 @@ export class SynthesisCoordinator {
       const synthSessionId = await this.#sessionManager.createSynthesizerSession(synthesizer);
       const model = getParticipantModel(synthesizer);
       const transcript = formatTranscriptFromData(transcriptData, participants);
-      artifactText = await this.#promptWithRetry(synthSessionId, synthesizer, transcriptData, transcript, model, participants);
+      artifactText = await this.#promptWithRetry(synthSessionId, synthesizer, transcriptData, transcript, model, participants, stateOfPlay, objections);
       // Second pass: have the synthesizer audit its own work against the transcript.
       artifactText = await this.#critique(synthSessionId, artifactText, transcript, model, synthesizer, participants);
     } catch (err) {
       const info = extractErrorInfo(err);
       await this.#sessionManager.postProgress(`Synthesis session failed: ${info.message}`);
-      artifactText = this.fallbackSynthesis(transcriptData);
+      artifactText = this.fallbackSynthesis(transcriptData, stateOfPlay);
     }
 
     const result = finalizeSynthesis(artifactText, transcriptData, participants, objections);
@@ -59,13 +59,13 @@ export class SynthesisCoordinator {
     return result;
   }
 
-  async #promptWithRetry(sessionId, synthesizer, transcriptData, transcript, model, allParticipants) {
+  async #promptWithRetry(sessionId, synthesizer, transcriptData, transcript, model, allParticipants, stateOfPlay = "", objections = []) {
     let additionalFeedback = "";
     const maxRetries = getConfig().synthesisMaxRetries;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       const userPrompt =
-        buildSynthesisPrompt(transcriptData.question, transcript, allParticipants, transcriptData.domain ?? null) +
+        buildSynthesisPrompt(transcriptData.question, transcript, allParticipants, transcriptData.domain ?? null, stateOfPlay, objections) +
         additionalFeedback;
 
       const llmStart = Date.now();
@@ -167,7 +167,26 @@ ${text.slice(0, 6000)}`;
     return text;
   }
 
-  fallbackSynthesis(transcriptData) {
+  fallbackSynthesis(transcriptData, stateOfPlay = "") {
+    if (stateOfPlay) {
+      return `## Decision
+Synthesis session failed. The following State of Play represents the
+consolidated deliberation state at the time of failure.
+
+## Reasoning
+Fallback: State of Play used as primary artifact. This captures the key
+decisions, agreements, disagreements, and open questions from the deliberation.
+
+## Action Items
+- Review the Decisions and Open Questions below
+- Re-run synthesis for a full structured artifact
+
+${stateOfPlay}
+
+## Confidence
+Low (synthesis incomplete — State of Play fallback)`;
+    }
+
     const contributions = transcriptData.rounds.flatMap((r) => r.contributions);
     const proposals = contributions.filter((c) => c.type === "propose" || c.type === "refine");
     const supports = contributions.filter((c) => c.type === "support");

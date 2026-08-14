@@ -1,4 +1,4 @@
-import { checkModeratorIntervention, parseModeratorRuling } from "../moderation.js";
+import { checkModeratorIntervention, parseModeratorRuling, planTurnOrder } from "../moderation.js";
 import { getConfig } from "../config.js";
 import { Logger } from "../logger.js";
 
@@ -30,6 +30,7 @@ export class ModeratorService {
    * @param {Function} params.promptOrchestrator - Function to prompt the orchestrator LLM
    * @param {Function} params.getHighestTierModel - Function to get the highest tier model
    * @param {Function} params.postProgress - Function to post progress messages
+   * @param {string} params.stateOfPlay - Current state of play summary
    * @returns {Promise<{action: string, nextSpeakerIdx: number}>}
    */
   async checkAndProcess(params) {
@@ -42,6 +43,7 @@ export class ModeratorService {
       promptOrchestrator,
       getHighestTierModel,
       postProgress,
+      stateOfPlay = "",
     } = params;
 
     const modDecision = await checkModeratorIntervention(
@@ -53,6 +55,7 @@ export class ModeratorService {
       promptOrchestrator,
       getHighestTierModel,
       this.#rulings,
+      stateOfPlay,
     );
 
     if (modDecision.action === "converge") {
@@ -81,5 +84,46 @@ export class ModeratorService {
     }
 
     return { action: "continue", nextSpeakerIdx: -1 };
+  }
+
+  /**
+   * Plans turn order for the next round based on agent [REQUEST_NEXT] tags.
+   * @param {Object} params
+   * @param {string} params.stateOfPlay - Current state of play
+   * @param {string} params.roundSummary - Summary of the completed round
+   * @param {Array} params.turnRequests - Array of {participant_id, priority, reason}
+   * @param {Array} params.participants - All participants
+   * @param {Function} params.promptOrchestrator - Function to prompt the orchestrator LLM
+   * @param {Function} params.getHighestTierModel - Function to get the highest tier model
+   * @returns {Promise<string[]>} Ordered array of participant IDs
+   */
+  async planTurnOrder(params) {
+    const {
+      stateOfPlay,
+      roundSummary,
+      turnRequests,
+      participants,
+      promptOrchestrator,
+      getHighestTierModel,
+    } = params;
+
+    this.#logger.info("turn_order_planning", "Planning turn order for next round", {
+      requestCount: turnRequests?.length ?? 0,
+    });
+
+    const ordered = await planTurnOrder({
+      stateOfPlay,
+      roundSummary,
+      turnRequests,
+      participants,
+      promptFn: promptOrchestrator,
+      getHighestTierModel,
+    });
+
+    this.#logger.info("turn_order_planned", "Turn order planned", {
+      order: ordered,
+    });
+
+    return ordered;
   }
 }

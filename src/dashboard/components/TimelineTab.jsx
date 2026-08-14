@@ -1,6 +1,6 @@
 import { useRef, useMemo, useCallback, useState, memo } from "react";
 import { cn } from "../utils.js";
-import { ContributionItem, InterjectionItem, ThinkingCard, ContentDialog, renderMarkdown } from "./Cards.jsx";
+import { ContributionItem, TurnRequestItem, ThinkingCard, ContentDialog, renderMarkdown } from "./Cards.jsx";
 import { LoadingSkeleton } from "./Skeleton.jsx";
 import { List } from "react-window";
 
@@ -13,7 +13,7 @@ function getRowHeight(item) {
   if (item.type === "header") {
     return HEADER_HEIGHT + (item.showExtensionMarker ? EXTENSION_MARKER_HEIGHT : 0);
   }
-  if (item.type === "interjection") return INTERJECTION_HEIGHT;
+  if (item.type === "turn_request") return INTERJECTION_HEIGHT;
   // Dynamic height: base height + ~18px per line of content (60 chars/line at ~0.875rem)
   const content = item.contribution?.content || "";
   const estimatedLines = Math.max(1, Math.ceil(content.length / 60));
@@ -34,7 +34,7 @@ const TimelineTabBase = ({
   onToggleCollapse,
   agentErrors,
   participantName,
-  interjections,
+  turnRequests,
   extensions,
   activeRound,
   maxRounds,
@@ -60,23 +60,23 @@ const TimelineTabBase = ({
       });
 
       if (!isCollapsed) {
-        const roundInterjections = interjections.filter((ij) => {
+        const roundTurnRequests = turnRequests.filter((tr) => {
           if (contribs.length === 0) return false;
           const contribTimes = contribs.map((c) => c.created_at);
           const roundStart = Math.min(...contribTimes);
-          return ij.created_at >= roundStart;
+          return tr.created_at >= roundStart;
         });
 
         for (const c of contribs) {
           items.push({ type: "contribution", contribution: c });
         }
-        for (const ij of roundInterjections) {
-          items.push({ type: "interjection", interjection: ij });
+        for (const tr of roundTurnRequests) {
+          items.push({ type: "turn_request", turnRequest: tr });
         }
       }
     }
     return items;
-  }, [groupedContributions, collapsedRounds, activeRound, agentErrors, interjections, extensions, maxRounds]);
+  }, [groupedContributions, collapsedRounds, activeRound, agentErrors, turnRequests, extensions, maxRounds]);
 
   const rowHeightFn = useCallback((index) => {
     const item = flatItems[index];
@@ -118,7 +118,7 @@ const TimelineTabBase = ({
     }
     return (
       <div style={style} className="loom-vrow">
-        <InterjectionItem interjection={item.interjection} participantName={participantName(item.interjection.participant_id)} />
+        <TurnRequestItem turnRequest={item.turnRequest} participantName={participantName(item.turnRequest.participant_id)} />
       </div>
     );
   }, [flatItems, onToggleCollapse, participantName]);

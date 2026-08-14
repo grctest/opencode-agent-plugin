@@ -731,7 +731,7 @@ export class MeetingDatabase {
     const roundMap = new Map();
     for (const c of contributions) {
       if (!roundMap.has(c.round)) {
-        roundMap.set(c.round, { number: c.round, contributions: [], interjections: [], summary: summaries[c.round] ?? "" });
+        roundMap.set(c.round, { number: c.round, contributions: [], turn_requests: [], summary: summaries[c.round] ?? "" });
       }
       roundMap.get(c.round).contributions.push({
         id: c.id,
@@ -747,17 +747,13 @@ export class MeetingDatabase {
     for (const ij of interjections) {
       const roundNum = ij.round ?? 1;
       if (!roundMap.has(roundNum)) {
-        roundMap.set(roundNum, { number: roundNum, contributions: [], interjections: [], summary: summaries[roundNum] ?? "" });
+        roundMap.set(roundNum, { number: roundNum, contributions: [], turn_requests: [], summary: summaries[roundNum] ?? "" });
       }
-      roundMap.get(roundNum).interjections.push({
-        id: ij.id,
+      roundMap.get(roundNum).turn_requests.push({
         participant_id: ij.participant_id,
-        target_participant_id: ij.target_participant_id ?? null,
+        target: ij.target_participant_id ?? "",
         priority: ij.priority,
         reason: ij.reason,
-        granted: ij.granted === 1,
-        pushback: ij.pushback,
-        resolved: ij.resolved,
       });
     }
 

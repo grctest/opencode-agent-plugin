@@ -134,6 +134,14 @@ export class StateManager {
     this.#state.next_speaker_id = id ?? null;
   }
 
+  getPlannedTurnOrder() {
+    return this.#state.planned_turn_order ?? [];
+  }
+
+  setPlannedTurnOrder(order) {
+    this.#state.planned_turn_order = order ?? [];
+  }
+
   transitionTo(status) {
     const validTransitions = {
       initializing: ["weaving", "cancelled", "aborted"],
@@ -288,9 +296,7 @@ export class StateManager {
   addParticipantReflection(participantId, reflection) {
     const p = this.getParticipant(participantId);
     if (p) {
-      if (!Array.isArray(p.reflections)) p.reflections = [];
-      p.reflections.push(reflection);
-      p.reflections = p.reflections.slice(-getConfig().maxReflectionsPerAgent);
+      p.reflection = reflection;
     } else {
       this.#logger.warn("participant_not_found", `addParticipantReflection: unknown participant "${participantId}"`);
     }

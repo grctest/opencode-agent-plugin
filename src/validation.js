@@ -6,7 +6,7 @@ import { Logger } from "./logger.js";
 const validationLogger = new Logger();
 
 /**
- * Parses an agent's text response into a structured AgentResponse with type and optional interjection.
+ * Parses an agent's text response into a structured AgentResponse with type and optional request_next.
  * Uses Zod schema validation for robust parsing.
  * @param {string} participantId
  * @param {string} response
@@ -21,10 +21,10 @@ export function parseAgentResponse(participantId, response, tier) {
   }
 
   if (text === "[PASS]") {
-    return { participant_id: participantId, content: "[PASS]", type: "propose", interjection: null };
+    return { participant_id: participantId, content: "[PASS]", type: "propose", request_next: null };
   }
 
-  // Parse raw response (extracts type prefix and interjection directive)
+  // Parse raw response (extracts type prefix and request_next directive)
   const parsed = parseAgentResponseRaw(response, tier);
   if (!parsed) return null;
 
@@ -37,7 +37,7 @@ export function parseAgentResponse(participantId, response, tier) {
     participant_id: participantId,
     content: limitedContent,
     type: parsed.type,
-    interjection: parsed.interjection,
+    request_next: parsed.request_next,
     ...(parsed.governance ? { governance: parsed.governance } : {}),
   });
 
@@ -56,6 +56,6 @@ export function parseAgentResponse(participantId, response, tier) {
     participant_id: participantId,
     content: limitedContent,
     type: "challenge",
-    interjection: null,
+    request_next: null,
   };
 }

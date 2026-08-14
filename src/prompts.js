@@ -17,8 +17,8 @@ export function delimitContext(context, label) {
 }
 
 /** Builds a prompt asking a listener to privately reflect on a speaker's contribution. */
-export function buildReflectionPrompt(listener, speakerName, contribution) {
-  const safeSpeaker = sanitizeForDisplay(speakerName);
+export function buildReflectionPrompt(listener, triggerParticipant, contribution, roundContributions) {
+  const safeSpeaker = sanitizeForDisplay(triggerParticipant.config.name);
   const safeContribution = sanitizeForDisplay(contribution);
   const tier = listener.config.tier;
 
@@ -31,70 +31,85 @@ export function buildReflectionPrompt(listener, speakerName, contribution) {
 
   const guidance = tierReflectionGuidance[tier] || tierReflectionGuidance.mid;
 
-  return `## Private Reflection
+  const previousReflection = listener.reflection || "";
+  const reflectionBlock = previousReflection
+    ? `Your previous reflection on this deliberation:\n"${sanitizeForDisplay(previousReflection)}"`
+    : "(No prior reflection — this is your first)";
 
-**${safeSpeaker}** just said:
-"${safeContribution}"
+  const myContributions = (roundContributions || [])
+    .filter((c) => c.participant_id === listener.config.id && c.type !== "pass")
+    .slice(-2)
+    .map((c) => sanitizeForDisplay(c.content));
+  const recentBlock = myContributions.length > 0
+    ? `Your recent contributions:\n${myContributions.map((c) => `- "${c}"`).join("\n")}`
+    : "";
+
+  return `## Private Reflection
 
 You are **${listener.config.name}** (${listener.config.tier}). Your agenda: ${listener.config.agenda}
 
+${recentBlock}
+
+${reflectionBlock}
+
+Now **${safeSpeaker}** said:
+"${safeContribution}"
+
 ${guidance}
 
-Write 2-3 sentences:
-- Does this change your view? How?
-- What assumption would you challenge?
-- What are they missing from your perspective?
+Write 2-3 sentences that UPDATE your previous reflection.
+Keep what still holds, revise what has changed, add what's new.
+Output a single coherent paragraph — this replaces your prior reflection.
 
 This is private — only you will see it.`;
 }
 
-/** Builds a prompt that produces private reflections for all listeners in a single call. */
-export function buildBatchReflectionPrompt(speakerName, contribution, listeners) {
-  const safeSpeaker = sanitizeForDisplay(speakerName);
-  const safeContribution = sanitizeForDisplay(contribution);
-  const listenerLines = listeners
-    .map((l) => `  - ${l.config.name} (${l.config.tier}): ${l.config.agenda}`)
+/** Builds a prompt for the moderator to plan turn order for the next round. */
+export function buildTurnOrderPrompt(stateOfPlay, roundSummary, turnRequests, participants) {
+  const safeStateOfPlay = sanitizeForDisplay(stateOfPlay, 2000);
+  const safeRoundSummary = sanitizeForDisplay(roundSummary, 1000);
+  
+  const requestsList = turnRequests.map((r) => {
+    const p = participants.find((pp) => pp.config.id === r.participant_id);
+    const name = p?.config.name ?? r.participant_id;
+    const tier = p?.config.tier ?? "mid";
+    return `  - ${r.participant_id} (${name}, ${tier}): Priority ${r.priority} — "${sanitizeForDisplay(r.reason, 100)}"`;
+  }).join("\n");
+
+  const participantsList = participants
+    .filter((p) => p.status !== "failed")
+    .map((p) => `  - ${p.config.id} (${p.config.name}, ${p.config.tier})`)
     .join("\n");
 
-  return `## Batch Private Reflection
+  return `You are the turn order planner for a multi-agent deliberation.
 
-**${safeSpeaker}** just said:
-"${safeContribution}"
+## Current State of Play
+${safeStateOfPlay || "(No state of play yet)"}
 
-Generate a private 2-3 sentence reflection for EACH participant below. For each, answer:
-- Does this change their view? How?
-- What assumption would they challenge?
-- What are they missing from their perspective?
+## Last Round Summary
+${safeRoundSummary || "(First round)"}
 
-Participants:
-${listenerLines}
+## Agent Turn Requests
+${requestsList || "(No requests — use default order)"}
 
-Respond with ONLY a JSON object in this exact shape:
-{"reflections":[{"name":"<participant name>","reflection":"<their 2-3 sentence reflection>"}]}`;
-}
+## Active Participants
+${participantsList}
 
-/** Builds a prompt asking the current speaker to yield or contest an interjection attempt. */
-export function buildPushbackPrompt(participant, interjectorName, interjectorPriority, lastContribution, interjectorReason = "") {
-  const safeInterjector = sanitizeForDisplay(interjectorName);
-  const safeContribution = sanitizeForDisplay(lastContribution);
-  const safeReason = sanitizeForDisplay(interjectorReason);
-  return `## Interjection Attempt
+## Task
+Return a JSON array of participant IDs ordered by who should speak first to push the deliberation forward efficiently.
 
-**${safeInterjector}** wants to interrupt you with priority ${interjectorPriority}.
-Reason: "${safeReason}"
+Rules:
+1. Higher priority requests should generally speak first
+2. Tie-break by: (1) who spoke least recently, (2) seniority tier (principal > senior > mid > junior)
+3. Ensure all active participants get a turn
+4. Consider the State of Play to avoid circular arguments
+5. If no requests, return participants in their current order
 
-**Your current point was:**
-"${safeContribution.slice(0, 300)}"
-
-Do you:
-a) **[YIELD]** — let them speak now, you'll continue after
-b) **[CONTEST]** — your point must be heard now because [reason]
-
-Respond with either "[YIELD]" or "[CONTEST] [your reason in one sentence]"`;
+Respond with ONLY a JSON array of participant IDs: ["id1", "id2", "id3"]`;
 }
 
 /** Builds a prompt for the moderator to rule on deadlocks, circular arguments, or force convergence. */
-export function buildModeratorPrompt(situation, currentRound, maxRounds, totalContributions, recentContributions, previousRulings = []) {
+export function buildModeratorPrompt(situation, currentRound, maxRounds, totalContributions, recentContributions, previousRulings = [], stateOfPlay = "") {
   const safeSituation = sanitizeForDisplay(situation);
   const contributionsList = recentContributions.map((c) =>
     `  - ${c.content ? sanitizeForDisplay(c.content.slice(0, 100)) : "(no content)"}...`
@@ -102,6 +117,10 @@ export function buildModeratorPrompt(situation, currentRound, maxRounds, totalCo
 
   const rulingsSection = previousRulings.length > 0
     ? `\n## Your Previous Rulings (for consistency)\n${previousRulings.map((r, i) => `  ${i + 1}. Round ${r.round}: ${r.decision} → ${r.next_speaker}`).join("\n")}\n`
+    : "";
+
+  const stateOfPlaySection = stateOfPlay
+    ? `\n## Current State of Play\n${sanitizeForDisplay(stateOfPlay, 2000)}\n\nUse this to distinguish between:\n- Circular arguments (revisiting settled points with no new evidence)\n- Legitimate disputes (unresolved disagreements that need more discussion)\n`
     : "";
 
   return `You are the MODERATOR of a structured multi-agent deliberation. You do NOT contribute opinions or domain knowledge. Your ONLY job is process governance.
@@ -120,6 +139,7 @@ export function buildModeratorPrompt(situation, currentRound, maxRounds, totalCo
 - Your rulings are final
 - Be consistent with your previous rulings unless circumstances have changed materially
 ${rulingsSection}
+${stateOfPlaySection}
 ## Situation Requiring Your Ruling
 ${safeSituation}
 
@@ -140,7 +160,7 @@ IMPORTANT: Respond ONLY with the <ruling> block above. Do not include any other 
 }
 
 /** Builds a prompt for synthesizing the final deliberation artifact from all contributions. */
-export function buildSynthesisPrompt(question, transcript, participants = [], domain = null) {
+export function buildSynthesisPrompt(question, transcript, participants = [], domain = null, stateOfPlay = "", objections = []) {
   const safeQuestion = sanitizeForDisplay(question);
   const safeTranscript = sanitizeForDisplay(transcript, 15000);
   const participantsSection = participants.length > 0
@@ -149,12 +169,22 @@ export function buildSynthesisPrompt(question, transcript, participants = [], do
 
   const domainGuidance = domain ? getDomainSynthesisGuidance(domain) : "";
 
+  const stateOfPlaySection = stateOfPlay
+    ? `\n## State of Play (Final)\n${sanitizeForDisplay(stateOfPlay, 3000)}\n`
+    : "";
+
+  const unresolvedObjections = (objections ?? []).filter((o) => o.unresolved);
+  const objectionsSection = unresolvedObjections.length > 0
+    ? `\n## Unresolved Objections\n${unresolvedObjections.map((o) => `- ${sanitizeForDisplay(o.content, 200)}`).join("\n")}\n`
+    : "";
+
   return `You are the synthesizer. The deliberation is complete. Produce the final artifact.
 
 ## Original Question
 ${safeQuestion}
 ${domain ? `\n## Domain Context\nThis is a ${domain} question. ${domainGuidance}\n` : ""}
-## Full Deliberation Transcript
+${stateOfPlaySection}${objectionsSection}
+## Deliberation Transcript
 ${safeTranscript}
 ${participantsSection}
 ## Instructions
@@ -164,6 +194,8 @@ Produce a comprehensive, well-structured response that:
 3. Notes any unresolved disagreements
 4. Provides clear, actionable conclusions
 5. Identifies remaining risks or open questions
+
+Use the State of Play as your primary reference for what was decided, agreed upon, and left unresolved. The transcript provides supporting detail and attribution.
 
 Format as markdown with these exact sections:
 ## Decision
@@ -221,7 +253,7 @@ export function buildAgentSystemPrompt(participant) {
   const tierGuidance = getPromptForTier(tier);
 
   const priorityCap = INTERJECTION_PRIORITY_CAP[tier] ?? 5;
-  const interjectionRule = `5. To interject, add: [INTERJECT: Priority: <1-${priorityCap}>, Reason: "why you must speak now", Target: <optional contribution id like #12 or participant name>] — then write your interjection content immediately after on the same line`;
+  const requestNextRule = `5. To request priority for the next round, add: [REQUEST_NEXT: Priority: <1-${priorityCap}>, Reason: "why you must speak next round"] — place this at the end of your response`;
   const governanceRule = `8. Only with a governance-level concern, add: [GOVERNANCE: <directive>: <value>] where directive is one of extend_rounds (value: rounds to add), force_converge (value: reason), raise_objection (value: objection), request_topic (value: topic), nominate_synthesizer (value: participant name), or escalate (value: reason). Use sparingly — this is an escalation mechanism, not a normal communication channel.`;
 
   const biases = Array.isArray(cfg.known_biases) && cfg.known_biases.length > 0
@@ -257,7 +289,7 @@ ${tierGuidance}
 2. If you have something meaningful to add, state it concisely (aim for under 200 words)
 3. If you have nothing to add, respond with exactly: [PASS]
 4. Tag your type: [PROPOSE], [CHALLENGE], [REFINE], [SUPPORT], [DISSENT], [SYNTHESIZE], [QUESTION], or [REFUSE]
-${interjectionRule}
+${requestNextRule}
 6. Stay in character — your persona and agenda shape your contributions
 7. Reference prior contributions using their stable ID from the Recent Contributions list, e.g. [#12]
 ${governanceRule}
@@ -265,10 +297,10 @@ ${governanceRule}
 ## Example Response
 [CHALLENGE] The proposed approach doesn't account for backward compatibility. In my experience, breaking changes typically require a migration period. Have we validated this with stakeholders?
 
-## Example With Interjection
+## Example With Turn Request
 [PROPOSE] We should adopt a phased migration over Q1 and Q2. This gives us time to validate each service migration before proceeding to the next.
 
-To interject on the current point: [INTERJECT: Priority: 8, Reason: "I have data showing the auth service migration alone will take 6 weeks, making Q1 unrealistic"] The auth service migration alone will take 6 weeks based on our last project timeline — Q1 is unrealistic without additional resources.
+[REQUEST_NEXT: Priority: 8, Reason: "Need to directly counter the Architect's claim about stateful overhead before we move to action items"]
 
 ## Example With Refusal
 [REFUSE: I cannot engage with this premise because it assumes we have budget approval, which we do not] This discussion presupposes resources that haven't been allocated.`;
@@ -315,11 +347,7 @@ Read the state of play, relevant context, and recent contributions. Then make yo
 }
 
 function formatReflections(participant) {
-  const reflections = Array.isArray(participant.reflections)
-    ? participant.reflections
-    : participant.reflection
-      ? [participant.reflection]
-      : [];
-  if (reflections.length === 0) return "";
-  return reflections.map((r) => `## Your Reflection\n${r}\n`).join("");
+  const reflection = participant.reflection;
+  if (!reflection) return "";
+  return `## Your Reflection\n${reflection}\n`;
 }

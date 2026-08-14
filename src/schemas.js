@@ -18,8 +18,7 @@ export const ContributionTypeSchema = z.enum([
   'dissent',
   'synthesize',
   'question',
-  'interjection',
-  'refuse',  // For Phase 5.1
+  'refuse',
 ]);
 
 // Governance directive types that can be embedded in agent responses
@@ -30,12 +29,10 @@ export const GovernanceDirectiveSchema = z.object({
   target_id: z.string().optional(),
 });
 
-// Interjection directive from agent response
-export const InterjectionSchema = z.object({
+// Turn order request directive from agent response (replaces interjection)
+export const RequestNextSchema = z.object({
   priority: z.number().int().min(1).max(10),
   reason: z.string().min(1).max(500),
-  target: z.string().optional(),
-  draft: z.string().max(2000).optional(),
 }).nullable();
 
 // Agent response parsed from LLM output
@@ -43,7 +40,7 @@ export const AgentResponseSchema = z.object({
   participant_id: z.string(),
   content: z.string().max(5000),
   type: ContributionTypeSchema,
-  interjection: InterjectionSchema,
+  request_next: RequestNextSchema,
   governance: GovernanceDirectiveSchema.optional(),
 });
 
@@ -76,7 +73,7 @@ export function parseAgentResponseRaw(response, tier) {
   }
 
   if (text === '[PASS]') {
-    return { content: '[PASS]', type: 'propose', interjection: null };
+    return { content: '[PASS]', type: 'propose', request_next: null };
   }
 
   const TYPE_PREFIXES = {
@@ -120,23 +117,22 @@ export function parseAgentResponseRaw(response, tier) {
 
   const rawContent = text.slice(contentStart).trim();
 
-  const ijMatch = rawContent.match(
-    /\[INTERJECT:\s*Priority:\s*(\d+),\s*Reason:\s*"([^"]+)"(?:\s*,\s*Target:\s*([^\]]+?))?\s*\]/i,
+  // Parse [REQUEST_NEXT] directive (replaces [INTERJECT])
+  const rnMatch = rawContent.match(
+    /\[REQUEST_NEXT:\s*Priority:\s*(\d+),\s*Reason:\s*"([^"]+)"\s*\]/i,
   );
 
-  let interjection = null;
+  let request_next = null;
   let cleanContent = rawContent;
 
-  if (ijMatch) {
-    const rawPriority = Math.min(10, Math.max(1, parseInt(ijMatch[1])));
+  if (rnMatch) {
+    const rawPriority = Math.min(10, Math.max(1, parseInt(rnMatch[1])));
     const priorityCap = getPriorityCap(tier);
     const priority = Math.min(rawPriority, priorityCap);
-    const reason = ijMatch[2].trim();
-    const target = ijMatch[3] ? ijMatch[3].trim() : null;
-    const beforeIJ = rawContent.slice(0, ijMatch.index).trim();
-    const afterIJ = rawContent.slice(ijMatch.index + ijMatch[0].length).trim();
-    interjection = { priority, reason, target, draft: afterIJ || null };
-    cleanContent = beforeIJ;
+    const reason = rnMatch[2].trim();
+    const beforeRN = rawContent.slice(0, rnMatch.index).trim();
+    request_next = { priority, reason };
+    cleanContent = beforeRN;
   }
 
   // Parse governance directive
@@ -173,7 +169,7 @@ export function parseAgentResponseRaw(response, tier) {
   return {
     content: refuseReason ? `${refuseReason}. ${cleanContent}`.trim() : cleanContent,
     type,
-    interjection,
+    request_next,
     governance,
   };
 }

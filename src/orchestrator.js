@@ -76,7 +76,7 @@ export class MeetingOrchestrator {
         session_id: "",
         status: "listening",
         session_version: 0,
-        reflections: [],
+        reflection: "",
         contributions_count: 0,
       })),
       fabric: options.context,
@@ -397,24 +397,23 @@ export class MeetingOrchestrator {
       throw new LoomError("RoundExecutor not initialized — call initialize() first", { phase: "round_execution", recoverable: false });
     }
 
-    const { round: updatedRound, ijNotes } = await this.#roundService.runRound({
+    const { round: updatedRound, turnNotes } = await this.#roundService.runRound({
       round,
       activeParticipants,
-      allowInterjections: this.#options.allowInterjections !== false,
       promptOrchestrator: async (system, model, message, type) => this.#promptOrchestrator(system, model, message, type),
       getHighestTierModel: () => this.#getHighestTierModel(),
       state: this.#stateManager.getState(),
     });
 
-    return this.#finalizeRound(updatedRound, ijNotes);
+    return this.#finalizeRound(updatedRound, turnNotes);
   }
 
-  async #finalizeRound(updatedRound, ijNotes) {
+  async #finalizeRound(updatedRound, turnNotes) {
     try {
       this.#database.setRoundSummary(updatedRound.number, updatedRound.summary);
 
-      if (ijNotes) {
-        this.#stateManager.setFabric(this.#stateManager.getFabric() + ijNotes);
+      if (turnNotes) {
+        this.#stateManager.setFabric(this.#stateManager.getFabric() + turnNotes);
       }
 
       const newStateOfPlay = updateStateOfPlay(
@@ -432,10 +431,10 @@ export class MeetingOrchestrator {
       ).catch(() => {});
 
       const contribCount = updatedRound.contributions.length;
-      const ijCount = updatedRound.interjections.length;
+      const turnRequestCount = (updatedRound.turn_requests || []).length;
       const summaryText = updatedRound.summary ? ` | ${truncate(updatedRound.summary, SUMMARY_TRUNCATE_LEN)}` : "";
       await this.#sessionManager.postProgress(
-        `📋 Round ${this.#stateManager.getCurrentRound()} complete — ${contribCount} contribution${contribCount !== 1 ? "s" : ""}, ${ijCount} interjection${ijCount !== 1 ? "s" : ""}${summaryText}`
+        `📋 Round ${this.#stateManager.getCurrentRound()} complete — ${contribCount} contribution${contribCount !== 1 ? "s" : ""}, ${turnRequestCount} turn request${turnRequestCount !== 1 ? "s" : ""}${summaryText}`
       );
 
       if (this.#options.onRoundComplete) {
@@ -443,6 +442,7 @@ export class MeetingOrchestrator {
       }
       this.#notifyUpdate();
 
+      // Moderator check (convergence/deadlock)
       const modResult = await this.#moderatorService.checkAndProcess({
         round: updatedRound,
         participants: this.#stateManager.getParticipants(),
@@ -452,6 +452,7 @@ export class MeetingOrchestrator {
         promptOrchestrator: async (system, model, message) => this.#promptOrchestrator(system, model, message, "moderation"),
         getHighestTierModel: () => this.#getHighestTierModel(),
         postProgress: async (message) => this.#sessionManager.postProgress(message),
+        stateOfPlay: this.#stateManager.getStateOfPlay(),
       });
 
       if (modResult.action === "converge") {
@@ -462,6 +463,25 @@ export class MeetingOrchestrator {
 
       if (modResult.action === "break") {
         this.#stateManager.setNextSpeakerId(this.#stateManager.getParticipants()[modResult.nextSpeakerIdx]?.config.id ?? null);
+      }
+
+      // Plan turn order for next round (unless moderator forced a break)
+      if (modResult.action !== "break") {
+        const turnRequests = updatedRound.turn_requests || [];
+        const orderedParticipants = await this.#moderatorService.planTurnOrder({
+          stateOfPlay: this.#stateManager.getStateOfPlay(),
+          roundSummary: updatedRound.summary || "",
+          turnRequests,
+          participants: this.#stateManager.getParticipants(),
+          promptOrchestrator: async (system, model, message) => this.#promptOrchestrator(system, model, message, "turn_order"),
+          getHighestTierModel: () => this.#getHighestTierModel(),
+        });
+        
+        // Store planned order for next round
+        if (orderedParticipants.length > 0) {
+          this.#stateManager.setNextSpeakerId(orderedParticipants[0]);
+          this.#stateManager.setPlannedTurnOrder(orderedParticipants);
+        }
       }
 
       const convergenceResult = await this.#convergenceService.check({
@@ -579,6 +599,7 @@ export class MeetingOrchestrator {
           if (this.#options.onSynthesisComplete) this.#options.onSynthesisComplete(output);
           this.#notifyUpdate();
         },
+        this.#stateManager.getStateOfPlay(),
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -610,7 +631,7 @@ export class MeetingOrchestrator {
     try {
       const stats = this.#getMergedStats();
       const weave = this.#stateManager.getWeave();
-      const allInterjections = this.#stateManager.getRounds().flatMap((r) => r.interjections);
+      const allTurnRequests = this.#stateManager.getRounds().flatMap((r) => r.turn_requests);
       this.#database.saveMeetingMetrics({
         counters: stats,
         latencies: {},
@@ -619,7 +640,7 @@ export class MeetingOrchestrator {
         duration_ms: Date.now() - this.#startTime,
         rounds: this.#stateManager.getCurrentRound(),
         contributions: weave.length,
-        interjections: allInterjections.length,
+        interjections: allTurnRequests.length,
       });
     } catch { /* non-critical */ }
   }

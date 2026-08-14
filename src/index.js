@@ -144,10 +144,6 @@ export const Loom = async (input) => {
             .describe(
               "Model assignments per tier. Use knit_models to discover available options.",
             ),
-          allow_interjections: tool.schema
-            .boolean()
-            .optional()
-            .describe("Allow agents to interject during others' turns. Default: true"),
           meeting_timeout: tool.schema
             .number()
             .int()
@@ -294,7 +290,7 @@ export const Loom = async (input) => {
               tier: p.config.tier,
               status: p.status,
               contributions: p.contributions_count,
-              reflections: p.reflections?.length ?? 0,
+              has_reflection: !!p.reflection,
               model: p.config.model ? `${p.config.model.providerID}/${p.config.model.modelID}` : 'unassigned',
             }));
           }
@@ -312,7 +308,7 @@ export const Loom = async (input) => {
             result.rounds = state.rounds.map(r => ({
               number: r.number,
               contributionCount: r.contributions.length,
-              interjectionCount: r.interjections.length,
+              turnRequestCount: r.turn_requests.length,
               summary: r.summary,
             }));
           }

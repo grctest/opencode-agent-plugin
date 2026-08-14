@@ -168,15 +168,15 @@ export function startDashboard(directory, port) {
           hadActivity = true;
         }
 
-        const maxIjId = api.getMaxInterjectionId();
+        const maxIjId = api.getMaxTurnRequestId();
         const prevIjId = lastInterjectionId.get(meetingId) ?? 0;
         if (maxIjId > prevIjId) {
           lastInterjectionId.set(meetingId, maxIjId);
-          const newInterjections = api.getInterjectionsSince(prevIjId);
-          if (newInterjections.length > 0) {
+          const newTurnRequests = api.getTurnRequestsSince(prevIjId);
+          if (newTurnRequests.length > 0) {
             broadcast(meetingId, {
-              type: "interjections",
-              data: newInterjections,
+              type: "turn_requests",
+              data: newTurnRequests,
               timestamp: new Date().toISOString(),
             });
           }
@@ -310,6 +310,7 @@ export function startDashboard(directory, port) {
             participants: api.getParticipants(),
             contributions,
             interjections: api.getInterjections(),
+            turn_requests: api.getTurnRequests(),
             orchestrator_messages: api.getOrchestratorMessages(meetingId),
             agent_errors: api.getAgentErrors(),
             artifact: api.getArtifact(),
@@ -374,10 +375,10 @@ export function startDashboard(directory, port) {
           return Response.json({ contributions, total, limit, offset });
         }
 
-        if (url.pathname === "/api/interjections") {
+        if (url.pathname === "/api/turn_requests") {
           const { api, error } = getMeetingApi(url, directory);
           if (error) return error;
-          return Response.json(api.getInterjections());
+          return Response.json(api.getTurnRequests());
         }
 
         if (url.pathname === "/api/agent_errors") {
