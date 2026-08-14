@@ -446,7 +446,7 @@ The summary is stored in the database but is NOT appended to any running context
 
 **Moderator break ruling:** If the moderator detects circular arguments, it can force a specific participant to speak next via `setNextSpeakerId()`. This overrides any planned turn order.
 
-**Skip-passed logic:** Starting from round 3, if a participant passed within the last 2 rounds and has no reflection since their last pass, they are excluded from the active participant list for the next round.
+**Skip-passed logic:** Starting from round 3, if a participant passed within the last 2 rounds and has no reflection since their last pass, they are excluded from the active participant list for the next round. A progress message is emitted (e.g., *"⏭️ Skipped: Agent X (inactive, no new reflections)"*) so users can see why an agent was excluded.
 
 **When no turn requests exist:** No LLM call is made. The default composition order is preserved (or the moderator's break ruling applies).
 
@@ -535,6 +535,7 @@ The `checkAndProcess()` function is called every round, but the LLM-based ruling
 
 1. Fewer than 3 contributions in the current round → returns `{ action: "continue" }` immediately.
 2. Fewer than 2 challenges/dissents in the last 4 contributions → returns `{ action: "continue" }` immediately.
+3. Consensus check: if none of the recent contributions are challenges or dissents → returns `{ action: "continue" }` immediately (the moderator is designed to resolve deadlocks; if everyone agrees, there's nothing to resolve).
 
 When thresholds are exceeded, the moderator LLM evaluates whether to:
 - **continue** — the deliberation is still productive
@@ -653,18 +654,20 @@ the security concerns raised — I have concrete mitigations"]
 At the end of each round (after prompt + reflection phases), the moderator plans turn order for the next round:
 
 1. **Collect all turn requests** from the round's contributions.
-2. **Resolve priorities** using the requesting agent's tier:
+2. **Filter valid requests** — participant must exist and not be failed.
+3. **Single-request fast path:** If only one valid request exists, programmatically move that agent to position 0 — no LLM call needed.
+4. **Resolve priorities** using the requesting agent's tier:
    - Principal = 10
    - Senior = 9
    - Mid = 7
    - Junior = 5
-3. **Sort by priority** descending.
-4. **Tie-breaking:** When priorities are equal, the moderator considers:
+5. **Sort by priority** descending.
+6. **Tie-breaking:** When priorities are equal, the moderator considers:
    - Persona seniority (tier)
    - Who spoke least recently (to balance participation)
-5. **Max per round:** 3 turn requests per round. Excess are denied.
-6. **Cooldown:** An agent cannot request in consecutive rounds (they must wait their turn).
-7. **Auto-grant threshold:** Priority ≥ 9 is automatically granted (intra-round queue jump if during round, or first in next round if at end of round).
+7. **Max per round:** 3 turn requests per round. Excess are denied.
+8. **Cooldown:** An agent cannot request in consecutive rounds (they must wait their turn).
+9. **Auto-grant threshold:** Priority ≥ 9 is automatically granted (intra-round queue jump if during round, or first in next round if at end of round).
 
 ### Intra-Round Queue Jumping
 
@@ -978,7 +981,7 @@ Priority: principal > senior > any non-failed > last participant.
 
 ### The Synthesis Prompt
 
-The synthesis prompt now uses the **State of Play** as its primary context, with the transcript as supporting detail. This gives the synthesizer a structured view of what was decided, agreed upon, and left unresolved.
+The synthesis prompt uses the **State of Play** as its primary context, with the **final round transcript** as supporting detail. The full transcript is omitted — the State of Play already captures all historical decisions and agreements. Only the final round is included to show how the conversation concluded.
 
 ```
 You are the synthesizer. The deliberation is complete. Produce the final artifact.
@@ -1018,8 +1021,8 @@ Should we migrate our authentication service to JWT tokens?
 - Security Engineer: Server-side refresh tokens are just session tokens with extra steps (Round 2)
 - Junior Developer: What's the actual downtime budget? (Round 3)
 
-## Deliberation Transcript
-### Round 1
+## Deliberation Transcript (Final Round Only)
+### Round 3
 **[Architect Lead]** (senior, propose): [PROPOSE] We should migrate to JWT for
 stateless auth...
 **[Security Engineer]** (senior, challenge): [CHALLENGE] JWTs can't be revoked
@@ -1027,9 +1030,6 @@ easily...
 **[Junior Developer]** (junior, support): [SUPPORT] The stateless benefit is
 real...
 **[Backend Engineer]** (mid, propose): [PROPOSE] We could use a hybrid approach...
-
-### Round 2
-[...]
 
 ## Participants
 - Architect Lead (senior): 3 contributions
@@ -1046,8 +1046,8 @@ Produce a comprehensive, well-structured response that:
 5. Identifies remaining risks or open questions
 
 Use the State of Play as your primary reference for what was decided, agreed
-upon, and left unresolved. The transcript provides supporting detail and
-attribution.
+upon, and left unresolved. The final round transcript provides supporting detail
+and shows how the conversation concluded.
 
 Format as markdown with these exact sections:
 ## Decision
@@ -1416,9 +1416,10 @@ The `#promptOrchestrator` method checks the call type and routes accordingly:
 |-----------|-----------|-------------|
 | `moderation` | Yes | Moderator rulings |
 | `summary` | Yes | Round summary generation |
+| `compaction` | Yes | Context compaction |
+| `domain` | Yes | Domain detection (simple keyword classification) |
 | `orchestrator` | No | Default — uses highest-tier model |
 | `convergence` | No | Convergence verdict (semantic check) |
-| `domain` | No | Domain detection |
 
 When `fastPathModel` is set and the call type matches, the fast-path model is used instead of the highest-tier agent model. When `fastPathModel` is empty (default), all orchestrator calls use the highest-tier model.
 
@@ -1427,7 +1428,7 @@ When `fastPathModel` is set and the call type matches, the fast-path model is us
 ```javascript
 async #promptOrchestrator(system, model, message, type = "orchestrator") {
   const fastPathModel = getConfig().fastPathModel;
-  const useModel = (fastPathModel && (type === "moderation" || type === "summary"))
+  const useModel = (fastPathModel && (type === "moderation" || type === "compaction" || type === "summary" || type === "domain"))
     ? fastPathModel
     : model;
   // ... prompt with useModel

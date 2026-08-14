@@ -1,5 +1,5 @@
 import { buildSynthesisPrompt } from "./prompts.js";
-import { formatTranscriptFromData } from "./fabric-manager.js";
+import { formatFinalRoundTranscript } from "./fabric-manager.js";
 import { finalizeSynthesis, validateSynthesisSections, NEUTRAL_SYNTHESIZER_SYSTEM } from "./synthesizer.js";
 import { extractText, withTimeout } from "./shared.js";
 import { getConfig } from "./config.js";
@@ -41,7 +41,7 @@ export class SynthesisCoordinator {
     try {
       const synthSessionId = await this.#sessionManager.createSynthesizerSession(synthesizer);
       const model = getParticipantModel(synthesizer);
-      const transcript = formatTranscriptFromData(transcriptData, participants);
+      const transcript = formatFinalRoundTranscript(transcriptData, participants);
       artifactText = await this.#promptWithRetry(synthSessionId, synthesizer, transcriptData, transcript, model, participants, stateOfPlay, objections);
       // Second pass: have the synthesizer audit its own work against the transcript.
       artifactText = await this.#critique(synthSessionId, artifactText, transcript, model, synthesizer, participants);

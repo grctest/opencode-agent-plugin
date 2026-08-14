@@ -170,7 +170,7 @@ export class MeetingOrchestrator {
 
   async #promptOrchestrator(system, model, message, type = "orchestrator") {
     const fastPathModel = getConfig().fastPathModel;
-    const useModel = (fastPathModel && (type === "moderation" || type === "compaction" || type === "summary"))
+    const useModel = (fastPathModel && (type === "moderation" || type === "compaction" || type === "summary" || type === "domain"))
       ? fastPathModel
       : model;
 
@@ -386,7 +386,11 @@ export class MeetingOrchestrator {
     }
 
     const round = this.#roundInitializer.initializeRound(this.#stateManager, this.#database, () => this.#notifyUpdate());
-    const activeParticipants = this.#roundInitializer.filterActiveParticipants(this.#stateManager, round);
+    const { activeParticipants, skipped } = this.#roundInitializer.filterActiveParticipants(this.#stateManager, round);
+
+    if (skipped.length > 0) {
+      await this.#sessionManager.postProgress(`⏭️ Skipped: ${skipped.join(", ")} (inactive, no new reflections)`);
+    }
 
     if (activeParticipants.length === 0) {
       this.#stateManager.transitionTo("converged");

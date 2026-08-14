@@ -145,3 +145,33 @@ export function formatTranscriptFromData(data, participants) {
 
   return lines.join("\n");
 }
+
+/** Formats only the final round's transcript for synthesis (reduces token usage). */
+export function formatFinalRoundTranscript(data, participants) {
+  if (!data.rounds || data.rounds.length === 0) return "";
+  const round = data.rounds[data.rounds.length - 1];
+  const lines = [];
+
+  lines.push(`### Round ${round.number} (Final)`);
+
+  for (const c of round.contributions) {
+    const participant = participants.find((p) => p.config.id === c.participant_id);
+    const name = participant?.config.name ?? c.participant_id;
+    const tier = participant?.config.tier ?? "mid";
+    lines.push(`**[${name}]** (${tier}, ${c.type}): ${c.content}`);
+  }
+
+  if (round.turn_requests && round.turn_requests.length > 0) {
+    lines.push(`  **Turn Requests:**`);
+    for (const tr of round.turn_requests) {
+      const name = participants.find((p) => p.config.id === tr.participant_id)?.config.name ?? tr.participant_id;
+      lines.push(`  - [${name}] P${tr.priority} → ${tr.target}: ${tr.reason}`);
+    }
+  }
+
+  if (round.summary) {
+    lines.push(`  *Summary:* ${round.summary}`);
+  }
+
+  return lines.join("\n");
+}

@@ -42,9 +42,11 @@ export class RoundInitializer {
   /**
    * Filters active participants, skipping passed agents with no new reflections
    * and reordering for the next speaker if one is set.
+   * @returns {{ activeParticipants: Array, skipped: string[] }}
    */
   filterActiveParticipants(stateManager, round) {
     let activeParticipants = stateManager.getActiveParticipants();
+    let skipped = [];
 
     if (round.number >= SKIP_PASSED_MIN_ROUND) {
       const weave = stateManager.getWeave();
@@ -61,7 +63,8 @@ export class RoundInitializer {
         return hasReflection;
       });
       if (filtered.length > 0 && filtered.length < activeParticipants.length) {
-        this.#logger.info("skip_passed", `Skipping ${activeParticipants.length - filtered.length} passed agents with no new reflections`);
+        skipped = activeParticipants.filter((p) => !filtered.includes(p)).map((p) => p.config.name);
+        this.#logger.info("skip_passed", `Skipping ${skipped.join(", ")} (inactive, no new reflections)`);
         activeParticipants = filtered;
       }
     }
@@ -94,6 +97,6 @@ export class RoundInitializer {
       stateManager.reorderForNextSpeaker(stateManager.getNextSpeakerId());
     }
 
-    return activeParticipants;
+    return { activeParticipants, skipped };
   }
 }

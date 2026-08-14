@@ -56,6 +56,12 @@ export async function checkModeratorIntervention(round, participants, weave, cur
     return { action: "continue", nextSpeakerIdx: -1 };
   }
 
+  // Consensus short-circuit: if no conflict signals at all, skip moderator
+  const hasConflict = recentTypes.some((t) => t === "challenge" || t === "dissent");
+  if (!hasConflict) {
+    return { action: "continue", nextSpeakerIdx: -1 };
+  }
+
   let situation = `Circular argument detected: ${challengeCount} challenges/dissents in the last ${trigger.lookbackWindow} contributions within a single round. The deliberation appears to be going in circles.`;
 
   if (weave.length >= LOOKBACK.SENDER_HISTORY) {
@@ -160,6 +166,20 @@ export async function planTurnOrder({ stateOfPlay, roundSummary, turnRequests, p
     return participants
       .filter((p) => p.status !== "failed")
       .map((p) => p.config.id);
+  }
+
+  // Fast path: single request — no LLM call needed
+  if (validRequests.length === 1) {
+    const requestedId = validRequests[0].participant_id;
+    const ordered = participants
+      .filter((p) => p.status !== "failed")
+      .map((p) => p.config.id);
+    const idx = ordered.indexOf(requestedId);
+    if (idx > 0) {
+      ordered.splice(idx, 1);
+      ordered.unshift(requestedId);
+    }
+    return ordered;
   }
 
   // Check if fast-path model is available for turn order planning
