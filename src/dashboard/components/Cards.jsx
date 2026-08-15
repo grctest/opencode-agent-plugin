@@ -212,6 +212,31 @@ export const TurnRequestItem = memo(({ turnRequest, participantName }) => {
   );
 });
 
+export const ReflectionInline = memo(({ reflection, contributions, participantName }) => {
+  const trigger = useMemo(() => {
+    if (!reflection.targets_which) return null;
+    return contributions.find((c) => c.id === reflection.targets_which);
+  }, [reflection.targets_which, contributions]);
+
+  const triggerType = trigger?.type?.toUpperCase() ?? "CONTRIBUTION";
+  const triggerAgentName = trigger ? participantName(trigger.participant_id) : "another agent";
+
+  const content = reflection.content ?? "";
+  const stripped = useMemo(() => {
+    return content.replace(/^\[Reflection on #\d+ \[[\w]+\] by .+?\]\s*/m, "");
+  }, [content]);
+  const html = useMemo(() => renderMarkdown(stripped), [stripped]);
+
+  return (
+    <div className="loom-reflection-inline">
+      <span className="loom-reflection-source">
+        ↳ Reflection on {triggerAgentName}'s {triggerType}
+      </span>
+      <div className="loom-prose" dangerouslySetInnerHTML={{ __html: html }} />
+    </div>
+  );
+});
+
 export const FabricViewer = memo(({ fabric }) => {
   const sections = useMemo(() => (fabric ? fabric.split(/(?=## )/g).filter(Boolean) : []), [fabric]);
 

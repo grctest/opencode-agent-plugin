@@ -1,6 +1,6 @@
 import { useRef, useMemo, useCallback, useState, memo } from "react";
 import { cn } from "../utils.js";
-import { ContributionItem, TurnRequestItem, ThinkingCard, ContentDialog, renderMarkdown } from "./Cards.jsx";
+import { ContributionItem, TurnRequestItem, ThinkingCard, ReflectionInline, ContentDialog, renderMarkdown } from "./Cards.jsx";
 import { LoadingSkeleton } from "./Skeleton.jsx";
 import { List } from "react-window";
 
@@ -8,20 +8,22 @@ const HEADER_HEIGHT = 48;
 const CONTRIBUTION_HEIGHT = 56;
 const INTERJECTION_HEIGHT = 72;
 const EXTENSION_MARKER_HEIGHT = 32;
+const REFLECTION_HEIGHT = 80;
 
 function getRowHeight(item) {
   if (item.type === "header") {
     return HEADER_HEIGHT + (item.showExtensionMarker ? EXTENSION_MARKER_HEIGHT : 0);
   }
   if (item.type === "turn_request") return INTERJECTION_HEIGHT;
-  // Dynamic height: base height + ~16px per line of content (60 chars/line at ~0.875rem)
-  const content = item.contribution?.content || "";
-  const estimatedLines = Math.max(1, Math.ceil(content.length / 60));
-  const contentHeight = estimatedLines * 16;
+  if (item.type === "agent_turn") {
+    const baseHeight = 115;
+    const reflectionHeight = (item.reflections?.length ?? 0) * REFLECTION_HEIGHT;
+    return baseHeight + reflectionHeight;
+  }
   return 115;
 }
 
-const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantName, onDialogOpen }) => {
+const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantName, onDialogOpen, contributions }) => {
   const item = items[index];
   if (!item) return null;
   if (item.type === "header") {
@@ -43,6 +45,20 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
               <span className="loom-round-errors"><span aria-hidden="true">⚠</span> {item.errorsCount}</span>
             )}
           </button>
+        </div>
+      </div>
+    );
+  }
+  if (item.type === "agent_turn") {
+    return (
+      <div style={style} className="loom-vrow">
+        <div className="loom-agent-turn-block">
+          {item.contributions.map((c) => (
+            <ContributionItem key={c.id} contribution={c} participantName={participantName(item.agentId)} onDialogOpen={onDialogOpen} />
+          ))}
+          {item.reflections.map((r) => (
+            <ReflectionInline key={r.id} reflection={r} contributions={contributions} participantName={participantName} />
+          ))}
         </div>
       </div>
     );
@@ -107,9 +123,39 @@ const TimelineTabBase = ({
           return tr.created_at >= roundStart;
         });
 
+        const regularByAgent = new Map();
+        const reflectionsByTarget = new Map();
+
         for (const c of contribs) {
-          items.push({ type: "contribution", contribution: c });
+          if (c.type === "reflection") {
+            const targetId = c.targets_which;
+            if (targetId != null) {
+              if (!reflectionsByTarget.has(targetId)) reflectionsByTarget.set(targetId, []);
+              reflectionsByTarget.get(targetId).push(c);
+            }
+          } else {
+            const key = c.participant_id;
+            if (!regularByAgent.has(key)) regularByAgent.set(key, []);
+            regularByAgent.get(key).push(c);
+          }
         }
+
+        for (const [agentId, agentContribs] of regularByAgent) {
+          const agentReflections = [];
+          for (const c of agentContribs) {
+            if (reflectionsByTarget.has(c.id)) {
+              agentReflections.push(...reflectionsByTarget.get(c.id));
+            }
+          }
+          items.push({
+            type: "agent_turn",
+            agentId,
+            round,
+            contributions: agentContribs,
+            reflections: agentReflections,
+          });
+        }
+
         for (const tr of roundTurnRequests) {
           items.push({ type: "turn_request", turnRequest: tr });
         }
@@ -132,7 +178,8 @@ const TimelineTabBase = ({
     onToggleCollapse,
     participantName,
     onDialogOpen: setDialogContribution,
-  }), [flatItems, onToggleCollapse, participantName]);
+    contributions,
+  }), [flatItems, onToggleCollapse, participantName, contributions]);
 
   return (
     <div className="loom-main-content">

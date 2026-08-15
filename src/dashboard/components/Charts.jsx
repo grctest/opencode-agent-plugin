@@ -16,10 +16,18 @@ export const ParticipationMatrix = memo(function ParticipationMatrix({ participa
       errorRounds.add(e.round);
     }
 
+    const reflectionMap = new Map();
+    for (const c of contributions) {
+      if (c.type === "reflection") {
+        const key = `${c.participant_id}:${c.round}`;
+        reflectionMap.set(key, (reflectionMap.get(key) || 0) + 1);
+      }
+    }
+
     const orderMap = new Map();
     for (let r = 1; r <= rounds; r++) {
       const roundContribs = contributions
-        .filter((c) => c.round === r)
+        .filter((c) => c.round === r && c.type !== "reflection")
         .slice()
         .sort((a, b) =>
           (a.created_at || "").localeCompare(b.created_at || "") ||
@@ -32,14 +40,16 @@ export const ParticipationMatrix = memo(function ParticipationMatrix({ participa
     for (let r = 1; r <= rounds; r++) {
       const row = {};
       for (const p of participants) {
-        if (contribMap.has(`${p.id}:${r}`)) {
-          row[p.id] = { status: "contributed", order: orderMap.get(`${p.id}:${r}`) || null };
-        } else if (errorMap.has(`${p.id}:${r}`)) {
-          row[p.id] = { status: "error", order: null };
+        const key = `${p.id}:${r}`;
+        const reflectionCount = reflectionMap.get(key) || 0;
+        if (contribMap.has(key)) {
+          row[p.id] = { status: "contributed", order: orderMap.get(key) || null, reflectionCount };
+        } else if (errorMap.has(key)) {
+          row[p.id] = { status: "error", order: null, reflectionCount };
         } else if (p.status === "passed") {
-          row[p.id] = { status: "passed", order: null };
+          row[p.id] = { status: "passed", order: null, reflectionCount };
         } else {
-          row[p.id] = { status: "none", order: null };
+          row[p.id] = { status: "none", order: null, reflectionCount };
         }
       }
       data.push({ round: r, participants: row });
@@ -73,6 +83,7 @@ export const ParticipationMatrix = memo(function ParticipationMatrix({ participa
                 {participants.map((p) => {
                   const cell = row[p.id];
                   const status = cell?.status ?? "none";
+                  const reflectionCount = cell?.reflectionCount ?? 0;
                   if (status === "contributed" && cell.order) {
                     return (
                       <td key={p.id} className="loom-matrix-cell">
@@ -82,12 +93,22 @@ export const ParticipationMatrix = memo(function ParticipationMatrix({ participa
                         >
                           {cell.order}
                         </span>
+                        {reflectionCount > 0 && (
+                          <span className="loom-matrix-reflection-badge" title={`${reflectionCount} reflection${reflectionCount !== 1 ? "s" : ""}`}>
+                            {reflectionCount}↩
+                          </span>
+                        )}
                       </td>
                     );
                   }
                   return (
                     <td key={p.id} className="loom-matrix-cell">
                       <span className={cn("loom-matrix-dot", `loom-matrix-${status}`)} title={status} />
+                      {reflectionCount > 0 && (
+                        <span className="loom-matrix-reflection-badge" title={`${reflectionCount} reflection${reflectionCount !== 1 ? "s" : ""}`}>
+                          {reflectionCount}↩
+                        </span>
+                      )}
                     </td>
                   );
                 })}

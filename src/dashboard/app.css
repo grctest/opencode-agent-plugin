@@ -511,6 +511,7 @@ input {
 .loom-badge-dissent { background: #c2410c; color: white; }
 .loom-badge-synthesize { background: #7e22ce; color: white; }
 .loom-badge-question { background: #0e7490; color: white; }
+.loom-badge-reflection { background: #6366f1; color: white; }
 
 /* Agent status */
 .loom-agent-status {
@@ -707,6 +708,7 @@ input {
 .loom-contrib-type-synthesize { border-left-color: #7e22ce; }
 .loom-contrib-type-question { border-left-color: #0e7490; }
 .loom-contrib-type-interjection { border-left-color: #be185d; }
+.loom-contrib-type-reflection { border-left-color: #6366f1; background: rgba(99, 102, 241, 0.04); }
 
 .loom-contrib-participant {
   font-size: 0.875rem;
@@ -1136,6 +1138,20 @@ input {
   margin-bottom: 0.125rem;
 }
 
+.loom-reflection-inline {
+  border-left: 2px solid #6366f1;
+  padding-left: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.loom-reflection-source {
+  font-size: 0.75rem;
+  font-style: italic;
+  color: var(--color-muted-foreground);
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
 /* Participation Matrix */
 .loom-matrix-scroll {
   overflow-x: auto;
@@ -1227,6 +1243,17 @@ input {
   color: var(--color-muted-foreground);
 }
 
+.loom-matrix-reflection-badge {
+  display: inline-block;
+  font-size: 0.625rem;
+  background: #6366f1;
+  color: white;
+  padding: 0 4px;
+  border-radius: 4px;
+  margin-left: 4px;
+  font-weight: 600;
+}
+
 /* Virtualized row */
 .loom-vrow {
   overflow: hidden;
@@ -1277,6 +1304,12 @@ input {
   font-size: 0.75rem;
   color: #ef4444;
   font-weight: 500;
+}
+
+.loom-agent-turn-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
 }
 
 .loom-round-content > * + * { margin-top: 0.5rem; }
