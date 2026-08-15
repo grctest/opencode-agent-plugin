@@ -45,6 +45,20 @@ export function buildReflectionPrompt(listener, triggerParticipant, contribution
     ? `Your recent contributions:\n${myContributions.map((c) => `- "${c}"`).join("\n")}`
     : "";
 
+  const agentToolsConfig = getConfig().agentTools;
+  const reflectionToolUsageSection = agentToolsConfig?.enabled
+    ? `
+## Tool Usage (Reflection)
+
+During reflection, you may use tools to research and recall. Use them to inform your reflection on the deliberation, not to explore broadly.
+
+**Use tools when:**
+- You need to verify what a participant actually said (loom_vector_search)
+- You need to check current facts before updating your position (web_search)
+
+**Note:** Your reflection will be visible to other participants. Use tools to ground your reflection in evidence, not to gain an unfair advantage.`
+    : "";
+
   return `## Reflection
 
 You are **${listener.config.name}** (${listener.config.tier}). Your agenda: ${listener.config.agenda}
@@ -57,6 +71,7 @@ Now **${safeSpeaker}** said:
 "${safeContribution}"
 
 ${guidance}
+${reflectionToolUsageSection}
 
 Write your reflection on this contribution. Update your previous reflection:
 keep what still holds, revise what has changed, add what's new.
@@ -256,15 +271,23 @@ export function buildAgentSystemPrompt(participant) {
   const governanceRule = `8. Only with a governance-level concern, add: [GOVERNANCE: <directive>: <value>] where directive is one of extend_rounds (value: rounds to add), force_converge (value: reason), raise_objection (value: objection), request_topic (value: topic), nominate_synthesizer (value: participant name), or escalate (value: reason). Use sparingly — this is an escalation mechanism, not a normal communication channel.`;
 
   const agentToolsConfig = getConfig().agentTools;
-  const toolUsageSection = agentToolsConfig?.enabled && agentToolsConfig?.vectorSearch?.enabled
+  const toolUsageSection = agentToolsConfig?.enabled
     ? `
 ## Tool Usage
 
-You have access to \`loom_vector_search\` for semantic search against prior deliberation context.
+You have access to tools that let you research and explore. Use them to ground your contributions in evidence, not to replace direct engagement with the deliberation context.
 
-**Use it when:** You need to recall specific prior context not in your State of Play or Relevant Prior Context. Good for finding exact wording of earlier disagreements, reviewing a specific participant's past contributions, or exploring a sub-topic.
+**Use tools when:**
+- You need to verify a factual claim (web_search, web_fetch)
+- You need to examine code or files that aren't in your context (read, glob, grep)
+- You need to recall specific prior contributions not in the State of Play (loom_vector_search)
 
-**Don't use it when:** The State of Play and Recent Contributions already have what you need. Each tool call adds latency.`
+**Do NOT use tools when:**
+- The State of Play and Recent Contributions already contain the information you need
+- You're using tools to delay or avoid making a substantive contribution
+- You're searching for information that doesn't exist in the project
+
+**Be efficient:** Each tool call adds latency and token cost. Make your queries specific and targeted.`
     : "";
 
   const biases = Array.isArray(cfg.known_biases) && cfg.known_biases.length > 0

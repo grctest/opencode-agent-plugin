@@ -1,5 +1,5 @@
 import { buildReflectionPrompt } from "./prompts.js";
-import { extractText, withTimeout } from "./shared.js";
+import { extractText, extractAgentResponse, withTimeout } from "./shared.js";
 import { getConfig } from "./config.js";
 import { Logger, extractErrorInfo } from "./logger.js";
 
@@ -42,6 +42,18 @@ export async function runMidRoundReflections(round, triggerParticipant, listener
           round.contributions,
         );
 
+        // Build tools map for reflection (reduced set: web_fetch, web_search, read, loom_vector_search)
+        const agentToolsConfig = getConfig().agentTools;
+        const reflectionTools = {};
+        if (agentToolsConfig?.enabled) {
+          // Reflection tools: web_fetch, web_search, read, loom_vector_search
+          // Exclude bash, glob, grep for reflection safety
+          if (agentToolsConfig?.builtIn?.web_fetch) reflectionTools.web_fetch = true;
+          if (agentToolsConfig?.builtIn?.web_search) reflectionTools.web_search = true;
+          if (agentToolsConfig?.builtIn?.read) reflectionTools.read = true;
+          if (agentToolsConfig?.loom?.loom_vector_search) reflectionTools.loom_vector_search = true;
+        }
+
         const result = await withTimeout(
           client.session.prompt({
             path: { id: sessionId },
@@ -50,6 +62,7 @@ export async function runMidRoundReflections(round, triggerParticipant, listener
               model,
               temperature: listener.tier_config.temperature,
               parts: [{ type: "text", text: prompt }],
+              tools: reflectionTools,
             },
             query: { directory },
           }),
@@ -58,7 +71,21 @@ export async function runMidRoundReflections(round, triggerParticipant, listener
 
         if (result.error) throw new Error(result.error.message || JSON.stringify(result.error));
 
-        const text = extractText(result.data);
+        // Use extractAgentResponse to handle tool call parts
+        const { text, toolResults } = extractAgentResponse(result.data);
+        
+        // Log tool results for observability
+        if (toolResults.length > 0) {
+          reflectionLogger.info("reflection_tool_results", `${listener.config.name} used ${toolResults.length} tool(s) in reflection`, {
+            tools: toolResults.map(t => ({
+              tool: t.tool,
+              callID: t.callID,
+              hasOutput: !!t.output,
+              hasError: !!t.error,
+            })),
+          });
+        }
+
         if (!text || text.trim().length < 10) return;
 
         // Build visible header with reflection context

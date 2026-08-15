@@ -323,7 +323,19 @@ export class RoundExecutor {
       }
 
       // Use extractAgentResponse to handle tool call parts
-      const { text: agentText, toolResults } = extractAgentResponse(result.data);
+      const { text: agentText, toolResults, reasoning } = extractAgentResponse(result.data);
+
+      // Log tool results for observability
+      if (toolResults.length > 0) {
+        this.#logger.info("tool_results", `${participant.config.name} used ${toolResults.length} tool(s)`, {
+          tools: toolResults.map(t => ({
+            tool: t.tool,
+            callID: t.callID,
+            hasOutput: !!t.output,
+            hasError: !!t.error,
+          })),
+        });
+      }
 
       // Enforce maxToolCallsPerTurn limit
       const maxToolCalls = agentToolsConfig?.maxToolCallsPerTurn ?? 5;

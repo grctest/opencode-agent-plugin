@@ -85,7 +85,7 @@ export const Loom = async (input) => {
       },
       async execute(args, context) {
         const agentToolsConfig = config.getValue("agentTools");
-        if (!agentToolsConfig?.enabled || !agentToolsConfig?.vectorSearch?.enabled) {
+        if (!agentToolsConfig?.enabled || !agentToolsConfig?.loom?.loom_vector_search) {
           return { error: "Vector search is not enabled in configuration" };
         }
 
@@ -101,8 +101,7 @@ export const Loom = async (input) => {
 
         try {
           // 3. Execute search
-          const maxResults = agentToolsConfig.vectorSearch.maxResults ?? 10;
-          const topK = Math.min(args.top_k || 5, maxResults);
+          const topK = Math.min(args.top_k || 5, 10);
           const results = await vectorIndex.retrieveRelevant(args.query, topK, args.exclude_round);
 
           // Format results with participation tags

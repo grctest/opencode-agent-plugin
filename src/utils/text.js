@@ -13,32 +13,83 @@ export function extractText(data) {
  * Returns the last text segment (post-tool-execution) plus any tool results.
  * When tools are enabled, the LLM may call tools mid-response; this function
  * returns the final text after all tool calls have been resolved.
+ * 
+ * Key design: Returns only the LAST TextPart (not concatenated).
+ * Pre-tool text ("Let me look that up...") is noise — the agent's actual
+ * response is the final text after tool execution.
  */
 export function extractAgentResponse(data) {
-  if (!data?.parts) return { text: null, toolResults: [] };
+  if (!data?.parts) return { text: null, toolResults: [], reasoning: null };
 
-  const toolResults = [];
   let lastText = null;
+  const toolResults = [];
+  const reasoningParts = [];
 
   for (const part of data.parts) {
-    if (part.type === "text") {
-      const trimmed = part.text?.trim();
-      if (trimmed) lastText = trimmed;
-    } else if (part.type === "tool_call") {
-      toolResults.push({
-        tool: part.name,
-        input: part.input,
-      });
-    } else if (part.type === "tool_result") {
-      toolResults.push({
-        tool: part.name,
-        result: part.content,
-        error: part.is_error,
-      });
+    switch (part.type) {
+      case "text":
+        // Track the LAST text part — this is the agent's actual response.
+        // Pre-tool text ("Let me look that up...") is noise and should be ignored.
+        if (!part.ignored && part.text) {
+          lastText = part.text;
+        }
+        break;
+
+      case "reasoning":
+        // Claude 3.7 thinking, o1-style reasoning
+        if (part.text) {
+          reasoningParts.push(part.text);
+        }
+        break;
+
+      case "tool":
+        // ToolPart — session.prompt() auto-executes tools server-side.
+        // All ToolParts are in "completed" or "error" state — never "pending" or "running".
+        const tool = part;
+        if (tool.state?.status === "completed") {
+          toolResults.push({
+            tool: tool.tool,
+            callID: tool.callID,
+            output: tool.state.output,
+            title: tool.state.title,
+            metadata: tool.state.metadata,
+          });
+        } else if (tool.state?.status === "error") {
+          toolResults.push({
+            tool: tool.tool,
+            callID: tool.callID,
+            error: tool.state.error,
+          });
+        }
+        break;
+
+      case "file":
+        // FilePart — agent referenced a file (informational)
+        break;
+
+      // Step/file/patch/lsp/etc. parts — informational, not actionable
+      case "step-start":
+      case "step-finish":
+      case "snapshot":
+      case "patch":
+      case "agent":
+      case "retry":
+      case "compaction":
+        // Log for observability, don't include in extracted text
+        break;
+
+      case "subtask":
+        // Subtask result — capture text if available
+        if (part.text) lastText = part.text;
+        break;
     }
   }
 
-  return { text: lastText, toolResults };
+  return {
+    text: lastText,
+    reasoning: reasoningParts.join("\n").trim(),
+    toolResults,
+  };
 }
 
 /** Truncates text to max length, adding ellipsis if needed. */

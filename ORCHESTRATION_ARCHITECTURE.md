@@ -25,7 +25,8 @@ A complete technical reference for how the Loom multi-agent deliberation system 
 17. [Stall Detection](#17-stall-detection)
 18. [Extension Logic](#18-extension-logic)
 19. [VectorIndex + RAG Context Retrieval](#19-vectorindex--rag-context-retrieval)
-20. [Fast-Path Model Routing](#20-fast-path-model-routing)
+20. [Agent-Requested Tools](#20-agent-requested-tools)
+21. [Fast-Path Model Routing](#21-fast-path-model-routing)
 
 ---
 
@@ -221,6 +222,24 @@ decisions.
    where directive is one of extend_rounds, force_converge, raise_objection,
    request_topic, nominate_synthesizer, or escalate.
 
+## Tool Usage (when agent tools are enabled)
+
+You have access to tools that let you research and explore. Use them to
+ground your contributions in evidence, not to replace direct engagement with
+the deliberation context.
+
+**Use tools when:**
+- You need to verify a factual claim (web_search, web_fetch)
+- You need to examine code or files that aren't in your context (read, glob, grep)
+- You need to recall specific prior contributions not in the State of Play (loom_vector_search)
+
+**Do NOT use tools when:**
+- The State of Play and Recent Contributions already contain the information you need
+- You're using tools to delay or avoid making a substantive contribution
+- You're searching for information that doesn't exist in the project
+
+**Be efficient:** Each tool call adds latency and token cost. Make your queries specific and targeted.
+
 ## Example Response
 [CHALLENGE] The proposed approach doesn't account for backward compatibility.
 In my experience, breaking changes typically require a migration period. Have
@@ -360,15 +379,17 @@ For each agent, the system:
 2. Checks if the assigned model's circuit breaker is healthy.
 3. Calculates adaptive timeout: base 120s, reduced by up to 50% as more agents fail in this round.
 4. Creates a fresh ephemeral LLM session for this single turn.
-5. Sends system prompt + Golden Sandwich user prompt.
-6. Wraps with retry logic (2 attempts, exponential backoff: 1s → 2s → 4s → 8s, 500ms jitter).
-7. Extracts text from the LLM response.
-8. Sanitizes content to prevent prompt injection (preserves known directives, strips other brackets/HTML).
-9. Parses the response for type tags, `[REQUEST_NEXT]` turn order requests, and governance directives.
-10. Enforces word limit (default 250 words).
-11. Validates against a Zod schema; falls back to type "challenge" on validation failure.
-12. Stores the contribution in state and database.
-13. Deletes the ephemeral session (cleanup).
+5. Registers ephemeral session → meeting mapping (for tool resolution).
+6. Sends system prompt + Golden Sandwich user prompt, with tools map if agent tools are enabled.
+7. Wraps with retry logic (2 attempts, exponential backoff: 1s → 2s → 4s → 8s, 500ms jitter).
+8. Extracts text from the LLM response using `extractAgentResponse()` (handles tool_call/tool_result parts when tools are enabled).
+9. Enforces `maxToolCallsPerTurn` limit (default 5).
+10. Sanitizes content to prevent prompt injection (preserves known directives, strips other brackets/HTML).
+11. Parses the response for type tags, `[REQUEST_NEXT]` turn order requests, and governance directives.
+12. Enforces word limit (default 250 words).
+13. Validates against a Zod schema; falls back to type "challenge" on validation failure.
+14. Stores the contribution in state and database.
+15. Cleans up session → meeting mapping and deletes the ephemeral session.
 
 **Mid-round reflections:** If the agent's contribution is a "challenge" or "dissent", the system immediately triggers reflections for agents that spoke BEFORE this agent in the current round. Each reflection:
 
@@ -500,6 +521,8 @@ async createEphemeralSession(participant) {
 
 ```javascript
 const ephemeralSessionId = await createEphemeralSession(participant);
+// Register session → meeting mapping for tool resolution
+sessionManager.registerSessionMeeting(ephemeralSessionId, meetingId);
 try {
   const result = await client.session.prompt({
     path: { id: ephemeralSessionId },
@@ -508,14 +531,25 @@ try {
       model: participant.tier_config.model,
       temperature: participant.tier_config.temperature,
       parts: [{ type: "text", text: buildAgentUserPrompt(...) }],
+      tools: agentToolsEnabled ? agentToolsMap : {},  // agent tools (e.g., loom_vector_search)
     },
     query: { directory: workingDirectory },
   });
-  // ... parse response
+  // extractAgentResponse() handles tool_call/tool_result parts
+  const { text, toolResults } = extractAgentResponse(result.data);
+  // ... parse text for type tags
 } finally {
+  sessionManager.unregisterSession(ephemeralSessionId);
   await deleteEphemeralSession(ephemeralSessionId);
 }
 ```
+
+When agent tools are enabled, the `tools` field in the prompt body includes tool definitions (e.g., `loom_vector_search`, `web_search`, `web_fetch`, `read`, `glob`, `grep`, `bash`). The LLM can call these tools mid-response; the SDK handles tool execution and returns the final text after all tool calls. The system uses `extractAgentResponse()` (not `extractText()`) to correctly handle all Part types in the response:
+- **TextPart**: The agent's text response (returns only the LAST TextPart, not concatenated — pre-tool text is noise)
+- **ToolPart**: Tool call results (all in "completed" or "error" state — never "pending" or "running")
+- **ReasoningPart**: Thinking blocks (Claude 3.7, o1-style reasoning)
+- **StepStartPart/StepFinishPart**: Internal metadata (ignored)
+- **FilePart, SnapshotPart, etc.**: Informational (ignored)
 
 ### Prompting the Orchestrator (Persistent)
 
@@ -917,6 +951,7 @@ After each challenge or dissent in the prompt phase, agents that spoke BEFORE th
 - **Ephemeral sessions:** Each reflection creates a fresh ephemeral session (same as agent turns), using the reflecting agent's own model and temperature. The persistent orchestrator session is not used.
 - **Public contributions:** Reflections are stored as contributions with type `reflection`, visible to all agents. They are not private.
 - **No word limit:** Reflections can be as verbose as the agent wants.
+- **Reduced tool set:** Reflections use a focused subset of tools: `web_fetch`, `web_search`, `read`, and `loom_vector_search`. The `bash`, `glob`, and `grep` tools are excluded from reflections to keep them focused and safe. This is configured via the `agentTools.reflection` overrides.
 
 ### How Reflections Evolve
 
@@ -1473,7 +1508,244 @@ CREATE VIRTUAL TABLE vec_fabric_chunks USING vec0(
 
 ---
 
-## 20. Fast-Path Model Routing
+## 20. Agent-Requested Tools
+
+The agent tools system allows deliberation agents to call tools during their turns, complementing the server-side RAG with agent-directed retrieval and research capabilities.
+
+### Motivation
+
+The server-side RAG (Section 19) uses a fixed query: `recentContributions.map(c => c.content).join("\n")` from the last 2 rounds, returning top 5 chunks. Agents cannot:
+
+- Search for specific sub-topics that don't match recent content
+- Use custom query formulations
+- Exclude noisy rounds
+- Adjust result count
+- Verify factual claims or research external topics
+- Explore the project filesystem for code-related deliberations
+
+**Example**: The Security Engineer raised a concern about token revocation in round 1. By round 3, the server-side RAG query (round 3 contributions) may not semantically match the round 1 concern. `loom_vector_search` lets the agent query directly for it.
+
+**Example**: An agent proposes adopting a specific library. With `web_search`, they can verify current version, adoption rate, and known issues before making the proposal.
+
+### Available Tools
+
+#### Primary Turn Tools (Ephemeral Sessions)
+
+| Tool | Category | Purpose in Deliberation |
+|------|----------|------------------------|
+| `web_fetch` | Web | Fetch articles, documentation, CVE entries when fact-checking or researching a specific URL |
+| `web_search` | Web | Search the web for current statistics, recent news, or background on a topic under discussion |
+| `read` | Filesystem | Read project files, architecture diagrams, config files to ground deliberation in local context |
+| `glob` | Filesystem | Find relevant files (e.g., "find all JWT-related files in the project") |
+| `grep` | Filesystem | Search file contents for specific patterns (e.g., "find all session-related code") |
+| `bash` | Shell | **Allowlisted commands only**: `git log`, `ls`, `wc`, `head`, `tail`, `grep`, `find` — no write operations |
+| `loom_vector_search` | Vector DB | Semantic search against prior deliberation context |
+
+#### Reflection Turn Tools (Reduced Set)
+
+| Tool | Granted? | Rationale |
+|------|----------|-----------|
+| `web_fetch` | Yes | Agents may need to research what someone said during reflection |
+| `web_search` | Yes | Same — finding context to inform reflection |
+| `loom_vector_search` | Yes | Essential — reflection is about recalling and re-evaluating prior context |
+| `read` | Yes | Reading local files is safe and useful (workspace-restricted) |
+| `bash` | **No** | Not needed for reflection; reduces risk |
+| `glob` | **No** | Not needed; reflection is about deliberation context, not filesystem discovery |
+| `grep` | **No** | Same as glob |
+
+**Not granted to agents**: `write`, `edit`, `tui`, `todo`, `lsp`, `comment`, `snapshot`, `permissions`
+
+### Tool Details
+
+#### `loom_vector_search` — Semantic Similarity Search
+
+**Backing**: `VectorIndex.retrieveRelevant(queryText, topK, excludeRound)` → `MeetingDatabase.searchFabricVectors()`
+
+**Arguments**:
+- `query` (string, required) — Search query text. Will be embedded for vector similarity search.
+- `top_k` (number, optional, default: 5, max: 20) — Maximum results to return.
+- `exclude_round` (number, optional) — Exclude chunks from this round.
+
+**Returns**:
+```json
+{
+  "results": [
+    {
+      "round": 2,
+      "source": "round_summary|contribution|context",
+      "distance": 0.23,
+      "content": "[Round 2] Security Engineer challenged that refresh tokens are just session tokens...",
+      "participation_tags": ["senior_security_engineer"]
+    }
+  ],
+  "truncated": false
+}
+```
+
+**Distance range**: `[0, 2]` (0 = identical, 2 = opposite) per sqlite-vec's `vec_distance_cosine`.
+
+#### `web_search` — Web Search
+
+Searches the web for a query. Useful for fact-checking, finding current statistics, or researching topics under discussion.
+
+#### `web_fetch` — URL Fetching
+
+Fetches a URL and returns its text content. Useful for reading articles, documentation, or CVE entries mentioned in the deliberation.
+
+#### `read` — File Reading
+
+Reads a file from the workspace. Useful for examining code, configuration files, or architecture diagrams. **Restricted to workspace directory** — agents cannot read files outside the project (e.g., `~/.ssh/`, `/etc/passwd`, `.env`).
+
+#### `glob` — File Discovery
+
+Finds files by name pattern. Useful for discovering relevant files in the workspace (e.g., "find all JWT-related files").
+
+#### `grep` — Content Search
+
+Searches file contents for patterns. Useful for finding specific code or documentation patterns.
+
+#### `bash` — Shell Commands
+
+Execute shell commands. **Allowlisted commands only**: `git`, `ls`, `wc`, `head`, `tail`, `grep`, `find`. Write operations (`rm`, `mv`, `git commit`, etc.) are never allowed.
+
+### Session-to-Meeting Resolution
+
+Each tool call needs to resolve which Loom meeting the ephemeral session belongs to:
+
+```
+1. Tool receives context.sessionID
+2. Check in-memory Map<sessionID, meetingId> (fast path, populated on session creation)
+3. Fallback: client.session.get({ path: { id: sessionID } })
+   → session.info.parentID → user's main session
+   → findMeetingBySessionId(directory, parentSessionID)
+4. MeetingDatabase.create(dbPath, meetingId) → SQLite connection
+5. VectorIndex(db) → vector search wrapper
+6. Execute VectorIndex.retrieveRelevant()
+```
+
+The plugin's `execute` function captures `input.client` (SDK client) in its closure, so `client.session.get()` is available.
+
+### Tool Registration
+
+Tools are registered in `src/index.js` via the `tool()` hook and passed through the chain:
+
+```
+src/index.js (Loom factory)
+  → createKnitHandler(client, directory, activeLooms, agentTools)
+    → new MeetingOrchestrator({ ..., agentTools })
+      → new RoundExecutor({ ..., tools: agentTools })
+        → client.session.prompt({ body: { tools: toolsMap } })
+```
+
+The `tools` map passed to the prompt call is built from the `agentTools` config:
+- **Primary turns**: All enabled tools from `builtIn` + `loom` sections
+- **Reflection turns**: Reduced set — only `web_fetch`, `web_search`, `read`, and `loom_vector_search` (bash, glob, grep excluded via `agentTools.reflection` overrides)
+
+Tool descriptions and JSON schemas are automatically provided by the opencode server to the LLM when tools are enabled. The server collects all registered tool definitions (built-in + plugin-registered), converts them to the format required by the LLM provider (Anthropic/OpenAI/etc.), and includes them in the API call. We only need to pass the `tools` boolean filter to enable/disable specific tools.
+
+### Agent Guidance
+
+When tools are enabled, the system prompt includes usage guidance:
+
+**Primary Turn Guidance:**
+```
+## Tool Usage
+
+You have access to tools that let you research and explore. Use them to ground your contributions in evidence, not to replace direct engagement with the deliberation context.
+
+**Use tools when:**
+- You need to verify a factual claim (web_search, web_fetch)
+- You need to examine code or files that aren't in your context (read, glob, grep)
+- You need to recall specific prior contributions not in the State of Play (loom_vector_search)
+
+**Do NOT use tools when:**
+- The State of Play and Recent Contributions already contain the information you need
+- You're using tools to delay or avoid making a substantive contribution
+- You're searching for information that doesn't exist in the project
+
+**Be efficient:** Each tool call adds latency and token cost. Make your queries specific and targeted.
+```
+
+**Reflection Turn Guidance:**
+```
+## Tool Usage (Reflection)
+
+During reflection, you may use tools to research and recall. Use them to inform your reflection on the deliberation, not to explore broadly.
+
+**Use tools when:**
+- You need to verify what a participant actually said (loom_vector_search)
+- You need to check current facts before updating your position (web_search)
+
+**Note:** Your reflection will be visible to other participants. Use tools to ground your reflection in evidence, not to gain an unfair advantage.
+```
+
+### Configuration
+
+```json
+{
+  "agentTools": {
+    "enabled": true,
+    "builtIn": {
+      "web_fetch": true,
+      "web_search": true,
+      "read": true,
+      "bash": {
+        "enabled": true,
+        "allowlist": ["git", "ls", "wc", "head", "tail", "grep", "find"]
+      },
+      "glob": true,
+      "grep": true,
+      "lsp": false
+    },
+    "loom": {
+      "loom_vector_search": true
+    },
+    "reflection": {
+      "bash": false,
+      "glob": false,
+      "grep": false
+    },
+    "maxToolCallsPerTurn": 5,
+    "maxToolOutputTokens": 4000
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `true` | Master switch for all agent tools |
+| `builtIn.web_fetch` | `true` | Enable web_fetch tool |
+| `builtIn.web_search` | `true` | Enable web_search tool |
+| `builtIn.read` | `true` | Enable read tool |
+| `builtIn.bash.enabled` | `true` | Enable bash tool |
+| `builtIn.bash.allowlist` | `["git","ls","wc","head","tail","grep","find"]` | Only these commands can be executed via bash |
+| `builtIn.glob` | `true` | Enable glob tool |
+| `builtIn.grep` | `true` | Enable grep tool |
+| `builtIn.lsp` | `false` | Enable LSP tool |
+| `loom.loom_vector_search` | `true` | Enable loom_vector_search tool |
+| `reflection.bash` | `false` | Override: disable bash for reflections |
+| `reflection.glob` | `false` | Override: disable glob for reflections |
+| `reflection.grep` | `false` | Override: disable grep for reflections |
+| `maxToolCallsPerTurn` | `5` | Max tool calls allowed per agent turn |
+| `maxToolOutputTokens` | `4000` | Max total output tokens from ALL tool results per turn (not per tool call) |
+
+### Risk Mitigations
+
+| Risk | Mitigation |
+|------|-----------|
+| Token budget overrun | `maxToolOutputTokens` per turn (default 4000) — total from ALL tool results, not per tool call |
+| Embedding model unavailable | `embedText` falls back to deterministic placeholder — tool won't crash |
+| Stale DB connections | `MeetingDatabase` created per-call, closed after use |
+| Session deletion timing | In-memory map populated at creation, cleaned at deletion |
+| Agent over-reliance | `maxToolCallsPerTurn` (default 5) + prompt guidance |
+| Bash command execution | Only allowlisted commands permitted; write operations (`rm`, `mv`, `git commit`) never allowed |
+| Filesystem read restrictions | `read` tool restricted to workspace directory; agents cannot read sensitive files outside project |
+| Prompt injection via tool outputs | Tool outputs treated as untrusted; `maxToolOutputTokens` limit helps mitigate large outputs |
+| Reflection tool safety | Reflections use reduced tool set (no bash/glob/grep) — configured via `agentTools.reflection` overrides |
+
+---
+
+## 21. Fast-Path Model Routing
 
 The fast-path model routing system allows certain orchestrator calls to use a cheaper, faster model instead of the highest-tier agent model.
 
@@ -1539,6 +1811,21 @@ async #promptOrchestrator(system, model, message, type = "orchestrator") {
 | `synthesisMaxRetries` | 1 | Synthesis retry count |
 | `critiqueMaxRetries` | 2 | Self-critique retry count |
 | `fastPathModel` | `""` | Model for cheap orchestrator calls (empty = disabled) |
+| `agentTools.enabled` | `true` | Master switch for agent tools |
+| `agentTools.builtIn.web_fetch` | `true` | Enable web_fetch tool |
+| `agentTools.builtIn.web_search` | `true` | Enable web_search tool |
+| `agentTools.builtIn.read` | `true` | Enable read tool |
+| `agentTools.builtIn.bash.enabled` | `true` | Enable bash tool |
+| `agentTools.builtIn.bash.allowlist` | `["git","ls","wc","head","tail","grep","find"]` | Allowlisted bash commands |
+| `agentTools.builtIn.glob` | `true` | Enable glob tool |
+| `agentTools.builtIn.grep` | `true` | Enable grep tool |
+| `agentTools.builtIn.lsp` | `false` | Enable LSP tool |
+| `agentTools.loom.loom_vector_search` | `true` | Enable loom_vector_search tool |
+| `agentTools.reflection.bash` | `false` | Disable bash for reflections |
+| `agentTools.reflection.glob` | `false` | Disable glob for reflections |
+| `agentTools.reflection.grep` | `false` | Disable grep for reflections |
+| `agentTools.maxToolCallsPerTurn` | `5` | Max tool calls per agent turn |
+| `agentTools.maxToolOutputTokens` | `4000` | Max total tokens from ALL tool results per turn |
 | `DEFAULT_EMBEDDING_MODEL` | `"Snowflake/snowflake-arctic-embed-xs"` | Default embedding model name (model-manager.js export) |
 | `DEFAULT_EMBEDDING_QUANT` | `"onnx/model_int8.onnx"` | Default quantization file (model-manager.js export) |
 | `EMBEDDING_DIM` | 384 | Default embedding dimensionality (set from model.json at runtime) |
