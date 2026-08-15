@@ -174,7 +174,7 @@ export const ContributionItem = memo(({ contribution, participantName, onDialogO
       onClick={openDialog}
       onKeyDown={onKeyDown}
     >
-      <div className="loom-mb-sm">
+      <div>
         <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">
           <span className={cn("loom-contrib-participant", isLong && "loom-contrib-underline")}>
             {participantName}

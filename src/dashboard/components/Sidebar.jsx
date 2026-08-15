@@ -2,12 +2,7 @@ import { memo, useMemo, useState } from "react";
 import { cn } from "../utils.js";
 import { ParticipantCard, ContentDialog, renderMarkdown } from "./Cards.jsx";
 import { TierBadge, StatusBadge } from "./Badges.jsx";
-
-const CONVERGENCE_LABELS = {
-  consensus: "Consensus",
-  majority: "Majority vote",
-  moderator_forces: "Moderator-forced",
-};
+import { List } from "react-window";
 
 const THEME_OPTIONS = [
   { value: "light", label: "☀ Light" },
@@ -33,12 +28,14 @@ function ThemeToggle({ theme, setTheme }) {
   );
 }
 
-function RoundIndicator({ current, max, status, convergence }) {
+function RoundIndicator({ current, max, status }) {
   const pct = max > 0 ? (current / max) * 100 : 0;
   return (
     <div className="loom-card">
       <div className="loom-flex loom-flex-between loom-mb-sm">
-        <StatusBadge status={status} />
+        <span className="loom-text-xs loom-text-muted loom-flex loom-gap-xs loom-items-center">
+          Status: {status}
+        </span>
         <span className="loom-text-xs loom-text-muted">
           Round {current} / {max}
         </span>
@@ -46,12 +43,23 @@ function RoundIndicator({ current, max, status, convergence }) {
       <div className="loom-progress-track" role="progressbar" aria-valuenow={current} aria-valuemin={0} aria-valuemax={max} aria-label="Meeting progress">
         <div className="loom-progress-bar" style={{ width: `${pct}%` }} />
       </div>
-      {convergence && (
-        <span className="loom-text-xs loom-text-muted loom-mt-xs">Convergence: {CONVERGENCE_LABELS[convergence] ?? convergence}</span>
-      )}
     </div>
   );
 }
+
+const ParticipantRow = memo(({ index, style, participants, errorByParticipant, contributionsByParticipant, onSelect }) => {
+  const p = participants[index];
+  return (
+    <div style={style} className="loom-sidebar-participant-row">
+      <ParticipantCard
+        participant={p}
+        error={errorByParticipant.get(p.id)}
+        contributionsByRound={contributionsByParticipant[p.id] ?? {}}
+        onSelect={onSelect}
+      />
+    </div>
+  );
+});
 
 const Sidebar = memo(function Sidebar({
   state,
@@ -156,24 +164,24 @@ const Sidebar = memo(function Sidebar({
 
       {state && (
         <div className="loom-sidebar-section">
-          <RoundIndicator current={state.round} max={state.max_rounds} status={state.status} convergence={state.convergence} />
+          <RoundIndicator current={state.round} max={state.max_rounds} status={state.status} />
         </div>
       )}
 
       {state && (
         <div className="loom-sidebar-section">
           <h3 className="loom-sidebar-heading">Participants ({participants.length})</h3>
-          <div className="loom-space-xs">
-            {participants.map((p) => (
-              <ParticipantCard
-                key={p.id}
-                participant={p}
-                error={errorByParticipant.get(p.id)}
-                contributionsByRound={contributionsByParticipant[p.id] ?? {}}
-                onSelect={setSelectedParticipant}
-              />
-            ))}
-          </div>
+          {participants.length > 0 && (
+            <List
+              height="100%"
+              rowCount={participants.length}
+              rowHeight={75}
+              rowComponent={ParticipantRow}
+              rowProps={{ participants, errorByParticipant, contributionsByParticipant, onSelect: setSelectedParticipant }}
+              width="100%"
+              overscanCount={3}
+            />
+          )}
         </div>
       )}
 

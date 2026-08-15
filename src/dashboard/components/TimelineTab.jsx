@@ -5,8 +5,8 @@ import { LoadingSkeleton } from "./Skeleton.jsx";
 import { List } from "react-window";
 
 const HEADER_HEIGHT = 48;
-const CONTRIBUTION_HEIGHT = 120;
-const INTERJECTION_HEIGHT = 96;
+const CONTRIBUTION_HEIGHT = 56;
+const INTERJECTION_HEIGHT = 72;
 const EXTENSION_MARKER_HEIGHT = 32;
 
 function getRowHeight(item) {
@@ -14,11 +14,11 @@ function getRowHeight(item) {
     return HEADER_HEIGHT + (item.showExtensionMarker ? EXTENSION_MARKER_HEIGHT : 0);
   }
   if (item.type === "turn_request") return INTERJECTION_HEIGHT;
-  // Dynamic height: base height + ~18px per line of content (60 chars/line at ~0.875rem)
+  // Dynamic height: base height + ~16px per line of content (60 chars/line at ~0.875rem)
   const content = item.contribution?.content || "";
   const estimatedLines = Math.max(1, Math.ceil(content.length / 60));
-  const contentHeight = estimatedLines * 18;
-  return Math.min(400, Math.max(CONTRIBUTION_HEIGHT, 80 + contentHeight));
+  const contentHeight = estimatedLines * 16;
+  return 115;
 }
 
 const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantName, onDialogOpen }) => {
