@@ -1276,10 +1276,12 @@ The VectorIndex system provides semantic retrieval over prior deliberation conte
 User context (initial)
   ↓ indexContext()
   ↓
-fabric_chunks table ← vec_fabric_chunks virtual table (384-dim float vectors)
+fabric_chunks table ← vec_fabric_chunks virtual table (N-dim float vectors from ONNX model)
   ↑
 Round summaries + contributions
   ↓ indexRound()
+  ↓
+embedText() → loadModel() → ONNX session + tokenizer → embed() → Float32Array
   ↓
 Agent prompt (RAG retrieval)
   ↓ retrieveRelevant()
@@ -1289,19 +1291,28 @@ Agent prompt (RAG retrieval)
 
 ### Embedding Service
 
-The embedding service (`embedding-service.js`) provides a pluggable embedding interface:
+The embedding service (`embedding-service.js`) provides a pluggable embedding interface backed by a local ONNX model:
 
-- **Placeholder mode** (current): Uses a seeded PRNG (mulberry32) to generate deterministic 384-dimensional vectors from text hashes. Vectors are normalized for cosine similarity. This is useful for development and testing — it produces consistent results but no semantic meaning.
-- **Real model mode**: Call `initializeEmbedder(embedFn)` to swap in a real model. The function receives a string and must return a `Float32Array` of length 384. Recommended model: snowflake-arctic-embed-xs (~22MB, 384 dims).
+- **ONNX Runtime model** (current): Uses `onnxruntime-node` for inference and `@huggingface/tokenizers` for tokenization. The default model is **Snowflake/snowflake-arctic-embed-xs** (~22 MB, 384 dims, BERT architecture, int8 quantized). The model runs entirely locally — no API calls, no network dependency for embeddings.
+
+- **Model resolution**: `onnxruntime-node` and `@huggingface/tokenizers` are marked as esbuild externals (not bundled into `dist/loom.js`). At runtime, they are resolved from a dedicated deps directory at `~/.config/opencode/loom/deps/node_modules/` via `createRequire`, with a fallback to the project's `node_modules` for local development. This solves the module-resolution problem where the deployed plugin (`~/.config/opencode/plugins/loom.js`) cannot resolve bare specifiers from the project root.
+
+- **Model download**: The default model is downloaded during `npm run install:plugin` via `scripts/model.mjs` into `~/.config/opencode/loom/models/<name>/model.json`. The `model.json` specifies dims (384), maxTokens (512), modelType (bert), quant path, and download metadata.
+
+- **Initialization**: `initEmbeddingModel()` is called eagerly when `startDashboard()` runs (i.e., on any `/loom_viz` invocation). The dashboard shows the embedder status (loading/ready/failed) in the sidebar. Agents also trigger initialization on the first `initializeEmbedder()` call if the dashboard hasn't started yet.
 
 ```javascript
-import { initializeEmbedder } from "./services/embedding-service.js";
-// Swap in real model:
-await initializeEmbedder(async (text) => {
-  const response = await realModel.embed(text);
-  return new Float32Array(response);
-});
+// src/services/model-manager.js
+async loadModel(name, quant) {
+  const ort = await resolveOnnx();           // from ~/.config/opencode/loom/deps/
+  const Tokenizer = await resolveTokenizer();
+  const session = await ort.InferenceSession.create(modelPath);
+  const tokenizer = await Tokenizer.fromFile(tokenizerPath);
+  return { session, tokenizer, dims: modelJson.dims, maxTokens: modelJson.maxTokens };
+}
 ```
+
+The `embed()` method tokenizes text, creates input tensors (`int64` for input_ids, attention_mask, token_type_ids), runs `session.run()`, extracts the `last_hidden_state` tensor, pools via mean-normalization over non-padding tokens, and L2-normalizes the result to a `Float32Array` of length `dims`.
 
 ### Chunking Strategy
 
@@ -1390,6 +1401,8 @@ CREATE VIRTUAL TABLE vec_fabric_chunks USING vec0(
 );
 ```
 
+**Dimension note**: The vector dimension is determined by the embedding model at runtime. If the model's dims change (e.g., switching from `snowflake-arctic-embed-xs` at 384 dims to a larger model), the vec table is created with the matching dimension at database initialization time. The `vec_fabric_chunks_{dim}` naming convention is not used — a single table stores all embeddings, and the dimension is set from `model.json` on first load.
+
 ---
 
 ## 20. Fast-Path Model Routing
@@ -1458,4 +1471,6 @@ async #promptOrchestrator(system, model, message, type = "orchestrator") {
 | `synthesisMaxRetries` | 1 | Synthesis retry count |
 | `critiqueMaxRetries` | 2 | Self-critique retry count |
 | `fastPathModel` | `""` | Model for cheap orchestrator calls (empty = disabled) |
-| `EMBEDDING_DIM` | 384 | Vector embedding dimensionality (sqlite-vec) |
+| `DEFAULT_EMBEDDING_MODEL` | `"Snowflake/snowflake-arctic-embed-xs"` | Default embedding model name (model-manager.js export) |
+| `DEFAULT_EMBEDDING_QUANT` | `"onnx/model_int8.onnx"` | Default quantization file (model-manager.js export) |
+| `EMBEDDING_DIM` | 384 | Default embedding dimensionality (set from model.json at runtime) |
