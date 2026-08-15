@@ -3,7 +3,7 @@ import { parseAgentResponse } from "./validation.js";
 import { getConfig } from "./config.js";
 import { extractText, truncate, withTimeout, enforceWordLimit } from "./shared.js";
 import { Logger, extractErrorInfo } from "./logger.js";
-import { runReflectionPhase as runReflections } from "./reflection-manager.js";
+import { runMidRoundReflections } from "./reflection-manager.js";
 import { sanitizeForPrompt, sanitizeForDisplay } from "./utils/sanitize.js";
 import { withRetry, isRetryableError, CircuitBreaker } from "./utils/retry.js";
 import { incrementKeyedCounter, recordLatency } from "./metrics.js";
@@ -15,6 +15,7 @@ export class RoundExecutor {
   #stateManager;
   #vectorIndex;
   #options;
+  #sessionManager;
   #promptParent;
   #getParticipantModel;
   #logError;
@@ -25,13 +26,14 @@ export class RoundExecutor {
   #callStats;
   #circuitBreaker;
 
-  constructor({ client, directory, db, stateManager, vectorIndex, options, promptParent, getParticipantModel, logError }) {
+  constructor({ client, directory, db, stateManager, vectorIndex, options, sessionManager, promptParent, getParticipantModel, logError }) {
     this.#client = client;
     this.#directory = directory;
     this.#db = db;
     this.#stateManager = stateManager;
     this.#vectorIndex = vectorIndex;
     this.#options = options;
+    this.#sessionManager = sessionManager;
     this.#promptParent = promptParent;
     this.#getParticipantModel = getParticipantModel;
     this.#logError = logError;
@@ -87,19 +89,48 @@ export class RoundExecutor {
   /**
    * Runs the prompt phase for a round. Agents speak sequentially — each sees
    * all prior same-round contributions before responding.
+   * After each challenge/dissent, agents that spoke BEFORE the challenger
+   * immediately reflect on it (mid-round reflections).
    * Supports intra-round queue jumping: Priority 9+ moves agent to position 0.
    */
   async runPromptPhase(round, activeParticipants) {
     this.#turnOrder = [];
     const remainingSpeakers = [...activeParticipants];
+    const spokenOrder = []; // Track agents that have spoken this round
 
     while (remainingSpeakers.length > 0) {
       const p = remainingSpeakers.shift();
       this.#turnOrder.push(p.config.id);
+      spokenOrder.push(p);
       this.#db.setParticipantStatus(p.config.id, "speaking");
       this.#options.onProgress?.(`${p.config.name} (${p.config.tier}) is thinking...`);
       const result = await this.#promptChildSession(p);
       await this.#handlePromptResult(p, result, round);
+
+      // Mid-round reflections: if this agent challenged/dissented,
+      // trigger reflections for agents that spoke BEFORE them
+      if (result && (result.type === "challenge" || result.type === "dissent")) {
+        const preChallengeAgents = spokenOrder.filter(
+          (sp) => sp.config.id !== p.config.id && sp.status !== "passed" && sp.status !== "failed"
+        );
+
+        if (preChallengeAgents.length > 0) {
+          // Store the challenge/dissent content and type for the reflection prompt
+          p.currentContribution = result.content;
+          p.currentContributionId = round.contributions[round.contributions.length - 1]?.id;
+          p.currentContributionType = result.type;
+
+          await runMidRoundReflections(round, p, preChallengeAgents, {
+            client: this.#client,
+            directory: this.#directory,
+            sessionManager: this.#sessionManager,
+            getParticipantModel: this.#getParticipantModel,
+            stateManager: this.#stateManager,
+            db: this.#db,
+            logError: this.#logError,
+          });
+        }
+      }
 
       // Intra-round queue jumping: Priority 9+ moves next speaker to position 0
       if (result?.request_next && result.request_next.priority >= 9 && remainingSpeakers.length > 0) {
@@ -155,8 +186,9 @@ export class RoundExecutor {
     this.#options.onProgress?.(`${p.config.name} (${p.config.tier}) — ${result.type}: "${truncated}"`);
   }
 
+  // Reflections now happen mid-round in runPromptPhase — no separate phase needed
   async runReflectionPhase(round, activeParticipants) {
-    await runReflections(round, activeParticipants, this.#promptParent, this.#getParticipantModel, this.#db, this.#logError);
+    // No-op
   }
 
   #storeContribution(participant, result, round) {

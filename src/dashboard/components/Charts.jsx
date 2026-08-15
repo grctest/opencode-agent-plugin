@@ -16,14 +16,31 @@ export const ParticipationMatrix = memo(function ParticipationMatrix({ participa
       errorRounds.add(e.round);
     }
 
+    const orderMap = new Map();
+    for (let r = 1; r <= rounds; r++) {
+      const roundContribs = contributions
+        .filter((c) => c.round === r)
+        .slice()
+        .sort((a, b) =>
+          (a.created_at || "").localeCompare(b.created_at || "") ||
+          ((a.id ?? 0) - (b.id ?? 0))
+        );
+      roundContribs.forEach((c, i) => orderMap.set(`${c.participant_id}:${r}`, i + 1));
+    }
+
     const data = [];
     for (let r = 1; r <= rounds; r++) {
       const row = {};
       for (const p of participants) {
-        if (contribMap.has(`${p.id}:${r}`)) row[p.id] = "contributed";
-        else if (errorMap.has(`${p.id}:${r}`)) row[p.id] = "error";
-        else if (p.status === "passed") row[p.id] = "passed";
-        else row[p.id] = "none";
+        if (contribMap.has(`${p.id}:${r}`)) {
+          row[p.id] = { status: "contributed", order: orderMap.get(`${p.id}:${r}`) || null };
+        } else if (errorMap.has(`${p.id}:${r}`)) {
+          row[p.id] = { status: "error", order: null };
+        } else if (p.status === "passed") {
+          row[p.id] = { status: "passed", order: null };
+        } else {
+          row[p.id] = { status: "none", order: null };
+        }
       }
       data.push({ round: r, participants: row });
     }
@@ -54,7 +71,20 @@ export const ParticipationMatrix = memo(function ParticipationMatrix({ participa
               <tr key={round} className={cn(roundData.errorRounds.has(round) && "loom-matrix-row-error")}>
                 <td className="loom-matrix-round-label">R{round}</td>
                 {participants.map((p) => {
-                  const status = row[p.id];
+                  const cell = row[p.id];
+                  const status = cell?.status ?? "none";
+                  if (status === "contributed" && cell.order) {
+                    return (
+                      <td key={p.id} className="loom-matrix-cell">
+                        <span
+                          className="loom-matrix-number loom-matrix-contributed"
+                          title={`Spoke ${cell.order} in round ${round}`}
+                        >
+                          {cell.order}
+                        </span>
+                      </td>
+                    );
+                  }
                   return (
                     <td key={p.id} className="loom-matrix-cell">
                       <span className={cn("loom-matrix-dot", `loom-matrix-${status}`)} title={status} />
@@ -67,7 +97,7 @@ export const ParticipationMatrix = memo(function ParticipationMatrix({ participa
         </table>
       </div>
       <div className="loom-matrix-legend">
-        <span className="loom-matrix-legend-item"><span className="loom-matrix-dot loom-matrix-contributed" /> Contributed</span>
+        <span className="loom-matrix-legend-item"><span className="loom-matrix-number loom-matrix-contributed">1</span> Contributed (1st = first to speak)</span>
         <span className="loom-matrix-legend-item"><span className="loom-matrix-dot loom-matrix-error" /> Error</span>
         <span className="loom-matrix-legend-item"><span className="loom-matrix-dot loom-matrix-passed" /> Passed</span>
         <span className="loom-matrix-legend-item"><span className="loom-matrix-dot loom-matrix-none" /> Pending</span>

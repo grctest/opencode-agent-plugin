@@ -404,7 +404,15 @@ export function App() {
       if (!groups.has(c.round)) groups.set(c.round, []);
       groups.get(c.round).push(c);
     }
-    return Array.from(groups.entries()).sort((a, b) => a[0] - b[0]);
+    return Array.from(groups.entries())
+      .map(([round, contribs]) => [
+        round,
+        contribs.slice().sort((a, b) =>
+          (a.created_at || "").localeCompare(b.created_at || "") ||
+          ((a.id ?? 0) - (b.id ?? 0))
+        ),
+      ])
+      .sort((a, b) => a[0] - b[0]);
   }, [filteredContributions]);
 
    const thinkingParticipants = useMemo(() => {

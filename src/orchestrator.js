@@ -295,6 +295,7 @@ export class MeetingOrchestrator {
           createEphemeralSession: async (participant) => this.#sessionManager.createEphemeralSession(participant),
           deleteEphemeralSession: async (sessionId) => this.#sessionManager.deleteEphemeralSession(sessionId),
         },
+        sessionManager: this.#sessionManager,
         promptParent: async (system, model, message) => this.#promptOrchestrator(system, model, message),
         getParticipantModel: (participant) => this.#getParticipantModel(participant, true),
         logError: (context, error) => this.#logError(context, error),

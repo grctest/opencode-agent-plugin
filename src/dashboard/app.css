@@ -1189,10 +1189,24 @@ input {
   border-radius: 9999px;
 }
 
+.loom-matrix-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.125rem;
+  height: 1.125rem;
+  padding: 0 0.125rem;
+  border-radius: 9999px;
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 0.6875rem;
+  line-height: 1;
+}
+
 .loom-matrix-contributed { background: #16a34a; }
 .loom-matrix-error { background: #ef4444; }
 .loom-matrix-passed { background: var(--color-muted-foreground); opacity: 0.4; }
-.loom-matrix-none { background: var(--color-muted); opacity: 0.3; }
+.loom-matrix-none { background: #f59e0b; opacity: 1; }
 
 .loom-matrix-row-error td {
   background: color-mix(in oklch, var(--color-destructive) 4%, transparent);

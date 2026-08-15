@@ -16,7 +16,7 @@ export function delimitContext(context, label) {
   return `${delim}_BEGIN_\n${context}\n${delim}_END_`;
 }
 
-/** Builds a prompt asking a listener to privately reflect on a speaker's contribution. */
+/** Builds a prompt asking a listener to reflect on a speaker's contribution. */
 export function buildReflectionPrompt(listener, triggerParticipant, contribution, roundContributions) {
   const safeSpeaker = sanitizeForDisplay(triggerParticipant.config.name);
   const safeContribution = sanitizeForDisplay(contribution);
@@ -44,7 +44,7 @@ export function buildReflectionPrompt(listener, triggerParticipant, contribution
     ? `Your recent contributions:\n${myContributions.map((c) => `- "${c}"`).join("\n")}`
     : "";
 
-  return `## Private Reflection
+  return `## Reflection
 
 You are **${listener.config.name}** (${listener.config.tier}). Your agenda: ${listener.config.agenda}
 
@@ -57,11 +57,9 @@ Now **${safeSpeaker}** said:
 
 ${guidance}
 
-Write 2-3 sentences that UPDATE your previous reflection.
-Keep what still holds, revise what has changed, add what's new.
-Output a single coherent paragraph — this replaces your prior reflection.
-
-This is private — only you will see it.`;
+Write your reflection on this contribution. Update your previous reflection:
+keep what still holds, revise what has changed, add what's new.
+This reflection will be visible to other participants in the deliberation.`;
 }
 
 /** Builds a prompt for the moderator to plan turn order for the next round. */

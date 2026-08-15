@@ -1,57 +1,98 @@
 import { buildReflectionPrompt } from "./prompts.js";
+import { extractText, withTimeout } from "./shared.js";
+import { getConfig } from "./config.js";
 import { Logger, extractErrorInfo } from "./logger.js";
 
 const reflectionLogger = new Logger();
 
-/** Stores a reflection on a participant, overwriting any previous reflection. */
-function pushReflection(listener, text, db) {
-  listener.reflection = text;
-  db.setParticipantReflection(listener.config.id, text);
-}
-
 /**
- * Runs the reflection phase for a round. When a challenge or dissent is contributed,
- * other participants privately reflect on it. Each reflection supersedes any prior one,
- * producing a single evolving belief state.
+ * Runs mid-round reflections. When a challenge or dissent is produced,
+ * agents that spoke BEFORE the challenger/dissenter reflect on it.
+ * Each reflection creates a public contribution in the weave with a visible
+ * header identifying the trigger contribution.
+ *
+ * @param {Object} round - Current round object
+ * @param {Object} triggerParticipant - The participant who produced the challenge/dissent
+ * @param {Array} listeners - Agents that spoke before the trigger (subset of active participants)
+ * @param {Object} deps - Dependencies
  */
-export async function runReflectionPhase(round, activeParticipants, promptParent, getParticipantModel, db, logError) {
-  const triggers = round.contributions.filter((c) => c.type === "challenge" || c.type === "dissent");
-  if (triggers.length === 0) return;
+export async function runMidRoundReflections(round, triggerParticipant, listeners, {
+  client,
+  directory,
+  sessionManager,
+  getParticipantModel,
+  stateManager,
+  db,
+  logError,
+}) {
+  if (listeners.length === 0) return;
 
-  for (const trigger of triggers) {
-    const triggerParticipant = activeParticipants.find((p) => p.config.id === trigger.participant_id);
-    if (!triggerParticipant) continue;
+  const config = getConfig();
+  const timeoutMs = config.agentTimeoutMs;
 
-    const listeners = activeParticipants.filter((p) => {
-      if (p.config.id === trigger.participant_id) return false;
-      if (p.status === "passed") return false;
-      if (p.status === "failed") return false;
-      return true;
-    });
+  await Promise.allSettled(
+    listeners.map(async (listener) => {
+      const model = getParticipantModel(listener);
+      const sessionId = await sessionManager.createEphemeralSession(listener);
+      try {
+        const prompt = buildReflectionPrompt(
+          listener,
+          triggerParticipant,
+          triggerParticipant.currentContribution,
+          round.contributions,
+        );
 
-    if (listeners.length === 0) continue;
+        const result = await withTimeout(
+          client.session.prompt({
+            path: { id: sessionId },
+            body: {
+              system: `You are ${listener.config.name} (${listener.config.tier}). This is your reflection on the deliberation — it will be visible to other participants.`,
+              model,
+              temperature: listener.tier_config.temperature,
+              parts: [{ type: "text", text: prompt }],
+            },
+            query: { directory },
+          }),
+          timeoutMs,
+        );
 
-    const model = getParticipantModel(listeners[0]);
+        if (result.error) throw new Error(result.error.message || JSON.stringify(result.error));
 
-    await Promise.allSettled(
-      listeners.map(async (listener) => {
-        const prompt = buildReflectionPrompt(listener, triggerParticipant, trigger.content, round.contributions);
-        try {
-          const reflection = await promptParent(
-            `You are ${listener.config.name} (${listener.config.tier}). Private reflection — only you will see this.`,
-            model,
-            prompt
-          );
+        const text = extractText(result.data);
+        if (!text || text.trim().length < 10) return;
 
-          if (reflection && reflection.trim().length > 10) {
-            pushReflection(listener, reflection.trim(), db);
-          }
-        } catch (err) {
-          const info = extractErrorInfo(err);
-          logError(`reflection prompt for ${listener.config.name}`, err);
-          reflectionLogger.warn("reflection_failed", `Reflection for ${listener.config.name} failed`, info);
-        }
-      })
-    );
-  }
+        // Build visible header with reflection context
+        const header = `[Reflection on #${triggerParticipant.currentContributionId} [${triggerParticipant.currentContributionType.toUpperCase()}] by ${triggerParticipant.config.name} (Round ${stateManager.getCurrentRound()})]`;
+
+        // Create a contribution object
+        const contribution = {
+          id: stateManager.nextContributionId(),
+          round: stateManager.getCurrentRound(),
+          participant_id: listener.config.id,
+          content: `${header}\n\n${text.trim()}`,
+          type: "reflection",
+          targets_which: triggerParticipant.currentContributionId,
+          created_at: new Date().toISOString(),
+        };
+
+        // Add to weave and round contributions
+        stateManager.addContribution(contribution);
+        round.contributions.push(contribution);
+
+        // Update participant's latest reflection (for next-round context, stored WITHOUT header)
+        listener.reflection = text.trim();
+        db.setParticipantReflection(listener.config.id, text.trim());
+
+        // Persist contribution
+        db.addContributionWithInterjection(stateManager.getMeetingId(), contribution, null);
+
+      } catch (err) {
+        const info = extractErrorInfo(err);
+        logError(`reflection prompt for ${listener.config.name}`, err);
+        reflectionLogger.warn("reflection_failed", `Reflection for ${listener.config.name} failed`, info);
+      } finally {
+        await sessionManager.deleteEphemeralSession(sessionId).catch(() => {});
+      }
+    })
+  );
 }

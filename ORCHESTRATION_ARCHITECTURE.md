@@ -37,9 +37,8 @@ When a user types `/knit` with a question, this is what happens:
 2. **Room composition** — Based on detected domains and question complexity, a team of 2–7 agents is assembled from persona files. Each agent gets a name, persona description, agenda, tier, and domain expertise.
 3. **Model assignment** — Each agent is assigned an LLM model, with higher-tier agents getting the best available models.
 4. **Orchestrator session created** — A single orchestrator session is created for system-level calls (moderation, summarization, convergence, domain detection). No persistent per-agent sessions are created.
-5. **Rounds execute** — Each round has three phases:
-   - **Prompt phase**: Agents speak sequentially, each via a fresh ephemeral session. Each sees the state of play, vector-RAG context, recent contributions, and their own reflection.
-   - **Reflection phase**: After a challenge or dissent, agents privately reflect on what they heard.
+5. **Rounds execute** — Each round has two phases:
+   - **Prompt phase**: Agents speak sequentially, each via a fresh ephemeral session. Each sees the state of play, vector-RAG context, recent contributions, and their own reflection. After each challenge or dissent, agents that spoke before the challenger immediately reflect on it (mid-round reflections).
    - **Turn order planning**: At end of round, moderator plans next round's turn order based on `[REQUEST_NEXT]` tags.
 6. **State of play update** — After each round, a structured summary of decisions, agreements, disagreements, and open questions is derived from all contributions.
 7. **Moderator checks** — After each round, if there are signs of deadlock or circular argument, the moderator intervenes.
@@ -302,7 +301,7 @@ Note the structure:
 - **State of Play**: A structured summary of decisions, agreements, disagreements, and open questions derived from ALL prior contributions. This is the primary running context.
 - **Relevant Prior Context**: Semantically retrieved prior contributions via vector RAG (sqlite-vec). Bounded to 5 results.
 - **Recent Contributions**: The last 3–4 contributions from the current and previous rounds, with stable IDs like `[#4]`.
-- **Reflection**: The agent's own private reflection from prior rounds.
+- **Reflection**: The agent's own reflection from prior rounds (raw text without header, stored on participant object).
 - **Delimiters**: `<<<LOOM_*_BEGIN_>>>` / `<<<LOOM_*_END_>>>` blocks prevent prompt injection.
 
 ### What Agents Produce
@@ -349,9 +348,9 @@ The system parses this into:
 
 ## 5. Round Execution
 
-Each round proceeds through two sequential phases:
+Each round proceeds through a single phase with embedded mid-round reflections:
 
-### Phase 1: Prompt Phase
+### Prompt Phase (with Mid-Round Reflections)
 
 Agents generate contributions sequentially. Each agent speaks one at a time via a fresh ephemeral session, seeing all prior same-round contributions as they are produced.
 
@@ -371,42 +370,54 @@ For each agent, the system:
 12. Stores the contribution in state and database.
 13. Deletes the ephemeral session (cleanup).
 
+**Mid-round reflections:** If the agent's contribution is a "challenge" or "dissent", the system immediately triggers reflections for agents that spoke BEFORE this agent in the current round. Each reflection:
+
+1. Creates a fresh ephemeral session for the reflecting agent.
+2. Sends a reflection prompt with the triggering challenge/dissent, the agent's previous reflection, and the agent's own recent contributions.
+3. Creates a contribution object with type `reflection` and a visible header: `[Reflection on #<id> [<TYPE>] by <agent_name> (Round <n>)]`.
+4. Adds the reflection contribution to the weave and round contributions immediately.
+5. Updates the agent's `reflection` field (raw text without header) for next-round context.
+6. Deletes the ephemeral session.
+
+Post-challenge agents (those who speak after the challenger) do not need to reflect — they already had the opportunity to react to the challenge in their turn.
+
 **Intra-round queue jumping:** If an agent tags `[REQUEST_NEXT: Priority: 9+]` during their turn, the system immediately moves that agent to position 0 of the *remaining* speakers in the current round. No LLM calls — pure programmatic array reorder.
 
-### Phase 2: Reflection Phase
+**Example mid-round flow:**
 
-If any contribution in the round was a "challenge" or "dissent", the reflection phase runs.
+Agent lineup: [Agent 1, Agent 2, Agent 3, Agent 4]
 
-Each listener generates a reflection in **parallel** via `Promise.allSettled()`. Each reflection supersedes any prior one — the agent produces a single evolved belief state, not an accumulated list.
+1. Agent 1 speaks → contribution added to weave
+2. Agent 2 speaks → contribution added to weave
+3. Agent 3 speaks → `[CHALLENGE]` → contribution added to weave
+4. **Immediate reflection phase:** Agents 1 and 2 reflect → each creates a new contribution (type `reflection`) added to weave
+5. Agent 4 speaks → sees agent 1's reflection, agent 2's reflection, and agent 3's challenge in their "recent contributions"
 
-**Reflection prompt includes:**
-1. The agent's previous reflection (if any)
-2. The triggering challenge/dissent
-3. The agent's own last 2 contributions (avoids repetition)
+**Reflection contribution example:**
 
-```
-## Private Reflection
-
-You are **Architect Lead** (senior). Your agenda: Drive long-term technical vision
-
-Your recent contributions:
-- "We should adopt a phased migration starting with the auth service"
-
-Your previous reflection:
-"Token revocation is a concern, but the phased approach mitigates risk."
-
-Now **Security Engineer** said:
-"The short-expiry-with-refresh approach assumes refresh tokens can't be stolen..."
-
-Assess risk and feasibility. What has worked before in similar situations?
-What assumptions are most dangerous to leave unchallenged?
-
-Write 2-3 sentences that UPDATE your previous reflection.
-Keep what still holds, revise what has changed, add what's new.
-Output a single coherent paragraph — this replaces your prior reflection.
+```javascript
+{
+  id: 14,
+  round: 3,
+  participant_id: "senior_architect",
+  content: "[Reflection on #12 [CHALLENGE] by Security Engineer (Round 3)]\n\nInitially concerned about token theft, but the phased migration mitigates risk because...",
+  type: "reflection",
+  targets_which: 12,
+  created_at: "2026-08-15T..."
+}
 ```
 
-Each agent maintains a single `reflection` string. The prompt instructs the LLM to produce a coherent paragraph that evolves the prior belief state.
+**How reflections appear in agent prompts:**
+
+```
+- [#12] [mid_security_engineer] (challenge): [CHALLENGE] Server-side refresh tokens are just session tokens with extra steps...
+- [#13] [junior_backend_dev] (support): [SUPPORT] The stateless benefit is real...
+- [#14] [senior_architect] (reflection): [Reflection on #12 [CHALLENGE] by Security Engineer (Round 3)]
+  Initially concerned about token theft, but the phased migration mitigates risk because...
+- [#15] [junior_backend_dev] (propose): [PROPOSE] We could use a hybrid approach...
+```
+
+Later agents immediately see: "The architect reflected on the security engineer's challenge from earlier in this round."
 
 ### Post-Phase: Turn Order Planning + Round Summarization
 
@@ -894,11 +905,18 @@ The state of play solves both: it's derived from the full weave (no information 
 
 ## 12. Reflection System
 
-Reflections are private, evolving belief states that agents maintain across rounds. Each reflection supersedes any prior one — the agent produces a single coherent paragraph that captures its current thinking, not a list of disconnected notes.
+Reflections are public, evolving belief states that agents maintain across rounds. Each reflection is a contribution in the weave with a visible header identifying the trigger contribution. The agent's latest reflection is also stored on the participant object for next-round context.
 
 ### When Reflections Trigger
 
-After the prompt phase, if any contribution was a "challenge" or "dissent", every other active participant generates a reflection. Reflections run in parallel via `Promise.allSettled()`.
+After each challenge or dissent in the prompt phase, agents that spoke BEFORE the challenger immediately reflect on it. Reflections run in parallel via `Promise.allSettled()`. Post-challenge agents (those who speak after the challenger) do not need to reflect — they already had the opportunity to react to the challenge in their turn.
+
+**Key design decisions:**
+
+- **Mid-round timing:** Reflections happen immediately after a challenge/dissent, not at the end of the round. This ensures later agents see how pre-challenge agents reacted before taking their own turns.
+- **Ephemeral sessions:** Each reflection creates a fresh ephemeral session (same as agent turns), using the reflecting agent's own model and temperature. The persistent orchestrator session is not used.
+- **Public contributions:** Reflections are stored as contributions with type `reflection`, visible to all agents. They are not private.
+- **No word limit:** Reflections can be as verbose as the agent wants.
 
 ### How Reflections Evolve
 
@@ -907,12 +925,46 @@ Each agent maintains a single `reflection` string (not an array). When generatin
 2. The triggering challenge/dissent
 3. The agent's own recent contributions
 
-The agent produces a 2–3 sentence paragraph that **updates** its prior reflection:
+The agent produces a paragraph that **updates** its prior reflection:
 - Keep what still holds
 - Revise what has changed
 - Add what's new
 
 This creates a narrative of evolving thought: *"Initially concerned about token theft, but after seeing the phased migration proposal, the bigger concern is..."*
+
+### Reflection Contribution Structure
+
+Each reflection contribution includes a visible header that identifies who is being reflected on, what type of contribution triggered the reflection, and which round it occurred in:
+
+```javascript
+{
+  id: 14,           // nextContributionId
+  round: 3,
+  participant_id: "senior_architect",
+  content: "[Reflection on #12 [CHALLENGE] by Security Engineer (Round 3)]\n\nInitially concerned about token theft, but the phased migration mitigates risk because...",
+  type: "reflection",
+  targets_which: 12, // ID of the challenge/dissent being reflected on
+  created_at: "2026-08-15T..."
+}
+```
+
+**Header format:** `[Reflection on #<id> [<TYPE>] by <agent_name> (Round <n>)]`
+
+The `targets_which` field links the reflection to the specific challenge/dissent it responds to. The visible header provides immediate context for other agents reading the contribution.
+
+### How Reflections Appear in Agent Prompts
+
+Later agents see reflection contributions in their "recent contributions" section:
+
+```
+- [#12] [mid_security_engineer] (challenge): [CHALLENGE] Server-side refresh tokens are just session tokens with extra steps...
+- [#13] [junior_backend_dev] (support): [SUPPORT] The stateless benefit is real...
+- [#14] [senior_architect] (reflection): [Reflection on #12 [CHALLENGE] by Security Engineer (Round 3)]
+  Initially concerned about token theft, but the phased migration mitigates risk because...
+- [#15] [junior_backend_dev] (propose): [PROPOSE] We could use a hybrid approach...
+```
+
+Agent 4 immediately sees: "The architect reflected on the security engineer's challenge from earlier in this round."
 
 ### Context-Aware Prompts
 
@@ -923,7 +975,7 @@ Reflection prompts are composed from three axes:
 
 ### Storage
 
-Each participant has a single `reflection` field (string). The reflection is persisted to the database and appears in subsequent agent prompts as:
+Each participant has a single `reflection` field (string) that stores the raw reflection text WITHOUT the header. This is used for next-round context in the agent's own prompt:
 
 ```
 ## Your Reflection
@@ -932,6 +984,22 @@ migration proposal, the bigger concern is refresh token rotation...
 ```
 
 When the agent has no prior reflection, the prompt notes: *(No prior reflection — this is your first)*.
+
+The reflection contribution (with header) is stored in the `contributions` table in the database. Reflections are excluded from the state of play summary — they are reactions, not decisions/agreements/disagreements.
+
+### Multiple Reflections in One Round
+
+If multiple challenges/dissents occur in one round, each triggers its own set of reflections:
+
+- Agent 2 challenges → agent 1 reflects (contribution R1, type `reflection`)
+- Agent 3 dissents → agents 1 and 2 reflect (contributions R2, R3)
+
+All three reflections exist in the weave as separate contributions. The `participant.reflection` field stores the latest (for next-round context), but all contributions are public and visible.
+
+### Limitations
+
+- **No cascading reflections:** A reflection cannot trigger further reflections. The trigger condition only applies to regular agent contributions (from `#promptChildSession`), not to reflection contributions (which are created directly in `reflection-manager.js` and added to the weave without going through the prompt phase flow).
+- **First agent cannot be reflected upon:** If the first agent challenges, there are no pre-challenge agents to reflect. This is correct — there's no one before them to reflect.
 
 ---
 

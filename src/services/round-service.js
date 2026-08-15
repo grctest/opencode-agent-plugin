@@ -4,7 +4,8 @@ import { formatTurnOrderNotes } from "../interjection-resolver.js";
 import { Logger } from "../logger.js";
 
 /**
- * Handles round execution including prompt and reflection phases.
+ * Handles round execution including prompt phase.
+ * Reflections now happen mid-round in runPromptPhase (after each challenge/dissent).
  * Turn order planning is handled separately by the moderator service.
  */
 export class RoundService {
@@ -23,7 +24,7 @@ export class RoundService {
   }
 
   /**
-   * Runs a complete round: prompt phase and reflection phase.
+   * Runs a complete round: prompt phase (with mid-round reflections).
    * @param {Object} params
    * @param {Object} params.round - Round object to populate
    * @param {Array} params.activeParticipants
@@ -37,7 +38,7 @@ export class RoundService {
     this.#roundExecutor.resetRoundStats();
 
     await this.#roundExecutor.runPromptPhase(round, activeParticipants);
-    await this.#roundExecutor.runReflectionPhase(round, activeParticipants);
+    // Reflections now happen mid-round in runPromptPhase — no separate phase needed
 
     // Summarize the round
     round.summary = await summarizeRound(round, params.state, promptOrchestrator, getHighestTierModel);

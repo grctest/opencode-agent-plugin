@@ -67,6 +67,7 @@ function classifyContribution(type, content) {
       return "openQuestions";
     case "synthesize":
     case "refuse":
+    case "reflection":
       return null;
     default:
       return classifyByKeywords(content);
