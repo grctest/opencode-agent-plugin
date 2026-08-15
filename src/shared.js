@@ -1,7 +1,7 @@
 // Shared utilities — re-export from focused modules for backward compatibility.
 // Prefer importing directly from utils/text.js, utils/tier.js, or utils/db-parsing.js in new code.
 
-export { extractText, truncate, enforceWordLimit, withTimeout } from "./utils/text.js";
+export { extractText, extractAgentResponse, truncate, enforceWordLimit, withTimeout } from "./utils/text.js";
 export {
   LOOKBACK,
   TURN_REQUEST_PRIORITY_CAP,

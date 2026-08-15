@@ -299,6 +299,7 @@ export class MeetingOrchestrator {
         promptParent: async (system, model, message) => this.#promptOrchestrator(system, model, message),
         getParticipantModel: (participant) => this.#getParticipantModel(participant, true),
         logError: (context, error) => this.#logError(context, error),
+        tools: this.#options.agentTools ?? null,
       });
 
       this.#roundService = new RoundService({ roundExecutor: this.#roundExecutor });

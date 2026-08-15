@@ -72,7 +72,7 @@ function createMeetingCallbacks(context, logger) {
   };
 }
 
-export function createKnitHandler(client, directory, activeLooms) {
+export function createKnitHandler(client, directory, activeLooms, agentTools = null) {
   let pendingModels = null;
   const logger = new Logger();
 
@@ -278,6 +278,7 @@ export function createKnitHandler(client, directory, activeLooms) {
       meetingTimeoutMs: args.meeting_timeout,
       domain: primaryDomain,
       detectDomains: true,
+      agentTools,
       ...meetingCallbacks,
     });
 
@@ -360,6 +361,7 @@ export function createKnitHandler(client, directory, activeLooms) {
         maxRounds: existingMeeting.max_rounds,
         convergence: args.convergence ?? "moderator_forces",
         meetingTimeoutMs: args.meeting_timeout,
+        agentTools,
         ...meetingCallbacks,
       });
 

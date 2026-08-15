@@ -1,7 +1,7 @@
 import { buildAgentSystemPrompt, buildAgentUserPrompt } from "./prompts.js";
 import { parseAgentResponse } from "./validation.js";
 import { getConfig } from "./config.js";
-import { extractText, truncate, withTimeout, enforceWordLimit } from "./shared.js";
+import { extractText, extractAgentResponse, truncate, withTimeout, enforceWordLimit } from "./shared.js";
 import { Logger, extractErrorInfo } from "./logger.js";
 import { runMidRoundReflections } from "./reflection-manager.js";
 import { sanitizeForPrompt, sanitizeForDisplay } from "./utils/sanitize.js";
@@ -25,8 +25,9 @@ export class RoundExecutor {
   #turnOrder = [];
   #callStats;
   #circuitBreaker;
+  #tools;
 
-  constructor({ client, directory, db, stateManager, vectorIndex, options, sessionManager, promptParent, getParticipantModel, logError }) {
+  constructor({ client, directory, db, stateManager, vectorIndex, options, sessionManager, promptParent, getParticipantModel, logError, tools = null }) {
     this.#client = client;
     this.#directory = directory;
     this.#db = db;
@@ -37,6 +38,7 @@ export class RoundExecutor {
     this.#promptParent = promptParent;
     this.#getParticipantModel = getParticipantModel;
     this.#logError = logError;
+    this.#tools = tools;
     this.#failureCounts = new Map();
     this.#modelFailureTimes = new Map();
     this.#logger = new Logger();
@@ -272,11 +274,22 @@ export class RoundExecutor {
     ).slice(-4);
 
     const ephemeralSessionId = await this.#options.createEphemeralSession(participant);
+
+    // Register ephemeral session → meeting mapping for tool resolution
+    this.#sessionManager.registerSessionMeeting(ephemeralSessionId, this.#stateManager.getMeetingId());
+
     let ephemeralSessionIdToDelete = ephemeralSessionId;
 
     try {
       this.#callStats.agent_prompts++;
       const llmStart = Date.now();
+
+      // Build tools map for the prompt call (only when agent tools are enabled)
+      const agentToolsConfig = config.agentTools;
+      const toolsMap = (agentToolsConfig?.enabled && this.#tools)
+        ? this.#tools
+        : {};
+
       const result = await withTimeout(
         this.#client.session.prompt({
           path: { id: ephemeralSessionId },
@@ -293,6 +306,7 @@ export class RoundExecutor {
               this.#stateManager.getQuestion(),
               this.#stateManager.getDomain(),
             ) }],
+            tools: toolsMap,
           },
           query: { directory: this.#directory },
         }),
@@ -308,10 +322,19 @@ export class RoundExecutor {
         throw new Error(result.error.message || JSON.stringify(result.error));
       }
 
-      const content = extractText(result.data);
-      if (!content) return null;
+      // Use extractAgentResponse to handle tool call parts
+      const { text: agentText, toolResults } = extractAgentResponse(result.data);
 
-      const safeContent = sanitizeForPrompt(content);
+      // Enforce maxToolCallsPerTurn limit
+      const maxToolCalls = agentToolsConfig?.maxToolCallsPerTurn ?? 5;
+      if (toolResults.length > maxToolCalls) {
+        this.#logger.warn("tool_call_limit", `${participant.config.name} exceeded max tool calls (${toolResults.length}/${maxToolCalls})`);
+      }
+
+      // Use the last text segment from the agent (post-tool-execution)
+      if (!agentText) return null;
+
+      const safeContent = sanitizeForPrompt(agentText);
       const response = parseAgentResponse(participant.config.id, safeContent);
       if (!response) return null;
 
@@ -329,6 +352,8 @@ export class RoundExecutor {
       this.#logger.error("participant_failed", `${participant.config.name} failed after ${config.maxRetryAttempts + 1} attempts`, info);
       return null;
     } finally {
+      // Unregister session mapping
+      this.#sessionManager.unregisterSession(ephemeralSessionId);
       if (ephemeralSessionIdToDelete) {
         this.#options.deleteEphemeralSession(ephemeralSessionIdToDelete).catch((err) => {
           this.#logger.warn("ephemeral_session_delete_failed", "Failed to clean up ephemeral session", extractErrorInfo(err));

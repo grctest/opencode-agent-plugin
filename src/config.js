@@ -36,6 +36,16 @@ const DEFAULT_CONFIG = {
     failureThreshold: 3,
     resetTimeoutMs: 300000,
   },
+  agentTools: {
+    enabled: true,
+    vectorSearch: {
+      enabled: true,
+      maxResults: 10,
+      maxQueryTokens: 500,
+    },
+    maxToolCallsPerTurn: 5,
+    maxToolOutputTokens: 4000,
+  },
 };
 
 const CONFIG_SCHEMA = {
@@ -75,6 +85,12 @@ const NESTED_SCHEMA = {
   'turnRequestThresholds.autoGrant': { type: 'number', min: 1, max: 10 },
   'circuitBreaker.failureThreshold': { type: 'number', min: 1, max: 10 },
   'circuitBreaker.resetTimeoutMs': { type: 'number', min: 10000, max: 3600000 },
+  'agentTools.enabled': { type: 'boolean' },
+  'agentTools.vectorSearch.enabled': { type: 'boolean' },
+  'agentTools.vectorSearch.maxResults': { type: 'number', min: 1, max: 20 },
+  'agentTools.vectorSearch.maxQueryTokens': { type: 'number', min: 100, max: 2000 },
+  'agentTools.maxToolCallsPerTurn': { type: 'number', min: 1, max: 20 },
+  'agentTools.maxToolOutputTokens': { type: 'number', min: 1000, max: 20000 },
 };
 
 function deepMerge(target, source) {

@@ -1,10 +1,11 @@
 import { tool } from "@opencode-ai/plugin";
 import { isAgentSessionClient } from "./client-types.js";
-import { deleteMeetingFiles, deleteMeetingsBySessionId, findMeetingBySessionId, getDbPathForMeeting, getDatabasesBySessionId, loadSessionIndex } from "./database.js";
+import { deleteMeetingFiles, deleteMeetingsBySessionId, findMeetingBySessionId, getDbPathForMeeting, getDatabasesBySessionId, loadSessionIndex, MeetingDatabase } from "./database.js";
 import { startDashboard } from "./dashboard/server.js";
 import { createKnitHandler } from "./handlers/knit-handler.js";
 import { createConfig, getConfigSource, setDefaultConfigDirectory } from "./config.js";
 import { Logger } from "./logger.js";
+import { VectorIndex } from "./services/vector-index.js";
 
 export const Loom = async (input) => {
   const { client, directory } = input;
@@ -33,6 +34,93 @@ export const Loom = async (input) => {
 
   const activeLooms = new Map();
   let activeDashboard = null;
+
+  /**
+   * Resolves an ephemeral session ID to its Loom meeting database path.
+   * Used by agent tools to find which meeting the current session belongs to.
+   */
+  async function resolveMeeting(sessionID) {
+    // 1. Direct session → meeting lookup via DB index
+    const meeting = await findMeetingBySessionId(directory, sessionID);
+    if (meeting) return meeting;
+
+    // 2. Fallback: walk up to parent session
+    try {
+      const sessionResult = await client.session.get({
+        path: { id: sessionID },
+        query: { directory },
+      });
+      const parentID = sessionResult?.data?.parentID;
+      if (parentID && parentID !== sessionID) {
+        return await findMeetingBySessionId(directory, parentID);
+      }
+    } catch {
+      // Session may not exist or API may not support .get()
+    }
+    return null;
+  }
+
+  // Agent tools that are available to deliberation agents during rounds
+  const agentTools = {
+    loom_vector_search: tool({
+      description:
+        "Semantic search against prior deliberation context. " +
+        "Find exact wording of earlier disagreements, review a specific participant's past contributions, or dig into a sub-topic.",
+      args: {
+        query: tool.schema
+          .string()
+          .describe("Search query text for vector similarity search"),
+        top_k: tool.schema
+          .number()
+          .int()
+          .min(1)
+          .max(20)
+          .optional()
+          .describe("Maximum results (default 5, max 20)"),
+        exclude_round: tool.schema
+          .number()
+          .int()
+          .optional()
+          .describe("Exclude chunks from this round"),
+      },
+      async execute(args, context) {
+        const agentToolsConfig = config.getValue("agentTools");
+        if (!agentToolsConfig?.enabled || !agentToolsConfig?.vectorSearch?.enabled) {
+          return { error: "Vector search is not enabled in configuration" };
+        }
+
+        // 1. Resolve session → meeting
+        const meetingInfo = await resolveMeeting(context.sessionID);
+        if (!meetingInfo) {
+          return { error: "Could not resolve meeting for this session" };
+        }
+
+        // 2. Open DB and vector index
+        const db = await MeetingDatabase.create(meetingInfo.dbPath, meetingInfo.meetingId);
+        const vectorIndex = new VectorIndex(db);
+
+        try {
+          // 3. Execute search
+          const maxResults = agentToolsConfig.vectorSearch.maxResults ?? 10;
+          const topK = Math.min(args.top_k || 5, maxResults);
+          const results = await vectorIndex.retrieveRelevant(args.query, topK, args.exclude_round);
+
+          // Format results with participation tags
+          const formattedResults = results.map((r) => ({
+            round: r.round,
+            source: r.source,
+            distance: r.distance,
+            content: r.content,
+            participation_tags: [],
+          }));
+
+          return { results: formattedResults, truncated: false };
+        } finally {
+          db.close();
+        }
+      },
+    }),
+  };
 
   const markActiveMeetingsAborted = () => {
     for (const [id, engine] of activeLooms) {
@@ -68,7 +156,7 @@ export const Loom = async (input) => {
     process.exit(1);
   });
 
-  const { handleKnit, handleKnitModels } = createKnitHandler(client, directory, activeLooms);
+  const { handleKnit, handleKnitModels } = createKnitHandler(client, directory, activeLooms, agentTools);
 
   return {
     tool: {

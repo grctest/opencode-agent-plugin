@@ -13,6 +13,7 @@ export class SessionManager {
   #progressFailureCount = 0;
   #progressAlerted = false;
   #orchestratorSessionId = null;
+  #sessionMeetingMap = new Map();
 
   constructor(client, directory, parentSessionId, logger = null) {
     this.#client = client;
@@ -23,6 +24,34 @@ export class SessionManager {
 
   setOrchestratorSessionId(sessionId) {
     this.#orchestratorSessionId = sessionId;
+  }
+
+  getParentSessionId() {
+    return this.#parentSessionId;
+  }
+
+  /**
+   * Maps an ephemeral session ID to its meeting ID for fast lookup
+   * during tool execution. Populated when sessions are created for a meeting.
+   */
+  registerSessionMeeting(sessionId, meetingId) {
+    this.#sessionMeetingMap.set(sessionId, meetingId);
+  }
+
+  /**
+   * Resolves an ephemeral session ID to its meeting ID.
+   * @param {string} sessionId
+   * @returns {string|null}
+   */
+  resolveMeetingId(sessionId) {
+    return this.#sessionMeetingMap.get(sessionId) ?? null;
+  }
+
+  /**
+   * Cleans up session→meeting mappings for a given session.
+   */
+  unregisterSession(sessionId) {
+    this.#sessionMeetingMap.delete(sessionId);
   }
 
   async #createSessionWithRetry(title, onRetry = null) {

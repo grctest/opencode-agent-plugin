@@ -1,5 +1,6 @@
 import { getPromptForTier, TURN_REQUEST_PRIORITY_CAP } from "./shared.js";
 import { sanitizeForDisplay } from "./utils/sanitize.js";
+import { getConfig } from "./config.js";
 
 /** Generates a stable delimiter that won't change across runs. */
 function makeDelimiter(label) {
@@ -254,6 +255,18 @@ export function buildAgentSystemPrompt(participant) {
   const requestNextRule = `5. To request priority for the next round, add: [REQUEST_NEXT: Priority: <1-${priorityCap}>, Reason: "why you must speak next round"] — place this at the end of your response`;
   const governanceRule = `8. Only with a governance-level concern, add: [GOVERNANCE: <directive>: <value>] where directive is one of extend_rounds (value: rounds to add), force_converge (value: reason), raise_objection (value: objection), request_topic (value: topic), nominate_synthesizer (value: participant name), or escalate (value: reason). Use sparingly — this is an escalation mechanism, not a normal communication channel.`;
 
+  const agentToolsConfig = getConfig().agentTools;
+  const toolUsageSection = agentToolsConfig?.enabled && agentToolsConfig?.vectorSearch?.enabled
+    ? `
+## Tool Usage
+
+You have access to \`loom_vector_search\` for semantic search against prior deliberation context.
+
+**Use it when:** You need to recall specific prior context not in your State of Play or Relevant Prior Context. Good for finding exact wording of earlier disagreements, reviewing a specific participant's past contributions, or exploring a sub-topic.
+
+**Don't use it when:** The State of Play and Recent Contributions already have what you need. Each tool call adds latency.`
+    : "";
+
   const biases = Array.isArray(cfg.known_biases) && cfg.known_biases.length > 0
     ? cfg.known_biases.map((b) => `- ${b}`).join("\n")
     : null;
@@ -291,6 +304,7 @@ ${requestNextRule}
 6. Stay in character — your persona and agenda shape your contributions
 7. Reference prior contributions using their stable ID from the Recent Contributions list, e.g. [#12]
 ${governanceRule}
+${toolUsageSection}
 
 ## Example Response
 [CHALLENGE] The proposed approach doesn't account for backward compatibility. In my experience, breaking changes typically require a migration period. Have we validated this with stakeholders?

@@ -8,6 +8,39 @@ export function extractText(data) {
   return content.length > 0 ? content : null;
 }
 
+/**
+ * Extracts the agent's response from prompt data, handling all Part types.
+ * Returns the last text segment (post-tool-execution) plus any tool results.
+ * When tools are enabled, the LLM may call tools mid-response; this function
+ * returns the final text after all tool calls have been resolved.
+ */
+export function extractAgentResponse(data) {
+  if (!data?.parts) return { text: null, toolResults: [] };
+
+  const toolResults = [];
+  let lastText = null;
+
+  for (const part of data.parts) {
+    if (part.type === "text") {
+      const trimmed = part.text?.trim();
+      if (trimmed) lastText = trimmed;
+    } else if (part.type === "tool_call") {
+      toolResults.push({
+        tool: part.name,
+        input: part.input,
+      });
+    } else if (part.type === "tool_result") {
+      toolResults.push({
+        tool: part.name,
+        result: part.content,
+        error: part.is_error,
+      });
+    }
+  }
+
+  return { text: lastText, toolResults };
+}
+
 /** Truncates text to max length, adding ellipsis if needed. */
 export function truncate(text, max) {
   const cleaned = text.replace(/\n/g, " ").trim();
