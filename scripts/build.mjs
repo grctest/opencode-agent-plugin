@@ -47,6 +47,8 @@ const steps = [
         "@opencode-ai/plugin",
         "@opencode-ai/sdk",
         "bun:sqlite",
+        "onnxruntime-node",
+        "@huggingface/tokenizers",
       ],
     },
   },
@@ -59,7 +61,7 @@ const steps = [
       format: "esm",
       platform: "node",
       outfile: join(DASHBOARD_DIST, "server.js"),
-      external: ["bun:sqlite"],
+      external: ["bun:sqlite", "onnxruntime-node", "@huggingface/tokenizers"],
     },
   },
   {

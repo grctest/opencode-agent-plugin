@@ -59,9 +59,10 @@ export async function discoverModels(client, directory, sessionID) {
     });
     const sessionData = sessionResult?.data ?? sessionResult;
     if (sessionData?.model) {
+      const m = sessionData.model;
       sessionModel = {
-        providerID: sessionData.model.providerID,
-        modelID: sessionData.model.modelID,
+        providerID: m.providerID,
+        modelID: m.modelID ?? m.id,
       };
     }
   } catch (err) {

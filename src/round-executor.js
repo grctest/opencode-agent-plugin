@@ -187,6 +187,7 @@ export class RoundExecutor {
         round: this.#stateManager.getCurrentRound(),
         priority: result.request_next.priority,
         reason: sanitizeForPrompt(result.request_next.reason),
+        resolved: "pending",
       };
       if (!round.turn_requests) round.turn_requests = [];
       round.turn_requests.push(turnRequest);

@@ -126,12 +126,12 @@ export class MeetingDatabase {
     this.#checkIntegrity();
   }
 
-  #initVectorTable() {
+  #initVectorTable(dim = 384) {
     try {
       this.#db.exec(`
-        CREATE VIRTUAL TABLE IF NOT EXISTS vec_fabric_chunks USING vec0(
+        CREATE VIRTUAL TABLE IF NOT EXISTS vec_fabric_chunks_${dim} USING vec0(
           id INTEGER PRIMARY KEY,
-          embedding float[384]
+          embedding float[${dim}]
         )
       `);
     } catch (err) {
@@ -162,8 +162,8 @@ export class MeetingDatabase {
   initializeMeeting(input) {
     const now = isoNow();
     const insertMeeting = this.#db.prepare(
-      `INSERT INTO meetings (id, question, context, status, round, fabric, max_rounds, convergence, domain, parent_session_id, opencode_session_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO meetings (id, question, context, status, round, fabric, max_rounds, convergence, domain, parent_session_id, opencode_session_id, embedding_model, embedding_dim, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     const insertParticipant = this.#db.prepare(
       `INSERT INTO participants (id, meeting_id, name, persona, agenda, tier, provider_id, model_id, session_id, known_biases, communication_style, preferred_contribution_types)
@@ -183,6 +183,8 @@ export class MeetingDatabase {
         input.domain ?? null,
         input.parentSessionId,
         input.opencodeSessionId,
+        input.embedding_model ?? null,
+        input.embedding_dim ?? null,
         now,
         now,
       );
@@ -603,7 +605,7 @@ export class MeetingDatabase {
   getMeeting() {
     const row = this.#db
       .prepare(
-        `SELECT id, question, context, status, round, fabric, max_rounds, convergence, domain, parent_session_id, opencode_session_id, next_speaker_id, state_of_play, stats, created_at
+        `SELECT id, question, context, status, round, fabric, max_rounds, convergence, domain, parent_session_id, opencode_session_id, next_speaker_id, state_of_play, stats, embedding_model, embedding_dim, created_at
          FROM meetings WHERE id = ?`,
       )
       .get(this.#meetingId);
@@ -853,12 +855,15 @@ export class MeetingDatabase {
   /**
    * Stores a text chunk and its embedding in the fabric vector index.
    * @param {number} chunkId - fabric_chunks.id
-   * @param {Float32Array} embedding - 384-dim vector
+   * @param {Float32Array} embedding - embedding vector
+   * @param {number} dim - embedding dimension (default: 384)
    */
-  storeFabricEmbedding(chunkId, embedding) {
+  storeFabricEmbedding(chunkId, embedding, dim = 384) {
     try {
+      // Ensure the vector table exists for this dimension
+      this.#initVectorTable(dim);
       this.#db.prepare(
-        `INSERT INTO vec_fabric_chunks (id, embedding) VALUES (?, ?)`
+        `INSERT INTO vec_fabric_chunks_${dim} (id, embedding) VALUES (?, ?)`
       ).run(chunkId, embedding);
     } catch (err) {
       dbLogger.debug("store_embedding_failed", "Failed to store fabric embedding", extractErrorInfo(err));
@@ -902,13 +907,16 @@ export class MeetingDatabase {
    * Performs a vector similarity search over fabric embeddings.
    * @param {Float32Array} queryEmbedding - 384-dim query vector
    * @param {number} topK - number of results
+   * @param {Float32Array} queryEmbedding - query vector
+   * @param {number} topK - max results
+   * @param {number} dim - embedding dimension (default: 384)
    * @returns {Array<{id: number, distance: number, content: string, round: number, source: string}>}
    */
-  searchFabricVectors(queryEmbedding, topK = 5) {
+  searchFabricVectors(queryEmbedding, topK = 5, dim = 384) {
     try {
       return this.#db.prepare(`
         SELECT v.id, v.distance, f.content, f.round, f.source
-        FROM vec_fabric_chunks v
+        FROM vec_fabric_chunks_${dim} v
         JOIN fabric_chunks f ON f.id = v.id AND f.meeting_id = ?
         WHERE v.embedding MATCH ?
         ORDER BY v.distance

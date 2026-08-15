@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 14;
+export const SCHEMA_VERSION = 15;
 
 export function initSchema(db) {
   db.exec(`
@@ -339,6 +339,12 @@ export function migrateSchema(db) {
   if (currentVersion < 14) {
     try { db.exec(`ALTER TABLE meetings ADD COLUMN state_of_play TEXT`); } catch { /* exists */ }
     db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '14')`);
+  }
+
+  if (currentVersion < 15) {
+    try { db.exec(`ALTER TABLE meetings ADD COLUMN embedding_model TEXT`); } catch { /* exists */ }
+    try { db.exec(`ALTER TABLE meetings ADD COLUMN embedding_dim INTEGER`); } catch { /* exists */ }
+    db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '15')`);
   }
   db.exec("COMMIT");
   } catch (err) {

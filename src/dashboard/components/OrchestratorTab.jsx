@@ -1,4 +1,4 @@
-import { useMemo, useCallback, memo } from "react";
+import { useMemo, memo } from "react";
 import { List } from "react-window";
 import { cn } from "../utils.js";
 
@@ -23,6 +23,40 @@ function formatContent(content, role) {
   return content.length > 500 ? content.slice(0, 500) + "..." : content;
 }
 
+const OrchestratorRow = memo(({ index, style, grouped }) => {
+  const group = grouped[index];
+  if (!group) return null;
+  return (
+    <div style={style} className="loom-vrow">
+      <div className="loom-orchestrator-exchange">
+        {group.query && (
+          <div className="loom-orchestrator-query">
+            <div className="loom-orchestrator-meta">
+              <span className={cn("loom-orchestrator-type", group.query.type === "governance" && "loom-orchestrator-type-governance")}>
+                {TYPE_LABELS[group.query.type] || group.query.type}
+              </span>
+              <span className="loom-text-xs loom-text-muted">Query</span>
+            </div>
+            <div className="loom-orchestrator-content loom-orchestrator-content-query">
+              {formatContent(group.query.content, "user")}
+            </div>
+          </div>
+        )}
+        {group.response && (
+          <div className="loom-orchestrator-response">
+            <div className="loom-orchestrator-meta">
+              <span className="loom-text-xs loom-text-muted">Response</span>
+            </div>
+            <div className="loom-orchestrator-content loom-orchestrator-content-response">
+              {formatContent(group.response.content, "assistant")}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+});
+
 const OrchestratorTabBase = ({ messages = [] }) => {
   const grouped = useMemo(() => {
     const groups = [];
@@ -41,44 +75,9 @@ const OrchestratorTabBase = ({ messages = [] }) => {
     return groups;
   }, [messages]);
 
-  const rowHeightFn = useCallback(() => EXCHANGE_HEIGHT, []);
-
   const listHeight = useMemo(() => {
     return Math.min(MAX_LIST_HEIGHT, grouped.length * EXCHANGE_HEIGHT);
   }, [grouped.length]);
-
-  const Row = useCallback(({ index, style }) => {
-    const group = grouped[index];
-    return (
-      <div style={style} className="loom-vrow">
-        <div className="loom-orchestrator-exchange">
-          {group.query && (
-            <div className="loom-orchestrator-query">
-              <div className="loom-orchestrator-meta">
-                <span className={cn("loom-orchestrator-type", group.query.type === "governance" && "loom-orchestrator-type-governance")}>
-                  {TYPE_LABELS[group.query.type] || group.query.type}
-                </span>
-                <span className="loom-text-xs loom-text-muted">Query</span>
-              </div>
-              <div className="loom-orchestrator-content loom-orchestrator-content-query">
-                {formatContent(group.query.content, "user")}
-              </div>
-            </div>
-          )}
-          {group.response && (
-            <div className="loom-orchestrator-response">
-              <div className="loom-orchestrator-meta">
-                <span className="loom-text-xs loom-text-muted">Response</span>
-              </div>
-              <div className="loom-orchestrator-content loom-orchestrator-content-response">
-                {formatContent(group.response.content, "assistant")}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }, [grouped]);
 
   if (messages.length === 0) {
     return (
@@ -98,13 +97,13 @@ const OrchestratorTabBase = ({ messages = [] }) => {
     <div className="loom-main-content">
       <div className="loom-orchestrator-list">
         <List
-          height={listHeight}
           rowCount={grouped.length}
-          rowHeight={rowHeightFn}
-          width="100%"
-        >
-          {Row}
-        </List>
+          rowHeight={EXCHANGE_HEIGHT}
+          rowComponent={OrchestratorRow}
+          rowProps={{ grouped }}
+          overscanCount={3}
+          style={{ height: listHeight, width: "100%" }}
+        />
       </div>
     </div>
   );

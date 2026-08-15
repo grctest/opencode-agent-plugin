@@ -215,6 +215,18 @@ export class MeetingOrchestrator {
       this.#sessionManager = new SessionManager(this.#client, this.#directory, this.#parentSessionId, this.#logger);
       this.#synthesisCoordinator = new SynthesisCoordinator(this.#client, this.#directory, this.#sessionManager);
 
+      // Initialize embedding model for this meeting
+      const meeting = db.getMeeting();
+      if (meeting?.embedding_model) {
+        try {
+          const { initializeEmbedder, getEmbeddingDim } = await import("./services/embedding-service.js");
+          await initializeEmbedder(meeting.embedding_model, this.#directory);
+          this.#logger.info("embedder_initialized", `Embedding model loaded: ${meeting.embedding_model} (${getEmbeddingDim()}d)`);
+        } catch (err) {
+          this.#logger.warn("embedder_init_failed", `Failed to initialize embedding model: ${err.message}`, extractErrorInfo(err));
+        }
+      }
+
       if (this.#resume) {
         const restored = restoreStateFromDb({
           db,
@@ -233,6 +245,8 @@ export class MeetingOrchestrator {
           domain: this.#options.domain ?? null,
           parentSessionId: this.#options.parentSessionId,
           opencodeSessionId: this.#options.opencodeSessionId ?? this.#options.parentSessionId,
+          embedding_model: this.#options.embedding_model ?? null,
+          embedding_dim: this.#options.embedding_dim ?? null,
           participants: this.#stateManager.getParticipants().map((p) => p.config),
         });
       }

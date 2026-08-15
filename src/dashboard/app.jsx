@@ -9,7 +9,7 @@ import { TimelineTab } from "./components/TimelineTab.jsx";
 import { FabricTab } from "./components/FabricTab.jsx";
 import { OutputTab } from "./components/OutputTab.jsx";
 import { ErrorBoundary } from "./ErrorBoundary.jsx";
-import { usePersistedState, useMeetingApi, useSSEReset } from "./hooks.js";
+import { usePersistedState, useMeetingApi, useSSEReset, useEmbeddingStatus } from "./hooks.js";
 
 const POLLING_FALLBACK_INTERVAL = 3000;
 
@@ -171,7 +171,8 @@ function ThemeProvider({ theme, setTheme, children }) {
   return children;
 }
 
-function MeetingHeader({ state, connected, reconnectAttempt, activeAgentCount, errorCount, selectedMeeting }) {
+function MeetingHeader({ state, connected, reconnectAttempt, activeAgentCount, errorCount, selectedMeeting, embeddingModel, embeddingDim }) {
+  const modelName = embeddingModel?.split("/").pop() ?? embeddingModel;
   return (
     <div className="loom-main-header">
       <h1 className="loom-title-lg loom-mb-sm">{state.question}</h1>
@@ -179,6 +180,11 @@ function MeetingHeader({ state, connected, reconnectAttempt, activeAgentCount, e
         <StatusBadge status={state.status} />
         <span className="loom-text-xs loom-text-muted">Round {state.round} / {state.max_rounds}</span>
         <span className="loom-text-xs loom-text-muted">Convergence: {CONVERGENCE_LABELS[state.convergence] ?? state.convergence}</span>
+        {embeddingModel && (
+          <span className="loom-text-xs loom-text-muted" title={`Model: ${embeddingModel} (${embeddingDim}d)`}>
+            <span aria-hidden="true">🧮</span> {modelName} ({embeddingDim}d)
+          </span>
+        )}
         <span className={cn("loom-text-xs", connected ? "loom-text-live" : "loom-text-muted")}>
           {connected ? "● live" : reconnectAttempt > 0 ? `○ reconnecting (${reconnectAttempt})` : "○ offline"}
         </span>
@@ -292,6 +298,7 @@ export function App() {
 
   const meetings = useMeetingsList();
   const { resetKey } = useSSEReset(selectedMeeting);
+  const embeddingStatus = useEmbeddingStatus();
   const {
     state,
     participants,
@@ -300,6 +307,8 @@ export function App() {
     orchestratorMessages,
     agentErrors,
     artifact,
+    embeddingModel,
+    embeddingDim,
     error,
   } = useMeetingApi(selectedMeeting, resetKey);
 
@@ -481,6 +490,7 @@ export function App() {
             agentErrors={agentErrors}
             contributionsByParticipant={contributionsByParticipant}
             selectedMeeting={selectedMeeting}
+            embeddingStatus={embeddingStatus}
           />
          </ErrorBoundary>
 
@@ -494,6 +504,8 @@ export function App() {
                 activeAgentCount={activeAgentCount}
                 errorCount={errorCount}
                 selectedMeeting={selectedMeeting}
+                embeddingModel={embeddingModel}
+                embeddingDim={embeddingDim}
               />
             </ErrorBoundary>
           )}

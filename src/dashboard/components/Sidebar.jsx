@@ -54,6 +54,7 @@ const Sidebar = memo(function Sidebar({
   agentErrors,
   contributionsByParticipant,
   selectedMeeting,
+  embeddingStatus,
 }) {
   const errorByParticipant = useMemo(() => {
     const map = new Map();
@@ -63,11 +64,33 @@ const Sidebar = memo(function Sidebar({
     return map;
   }, [agentErrors]);
 
+  const modelName = embeddingStatus?.model?.split("/").pop() ?? embeddingStatus?.model;
+
   return (
     <aside className="loom-sidebar">
       <div className="loom-sidebar-section">
         <h2 className="loom-sidebar-title">Loom</h2>
         <ThemeToggle theme={theme} setTheme={setTheme} />
+        {modelName && (
+          <div className="loom-flex loom-gap-xs loom-mt-xs loom-items-center">
+            <span
+              className={cn(
+                "loom-text-xs",
+                embeddingStatus.state === "ready" ? "loom-text-live" : "loom-text-muted"
+              )}
+              title={embeddingStatus.message ? `Embedding model: ${embeddingStatus.message}` : `Embedding model: ${embeddingStatus.model}`}
+            >
+              <span aria-hidden="true">🧮</span> {modelName}
+              {embeddingStatus.dims ? ` (${embeddingStatus.dims}d)` : ""}
+              {" "}{embeddingStatus.state === "ready" ? "●" : embeddingStatus.state === "error" ? "⚠" : "…"}
+            </span>
+          </div>
+        )}
+        {embeddingStatus?.state === "error" && (
+          <div className="loom-text-xs loom-text-muted" title={embeddingStatus.message}>
+            <span aria-hidden="true">⚠</span> Emb. model failed — using placeholder vectors
+          </div>
+        )}
       </div>
 
       {state && (

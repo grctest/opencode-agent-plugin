@@ -1,5 +1,5 @@
 import { Logger, extractErrorInfo } from "../logger.js";
-import { embedText } from "./embedding-service.js";
+import { embedText, getEmbeddingDim, getEmbeddingMaxTokens } from "./embedding-service.js";
 
 const vectorLogger = new Logger();
 
@@ -24,6 +24,7 @@ export class VectorIndex {
    */
   async indexRound(roundNumber, roundSummary, contributions = []) {
     let indexed = 0;
+    const dim = getEmbeddingDim();
 
     if (roundSummary && roundSummary.trim()) {
       const chunks = this.#chunkText(roundSummary, `Round ${roundNumber} summary`);
@@ -31,7 +32,7 @@ export class VectorIndex {
         const chunkId = this.#database.storeFabricChunk(chunk, roundNumber, "round_summary");
         if (chunkId != null) {
           const embedding = await embedText(chunk);
-          this.#database.storeFabricEmbedding(chunkId, embedding);
+          this.#database.storeFabricEmbedding(chunkId, embedding, dim);
           indexed++;
         }
       }
@@ -45,7 +46,7 @@ export class VectorIndex {
         const chunkId = this.#database.storeFabricChunk(chunk, roundNumber, "contribution");
         if (chunkId != null) {
           const embedding = await embedText(chunk);
-          this.#database.storeFabricEmbedding(chunkId, embedding);
+          this.#database.storeFabricEmbedding(chunkId, embedding, dim);
           indexed++;
         }
       }
@@ -63,12 +64,13 @@ export class VectorIndex {
   async indexContext(context) {
     if (!context || !context.trim()) return 0;
     let indexed = 0;
+    const dim = getEmbeddingDim();
     const chunks = this.#chunkText(context, "User context");
     for (const chunk of chunks) {
       const chunkId = this.#database.storeFabricChunk(chunk, 0, "context");
       if (chunkId != null) {
         const embedding = await embedText(chunk);
-        this.#database.storeFabricEmbedding(chunkId, embedding);
+        this.#database.storeFabricEmbedding(chunkId, embedding, dim);
         indexed++;
       }
     }
@@ -85,8 +87,9 @@ export class VectorIndex {
   async retrieveRelevant(queryText, topK = 5, excludeRound = -1) {
     if (!queryText || !queryText.trim()) return [];
     try {
+      const dim = getEmbeddingDim();
       const queryEmbedding = await embedText(queryText);
-      const results = this.#database.searchFabricVectors(queryEmbedding, topK + 5);
+      const results = this.#database.searchFabricVectors(queryEmbedding, topK + 5, dim);
       return results
         .filter((r) => r.round !== excludeRound)
         .slice(0, topK)
@@ -154,10 +157,12 @@ export class VectorIndex {
 
   /**
    * Splits text into chunks suitable for embedding.
-   * Strategy: split on paragraph boundaries, max ~500 chars per chunk.
+   * Strategy: split on paragraph boundaries, respect token limit.
    */
   #chunkText(text, sourceLabel = "") {
-    const maxChunkSize = 500;
+    const maxTokens = getEmbeddingMaxTokens();
+    // Approximate: 1 token ≈ 4 characters for English text
+    const maxChunkSize = maxTokens * 4;
     const paragraphs = text.split(/\n\n+/).filter((p) => p.trim().length > 0);
     const chunks = [];
     let current = "";

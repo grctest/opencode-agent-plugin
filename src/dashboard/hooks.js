@@ -123,6 +123,37 @@ export function useSSEHandlers({ setContributions, setTurnRequests, setState, se
   }, []);
 }
 
+export function useEmbeddingStatus() {
+  const [status, setStatus] = useState({ state: "idle", models: [] });
+
+  const fetchStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/models");
+      if (res.ok) {
+        const data = await res.json();
+        setStatus({
+          state: data.status?.state ?? "idle",
+          model: data.status?.model ?? null,
+          dims: data.status?.dims ?? null,
+          maxTokens: data.status?.maxTokens ?? null,
+          message: data.status?.message ?? null,
+          models: data.models ?? [],
+        });
+      }
+    } catch {
+      // Ignore transient fetch errors — keep last known status
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchStatus();
+    const interval = setInterval(fetchStatus, 5000);
+    return () => clearInterval(interval);
+  }, [fetchStatus]);
+
+  return status;
+}
+
 export function useMeetingApi(meetingId, resetKey) {
   const [state, setState] = useState(null);
   const [participants, setParticipants] = useState([]);
@@ -131,6 +162,8 @@ export function useMeetingApi(meetingId, resetKey) {
   const [orchestratorMessages, setOrchestratorMessages] = useState([]);
   const [agentErrors, setAgentErrors] = useState([]);
   const [artifact, setArtifact] = useState(null);
+  const [embeddingModel, setEmbeddingModel] = useState(null);
+  const [embeddingDim, setEmbeddingDim] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -158,6 +191,8 @@ export function useMeetingApi(meetingId, resetKey) {
       setOrchestratorMessages(data.orchestrator_messages ?? []);
       setAgentErrors(data.agent_errors);
       setArtifact(data.artifact ?? null);
+      setEmbeddingModel(data.embedding_model ?? null);
+      setEmbeddingDim(data.embedding_dim ?? null);
       const { total, limit, offset } = data.contributionsPagination ?? {};
       let all = [...(data.contributions ?? [])];
       if (typeof total === "number" && all.length < total) {
@@ -200,6 +235,8 @@ export function useMeetingApi(meetingId, resetKey) {
     orchestratorMessages,
     agentErrors,
     artifact,
+    embeddingModel,
+    embeddingDim,
     loading,
     error,
     refetch: () => fetchMeetingData(meetingId),

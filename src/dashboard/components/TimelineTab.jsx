@@ -21,6 +21,46 @@ function getRowHeight(item) {
   return Math.min(400, Math.max(CONTRIBUTION_HEIGHT, 80 + contentHeight));
 }
 
+const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantName, onDialogOpen }) => {
+  const item = items[index];
+  if (!item) return null;
+  if (item.type === "header") {
+    return (
+      <div style={style} className="loom-vrow">
+        {item.showExtensionMarker && (
+          <div className="loom-extension-marker">
+            <span className="loom-extension-marker-line" />
+            <span className="loom-extension-marker-label">Extended</span>
+            <span className="loom-extension-marker-line" />
+          </div>
+        )}
+        <div className={cn("loom-round-group", item.isActive && "loom-round-active")}>
+          <button className="loom-round-header" onClick={() => onToggleCollapse(item.round)}>
+            <span className="loom-round-toggle">{item.isCollapsed ? "▶" : "▼"}</span>
+            <span className="loom-round-title">Round {item.round}</span>
+            <span className="loom-round-count">{item.contribsCount} contribution{item.contribsCount !== 1 ? "s" : ""}</span>
+            {item.errorsCount > 0 && (
+              <span className="loom-round-errors"><span aria-hidden="true">⚠</span> {item.errorsCount}</span>
+            )}
+          </button>
+        </div>
+      </div>
+    );
+  }
+  if (item.type === "contribution") {
+    return (
+      <div style={style} className="loom-vrow">
+        <ContributionItem contribution={item.contribution} participantName={participantName(item.contribution.participant_id)} onDialogOpen={onDialogOpen} />
+      </div>
+    );
+  }
+  return (
+    <div style={style} className="loom-vrow">
+      <TurnRequestItem turnRequest={item.turnRequest} participantName={participantName(item.turnRequest.participant_id)} />
+    </div>
+  );
+});
+
 const TimelineTabBase = ({
   contributions,
   groupedContributions,
@@ -78,54 +118,21 @@ const TimelineTabBase = ({
     return items;
   }, [groupedContributions, collapsedRounds, activeRound, agentErrors, turnRequests, extensions, maxRounds]);
 
-  const rowHeightFn = useCallback((index) => {
-    const item = flatItems[index];
+  const rowHeightFn = useCallback((index, cellProps) => {
+    const item = cellProps.items[index];
     return item ? getRowHeight(item) : CONTRIBUTION_HEIGHT;
-  }, [flatItems]);
-
-  const renderRow = useCallback(({ index, style }) => {
-    const item = flatItems[index];
-    if (!item) return null;
-    if (item.type === "header") {
-      return (
-        <div style={style} className="loom-vrow">
-          {item.showExtensionMarker && (
-            <div className="loom-extension-marker">
-              <span className="loom-extension-marker-line" />
-              <span className="loom-extension-marker-label">Extended</span>
-              <span className="loom-extension-marker-line" />
-            </div>
-          )}
-          <div className={cn("loom-round-group", item.isActive && "loom-round-active")}>
-            <button className="loom-round-header" onClick={() => onToggleCollapse(item.round)}>
-              <span className="loom-round-toggle">{item.isCollapsed ? "▶" : "▼"}</span>
-              <span className="loom-round-title">Round {item.round}</span>
-              <span className="loom-round-count">{item.contribsCount} contribution{item.contribsCount !== 1 ? "s" : ""}</span>
-              {item.errorsCount > 0 && (
-                <span className="loom-round-errors"><span aria-hidden="true">⚠</span> {item.errorsCount}</span>
-              )}
-            </button>
-          </div>
-        </div>
-      );
-    }
-    if (item.type === "contribution") {
-      return (
-        <div style={style} className="loom-vrow">
-          <ContributionItem contribution={item.contribution} participantName={participantName(item.contribution.participant_id)} onDialogOpen={setDialogContribution} />
-        </div>
-      );
-    }
-    return (
-      <div style={style} className="loom-vrow">
-        <TurnRequestItem turnRequest={item.turnRequest} participantName={participantName(item.turnRequest.participant_id)} />
-      </div>
-    );
-  }, [flatItems, onToggleCollapse, participantName]);
+  }, []);
 
   const listHeight = useMemo(() => {
     return Math.min(600, flatItems.reduce((sum, item) => sum + getRowHeight(item), 0));
   }, [flatItems]);
+
+  const rowProps = useMemo(() => ({
+    items: flatItems,
+    onToggleCollapse,
+    participantName,
+    onDialogOpen: setDialogContribution,
+  }), [flatItems, onToggleCollapse, participantName]);
 
   return (
     <div className="loom-main-content">
@@ -174,14 +181,14 @@ const TimelineTabBase = ({
       {flatItems.length > 0 && (
         <div className="loom-timeline-list">
           <List
-            ref={listRef}
-            height={listHeight}
+            listRef={listRef}
             rowCount={flatItems.length}
             rowHeight={rowHeightFn}
-            width="100%"
-          >
-            {renderRow}
-          </List>
+            rowComponent={TimelineRow}
+            rowProps={rowProps}
+            overscanCount={3}
+            style={{ height: listHeight, width: "100%" }}
+          />
         </div>
       )}
       {filteredContributions.length === 0 && contributions.length > 0 && (

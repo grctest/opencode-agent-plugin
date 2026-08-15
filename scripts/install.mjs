@@ -217,6 +217,39 @@ try {
   console.log("");
   logInfo("Cleaning config...");
   configureOpencodeJson(opencodeDir);
+  
+  // Auto-download default embedding model
+  console.log("");
+  logInfo("Downloading default embedding model...");
+  const { execSync } = await import("node:child_process");
+  try {
+    execSync("npm run model:download", { 
+      cwd: PROJECT_ROOT, 
+      stdio: "inherit",
+      timeout: 120000 // 2 minute timeout
+    });
+    logInfo("Default embedding model downloaded successfully.");
+  } catch (err) {
+    logWarn(`Could not download default embedding model: ${err.message}`);
+    logInfo("You can download it manually later with: npm run model:download");
+  }
+
+  // Install runtime deps (onnxruntime-node, @huggingface/tokenizers) into the
+  // config's loom/deps dir so the deployed plugin can resolve them at runtime
+  // (bare imports resolve relative to the plugin file, not the project).
+  console.log("");
+  logInfo("Installing runtime deps (onnxruntime-node, @huggingface/tokenizers)...");
+  try {
+    execSync("npm install --prefix " + join(opencodeDir, "loom", "deps") + " onnxruntime-node@^1.27.0 @huggingface/tokenizers@^0.1.3", {
+      cwd: PROJECT_ROOT,
+      stdio: "inherit",
+      timeout: 300000 // 5 minute timeout
+    });
+    logInfo("Runtime deps installed successfully.");
+  } catch (err) {
+    logWarn(`Could not install runtime deps: ${err.message}`);
+    logInfo("Run: npm install --prefix " + join(opencodeDir, "loom", "deps") + " onnxruntime-node@^1.27.0 @huggingface/tokenizers@^0.1.3");
+  }
 } catch (err) {
   logError(err.message || "Installation failed");
   process.exit(1);

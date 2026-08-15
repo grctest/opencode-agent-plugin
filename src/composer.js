@@ -363,8 +363,8 @@ Examples:
 JSON array:`;
 
   const model = getModel();
-  if (!model) {
-    composerLogger.warn("no_model_for_domain_detection", "No model available for LLM domain detection — defaulting to general");
+  if (!model || !model.providerID || !model.modelID) {
+    composerLogger.warn("no_model_for_domain_detection", "No usable model available for LLM domain detection — defaulting to general");
     return [];
   }
 

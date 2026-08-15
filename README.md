@@ -36,6 +36,59 @@ npm run update:plugin     # update to latest version
 
 No manual configuration needed. The plugin is auto-discovered from your `plugins/` directory.
 
+The installer automatically downloads the default embedding model (`snowflake-arctic-embed-xs` INT8, ~23MB). If the download fails, you can manually download it later with `npm run model:download`.
+
+## Embedding Models
+
+The Loom uses vector embeddings for RAG-based context retrieval during deliberations. Embedding models are downloaded separately from the plugin and stored in `~/.config/opencode/loom/models/`.
+
+### Downloading Models
+
+```bash
+# Download the default model (INT8 quantization, ~23MB)
+npm run model:download
+
+# Download a specific model and quantization
+npm run model:download -- --model=Snowflake/snowflake-arctic-embed-xs --quant=onnx/model_int8.onnx
+```
+
+### Available Models
+
+| Model | Dims | Max Tokens | Quant | Size | Description |
+|-------|------|------------|-------|------|-------------|
+| `Snowflake/snowflake-arctic-embed-xs` | 384 | 512 | INT8 | ~23 MB | **Default** — tiny but powerful, based on all-MiniLM-L6-v2 |
+| `mixedbread-ai/mxbai-embed-xsmall-v1` | 384 | 4096 | INT8 | ~24 MB | Longer context window (4096 tokens) |
+| `MongoDB/mdbr-leaf-mt` | 384 | 512 | quantized | ~23 MB | Optimized for retrieval tasks |
+
+### Finding More Models
+
+Browse the MTEB leaderboard to find embedding models suited to your needs:
+
+- [Multilingual models](https://mteb-leaderboard.hf.space/benchmark/MTEB(Multilingual%2C%20v2)?mmods=text&minSize=1&maxSize=1000&openreq=license) — models supporting multiple languages
+- [English-only models](https://mteb-leaderboard.hf.space/benchmark/MTEB(eng%2C%20v2)?mmods=text&minSize=1&maxSize=1000&openreq=license) — models optimized for English
+
+Look for models with ONNX exports in their Hugging Face repository. Most sentence-transformers models provide INT8 quantizations suitable for CPU inference.
+
+Bear in mind that some encoding models may require changes to the plugin to work optimally.
+
+### Model Storage
+
+Models are stored globally at:
+```
+~/.config/opencode/loom/models/Snowflake/snowflake-arctic-embed-xs/
+├── model_int8.onnx      # ONNX model weights
+├── tokenizer.json       # Tokenizer configuration
+└── model.json           # Auto-generated metadata (dims, maxTokens, etc.)
+```
+
+### How Embedding Models Are Used
+
+1. **RAG Context Retrieval** — Round summaries and contributions are chunked, embedded, and indexed. When prompting agents, the system retrieves relevant prior context using cosine similarity.
+
+2. **Semantic Drift Detection** — Embeddings are used to compute semantic drift between rounds. If agents are rehashing the same ideas (low drift), the convergence check triggers early termination.
+
+3. **Token-Aware Chunking** — Text is split into chunks that respect the model's token limit. This ensures embeddings are accurate and not truncated.
+
 ## Quick Start
 
 ```

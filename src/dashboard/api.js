@@ -540,6 +540,53 @@ export class DashboardApi {
     this.#db.close();
     DashboardApi.cache.delete(this.#dbPath);
   }
+
+  /**
+   * Get the embedding model information for this meeting.
+   */
+  getEmbeddingModel(meetingId) {
+    const meeting = this.#db
+      .prepare(`SELECT embedding_model, embedding_dim FROM meetings WHERE id = ?`)
+      .get(meetingId);
+    return meeting ?? null;
+  }
+}
+
+/**
+ * List all downloaded embedding models.
+ */
+export function listDownloadedModels() {
+  const { homedir } = require("os");
+  const { join } = require("path");
+  const modelDir = join(homedir(), ".config", "opencode", "loom", "models");
+  
+  if (!existsSync(modelDir)) return [];
+  
+  const models = [];
+  try {
+    const entries = readdirSync(modelDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const modelJsonPath = join(modelDir, entry.name, "model.json");
+        if (existsSync(modelJsonPath)) {
+          try {
+            const stat = statSync(modelJsonPath);
+            if (stat.size > 0) {
+              const content = require("fs").readFileSync(modelJsonPath, "utf-8");
+              const modelJson = JSON.parse(content);
+              models.push(modelJson);
+            }
+          } catch {
+            // Skip invalid model.json
+          }
+        }
+      }
+    }
+  } catch {
+    // Skip on error
+  }
+  
+  return models;
 }
 
 export function listMeetings(directory) {

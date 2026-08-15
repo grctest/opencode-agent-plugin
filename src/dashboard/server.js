@@ -7,6 +7,37 @@ import {
 import { join, resolve } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { getMetricsSnapshot } from "../metrics.js";
+import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_QUANT } from "../services/model-manager.js";
+
+const embeddingStatus = {
+  state: "idle",
+  model: null,
+  dims: null,
+  maxTokens: null,
+  message: null,
+  initializedAt: null,
+};
+
+async function initEmbeddingModel() {
+  if (embeddingStatus.state === "initializing") return;
+  embeddingStatus.state = "initializing";
+  embeddingStatus.message = null;
+  const started = Date.now();
+  try {
+    const { initializeEmbedder, getEmbeddingDim, getEmbeddingMaxTokens } = await import("../services/embedding-service.js");
+    await initializeEmbedder(DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_QUANT);
+    embeddingStatus.state = "ready";
+    embeddingStatus.model = DEFAULT_EMBEDDING_MODEL;
+    embeddingStatus.dims = getEmbeddingDim();
+    embeddingStatus.maxTokens = getEmbeddingMaxTokens();
+    embeddingStatus.initializedAt = new Date().toISOString();
+    console.log(`[Loom dashboard] Embedding model ${DEFAULT_EMBEDDING_MODEL} ready (${embeddingStatus.dims}d) in ${Date.now() - started}ms`);
+  } catch (err) {
+    embeddingStatus.state = "error";
+    embeddingStatus.message = err instanceof Error ? err.message : String(err);
+    console.warn(`[Loom dashboard] Embedding model init failed: ${embeddingStatus.message}`);
+  }
+}
 
 function getPackageVersion() {
   try {
@@ -95,6 +126,8 @@ export function startDashboard(directory, port) {
   const lastInterjectionId = new Map();
   const lastErrorId = new Map();
   const participantStatusCache = new Map();
+
+  initEmbeddingModel();
 
   const broadcast = (meetingId, event) => {
     const clients = sseClients.get(meetingId);
@@ -305,6 +338,7 @@ export function startDashboard(directory, port) {
           const offset = Number(url.searchParams.get("offset")) || 0;
           const contributions = api.getContributions(limit, offset);
           const totalContributions = api.getContributionsCount();
+          const embeddingModel = api.getEmbeddingModel(meetingId);
           return Response.json({
             state: api.getState(),
             participants: api.getParticipants(),
@@ -314,6 +348,8 @@ export function startDashboard(directory, port) {
             orchestrator_messages: api.getOrchestratorMessages(meetingId),
             agent_errors: api.getAgentErrors(),
             artifact: api.getArtifact(),
+            embedding_model: embeddingModel?.embedding_model ?? null,
+            embedding_dim: embeddingModel?.embedding_dim ?? null,
             contributionsPagination: { total: totalContributions, limit, offset },
           });
         }
@@ -347,8 +383,13 @@ export function startDashboard(directory, port) {
             status: "ok",
             uptime: process.uptime(),
             timestamp: new Date().toISOString(),
-            version: PACKAGE_VERSION,
           });
+        }
+
+        if (url.pathname === "/api/models") {
+          const { listDownloadedModels } = await import("./api.js");
+          const models = listDownloadedModels();
+          return Response.json({ models, status: embeddingStatus });
         }
 
         if (url.pathname === "/api/metrics") {
