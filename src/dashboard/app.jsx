@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { createRoot } from "react-dom/client";
 import { cn } from "./utils.js";
-import { StatusBadge } from "./components/Badges.jsx";
 import { Sidebar } from "./components/Sidebar.jsx";
 import { OverviewTab } from "./components/OverviewTab.jsx";
 import { OrchestratorTab } from "./components/OrchestratorTab.jsx";
@@ -12,12 +11,6 @@ import { ErrorBoundary } from "./ErrorBoundary.jsx";
 import { usePersistedState, useMeetingApi, useSSEReset, useEmbeddingStatus } from "./hooks.js";
 
 const POLLING_FALLBACK_INTERVAL = 3000;
-
-const CONVERGENCE_LABELS = {
-  consensus: "Consensus",
-  majority: "Majority vote",
-  moderator_forces: "Moderator-forced",
-};
 
 function useSSE(meetingId, onEvent) {
   const [connected, setConnected] = useState(false);
@@ -171,22 +164,20 @@ function ThemeProvider({ theme, setTheme, children }) {
   return children;
 }
 
-function MeetingHeader({ state, connected, reconnectAttempt, activeAgentCount, errorCount, selectedMeeting, embeddingModel, embeddingDim }) {
-  const modelName = embeddingModel?.split("/").pop() ?? embeddingModel;
+function MeetingHeader({ state, connected, reconnectAttempt, activeAgentCount, errorCount }) {
   return (
     <div className="loom-main-header">
       <h1 className="loom-title-lg loom-mb-sm">{state.question}</h1>
       <div className="loom-flex loom-flex-wrap loom-gap-md loom-items-center">
-        <StatusBadge status={state.status} />
-        <span className="loom-text-xs loom-text-muted">Round {state.round} / {state.max_rounds}</span>
-        <span className="loom-text-xs loom-text-muted">Convergence: {CONVERGENCE_LABELS[state.convergence] ?? state.convergence}</span>
-        {embeddingModel && (
-          <span className="loom-text-xs loom-text-muted" title={`Model: ${embeddingModel} (${embeddingDim}d)`}>
-            <span aria-hidden="true">🧮</span> {modelName} ({embeddingDim}d)
-          </span>
-        )}
         <span className={cn("loom-text-xs", connected ? "loom-text-live" : "loom-text-muted")}>
-          {connected ? "● live" : reconnectAttempt > 0 ? `○ reconnecting (${reconnectAttempt})` : "○ offline"}
+          {connected ? "● live" : reconnectAttempt > 0 ? (
+            <span
+              className="loom-reconnect-badge"
+              title={`Reconnecting to live updates (attempt ${reconnectAttempt}/10).\nState keeps refreshing, but at a slower rate.`}
+            >
+              ⚠ reconnecting ({reconnectAttempt})
+            </span>
+          ) : "○ offline"}
         </span>
         {activeAgentCount > 0 && (
           <span className="loom-text-xs loom-text-active">
@@ -198,13 +189,6 @@ function MeetingHeader({ state, connected, reconnectAttempt, activeAgentCount, e
             <span aria-hidden="true">⚠</span> {errorCount} error{errorCount > 1 ? "s" : ""}
           </span>
         )}
-        <a
-          className="pure-button loom-export-btn"
-          href={`/api/export?meeting=${selectedMeeting}`}
-          download
-        >
-          ↓ Export Markdown
-        </a>
       </div>
     </div>
   );
@@ -232,23 +216,6 @@ function ExtensionBanner({ banner, onDismiss }) {
         <span className="loom-extension-prompt">{banner.prompt}</span>
       </div>
       <button className="loom-extension-dismiss" onClick={onDismiss}>✕</button>
-    </div>
-  );
-}
-
-function ConnectionBanner({ connected, reconnectAttempt, lastError }) {
-  const visible = !connected && (lastError != null || reconnectAttempt > 0);
-  if (!visible) return null;
-  return (
-    <div className="loom-card loom-connection-banner">
-      <span className="loom-connection-icon" aria-hidden="true">{lastError ? "⚠" : "⟳"}</span>
-      <div className="loom-connection-body">
-        <span className="loom-connection-title">
-          {lastError ? "Live updates interrupted" : "Reconnecting to live updates"}
-        </span>
-        {lastError && <span className="loom-connection-reason">{lastError}</span>}
-        <span className="loom-connection-hint">State keeps refreshing, but at a slower rate.</span>
-      </div>
     </div>
   );
 }
@@ -503,9 +470,6 @@ export function App() {
                 reconnectAttempt={reconnectAttempt}
                 activeAgentCount={activeAgentCount}
                 errorCount={errorCount}
-                selectedMeeting={selectedMeeting}
-                embeddingModel={embeddingModel}
-                embeddingDim={embeddingDim}
               />
             </ErrorBoundary>
           )}
@@ -518,14 +482,6 @@ export function App() {
             <ExtensionBanner
               banner={extensionBanner}
               onDismiss={dismissExtensionBanner}
-            />
-          </ErrorBoundary>
-
-          <ErrorBoundary fallbackMessage="Failed to render connection banner">
-            <ConnectionBanner
-              connected={connected}
-              reconnectAttempt={reconnectAttempt}
-              lastError={lastError}
             />
           </ErrorBoundary>
 

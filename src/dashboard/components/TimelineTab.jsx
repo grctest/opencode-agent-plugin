@@ -203,9 +203,19 @@ const TimelineTabBase = ({
         className={dialogContribution ? `loom-dialog-type-${dialogContribution.contribution.type}` : ""}
       >
         {dialogContribution && (
-          <div className="loom-prose" dangerouslySetInnerHTML={{
-            __html: renderMarkdown(dialogContribution.contribution.content ?? "")
-          }} />
+          <>
+            <div className="loom-prose" dangerouslySetInnerHTML={{
+              __html: renderMarkdown(dialogContribution.contribution.content ?? "")
+            }} />
+            <div className="loom-dialog-footer">
+              <button
+                className="pure-button pure-button-small loom-copy-btn"
+                onClick={() => navigator.clipboard.writeText(dialogContribution.contribution.content ?? "")}
+              >
+                Copy text
+              </button>
+            </div>
+          </>
         )}
       </ContentDialog>
     </div>

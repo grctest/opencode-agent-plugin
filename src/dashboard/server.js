@@ -392,6 +392,39 @@ export function startDashboard(directory, port) {
           return Response.json({ models, status: embeddingStatus });
         }
 
+        if (url.pathname === "/api/models/select" && req.method === "POST") {
+          const body = await req.json().catch(() => null);
+          if (!body?.model) {
+            return Response.json({ error: "model name required" }, { status: 400 });
+          }
+          const { listDownloadedModels } = await import("./api.js");
+          const models = listDownloadedModels();
+          const matched = models.find((m) => m.name === body.model || m.id === body.model);
+          if (!matched) {
+            return Response.json({ error: "model not found among downloaded models" }, { status: 404 });
+          }
+          if (embeddingStatus.state === "initializing") {
+            return Response.json({ error: "embedding model is currently initializing, please wait" }, { status: 409 });
+          }
+          const { initializeEmbedder, getEmbeddingDim, getEmbeddingMaxTokens } = await import("../services/embedding-service.js");
+          embeddingStatus.state = "initializing";
+          embeddingStatus.message = null;
+          try {
+            await initializeEmbedder(matched.name, matched.quant ?? "onnx/model_int8.onnx");
+            embeddingStatus.state = "ready";
+            embeddingStatus.model = matched.name;
+            embeddingStatus.dims = getEmbeddingDim();
+            embeddingStatus.maxTokens = getEmbeddingMaxTokens();
+            embeddingStatus.initializedAt = new Date().toISOString();
+            embeddingStatus.message = null;
+            return Response.json({ ok: true, status: embeddingStatus });
+          } catch (err) {
+            embeddingStatus.state = "error";
+            embeddingStatus.message = err instanceof Error ? err.message : String(err);
+            return Response.json({ error: embeddingStatus.message }, { status: 500 });
+          }
+        }
+
         if (url.pathname === "/api/metrics") {
           return Response.json(getMetricsSnapshot());
         }

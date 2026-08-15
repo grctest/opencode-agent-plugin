@@ -61,6 +61,14 @@ function OutputTabBase({ artifact, participants }) {
       <div className="loom-card">
         <h3 className="loom-title-sm loom-mb-sm">Full Artifact</h3>
         <pre className="loom-artifact-pre">{artifact.content}</pre>
+        <div className="loom-dialog-footer">
+          <button
+            className="pure-button loom-copy-btn"
+            onClick={() => navigator.clipboard.writeText(artifact.content ?? "")}
+          >
+            Copy full artifact
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -201,6 +201,79 @@ input {
   margin: 0 0 0.5rem;
 }
 
+/* Sidebar model card */
+.loom-sidebar-model-card {
+  padding: 0.5rem 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.loom-sidebar-model-card-clickable {
+  cursor: pointer;
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+
+.loom-sidebar-model-card-clickable:hover {
+  border-color: var(--color-ring);
+  background: var(--color-secondary);
+}
+
+.loom-sidebar-model-card-clickable:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+}
+
+.loom-sidebar-model-row {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.8rem;
+}
+
+.loom-sidebar-model-name {
+  font-weight: 500;
+}
+
+.loom-sidebar-model-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-left: auto;
+}
+
+.loom-sidebar-model-dot-ready { background: #16a34a; }
+.loom-sidebar-model-dot-error { background: #dc2626; }
+.loom-sidebar-model-dot-loading { background: #ca8a04; }
+
+/* Model selector dialog options */
+.loom-sidebar-model-option {
+  padding: 0.625rem 0.75rem;
+  cursor: pointer;
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+
+.loom-sidebar-model-option:hover {
+  border-color: var(--color-ring);
+  background: var(--color-secondary);
+}
+
+.loom-sidebar-model-option-active {
+  border-color: var(--color-primary);
+  background: color-mix(in oklch, var(--color-primary) 8%, var(--color-card));
+  cursor: default;
+}
+
+.loom-sidebar-model-option-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.loom-sidebar-model-option-name {
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
 .loom-main {
   flex: 1;
   overflow-y: auto;
@@ -557,45 +630,20 @@ input {
   color: var(--color-foreground);
 }
 
-/* Connection banner */
-.loom-connection-banner {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.75rem;
-  padding: 0.625rem 0.875rem;
-  margin-bottom: 1rem;
-  background: color-mix(in oklch, #b45309 14%, var(--color-card));
-  border: 1px solid color-mix(in oklch, #b45309 35%, var(--color-border));
-  border-radius: var(--radius-md);
-}
-
-.loom-connection-icon {
-  font-size: 1rem;
-  line-height: 1.25;
-}
-
-.loom-connection-body {
-  display: flex;
-  flex-direction: column;
-  gap: 0.125rem;
-  flex: 1;
-  min-width: 0;
-}
-
-.loom-connection-title {
-  font-size: 0.75rem;
+/* Reconnect badge (inline in header) */
+.loom-reconnect-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.7rem;
   font-weight: 600;
   color: #d97706;
-}
-
-.loom-connection-reason {
-  font-size: 0.75rem;
-  color: var(--color-foreground);
-}
-
-.loom-connection-hint {
-  font-size: 0.7rem;
-  color: var(--color-muted-foreground);
+  background: color-mix(in oklch, #b45309 12%, var(--color-card));
+  border: 1px solid color-mix(in oklch, #b45309 30%, var(--color-border));
+  border-radius: var(--radius-md);
+  white-space: nowrap;
+  cursor: default;
 }
 
 /* Extension marker in timeline */
@@ -659,19 +707,48 @@ input {
 
 /* Participant card */
 .loom-participant-card {
-  transition: border-color 150ms ease;
+  transition: border-color 150ms ease, background-color 150ms ease;
+  cursor: pointer;
+}
+
+.loom-participant-card:hover {
+  background: var(--color-secondary);
+  border-color: var(--color-ring);
 }
 
 .loom-participant-card-error {
   border-color: var(--color-destructive);
 }
 
-.loom-participant-contribs {
-  margin-top: 0.25rem;
+.loom-participant-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  margin-bottom: 0.125rem;
+}
+
+.loom-participant-card-title {
+  font-size: 0.8rem;
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--color-foreground);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .loom-contrib-count {
-  font-size: 0.75rem;
+  display: block;
+  font-size: 0.7rem;
+  color: var(--color-muted-foreground);
+  margin-bottom: 0.0625rem;
+}
+
+.loom-participant-model {
+  display: block;
+  font-size: 0.65rem;
   color: var(--color-muted-foreground);
 }
 
@@ -969,6 +1046,48 @@ input {
   margin-top: 0.25rem;
 }
 
+/* Type stats (numeric replacement for chart) */
+.loom-type-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.loom-type-stat-row {
+  display: grid;
+  grid-template-columns: 6rem 2.5rem 1fr;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+}
+
+.loom-type-stat-name {
+  color: var(--color-foreground);
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+.loom-type-stat-count {
+  text-align: right;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.loom-type-stat-bar-track {
+  height: 6px;
+  background: var(--color-secondary);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.loom-type-stat-bar {
+  height: 100%;
+  background: var(--color-primary);
+  border-radius: 3px;
+  opacity: 0.85;
+  min-width: 2px;
+}
+
 .loom-stat-badges {
   display: flex;
   flex-wrap: wrap;
@@ -1090,12 +1209,12 @@ input {
 .loom-vrow {
   overflow: hidden;
   box-sizing: border-box;
-  padding: 4px 0;
+  padding: 2px 0;
 }
 
 /* Round groups */
-.loom-round-group { margin-bottom: 1rem; }
-.loom-round-group + .loom-round-group { margin-top: 1.5rem; }
+.loom-round-group { margin-bottom: 0.375rem; }
+.loom-round-group + .loom-round-group { margin-top: 0.375rem; }
 
 .loom-round-active .loom-round-header { border-color: var(--color-primary); }
 
@@ -1290,7 +1409,41 @@ input {
   color: var(--color-muted-foreground);
   padding: 0.25rem;
 }
-.loom-dialog-close:hover { color: var(--color-foreground); }
+.loom-dialog-close:hover {   color: var(--color-foreground);
+}
+
+/* Dialog footer (copy button) */
+.loom-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 0.75rem;
+  margin-top: 0.75rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.loom-copy-btn {
+  font-size: 0.75rem;
+  padding: 0.35rem 0.75rem;
+}
+
+/* Participant detail dialog */
+.loom-participant-detail-section {
+  margin-bottom: 0.75rem;
+}
+
+.loom-participant-detail-section:last-child {
+  margin-bottom: 0;
+}
+
+.loom-participant-detail-label {
+  display: block;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-muted-foreground);
+  margin-bottom: 0.25rem;
+}
 
 .loom-dialog-body {
   padding: 1.5rem;

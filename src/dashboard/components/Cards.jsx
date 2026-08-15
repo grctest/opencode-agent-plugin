@@ -81,14 +81,20 @@ export const ContentDialog = memo(({ open, onClose, title, className, children }
   );
 });
 
-export const ParticipantCard = memo(({ participant, error, contributionsByRound }) => {
-  const [expanded, setExpanded] = useState(false);
-  const preview = useMemo(() => participant.persona.slice(0, 200), [participant.persona]);
-  const isLong = participant.persona.length > 200;
+export const ParticipantCard = memo(({ participant, error, contributionsByRound, onSelect }) => {
   const totalContribs = useMemo(
     () => Object.values(contributionsByRound ?? {}).reduce((a, b) => a + b, 0),
     [contributionsByRound]
   );
+
+  const personaTitle = useMemo(() => {
+    const p = participant.persona ?? "";
+    const firstLine = p.split("\n").find((l) => l.trim().length > 0) ?? "";
+    const cleaned = firstLine.replace(/^#+\s*/, "").replace(/[:].*$/, "").trim();
+    if (cleaned.length > 0 && cleaned.length <= 60) return cleaned;
+    if (cleaned.length > 60) return cleaned.slice(0, 57) + "...";
+    return participant.name;
+  }, [participant.persona, participant.name]);
 
   const statusIndicator = () => {
     if (error) {
@@ -104,38 +110,29 @@ export const ParticipantCard = memo(({ participant, error, contributionsByRound 
   };
 
   return (
-    <div className={cn("loom-card", "loom-participant-card", error && "loom-participant-card-error")}>
-      <div className="loom-flex loom-flex-between loom-mb-sm">
-        <span className="loom-title-sm loom-flex loom-gap-xs loom-items-center">
-          {statusIndicator()}
-          {participant.name}
-        </span>
+    <div
+      className={cn("loom-card", "loom-participant-card", error && "loom-participant-card-error")}
+      onClick={() => onSelect?.(participant)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect?.(participant); } }}
+    >
+      <div className="loom-participant-card-header">
+        {statusIndicator()}
+        <span className="loom-participant-card-title">{personaTitle}</span>
         <TierBadge tier={participant.tier} />
       </div>
-      <p className="loom-text loom-text-muted">
-        {expanded || !isLong ? participant.persona : `${preview}...`}
-      </p>
-      {isLong && (
-        <button className="loom-link-btn" onClick={() => setExpanded(!expanded)}>
-          {expanded ? "Show less" : "Show more"}
-        </button>
-      )}
       {totalContribs > 0 && (
-        <div className="loom-participant-contribs">
-          <span className="loom-contrib-count">{totalContribs} contribution{totalContribs !== 1 ? "s" : ""}</span>
-        </div>
+        <span className="loom-contrib-count">{totalContribs} contribution{totalContribs !== 1 ? "s" : ""}</span>
+      )}
+      {participant.model_id && (
+        <span className="loom-participant-model">{participant.model_id}</span>
       )}
       {error && (
         <div className="loom-error-detail">
           <span className="loom-error-type">{error.error_type}</span>
           <span className="loom-error-message">{error.error_message}</span>
-          <span className="loom-error-attempts">{error.attempts} attempts</span>
         </div>
-      )}
-      {participant.model_id && (
-        <p className="loom-text-xs loom-text-muted loom-mt-xs">
-          {participant.provider_id}/{participant.model_id}
-        </p>
       )}
     </div>
   );
@@ -269,18 +266,6 @@ export const AgentPerspective = memo(({ participant, meeting }) => {
         <TierBadge tier={participant.tier} />
       </div>
       <div className="loom-agent-perspective-body">
-        <div className="loom-agent-perspective-section">
-          <span className="loom-agent-perspective-label">Persona</span>
-          <p className="loom-text-xs loom-text-muted">{participant.persona}</p>
-        </div>
-        <div className="loom-agent-perspective-section">
-          <span className="loom-agent-perspective-label">Agenda</span>
-          <p className="loom-text-xs loom-text-muted">{participant.agenda}</p>
-        </div>
-        <div className="loom-agent-perspective-section">
-          <span className="loom-agent-perspective-label">Model</span>
-          <p className="loom-text-xs loom-text-muted">{participant.provider_id}/{participant.model_id}</p>
-        </div>
         {fabricPreview && (
           <div className="loom-agent-perspective-section">
             <span className="loom-agent-perspective-label">Shared Context (Fabric)</span>
