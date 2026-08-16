@@ -87,14 +87,7 @@ export const ParticipantCard = memo(({ participant, error, contributionsByRound,
     [contributionsByRound]
   );
 
-  const personaTitle = useMemo(() => {
-    const p = participant.persona ?? "";
-    const firstLine = p.split("\n").find((l) => l.trim().length > 0) ?? "";
-    const cleaned = firstLine.replace(/^#+\s*/, "").replace(/[:].*$/, "").trim();
-    if (cleaned.length > 0 && cleaned.length <= 60) return cleaned;
-    if (cleaned.length > 60) return cleaned.slice(0, 57) + "...";
-    return participant.name;
-  }, [participant.persona, participant.name]);
+  const personaTitle = participant.name;
 
   const statusIndicator = () => {
     if (error) {
@@ -189,9 +182,6 @@ export const ContributionItem = memo(({ contribution, participantName, onDialogO
       ) : (
         <div className="loom-prose" dangerouslySetInnerHTML={{ __html: html }} />
       )}
-      {isLong && (
-        <span className="loom-link-btn">Show full output</span>
-      )}
     </div>
   );
 });
@@ -233,6 +223,48 @@ export const ReflectionInline = memo(({ reflection, contributions, participantNa
         ↳ Reflection on {triggerAgentName}'s {triggerType}
       </span>
       <div className="loom-prose" dangerouslySetInnerHTML={{ __html: html }} />
+    </div>
+  );
+});
+
+export const ReflectionRow = memo(({ reflection, contributions, participantName, onDialogOpen }) => {
+  const trigger = useMemo(() => {
+    if (!reflection.targets_which) return null;
+    return contributions.find((c) => c.id === reflection.targets_which);
+  }, [reflection.targets_which, contributions]);
+
+  const triggerType = trigger?.type?.toUpperCase() ?? "CONTRIBUTION";
+  const triggerAgentName = trigger ? participantName(trigger.participant_id) : "another agent";
+
+  const content = reflection.content ?? "";
+  const stripped = useMemo(() => {
+    return content.replace(/^\[Reflection on #\d+ \[[\w]+\] by .+?\]\s*/m, "");
+  }, [content]);
+  const isLong = stripped.length > 300;
+  const html = useMemo(() => renderMarkdown(stripped), [stripped]);
+
+  const openDialog = () => onDialogOpen?.({ contribution: reflection, participantName: participantName(reflection.participant_id), isReflection: true, triggerAgentName, triggerType });
+
+  return (
+    <div
+      className={cn("loom-card", "loom-contribution-card", "loom-contrib-type-reflection", "loom-reflection-row", isLong && "loom-contrib-clickable")}
+      onClick={openDialog}
+      role={isLong ? "button" : undefined}
+      tabIndex={isLong ? 0 : undefined}
+      onKeyDown={isLong ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDialog(); } } : undefined}
+    >
+      <div>
+        <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">
+          <span className="loom-badge loom-badge-reflection">reflection</span>
+          <span className="loom-text-xs loom-text-muted">on {triggerAgentName}'s {triggerType}</span>
+          <span className="loom-text-xs loom-text-muted">{relativeTime(reflection.created_at)}</span>
+        </div>
+      </div>
+      {isLong ? (
+        <p className="loom-text loom-text-muted">{stripped.slice(0, 300)}...</p>
+      ) : (
+        <div className="loom-prose" dangerouslySetInnerHTML={{ __html: html }} />
+      )}
     </div>
   );
 });

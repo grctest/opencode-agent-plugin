@@ -165,21 +165,11 @@ function ThemeProvider({ theme, setTheme, children }) {
   return children;
 }
 
-function MeetingHeader({ state, connected, reconnectAttempt, activeAgentCount, errorCount }) {
+function MeetingHeader({ state, activeAgentCount, errorCount }) {
   return (
     <div className="loom-main-header">
       <h1 className="loom-title-lg loom-mb-sm">{state.question}</h1>
       <div className="loom-flex loom-flex-wrap loom-gap-md loom-items-center">
-        <span className={cn("loom-text-xs", connected ? "loom-text-live" : "loom-text-muted")}>
-          {connected ? "● live" : reconnectAttempt > 0 ? (
-            <span
-              className="loom-reconnect-badge"
-              title={`Reconnecting to live updates (attempt ${reconnectAttempt}/10).\nState keeps refreshing, but at a slower rate.`}
-            >
-              ⚠ reconnecting ({reconnectAttempt})
-            </span>
-          ) : "○ offline"}
-        </span>
         {activeAgentCount > 0 && (
           <span className="loom-text-xs loom-text-active">
             <span aria-hidden="true">⏳</span> {activeAgentCount} active
@@ -432,6 +422,20 @@ export function App() {
     return map;
   }, [contributions]);
 
+  const contributionCountsByParticipant = useMemo(() => {
+    const map = {};
+    for (const c of contributions) {
+      const pid = c.participant_id;
+      if (!map[pid]) map[pid] = { contributions: 0, reflections: 0 };
+      if (c.type === "reflection") {
+        map[pid].reflections++;
+      } else {
+        map[pid].contributions++;
+      }
+    }
+    return map;
+  }, [contributions]);
+
   const toggleRoundCollapse = useCallback((round) => {
     setCollapsedRounds((prev) =>
       prev.includes(round) ? prev.filter((r) => r !== round) : [...prev, round]
@@ -467,8 +471,11 @@ export function App() {
             setTheme={setTheme}
             agentErrors={agentErrors}
             contributionsByParticipant={contributionsByParticipant}
+            contributionCountsByParticipant={contributionCountsByParticipant}
             selectedMeeting={selectedMeeting}
             embeddingStatus={embeddingStatus}
+            connected={connected}
+            reconnectAttempt={reconnectAttempt}
           />
          </ErrorBoundary>
 
@@ -477,8 +484,6 @@ export function App() {
             <ErrorBoundary fallbackMessage="Failed to render meeting header">
               <MeetingHeader
                 state={state}
-                connected={connected}
-                reconnectAttempt={reconnectAttempt}
                 activeAgentCount={activeAgentCount}
                 errorCount={errorCount}
               />

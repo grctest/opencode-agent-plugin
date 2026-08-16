@@ -113,36 +113,6 @@ export const OverviewTab = memo(({
           </div>
         </div>
       )}
-      {(() => {
-        const reflections = contributions.filter((c) => c.type === "reflection");
-        if (reflections.length === 0) return null;
-
-        const byAgent = {};
-        for (const r of reflections) {
-          const pid = r.participant_id;
-          byAgent[pid] = (byAgent[pid] || 0) + 1;
-        }
-        const agentCount = Object.keys(byAgent).length;
-
-        return (
-          <div className="loom-card loom-mt-sm">
-            <h3 className="loom-title-sm loom-mb-sm">Reflection Activity</h3>
-            <span className="loom-text loom-text-muted">
-              {reflections.length} reflection{reflections.length !== 1 ? "s" : ""} across {agentCount} agent{agentCount !== 1 ? "s" : ""}
-            </span>
-            <div className="loom-reflection-stats" style={{ marginTop: "0.5rem" }}>
-              {Object.entries(byAgent).map(([pid, count]) => (
-                <div key={pid} className="loom-reflection-entry" style={{ marginBottom: "0.25rem" }}>
-                  <span className="loom-reflection-name">{participantName(pid)}</span>
-                  <span className="loom-text-xs loom-text-muted" style={{ marginLeft: "0.5rem" }}>
-                    {count} reflection{count !== 1 ? "s" : ""}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        );
-      })()}
     </div>
   );
 });

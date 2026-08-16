@@ -1,6 +1,6 @@
 import { useRef, useMemo, useCallback, useState, memo } from "react";
-import { cn } from "../utils.js";
-import { ContributionItem, TurnRequestItem, ThinkingCard, ReflectionInline, ContentDialog, renderMarkdown } from "./Cards.jsx";
+import { cn, typeClass } from "../utils.js";
+import { ContributionItem, TurnRequestItem, ThinkingCard, ReflectionRow, ContentDialog, renderMarkdown } from "./Cards.jsx";
 import { LoadingSkeleton } from "./Skeleton.jsx";
 import { List } from "react-window";
 
@@ -15,10 +15,9 @@ function getRowHeight(item) {
     return HEADER_HEIGHT + (item.showExtensionMarker ? EXTENSION_MARKER_HEIGHT : 0);
   }
   if (item.type === "turn_request") return INTERJECTION_HEIGHT;
+  if (item.type === "reflection") return REFLECTION_HEIGHT;
   if (item.type === "agent_turn") {
-    const baseHeight = 115;
-    const reflectionHeight = (item.reflections?.length ?? 0) * REFLECTION_HEIGHT;
-    return baseHeight + reflectionHeight;
+    return 115;
   }
   return 115;
 }
@@ -56,10 +55,19 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
           {item.contributions.map((c) => (
             <ContributionItem key={c.id} contribution={c} participantName={participantName(item.agentId)} onDialogOpen={onDialogOpen} />
           ))}
-          {item.reflections.map((r) => (
-            <ReflectionInline key={r.id} reflection={r} contributions={contributions} participantName={participantName} />
-          ))}
         </div>
+      </div>
+    );
+  }
+  if (item.type === "reflection") {
+    return (
+      <div style={style} className="loom-vrow loom-vrow-reflection">
+        <ReflectionRow
+          reflection={item.reflection}
+          contributions={contributions}
+          participantName={participantName}
+          onDialogOpen={onDialogOpen}
+        />
       </div>
     );
   }
@@ -125,6 +133,7 @@ const TimelineTabBase = ({
 
         const regularByAgent = new Map();
         const reflectionsByTarget = new Map();
+        const consumedReflectionIds = new Set();
 
         for (const c of contribs) {
           if (c.type === "reflection") {
@@ -141,19 +150,37 @@ const TimelineTabBase = ({
         }
 
         for (const [agentId, agentContribs] of regularByAgent) {
-          const agentReflections = [];
-          for (const c of agentContribs) {
-            if (reflectionsByTarget.has(c.id)) {
-              agentReflections.push(...reflectionsByTarget.get(c.id));
-            }
-          }
           items.push({
             type: "agent_turn",
             agentId,
             round,
             contributions: agentContribs,
-            reflections: agentReflections,
           });
+
+          for (const c of agentContribs) {
+            if (reflectionsByTarget.has(c.id)) {
+              for (const r of reflectionsByTarget.get(c.id)) {
+                consumedReflectionIds.add(r.id);
+                items.push({
+                  type: "reflection",
+                  reflection: r,
+                  round,
+                });
+              }
+            }
+          }
+        }
+
+        for (const [, reflections] of reflectionsByTarget) {
+          for (const r of reflections) {
+            if (!consumedReflectionIds.has(r.id)) {
+              items.push({
+                type: "reflection",
+                reflection: r,
+                round,
+              });
+            }
+          }
         }
 
         for (const tr of roundTurnRequests) {
@@ -199,7 +226,8 @@ const TimelineTabBase = ({
               key={type}
               className={cn(
                 "pure-button loom-filter-btn",
-                activeType === type && "pure-button-active"
+                activeType === type && "pure-button-active",
+                activeType === type && typeClass(type)
               )}
               onClick={() => onActiveTypeChange(type)}
             >
@@ -246,8 +274,12 @@ const TimelineTabBase = ({
       <ContentDialog
         open={dialogContribution !== null}
         onClose={() => setDialogContribution(null)}
-        title={dialogContribution ? `${dialogContribution.participantName} — ${dialogContribution.contribution.type}` : ""}
-        className={dialogContribution ? `loom-dialog-type-${dialogContribution.contribution.type}` : ""}
+        title={dialogContribution ? (dialogContribution.isReflection
+          ? `Reflection by ${dialogContribution.participantName}`
+          : `${dialogContribution.participantName} — ${dialogContribution.contribution.type}`) : ""}
+        className={dialogContribution ? (dialogContribution.isReflection
+          ? "loom-dialog-type-reflection"
+          : `loom-dialog-type-${dialogContribution.contribution.type}`) : ""}
       >
         {dialogContribution && (
           <>

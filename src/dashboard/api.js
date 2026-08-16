@@ -194,7 +194,16 @@ export class DashboardApi {
         `SELECT id, participant_id, round, type, content, target_which, created_at
          FROM contributions ORDER BY round ASC, id ASC LIMIT ? OFFSET ?`,
       )
-      .all(limit, offset);
+      .all(limit, offset)
+      .map((r) => ({
+        id: r.id,
+        participant_id: r.participant_id,
+        round: r.round,
+        type: r.type,
+        content: r.content,
+        targets_which: r.target_which ?? null,
+        created_at: r.created_at,
+      }));
   }
 
   getContributionsCount() {
@@ -208,7 +217,16 @@ export class DashboardApi {
         `SELECT id, participant_id, round, type, content, target_which, created_at
          FROM contributions WHERE id > ? ORDER BY id ASC`,
       )
-      .all(sinceId);
+      .all(sinceId)
+      .map((r) => ({
+        id: r.id,
+        participant_id: r.participant_id,
+        round: r.round,
+        type: r.type,
+        content: r.content,
+        targets_which: r.target_which ?? null,
+        created_at: r.created_at,
+      }));
   }
 
   getTurnRequests() {

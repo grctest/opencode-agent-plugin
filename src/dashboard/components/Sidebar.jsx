@@ -68,8 +68,11 @@ const Sidebar = memo(function Sidebar({
   setTheme,
   agentErrors,
   contributionsByParticipant,
+  contributionCountsByParticipant,
   selectedMeeting,
   embeddingStatus,
+  connected,
+  reconnectAttempt,
 }) {
   const [selectedParticipant, setSelectedParticipant] = useState(null);
   const [modelDialogOpen, setModelDialogOpen] = useState(false);
@@ -126,7 +129,19 @@ const Sidebar = memo(function Sidebar({
   return (
     <aside className="loom-sidebar">
       <div className="loom-sidebar-section">
-        <h2 className="loom-sidebar-title">Loom</h2>
+        <div className="loom-flex loom-flex-between loom-items-center">
+          <h2 className="loom-sidebar-title">Loom</h2>
+          <span className={cn("loom-text-xs", connected ? "loom-text-live" : "loom-text-muted")}>
+            {connected ? "● live" : reconnectAttempt > 0 ? (
+              <span
+                className="loom-reconnect-badge"
+                title={`Reconnecting to live updates (attempt ${reconnectAttempt}/10).\nState keeps refreshing, but at a slower rate.`}
+              >
+                ⚠ reconnecting ({reconnectAttempt})
+              </span>
+            ) : "○ offline"}
+          </span>
+        </div>
         <ThemeToggle theme={theme} setTheme={setTheme} />
         {modelName && (
           <div
@@ -214,6 +229,18 @@ const Sidebar = memo(function Sidebar({
               <span className="loom-participant-detail-label">Seniority</span>
               <TierBadge tier={selectedParticipant.tier} />
             </div>
+            {contributionCountsByParticipant[selectedParticipant.id] && (() => {
+              const counts = contributionCountsByParticipant[selectedParticipant.id];
+              return (
+                <div className="loom-participant-detail-section">
+                  <span className="loom-participant-detail-label">Activity</span>
+                  <div className="loom-flex loom-gap-md loom-items-center">
+                    <span className="loom-text">{counts.contributions} contribution{counts.contributions !== 1 ? "s" : ""}</span>
+                    <span className="loom-text">{counts.reflections} reflection{counts.reflections !== 1 ? "s" : ""}</span>
+                  </div>
+                </div>
+              );
+            })()}
             {errorByParticipant.get(selectedParticipant.id) && (() => {
               const err = errorByParticipant.get(selectedParticipant.id);
               return (
