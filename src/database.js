@@ -411,7 +411,7 @@ export class MeetingDatabase {
       round: r.round,
       content: r.content,
       type: r.type,
-      targets_which: r.target_which ?? null,
+      targets_which: r.target_which != null ? Number(r.target_which) : null,
       created_at: r.created_at,
     }));
   }
@@ -429,7 +429,7 @@ export class MeetingDatabase {
       round: r.round,
       content: r.content,
       type: r.type,
-      targets_which: r.target_which ?? null,
+      targets_which: r.target_which != null ? Number(r.target_which) : null,
       created_at: r.created_at,
     }));
   }
@@ -741,7 +741,7 @@ export class MeetingDatabase {
         content: c.content,
         type: c.type,
         round: c.round,
-        targets_which: c.target_which ?? null,
+        targets_which: c.target_which != null ? Number(c.target_which) : null,
         created_at: c.created_at,
       });
     }

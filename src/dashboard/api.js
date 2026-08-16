@@ -201,7 +201,7 @@ export class DashboardApi {
         round: r.round,
         type: r.type,
         content: r.content,
-        targets_which: r.target_which ?? null,
+        targets_which: r.target_which != null ? Number(r.target_which) : null,
         created_at: r.created_at,
       }));
   }
@@ -224,7 +224,7 @@ export class DashboardApi {
         round: r.round,
         type: r.type,
         content: r.content,
-        targets_which: r.target_which ?? null,
+        targets_which: r.target_which != null ? Number(r.target_which) : null,
         created_at: r.created_at,
       }));
   }

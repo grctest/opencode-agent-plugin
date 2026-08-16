@@ -1,5 +1,5 @@
 import { useRef, useMemo, useCallback, useState, memo } from "react";
-import { cn, typeClass } from "../utils.js";
+import { cn } from "../utils.js";
 import { ContributionItem, TurnRequestItem, ThinkingCard, ReflectionRow, ContentDialog, renderMarkdown } from "./Cards.jsx";
 import { LoadingSkeleton } from "./Skeleton.jsx";
 import { List } from "react-window";
@@ -88,12 +88,8 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
 const TimelineTabBase = ({
   contributions,
   groupedContributions,
-  filteredContributions,
   isWeaving,
   thinkingParticipants,
-  activeType,
-  onActiveTypeChange,
-  contributionTypes,
   collapsedRounds,
   onToggleCollapse,
   agentErrors,
@@ -210,32 +206,6 @@ const TimelineTabBase = ({
 
   return (
     <div className="loom-main-content">
-      <div className="loom-timeline-filter">
-        <div className="loom-flex loom-flex-wrap loom-gap-xs">
-          <button
-            className={cn(
-              "pure-button loom-filter-btn",
-              activeType === "" && "pure-button-active"
-            )}
-            onClick={() => onActiveTypeChange("")}
-          >
-            All
-          </button>
-          {contributionTypes.map((type) => (
-            <button
-              key={type}
-              className={cn(
-                "pure-button loom-filter-btn",
-                activeType === type && "pure-button-active",
-                activeType === type && typeClass(type)
-              )}
-              onClick={() => onActiveTypeChange(type)}
-            >
-              {type}
-            </button>
-          ))}
-        </div>
-      </div>
       {isWeaving && thinkingParticipants.length > 0 && (
         <div className="loom-thinking-placeholders">
           {thinkingParticipants.map((p) => (
@@ -264,11 +234,6 @@ const TimelineTabBase = ({
             overscanCount={3}
             style={{ height: listHeight, width: "100%" }}
           />
-        </div>
-      )}
-      {filteredContributions.length === 0 && contributions.length > 0 && (
-        <div className="loom-empty-state">
-          <p className="loom-text loom-text-muted">No contributions match your filter.</p>
         </div>
       )}
       <ContentDialog

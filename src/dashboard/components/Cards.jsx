@@ -235,6 +235,7 @@ export const ReflectionRow = memo(({ reflection, contributions, participantName,
 
   const triggerType = trigger?.type?.toUpperCase() ?? "CONTRIBUTION";
   const triggerAgentName = trigger ? participantName(trigger.participant_id) : "another agent";
+  const reflectionAgentName = participantName(reflection.participant_id);
 
   const content = reflection.content ?? "";
   const stripped = useMemo(() => {
@@ -243,7 +244,7 @@ export const ReflectionRow = memo(({ reflection, contributions, participantName,
   const isLong = stripped.length > 300;
   const html = useMemo(() => renderMarkdown(stripped), [stripped]);
 
-  const openDialog = () => onDialogOpen?.({ contribution: reflection, participantName: participantName(reflection.participant_id), isReflection: true, triggerAgentName, triggerType });
+  const openDialog = () => onDialogOpen?.({ contribution: reflection, participantName: reflectionAgentName, isReflection: true, triggerAgentName, triggerType });
 
   return (
     <div
@@ -256,7 +257,7 @@ export const ReflectionRow = memo(({ reflection, contributions, participantName,
       <div>
         <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">
           <span className="loom-badge loom-badge-reflection">reflection</span>
-          <span className="loom-text-xs loom-text-muted">on {triggerAgentName}'s {triggerType}</span>
+          <span className="loom-text-xs loom-text-muted">Reflection by {reflectionAgentName} on #{reflection.targets_which} [{triggerType}] by {triggerAgentName} (Round {reflection.round})</span>
           <span className="loom-text-xs loom-text-muted">{relativeTime(reflection.created_at)}</span>
         </div>
       </div>

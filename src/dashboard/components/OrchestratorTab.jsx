@@ -1,61 +1,56 @@
-import { useMemo, memo } from "react";
+import { useMemo, useState, useCallback, memo } from "react";
 import { List } from "react-window";
+import { ContentDialog } from "./Cards.jsx";
+import { cn } from "../utils.js";
 
-const TYPE_LABELS = {
-  domain: "Domain Detection",
-  moderation: "Moderation",
-  convergence: "Convergence Check",
-  compaction: "Context Compaction",
-  summary: "Round Summary",
-  orchestrator: "Orchestrator",
+const TYPE_META = {
+  domain: { emoji: "🔍", label: "Domain Detection" },
+  moderation: { emoji: "🛡️", label: "Moderation" },
+  convergence: { emoji: "🎯", label: "Convergence Check" },
+  compaction: { emoji: "📦", label: "Context Compaction" },
+  summary: { emoji: "📝", label: "Round Summary" },
+  orchestrator: { emoji: "🎛️", label: "Orchestrator" },
+  turn_order: { emoji: "🔄", label: "Turn Planning" },
 };
 
-const EXCHANGE_HEIGHT = 300;
+const ROW_HEIGHT = 36;
 const MAX_LIST_HEIGHT = 600;
 
-function formatContent(content, role) {
-  if (role === "user") {
-    const truncated = content.length > 300 ? content.slice(0, 300) + "..." : content;
-    return truncated;
-  }
-  return content.length > 500 ? content.slice(0, 500) + "..." : content;
-}
-
-const OrchestratorRow = memo(({ index, style, grouped }) => {
+const OrchestratorRow = memo(({ index, style, grouped, onSelect }) => {
   const group = grouped[index];
   if (!group) return null;
+  const rawType = group.query
+    ? group.query.type
+    : group.response
+      ? group.response.type
+      : null;
+  const meta = rawType ? (TYPE_META[rawType] || { emoji: "❓", label: rawType }) : { emoji: "❓", label: "Unknown" };
   return (
-    <div style={style} className="loom-vrow">
-      <div className="loom-orchestrator-exchange">
-        {group.query && (
-          <div className="loom-orchestrator-query">
-            <div className="loom-orchestrator-meta">
-              <span className="loom-orchestrator-type">
-                {TYPE_LABELS[group.query.type] || group.query.type}
-              </span>
-              <span className="loom-text-xs loom-text-muted">Query</span>
-            </div>
-            <div className="loom-orchestrator-content loom-orchestrator-content-query">
-              {formatContent(group.query.content, "user")}
-            </div>
-          </div>
-        )}
-        {group.response && (
-          <div className="loom-orchestrator-response">
-            <div className="loom-orchestrator-meta">
-              <span className="loom-text-xs loom-text-muted">Response</span>
-            </div>
-            <div className="loom-orchestrator-content loom-orchestrator-content-response">
-              {formatContent(group.response.content, "assistant")}
-            </div>
-          </div>
-        )}
-      </div>
+    <div
+      style={style}
+      className="loom-orchestrator-row"
+      role="button"
+      tabIndex={0}
+      onClick={() => onSelect(group)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect(group);
+        }
+      }}
+    >
+      <span className="loom-orchestrator-row-type">
+        <span className="loom-orchestrator-row-emoji" aria-hidden="true">{meta.emoji}</span>
+        {meta.label}
+      </span>
     </div>
   );
 });
 
 const OrchestratorTabBase = ({ messages = [] }) => {
+  const [selectedGroup, setSelectedGroup] = useState(null);
+  const [activeTab, setActiveTab] = useState("prompt");
+
   const grouped = useMemo(() => {
     const groups = [];
     let i = 0;
@@ -74,8 +69,17 @@ const OrchestratorTabBase = ({ messages = [] }) => {
   }, [messages]);
 
   const listHeight = useMemo(() => {
-    return Math.min(MAX_LIST_HEIGHT, grouped.length * EXCHANGE_HEIGHT);
+    return Math.min(MAX_LIST_HEIGHT, grouped.length * ROW_HEIGHT);
   }, [grouped.length]);
+
+  const handleSelect = useCallback((group) => {
+    setSelectedGroup(group);
+    setActiveTab("prompt");
+  }, []);
+
+  const handleClose = useCallback(() => {
+    setSelectedGroup(null);
+  }, []);
 
   if (messages.length === 0) {
     return (
@@ -91,18 +95,75 @@ const OrchestratorTabBase = ({ messages = [] }) => {
     );
   }
 
+  const rawType = selectedGroup
+    ? (selectedGroup.query?.type || selectedGroup.response?.type || null)
+    : null;
+  const dialogTitle = rawType ? (TYPE_META[rawType]?.label || rawType) : "";
+
   return (
     <div className="loom-main-content">
       <div className="loom-orchestrator-list">
         <List
           rowCount={grouped.length}
-          rowHeight={EXCHANGE_HEIGHT}
+          rowHeight={ROW_HEIGHT}
           rowComponent={OrchestratorRow}
-          rowProps={{ grouped }}
-          overscanCount={3}
+          rowProps={{ grouped, onSelect: handleSelect }}
+          overscanCount={5}
           style={{ height: listHeight, width: "100%" }}
         />
       </div>
+
+      <ContentDialog open={selectedGroup !== null} onClose={handleClose} title={dialogTitle}>
+        {selectedGroup && (
+          <div className="loom-orchestrator-dialog">
+            <div className="loom-orchestrator-tabs" role="tablist">
+              <button
+                role="tab"
+                aria-selected={activeTab === "prompt"}
+                className={cn("loom-orchestrator-tab", activeTab === "prompt" && "loom-orchestrator-tab-active")}
+                onClick={() => setActiveTab("prompt")}
+              >
+                Prompt
+              </button>
+              <button
+                role="tab"
+                aria-selected={activeTab === "response"}
+                className={cn("loom-orchestrator-tab", activeTab === "response" && "loom-orchestrator-tab-active")}
+                onClick={() => setActiveTab("response")}
+              >
+                Response
+              </button>
+            </div>
+            <div className="loom-orchestrator-dialog-content" role="tabpanel">
+              {activeTab === "prompt" && selectedGroup.query && (
+                <pre className="loom-orchestrator-full-content">{selectedGroup.query.content}</pre>
+              )}
+              {activeTab === "prompt" && !selectedGroup.query && (
+                <p className="loom-text loom-text-muted">No prompt recorded for this exchange.</p>
+              )}
+              {activeTab === "response" && selectedGroup.response && (
+                <pre className="loom-orchestrator-full-content">{selectedGroup.response.content}</pre>
+              )}
+              {activeTab === "response" && !selectedGroup.response && (
+                <p className="loom-text loom-text-muted">No response recorded for this exchange.</p>
+              )}
+            </div>
+            <div className="loom-dialog-footer">
+              <button
+                className="pure-button pure-button-small loom-copy-btn"
+                onClick={() => {
+                  const content = activeTab === "prompt"
+                    ? selectedGroup.query?.content ?? ""
+                    : selectedGroup.response?.content ?? "";
+                  navigator.clipboard.writeText(content);
+                }}
+              >
+                Copy
+              </button>
+            </div>
+          </div>
+        )}
+      </ContentDialog>
     </div>
   );
 }

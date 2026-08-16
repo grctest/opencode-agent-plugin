@@ -243,14 +243,11 @@ export function App() {
   const [selectedMeeting, setSelectedMeeting] = useState("");
   const [theme, setTheme] = useState(() => localStorage.getItem("loom-theme") ?? "system");
   const [activeTab, setActiveTab] = usePersistedState("active-tab", "overview");
-  const [activeType, setActiveType] = usePersistedState("active-type", "");
   const [collapsedRounds, setCollapsedRounds] = usePersistedState("collapsed-rounds", []);
-  const [scrolledToBottom, setScrolledToBottom] = useState(true);
   const [extensions, setExtensions] = useState([]);
   const [extensionBanner, setExtensionBanner] = useState(null);
 
   const bannerTimeoutRef = useRef(null);
-  const mainRef = useRef(null);
 
   const dismissExtensionBanner = useCallback(() => setExtensionBanner(null), []);
 
@@ -329,24 +326,6 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    const main = mainRef.current;
-    if (!main) return;
-    const handleScroll = () => {
-      const threshold = 100;
-      const atBottom = main.scrollHeight - main.scrollTop - main.clientHeight < threshold;
-      setScrolledToBottom(atBottom);
-    };
-    main.addEventListener("scroll", handleScroll, { passive: true });
-    return () => main.removeEventListener("scroll", handleScroll);
-  }, []);
-
-  useEffect(() => {
-    if (scrolledToBottom && mainRef.current) {
-      mainRef.current.scrollTop = mainRef.current.scrollHeight;
-    }
-  }, [contributions.length, scrolledToBottom]);
-
-  useEffect(() => {
     const handleKey = (e) => {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
       if (e.key === "j") {
@@ -363,12 +342,6 @@ export function App() {
     return () => window.removeEventListener("keydown", handleKey);
   }, [setActiveTab]);
 
-  const scrollToBottom = useCallback(() => {
-    if (mainRef.current) {
-      mainRef.current.scrollTo({ top: mainRef.current.scrollHeight, behavior: "smooth" });
-    }
-  }, []);
-
   const participantNameMap = useMemo(() => {
     const map = new Map();
     for (const p of participants) map.set(p.id, p.name);
@@ -377,23 +350,9 @@ export function App() {
 
   const participantName = useCallback((id) => participantNameMap.get(id) ?? id, [participantNameMap]);
 
-  const contributionTypes = useMemo(() => {
-    const types = new Set();
-    for (const c of contributions) types.add(c.type);
-    return Array.from(types).sort();
-  }, [contributions]);
-
-  const filteredContributions = useMemo(() => {
-    const type = activeType;
-    return contributions.filter((c) => {
-      if (type && c.type !== type) return false;
-      return true;
-    });
-  }, [contributions, activeType]);
-
   const groupedContributions = useMemo(() => {
     const groups = new Map();
-    for (const c of filteredContributions) {
+    for (const c of contributions) {
       if (!groups.has(c.round)) groups.set(c.round, []);
       groups.get(c.round).push(c);
     }
@@ -406,7 +365,7 @@ export function App() {
         ),
       ])
       .sort((a, b) => a[0] - b[0]);
-  }, [filteredContributions]);
+  }, [contributions]);
 
    const thinkingParticipants = useMemo(() => {
     return participants.filter((p) => p.status === "speaking");
@@ -479,7 +438,7 @@ export function App() {
           />
          </ErrorBoundary>
 
-        <main className="loom-main" ref={mainRef}>
+        <main className="loom-main">
           {state && (
             <ErrorBoundary fallbackMessage="Failed to render meeting header">
               <MeetingHeader
@@ -549,12 +508,8 @@ export function App() {
                 <TimelineTab
                   contributions={contributions}
                   groupedContributions={groupedContributions}
-                  filteredContributions={filteredContributions}
                   isWeaving={isWeaving}
                   thinkingParticipants={thinkingParticipants}
-                  activeType={activeType}
-                  onActiveTypeChange={setActiveType}
-                  contributionTypes={contributionTypes}
                   collapsedRounds={collapsedRounds}
                   onToggleCollapse={toggleRoundCollapse}
                   agentErrors={agentErrors}
@@ -583,12 +538,6 @@ export function App() {
               </div>
             )}
           </ErrorBoundary>
-
-          {!scrolledToBottom && (
-            <button className="loom-scroll-bottom" onClick={scrollToBottom} aria-label="Scroll to new contributions">
-              ↓ New contributions
-            </button>
-          )}
         </main>
       </div>
     </ThemeProvider>
