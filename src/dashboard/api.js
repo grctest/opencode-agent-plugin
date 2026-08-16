@@ -191,7 +191,7 @@ export class DashboardApi {
   getContributions(limit = 100, offset = 0) {
     return this.#db
       .prepare(
-        `SELECT id, participant_id, round, type, content, created_at
+        `SELECT id, participant_id, round, type, content, target_which, created_at
          FROM contributions ORDER BY round ASC, id ASC LIMIT ? OFFSET ?`,
       )
       .all(limit, offset);
@@ -205,26 +205,26 @@ export class DashboardApi {
   getContributionsSince(sinceId) {
     return this.#db
       .prepare(
-        `SELECT id, participant_id, round, type, content, created_at
+        `SELECT id, participant_id, round, type, content, target_which, created_at
          FROM contributions WHERE id > ? ORDER BY id ASC`,
       )
       .all(sinceId);
   }
 
-  getInterjections() {
+  getTurnRequests() {
     return this.#db
       .prepare(
         `SELECT id, participant_id, target_participant_id, round, content, priority, granted, pushback, resolved, created_at
-         FROM interjections ORDER BY id ASC`,
+         FROM turn_requests ORDER BY id ASC`,
       )
       .all();
   }
 
-  getTurnRequests() {
+  getTurnRequestsLegacy() {
     return this.#db
       .prepare(
         `SELECT participant_id, target_participant_id, round, content as reason, priority
-         FROM interjections ORDER BY id ASC`,
+         FROM turn_requests ORDER BY id ASC`,
       )
       .all()
       .map((r) => ({
@@ -236,7 +236,7 @@ export class DashboardApi {
   }
 
   getMaxTurnRequestId() {
-    const row = this.#db.prepare(`SELECT MAX(id) as max_id FROM interjections`).get();
+    const row = this.#db.prepare(`SELECT MAX(id) as max_id FROM turn_requests`).get();
     return row?.max_id ?? 0;
   }
 
@@ -244,7 +244,7 @@ export class DashboardApi {
     return this.#db
       .prepare(
         `SELECT participant_id, target_participant_id, content as reason, priority
-         FROM interjections WHERE id > ? ORDER BY id ASC`,
+         FROM turn_requests WHERE id > ? ORDER BY id ASC`,
       )
       .all(sinceId);
   }
@@ -309,7 +309,7 @@ export class DashboardApi {
     const meeting = this.getState();
     const participants = this.getParticipants();
     const contributions = this.getContributions(500, 0);
-    const interjections = this.getInterjections();
+    const turnRequests = this.getTurnRequests();
     const errors = this.getAgentErrors();
     const artifact = this.getArtifact();
 
@@ -353,13 +353,13 @@ export class DashboardApi {
       lines.push("");
     }
 
-    if (interjections.length > 0) {
-      lines.push(`## Interjections`);
+    if (turnRequests.length > 0) {
+      lines.push(`## Turn Requests`);
       lines.push("");
-      for (const ij of interjections) {
-        const participant = participants.find((p) => p.id === ij.participant_id);
-        const name = participant?.name ?? ij.participant_id;
-        lines.push(`- **[${name}]** P${ij.priority}: ${ij.content} → ${ij.granted ? "granted" : "denied"}`);
+      for (const tr of turnRequests) {
+        const participant = participants.find((p) => p.id === tr.participant_id);
+        const name = participant?.name ?? tr.participant_id;
+        lines.push(`- **[${name}]** P${tr.priority}: ${tr.content} → ${tr.granted ? "granted" : "denied"}`);
       }
       lines.push("");
     }
@@ -389,7 +389,7 @@ export class DashboardApi {
     const meeting = this.getState();
     const participants = this.getParticipants();
     const contributions = this.getContributions(500, 0);
-    const interjections = this.getInterjections();
+    const turnRequests = this.getTurnRequests();
     const errors = this.getAgentErrors();
     const artifact = this.getArtifact();
     const orchestratorMessages = this.getOrchestratorMessages(meetingId);
@@ -424,17 +424,17 @@ export class DashboardApi {
         targetsWhich: c.targets_which,
         createdAt: c.created_at,
       })),
-      interjections: interjections.map(ij => ({
-        id: ij.id,
-        participantId: ij.participant_id,
-        targetParticipantId: ij.target_participant_id,
-        round: ij.round,
-        priority: ij.priority,
-        content: ij.content,
-        granted: ij.granted,
-        pushback: ij.pushback,
-        resolved: ij.resolved,
-        createdAt: ij.created_at,
+      turn_requests: turnRequests.map(tr => ({
+        id: tr.id,
+        participantId: tr.participant_id,
+        targetParticipantId: tr.target_participant_id,
+        round: tr.round,
+        priority: tr.priority,
+        content: tr.content,
+        granted: tr.granted,
+        pushback: tr.pushback,
+        resolved: tr.resolved,
+        createdAt: tr.created_at,
       })),
       errors: errors.map(e => ({
         id: e.id,
@@ -468,7 +468,7 @@ export class DashboardApi {
   *exportMarkdownStream(meetingId) {
     const meeting = this.getState();
     const participants = this.getParticipants();
-    const interjections = this.getInterjections();
+    const turnRequests = this.getTurnRequests();
     const errors = this.getAgentErrors();
     const artifact = this.getArtifact();
 
@@ -511,12 +511,12 @@ export class DashboardApi {
       yield `\n`;
     }
 
-    if (interjections.length > 0) {
-      yield `## Interjections\n\n`;
-      for (const ij of interjections) {
-        const participant = participants.find((p) => p.id === ij.participant_id);
-        const name = participant?.name ?? ij.participant_id;
-        yield `- **[${name}]** P${ij.priority}: ${ij.content} → ${ij.granted ? "granted" : "denied"}\n`;
+    if (turnRequests.length > 0) {
+      yield `## Turn Requests\n\n`;
+      for (const tr of turnRequests) {
+        const participant = participants.find((p) => p.id === tr.participant_id);
+        const name = participant?.name ?? tr.participant_id;
+        yield `- **[${name}]** P${tr.priority}: ${tr.content} → ${tr.granted ? "granted" : "denied"}\n`;
       }
       yield `\n`;
     }

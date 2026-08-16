@@ -47,6 +47,7 @@ function useSSE(meetingId, onEvent) {
             if (data.state) onEventRef.current({ type: "state", data: data.state, timestamp });
             if (data.participants) onEventRef.current({ type: "participants", data: data.participants, timestamp });
             if (data.artifact) onEventRef.current({ type: "artifact", data: data.artifact, timestamp });
+            if (data.orchestrator_messages) onEventRef.current({ type: "orchestrator_messages", data: data.orchestrator_messages, timestamp });
           }
         } catch (err) {
           window.dispatchEvent(new CustomEvent("loom-sse-error", {
@@ -298,6 +299,8 @@ export function App() {
       if (newTrs && newTrs.length > 0) {
         window.dispatchEvent(new CustomEvent("loom-new-turn-requests", { detail: newTrs }));
       }
+    } else if (data.type === "orchestrator_messages") {
+      window.dispatchEvent(new CustomEvent("loom-orchestrator-messages", { detail: data.data }));
     }
   }, []);
 

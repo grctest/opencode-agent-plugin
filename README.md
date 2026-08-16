@@ -17,7 +17,7 @@ A real-time web dashboard shows every agent contributing as it happens. If you r
 - **Structured turn-taking** with priority turn requests
 - **Tier-based roles** — junior to principal, each with escalating expectations and rights
 - **Moderator agent** — spawned on demand to break deadlocks and force convergence
-- **Semi-automatic convergence** — detects repetition, diminishing returns, and semantic agreement
+- **Deterministic convergence** — early termination when all agents pass, or at round limit
 - **Minority report** — unresolved dissenting views are preserved in the output
 - **Meeting extension** — re-run `/knit` to continue a deliberation with new input
 - **Auto-composed rooms** — persona selection based on your question's domain
@@ -85,7 +85,7 @@ Models are stored globally at:
 
 1. **RAG Context Retrieval** — Round summaries and contributions are chunked, embedded, and indexed. When prompting agents, the system retrieves relevant prior context using cosine similarity.
 
-2. **Semantic Drift Detection** — Embeddings are used to compute semantic drift between rounds. If agents are rehashing the same ideas (low drift), the convergence check triggers early termination.
+2. **Semantic Drift Detection** — Embeddings are available for computing semantic drift between rounds, though this is not currently used in the convergence system.
 
 3. **Token-Aware Chunking** — Text is split into chunks that respect the model's token limit. This ensures embeddings are accurate and not truncated.
 
@@ -193,13 +193,7 @@ The Loom can be configured via a `"loom"` key in your `opencode.json` or via a p
 {
   "loom": {
     "maxContributionWords": 250,
-    "maxTurnRequestWords": 200,
-    "defaultMaxRounds": 3,
-    "maxTurnRequestsPerRound": 3,
-    "convergence": {
-      "repetitionOverlapThreshold": 0.45,
-      "semanticConvergenceFromRound": 3
-    }
+    "defaultMaxRounds": 3
   }
 }
 ```

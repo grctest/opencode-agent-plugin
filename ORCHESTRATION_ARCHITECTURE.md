@@ -37,14 +37,13 @@ When a user types `/knit` with a question, this is what happens:
 1. **Domain detection** — The question is sent to an LLM to identify which domains it touches (engineering, finance, business, creative, etc.).
 2. **Room composition** — Based on detected domains and question complexity, a team of 2–7 agents is assembled from persona files. Each agent gets a name, persona description, agenda, tier, and domain expertise.
 3. **Model assignment** — Each agent is assigned an LLM model, with higher-tier agents getting the best available models.
-4. **Orchestrator session created** — A single orchestrator session is created for system-level calls (moderation, summarization, convergence, domain detection). No persistent per-agent sessions are created.
-5. **Rounds execute** — Each round has two phases:
+4. **Rounds execute** — Each round has two phases:
    - **Prompt phase**: Agents speak sequentially, each via a fresh ephemeral session. Each sees the state of play, vector-RAG context, recent contributions, and their own reflection. After each challenge or dissent, agents that spoke before the challenger immediately reflect on it (mid-round reflections).
    - **Turn order planning**: At end of round, moderator plans next round's turn order based on `[REQUEST_NEXT]` tags.
-6. **State of play update** — After each round, a structured summary of decisions, agreements, disagreements, and open questions is derived from all contributions.
-7. **Moderator checks** — After each round, if there are signs of deadlock or circular argument, the moderator intervenes.
-8. **Convergence check** — After each round, 9 statistical and LLM-based checks (including a vector novelty check) determine whether to stop.
-9. **Synthesis** — When the meeting ends, one agent (typically the principal) synthesizes all contributions into a structured artifact with Decision, Reasoning, Action Items, Dissenting Views, Open Questions, and Confidence.
+5. **State of play update** — After each round, a structured summary of decisions, agreements, disagreements, and open questions is derived from all contributions.
+6. **Moderator checks** — After each round, if there are signs of deadlock or circular argument, the moderator intervenes.
+7. **Convergence check** — After each round, 2 deterministic checks (all_passed, max_rounds) determine whether to stop. The moderator also handles deadlock detection separately.
+8. **Synthesis** — When the meeting ends, one agent (typically the principal) synthesizes all contributions into a structured artifact with Decision, Reasoning, Action Items, Dissenting Views, Open Questions, and Confidence.
 
 ---
 
@@ -99,9 +98,7 @@ Each agent is assigned a model. Higher tiers get better models. If more models e
 
 ### Step 4: Session Creation
 
-Only one session is created at meeting start: the **orchestrator session** for system-level LLM calls (moderation, summarization, convergence, domain detection).
-
-**No persistent per-agent sessions are created.** Each agent turn uses a fresh ephemeral session (see Section 7).
+**No persistent sessions are created.** All LLM calls — both agent turns and orchestrator system calls — use fresh ephemeral sessions. Each call creates a session, sends a self-contained prompt, receives a response, and deletes the session (see Section 7).
 
 ---
 
@@ -218,9 +215,6 @@ decisions.
 6. Stay in character — your persona and agenda shape your contributions
 7. Reference prior contributions using their stable ID from the Recent
    Contributions list, e.g. [#12]
-8. Only with a governance-level concern, add: [GOVERNANCE: <directive>: <value>]
-   where directive is one of extend_rounds, force_converge, raise_objection,
-   request_topic, nominate_synthesizer, or escalate.
 
 ## Tool Usage (when agent tools are enabled)
 
@@ -340,7 +334,6 @@ An agent response is a text string. The system parses it for structured directiv
 
 **Optional directives:**
 - `[REQUEST_NEXT: Target: <participant|Self>, Priority: N, Reason: "..."]` — request next turn
-- `[GOVERNANCE: extend_rounds: 2]` — system-level escalation
 
 **Content** follows the tag. Example full response:
 
@@ -358,7 +351,6 @@ The system parses this into:
   type: "challenge",
   content: "The short-expiry-with-refresh approach assumes...",
   request_next: null,
-  governance: null,
   word_count: 52
 }
 ```
@@ -385,7 +377,7 @@ For each agent, the system:
 8. Extracts text from the LLM response using `extractAgentResponse()` (handles tool_call/tool_result parts when tools are enabled).
 9. Enforces `maxToolCallsPerTurn` limit (default 5).
 10. Sanitizes content to prevent prompt injection (preserves known directives, strips other brackets/HTML).
-11. Parses the response for type tags, `[REQUEST_NEXT]` turn order requests, and governance directives.
+11. Parses the response for type tags and `[REQUEST_NEXT]` turn order requests.
 12. Enforces word limit (default 250 words).
 13. Validates against a Zod schema; falls back to type "challenge" on validation failure.
 14. Stores the contribution in state and database.
@@ -488,19 +480,21 @@ The summary is stored in the database but is NOT appended to any running context
 
 ### Stateless Ephemeral Sessions
 
-The system uses **ephemeral sessions**, not persistent sessions:
+The system uses **ephemeral sessions** for all LLM calls — both agent turns and orchestrator system calls:
 
 ```
 Parent Session (user's opencode chat)
-  └── Orchestrator Session (persistent, for system calls)
-       ├── Ephemeral Session: Architect Lead (round 1, turn 1) → deleted after use
-       ├── Ephemeral Session: Security Engineer (round 1, turn 2) → deleted after use
-       ├── Ephemeral Session: Junior Developer (round 1, turn 3) → deleted after use
-       ├── Ephemeral Session: Architect Lead (round 2, turn 1) → deleted after use
-       └── ...
+  ├── Ephemeral Session: Orchestrator (domain detection) → deleted after use
+  ├── Ephemeral Session: Architect Lead (round 1, turn 1) → deleted after use
+  ├── Ephemeral Session: Security Engineer (round 1, turn 2) → deleted after use
+  ├── Ephemeral Session: Junior Developer (round 1, turn 3) → deleted after use
+  ├── Ephemeral Session: Orchestrator (moderation) → deleted after use
+  ├── Ephemeral Session: Orchestrator (turn order) → deleted after use
+  ├── Ephemeral Session: Architect Lead (round 2, turn 1) → deleted after use
+  └── ...
 ```
 
-**Why ephemeral?** Each agent turn creates a fresh session, sends the Golden Sandwich prompt (state of play + RAG + recent contributions), receives a response, and deletes the session. This means:
+**Why ephemeral?** Each LLM call creates a fresh session, sends a self-contained prompt (with all necessary context passed explicitly), receives a response, and deletes the session. This means:
 - **O(1) token growth per turn** — no accumulated history from prior turns
 - **No session state drift** — each turn starts clean
 - **No session recreation needed** — if a turn fails, the next turn just creates a new ephemeral session
@@ -551,22 +545,32 @@ When agent tools are enabled, the `tools` field in the prompt body includes tool
 - **StepStartPart/StepFinishPart**: Internal metadata (ignored)
 - **FilePart, SnapshotPart, etc.**: Informational (ignored)
 
-### Prompting the Orchestrator (Persistent)
+### Prompting the Orchestrator (Ephemeral)
 
-The orchestrator session is the only persistent session — it's reused across all system calls:
+All orchestrator calls (moderation, summarization, convergence, turn order planning, domain detection) use **fresh ephemeral sessions** — the same pattern as agent turns. Each call creates a session, sends the prompt, receives a response, and deletes the session:
 
 ```javascript
-client.session.prompt({
-    path: { id: orchestratorSessionId },
-    body: {
-      system: "You are a neutral summarizer.",
-      model: highestTierModel,
-      tools: {},
-      parts: [{ type: "text", text: prompt }],
-    },
-    query: { directory: workingDirectory },
-  })
+async promptOrchestrator(system, model, message) {
+  const sessionId = await this.#createSessionWithRetry("Loom · Orchestrator (ephemeral)");
+  try {
+    const result = await client.session.prompt({
+      path: { id: sessionId },
+      body: { system, model, tools: {}, parts: [{ type: "text", text: message }] },
+      query: { directory: workingDirectory },
+    });
+    return { text: extractText(result.data), tokens: result.data?.tokens };
+  } finally {
+    this.deleteEphemeralSession(sessionId);
+  }
+}
 ```
+
+**Why ephemeral?** The previous design used a persistent orchestrator session that accumulated history across all system calls. This caused:
+- **Context pollution** — the summarizer saw moderator rulings, the convergence check saw summarization outputs
+- **Unbounded token growth** — each system call added to the session history, consuming more tokens over time
+- **Inconsistent behavior** — the LLM's responses were influenced by unrelated prior calls
+
+With ephemeral sessions, each orchestrator call is stateless. Context that needs to persist (like moderator previous rulings) is passed explicitly in the message text, not accumulated in session history.
 
 **Circuit breaker:** Each model tracks consecutive failures. After 3 failures, the model is skipped for 5 minutes. After the timeout, one test attempt is allowed. On success, the breaker resets.
 
@@ -776,41 +780,22 @@ All agents see these notes in subsequent rounds via the state of play.
 
 ## 10. Convergence Detection
 
-After each round, 9 checks run to determine if the meeting should end. Each produces a confidence score (0–100). The system uses a weighted scoring model.
+After each round, 2 deterministic checks run to determine if the meeting should end. The system was intentionally simplified from 9 checks to 2 — the moderator handles deadlock detection, max rounds handles termination, and agents handle passing. This protocol only detects early convergence when all agents have passed.
 
-### The 9 Checks
+### The 2 Checks
 
 | Check | Weight | Min Round | What It Does |
 |-------|--------|-----------|--------------|
 | all_passed | 1.0 | any | All participants have passed or failed |
 | max_rounds | 1.0 | any | Current round ≥ max rounds |
-| early_convergence | 0.8 | 2 | All remaining participants passed (others failed) |
-| low_novelty | 0.8 | 3 | Last 2 rounds' final contributions are highly similar to earlier context (TF-IDF cosine ≥ 0.45) |
-| diminishing_returns | 0.6 | 3 | Recent content cosine similarity to older content ≥ 0.85 |
-| stale_participants | 0.5 | 3 | Unique contributors in last 3 rounds ≤ 34% of total |
-| diminishing_contributions | 0.55 | 3 | Recent 2 rounds' avg contribution count ≤ 50% of earlier avg |
-| semantic | 0.9 | 3 | LLM says "converge" |
-| vector_novelty | 0.85 | 3 | Semantic drift between last two rounds is below threshold (cosine distance < 0.15 via sqlite-vec embeddings) |
 
-### The Semantic Check (LLM-Based)
+### Deterministic Checks Only
 
-This is the most sophisticated check. The prompt sent to the orchestrator LLM:
+The convergence protocol uses only deterministic checks — no LLM calls. This makes convergence detection fast and predictable:
+- **all_passed** — triggers when every agent has passed or failed (early termination)
+- **max_rounds** — triggers when the round limit is reached (guaranteed termination)
 
-```
-You are evaluating whether a multi-agent deliberation has reached a natural
-conclusion.
-
-## Original Question
-Should we migrate our authentication service to JWT tokens?
-
-## Deliberation State
-Round: 4/6
-Total contributions: 14
-
-## Recent Round Summaries
-Round 2: 3 proposals, 2 challenges. Turn requests granted on timeline concerns.
-Round 3: 2 supports, 1 challenge. Junior developer raised refresh token security.
-Round 4: 1 propose, 2 challenges. Circular argument on revocation vs statelessness.
+The moderator handles deadlock detection separately, which can also force convergence.
 
 ## Most Recent Contributions
 - [senior_architect] (propose): We should use a hybrid approach — short-lived
@@ -827,7 +812,7 @@ Decide whether this deliberation should continue or converge. Consider:
 - Has the discussion naturally exhausted its productive potential?
 
 Respond with EXACTLY this format:
-decision: <converge | continue | extend>
+decision: <converge | continue>
 reason: <one sentence explanation>
 key_disagreements: <comma-separated list of unresolved disagreements, or "none">
 ```
@@ -846,7 +831,16 @@ thresholds:
 shouldStop = normalizedScore >= threshold
 ```
 
-The "extend" action from the semantic check adds 1 round to max_rounds (capped at 10).
+### Design Rationale
+
+The convergence system was simplified from 9 checks to 2 deterministic checks. The removed checks (low_novelty, diminishing_returns, stale_participants, diminishing_contributions, early_convergence, vector_novelty, semantic) duplicated functionality already provided by:
+- **The moderator** — detects circular arguments and deadlocks (replaces low_novelty, stale_participants)
+- **Agent passing** — agents pass when they have nothing to add (replaces early_convergence, diminishing_contributions)
+- **Max rounds** — the user controls meeting length (replaces diminishing_returns)
+
+The remaining 2 checks provide unique value:
+- `all_passed` — deterministic, no LLM call, catches the case where everyone passed
+- `max_rounds` — deterministic, enforces the user's chosen limit
 
 ---
 
@@ -900,7 +894,7 @@ After each round finalization, the orchestrator calls `updateStateOfPlay(weave, 
 
 **Fallback keyword matching** (for contributions with missing/unknown type tags) uses word-boundary-aware regex to avoid substring false positives (e.g., `\bwe should\b` instead of `.includes("we should")`).
 
-Each section is capped at the 5 most recent items. Each item is truncated to 300 characters. The content is cleaned of `[REQUEST_NEXT]`, `[GOVERNANCE]`, and type tags before inclusion.
+Each section is capped at the 5 most recent items. Each item is truncated to 300 characters. The content is cleaned of `[REQUEST_NEXT]` and type tags before inclusion.
 
 ### How It Appears in Agent Prompts
 
@@ -948,7 +942,7 @@ After each challenge or dissent in the prompt phase, agents that spoke BEFORE th
 **Key design decisions:**
 
 - **Mid-round timing:** Reflections happen immediately after a challenge/dissent, not at the end of the round. This ensures later agents see how pre-challenge agents reacted before taking their own turns.
-- **Ephemeral sessions:** Each reflection creates a fresh ephemeral session (same as agent turns), using the reflecting agent's own model and temperature. The persistent orchestrator session is not used.
+- **Ephemeral sessions:** Each reflection creates a fresh ephemeral session (same as agent turns), using the reflecting agent's own model and temperature.
 - **Public contributions:** Reflections are stored as contributions with type `reflection`, visible to all agents. They are not private.
 - **No word limit:** Reflections can be as verbose as the agent wants.
 - **Reduced tool set:** Reflections use a focused subset of tools: `web_fetch`, `web_search`, `read`, and `loom_vector_search`. The `bash`, `glob`, and `grep` tools are excluded from reflections to keep them focused and safe. This is configured via the `agentTools.reflection` overrides.
@@ -1359,14 +1353,6 @@ When a user runs `/knit` again in a session that already has a meeting, the syst
 4. All participants are reset to "listening" status.
 5. The weaving loop restarts from the current round.
 
-### Automatic Extension via Convergence
-
-The semantic convergence check can return "extend" instead of "converge" or "continue". When this happens:
-- `max_rounds` is incremented by 1 (capped at 10).
-- The meeting continues for one more round.
-
-This handles the case where the LLM detects the discussion is close to conclusion but needs one more round to resolve key disagreements.
-
 ---
 
 ## 19. VectorIndex + RAG Context Retrieval
@@ -1471,15 +1457,9 @@ When no RAG context is available (early rounds, empty index), this section is om
 
 The RAG query is persona-aware: it combines the agent's recent contributions with the question to produce a query that's relevant to the agent's perspective. This means different agents may retrieve different "relevant" context, reflecting their individual focus areas.
 
-### Semantic Drift Detection
+### Semantic Drift Detection (Unused)
 
-The VectorIndex also supports computing semantic drift between two rounds via `computeSemanticDrift(roundA, roundB)`:
-
-1. Retrieves all chunks for each round
-2. Computes the centroid embedding for each round (average of all chunk embeddings, normalized)
-3. Returns cosine distance: 0 = identical, 1 = orthogonal, 2 = opposite
-
-This is used by the `vector_novelty` convergence check (Section 10). If the drift between the last two rounds is below 0.15, it signals the discussion has stagnated semantically — agents are rehashing the same ideas even if the exact words differ.
+The VectorIndex has a `computeSemanticDrift(roundA, roundB)` method that computes cosine distance between two rounds' centroids. This method exists but is not currently wired into any convergence check — it was part of the old 9-check system that was simplified to 2 deterministic checks.
 
 ### Database Schema
 
@@ -1751,7 +1731,7 @@ The fast-path model routing system allows certain orchestrator calls to use a ch
 
 ### Motivation
 
-The orchestrator session is shared for multiple system-level calls: moderation, summarization, convergence checks, and domain detection. Not all of these require the most powerful model. The fast-path routing lets you assign a lightweight model to routine calls while reserving the best model for agent prompts.
+Orchestrator calls (moderation, summarization, convergence checks, domain detection) use ephemeral sessions. Not all of these require the most powerful model. The fast-path routing lets you assign a lightweight model to routine calls while reserving the best model for agent prompts.
 
 ### Configuration
 
@@ -1769,10 +1749,8 @@ The `#promptOrchestrator` method checks the call type and routes accordingly:
 |-----------|-----------|-------------|
 | `moderation` | Yes | Moderator rulings |
 | `summary` | Yes | Round summary generation |
-| `compaction` | Yes | Context compaction |
 | `domain` | Yes | Domain detection (simple keyword classification) |
 | `orchestrator` | No | Default — uses highest-tier model |
-| `convergence` | No | Convergence verdict (semantic check) |
 
 When `fastPathModel` is set and the call type matches, the fast-path model is used instead of the highest-tier agent model. When `fastPathModel` is empty (default), all orchestrator calls use the highest-tier model.
 
@@ -1781,7 +1759,7 @@ When `fastPathModel` is set and the call type matches, the fast-path model is us
 ```javascript
 async #promptOrchestrator(system, model, message, type = "orchestrator") {
   const fastPathModel = getConfig().fastPathModel;
-  const useModel = (fastPathModel && (type === "moderation" || type === "compaction" || type === "summary" || type === "domain"))
+  const useModel = (fastPathModel && (type === "moderation" || type === "summary" || type === "domain"))
     ? fastPathModel
     : model;
   // ... prompt with useModel
@@ -1795,19 +1773,13 @@ async #promptOrchestrator(system, model, message, type = "orchestrator") {
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `maxContributionWords` | 250 | Max words per agent contribution |
-| `maxTurnRequestWords` | 200 | Max words per turn request reason |
 | `defaultMaxRounds` | 3 | Default meeting length |
-| `maxTurnRequestsPerRound` | 3 | Cap on turn requests per round |
 | `agentTimeoutMs` | 120,000 | Per-agent LLM call timeout |
 | `maxRetryAttempts` | 2 | Retries per agent call |
 | `retryBaseDelayMs` | 1,000 | Base retry delay |
 | `retryMaxDelayMs` | 8,000 | Max retry delay |
 | `stallTimeoutMs` | 300,000 | Inactivity timeout |
 | `meetingTimeoutMs` | 600,000 | Absolute meeting timeout |
-| `convergence.lowNoveltyCosineThreshold` | 0.45 | TF-IDF similarity threshold |
-| `convergence.llmVerdictConfidence` | 90 | LLM convergence confidence |
-| `convergence.staleParticipantRatio` | 0.34 | Stale participant threshold |
-| `convergence.diminishingReturnsWindow` | 3 | Rounds to compare |
 | `synthesisMaxRetries` | 1 | Synthesis retry count |
 | `critiqueMaxRetries` | 2 | Self-critique retry count |
 | `fastPathModel` | `""` | Model for cheap orchestrator calls (empty = disabled) |

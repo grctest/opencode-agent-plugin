@@ -38,7 +38,6 @@ export function parseAgentResponse(participantId, response, tier) {
     content: limitedContent,
     type: parsed.type,
     request_next: parsed.request_next,
-    ...(parsed.governance ? { governance: parsed.governance } : {}),
   });
 
   if (result.success) {

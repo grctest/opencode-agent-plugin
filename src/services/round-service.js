@@ -1,6 +1,6 @@
 import { RoundExecutor } from "../round-executor.js";
 import { summarizeRound } from "../round-summarizer.js";
-import { formatTurnOrderNotes } from "../interjection-resolver.js";
+import { formatTurnOrderNotes } from "../turn-request-resolver.js";
 import { Logger } from "../logger.js";
 
 /**

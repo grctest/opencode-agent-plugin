@@ -2,13 +2,11 @@ import { Logger, extractErrorInfo } from "./logger.js";
 
 const TAG_STRIP_RE = /^\[(?:PROPOSE|CHALLENGE|REFINE|SUPPORT|DISSENT|SYNTHESIZE|QUESTION|REFUSE)\]\s*/i;
 const REQUEST_NEXT_RE = /\[REQUEST_NEXT:[^\]]*\]/gi;
-const GOVERNANCE_RE = /\[GOVERNANCE:[^\]]*\]/gi;
 
 function cleanContent(content) {
   return content
     .replace(TAG_STRIP_RE, "")
     .replace(REQUEST_NEXT_RE, "")
-    .replace(GOVERNANCE_RE, "")
     .trim();
 }
 

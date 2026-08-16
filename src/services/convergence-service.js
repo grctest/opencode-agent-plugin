@@ -3,43 +3,28 @@ import { Logger } from "../logger.js";
 
 /**
  * Handles convergence checking logic.
- * Delegates to the unified convergence protocol with weighted scoring.
+ * Delegates to the deterministic convergence protocol (all_passed, max_rounds).
  */
 export class ConvergenceService {
   /** @type {import("../logger.js").Logger} */
   #logger;
-  /** @type {import("./vector-index.js").VectorIndex|null} */
-  #vectorIndex;
 
-  constructor({ vectorIndex = null } = {}) {
+  constructor() {
     this.#logger = new Logger();
-    this.#vectorIndex = vectorIndex;
-  }
-
-  setVectorIndex(vectorIndex) {
-    this.#vectorIndex = vectorIndex;
   }
 
   /**
-   * Checks convergence using the unified protocol.
+   * Checks convergence using the deterministic protocol.
    * @param {Object} params
    * @param {Object} params.state - Meeting state
    * @param {Object} params.round - Current round
-   * @param {Function} params.promptOrchestrator
-   * @param {Function} params.getHighestTierModel
    * @param {Function} [params.postProgress]
-   * @returns {Promise<{shouldStop: boolean, extendAmount: number}>} Whether the meeting should stop
+   * @returns {Promise<{shouldStop: boolean}>} Whether the meeting should stop
    */
   async check(params) {
-    const { state, round, promptOrchestrator, getHighestTierModel, postProgress } = params;
+    const { state, round, postProgress } = params;
 
-    const result = await orchestrateConvergence(
-      state,
-      round,
-      promptOrchestrator,
-      getHighestTierModel,
-      this.#vectorIndex,
-    );
+    const result = orchestrateConvergence(state, round);
 
     if (result.shouldStop) {
       this.#logger.info("convergence_reached", "Convergence detected, ending meeting", {
@@ -58,7 +43,6 @@ export class ConvergenceService {
 
     return {
       shouldStop: result.shouldStop,
-      extendAmount: result.extendAmount ?? 0,
     };
   }
 }

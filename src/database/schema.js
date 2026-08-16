@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 15;
+export const SCHEMA_VERSION = 16;
 
 export function initSchema(db) {
   db.exec(`
@@ -51,7 +51,7 @@ export function initSchema(db) {
       created_at TEXT NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS interjections (
+    CREATE TABLE IF NOT EXISTS turn_requests (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
       participant_id TEXT NOT NULL,
@@ -118,8 +118,8 @@ export function initSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_contributions_meeting_round ON contributions(meeting_id, round);
     CREATE INDEX IF NOT EXISTS idx_contributions_meeting ON contributions(meeting_id);
     CREATE INDEX IF NOT EXISTS idx_contributions_participant ON contributions(participant_id);
-    CREATE INDEX IF NOT EXISTS idx_interjections_meeting ON interjections(meeting_id);
-    CREATE INDEX IF NOT EXISTS idx_interjections_participant ON interjections(participant_id);
+    CREATE INDEX IF NOT EXISTS idx_turn_requests_meeting ON turn_requests(meeting_id);
+    CREATE INDEX IF NOT EXISTS idx_turn_requests_participant ON turn_requests(participant_id);
     CREATE INDEX IF NOT EXISTS idx_agent_errors_meeting ON agent_errors(meeting_id);
     CREATE INDEX IF NOT EXISTS idx_participants_meeting ON participants(meeting_id);
     CREATE INDEX IF NOT EXISTS idx_error_log_meeting ON error_log(meeting_id);
@@ -135,7 +135,7 @@ export function initSchema(db) {
       duration_ms INTEGER NOT NULL DEFAULT 0,
       rounds INTEGER NOT NULL DEFAULT 0,
       contributions INTEGER NOT NULL DEFAULT 0,
-      interjections INTEGER NOT NULL DEFAULT 0,
+      turn_requests INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_meeting_metrics_created ON meeting_metrics(created_at);
@@ -345,6 +345,20 @@ export function migrateSchema(db) {
     try { db.exec(`ALTER TABLE meetings ADD COLUMN embedding_model TEXT`); } catch { /* exists */ }
     try { db.exec(`ALTER TABLE meetings ADD COLUMN embedding_dim INTEGER`); } catch { /* exists */ }
     db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '15')`);
+  }
+
+  if (currentVersion < 16) {
+    try {
+      db.exec(`ALTER TABLE interjections RENAME TO turn_requests`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_turn_requests_meeting ON turn_requests(meeting_id)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_turn_requests_participant ON turn_requests(participant_id)`);
+      db.exec(`DROP INDEX IF EXISTS idx_interjections_meeting`);
+      db.exec(`DROP INDEX IF EXISTS idx_interjections_participant`);
+    } catch { /* table doesn't exist or already renamed */ }
+    try {
+      db.exec(`ALTER TABLE meeting_metrics RENAME COLUMN interjections TO turn_requests`);
+    } catch { /* column doesn't exist or already renamed */ }
+    db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '16')`);
   }
   db.exec("COMMIT");
   } catch (err) {

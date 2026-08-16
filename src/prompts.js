@@ -268,8 +268,6 @@ export function buildAgentSystemPrompt(participant) {
 
   const priorityCap = TURN_REQUEST_PRIORITY_CAP[tier] ?? 5;
   const requestNextRule = `5. To request priority for the next round, add: [REQUEST_NEXT: Priority: <1-${priorityCap}>, Reason: "why you must speak next round"] — place this at the end of your response`;
-  const governanceRule = `8. Only with a governance-level concern, add: [GOVERNANCE: <directive>: <value>] where directive is one of extend_rounds (value: rounds to add), force_converge (value: reason), raise_objection (value: objection), request_topic (value: topic), nominate_synthesizer (value: participant name), or escalate (value: reason). Use sparingly — this is an escalation mechanism, not a normal communication channel.`;
-
   const agentToolsConfig = getConfig().agentTools;
   const toolUsageSection = agentToolsConfig?.enabled
     ? `
@@ -326,7 +324,6 @@ ${tierGuidance}
 ${requestNextRule}
 6. Stay in character — your persona and agenda shape your contributions
 7. Reference prior contributions using their stable ID from the Recent Contributions list, e.g. [#12]
-${governanceRule}
 ${toolUsageSection}
 
 ## Example Response

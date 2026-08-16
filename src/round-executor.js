@@ -93,7 +93,6 @@ export class RoundExecutor {
    * all prior same-round contributions before responding.
    * After each challenge/dissent, agents that spoke BEFORE the challenger
    * immediately reflect on it (mid-round reflections).
-   * Supports intra-round queue jumping: Priority 9+ moves agent to position 0.
    */
   async runPromptPhase(round, activeParticipants) {
     this.#turnOrder = [];
@@ -133,19 +132,6 @@ export class RoundExecutor {
           });
         }
       }
-
-      // Intra-round queue jumping: Priority 9+ moves next speaker to position 0
-      if (result?.request_next && result.request_next.priority >= 9 && remainingSpeakers.length > 0) {
-        const nextRequest = result.request_next;
-        const jumpIdx = remainingSpeakers.findIndex((sp) => {
-          const nextResult = round.turn_requests?.find((tr) => tr.participant_id === sp.config.id);
-          return nextResult && nextResult.priority >= 9;
-        });
-        if (jumpIdx > 0) {
-          const [jumped] = remainingSpeakers.splice(jumpIdx, 1);
-          remainingSpeakers.unshift(jumped);
-        }
-      }
     }
   }
 
@@ -174,15 +160,6 @@ export class RoundExecutor {
     }
 
     this.#storeContribution(p, result, round);
-
-    if (result.governance) {
-      const g = result.governance;
-      this.#logger.info("governance_directive", `${p.config.name} issued governance directive`, { directive: g.directive, value: g.value });
-      if (!round.governance) round.governance = [];
-      round.governance.push({ participant_id: p.config.id, directive: g.directive, value: g.value ?? null });
-      this.#options.onProgress?.(`${p.config.name} (${p.config.tier}) — issued governance directive [GOVERNANCE: ${g.directive}${g.value !== undefined ? `: ${g.value}` : ""}]`);
-      this.#db.addOrchestratorMessage("governance", "user", `[GOVERNANCE: ${g.directive}${g.value !== undefined ? `: ${g.value}` : ""}] issued by ${p.config.name}`);
-    }
 
     const truncated = truncate(result.content, 120);
     this.#options.onProgress?.(`${p.config.name} (${p.config.tier}) — ${result.type}: "${truncated}"`);
@@ -227,7 +204,7 @@ export class RoundExecutor {
       round.turn_requests.push(turnRequest);
     }
 
-    this.#db.addContributionWithInterjection(this.#stateManager.getMeetingId(), {
+    this.#db.addContributionWithTurnRequest(this.#stateManager.getMeetingId(), {
       ...contribution,
       round: this.#stateManager.getCurrentRound(),
     }, turnRequest);
@@ -284,11 +261,21 @@ export class RoundExecutor {
       this.#callStats.agent_prompts++;
       const llmStart = Date.now();
 
-      // Build tools map for the prompt call (only when agent tools are enabled)
+      // Build boolean filter map for the prompt call (only when agent tools are enabled)
+      // SDK expects { [toolName]: boolean }, NOT the raw tool definition objects
       const agentToolsConfig = config.agentTools;
-      const toolsMap = (agentToolsConfig?.enabled && this.#tools)
-        ? this.#tools
-        : {};
+      const toolsMap = {};
+      if (agentToolsConfig?.enabled) {
+        const builtIn = agentToolsConfig.builtIn;
+        if (builtIn?.web_fetch) toolsMap.web_fetch = true;
+        if (builtIn?.web_search) toolsMap.web_search = true;
+        if (builtIn?.read) toolsMap.read = true;
+        if (builtIn?.bash?.enabled || builtIn?.bash === true) toolsMap.bash = true;
+        if (builtIn?.glob) toolsMap.glob = true;
+        if (builtIn?.grep) toolsMap.grep = true;
+        if (builtIn?.lsp) toolsMap.lsp = true;
+        if (agentToolsConfig.loom?.loom_vector_search) toolsMap.loom_vector_search = true;
+      }
 
       const result = await withTimeout(
         this.#client.session.prompt({

@@ -210,12 +210,9 @@ export class MeetingOrchestrator {
       this.#database = db;
       this.#persistenceService = new PersistenceService(db, this.#meetingId);
       this.#vectorIndex = new VectorIndex(db);
-      this.#convergenceService.setVectorIndex(this.#vectorIndex);
 
       this.#sessionManager = new SessionManager(this.#client, this.#directory, this.#parentSessionId, this.#logger);
       this.#synthesisCoordinator = new SynthesisCoordinator(this.#client, this.#directory, this.#sessionManager);
-
-      // Initialize embedding model for this meeting
       const meeting = db.getMeeting();
       if (meeting?.embedding_model) {
         try {
@@ -250,9 +247,6 @@ export class MeetingOrchestrator {
           participants: this.#stateManager.getParticipants().map((p) => p.config),
         });
       }
-
-      const orchestratorSessionId = await this.#sessionManager.createOrchestratorSession();
-      this.#sessionManager.setOrchestratorSessionId(orchestratorSessionId);
 
       if (this.#options.detectDomains && !this.#stateManager.getDomain()) {
         try {
@@ -511,14 +505,8 @@ export class MeetingOrchestrator {
       const convergenceResult = await this.#convergenceService.check({
         state: this.#stateManager.getState(),
         round: updatedRound,
-        promptOrchestrator: async (system, model, message) => this.#promptOrchestrator(system, model, message, "convergence"),
-        getHighestTierModel: () => this.#getHighestTierModel(),
         postProgress: async (message) => this.#sessionManager.postProgress(message),
       });
-
-      if (convergenceResult.extendAmount > 0) {
-        this.#stateManager.setMaxRounds(this.#stateManager.getMaxRounds() + convergenceResult.extendAmount);
-      }
 
       if (convergenceResult.shouldStop) {
         this.#stateManager.transitionTo("converged");
@@ -659,13 +647,13 @@ export class MeetingOrchestrator {
       this.#database.saveMeetingMetrics({
         counters: stats,
         latencies: {},
-        input_tokens: stats.input_tokens ?? 0,
-        output_tokens: stats.output_tokens ?? 0,
-        duration_ms: Date.now() - this.#startTime,
-        rounds: this.#stateManager.getCurrentRound(),
-        contributions: weave.length,
-        interjections: allTurnRequests.length,
-      });
+         input_tokens: stats.input_tokens ?? 0,
+         output_tokens: stats.output_tokens ?? 0,
+         duration_ms: Date.now() - this.#startTime,
+         rounds: this.#stateManager.getCurrentRound(),
+         contributions: weave.length,
+         turn_requests: allTurnRequests.length,
+       });
     } catch { /* non-critical */ }
   }
 }

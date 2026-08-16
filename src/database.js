@@ -434,31 +434,31 @@ export class MeetingDatabase {
     }));
   }
 
-  addInterjection(meetingId, interjection) {
+  addTurnRequest(meetingId, turnRequest) {
     this.#db
       .prepare(
-        `INSERT INTO interjections (meeting_id, participant_id, target_participant_id, round, content, priority, granted, pushback, resolved, created_at)
+        `INSERT INTO turn_requests (meeting_id, participant_id, target_participant_id, round, content, priority, granted, pushback, resolved, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         meetingId,
-        interjection.participant_id,
-        interjection.target_participant_id ?? null,
-        interjection.round ?? null,
-        interjection.reason,
-        interjection.priority,
-        interjection.granted ? 1 : 0,
-        interjection.pushback ?? null,
-        interjection.resolved,
+        turnRequest.participant_id,
+        turnRequest.target_participant_id ?? null,
+        turnRequest.round ?? null,
+        turnRequest.reason,
+        turnRequest.priority,
+        turnRequest.granted ? 1 : 0,
+        turnRequest.pushback ?? null,
+        turnRequest.resolved,
         isoNow(),
       );
   }
 
   /**
-   * Atomically adds a contribution and its associated interjection (if present).
+   * Atomically adds a contribution and its associated turn request (if present).
    * Ensures both writes succeed or neither does, preventing orphaned records.
    */
-  addContributionWithInterjection(meetingId, contribution, interjection) {
+  addContributionWithTurnRequest(meetingId, contribution, turnRequest) {
     this.#db.exec('BEGIN TRANSACTION');
     try {
       this.#db
@@ -476,22 +476,22 @@ export class MeetingDatabase {
           contribution.created_at ?? isoNow(),
         );
 
-      if (interjection) {
+      if (turnRequest) {
         this.#db
           .prepare(
-            `INSERT INTO interjections (meeting_id, participant_id, target_participant_id, round, content, priority, granted, pushback, resolved, created_at)
+            `INSERT INTO turn_requests (meeting_id, participant_id, target_participant_id, round, content, priority, granted, pushback, resolved, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             meetingId,
-            interjection.participant_id,
-            interjection.target_participant_id ?? null,
-            interjection.round ?? null,
-            interjection.reason,
-            interjection.priority,
-            interjection.granted ? 1 : 0,
-            interjection.pushback ?? null,
-            interjection.resolved,
+            turnRequest.participant_id,
+            turnRequest.target_participant_id ?? null,
+            turnRequest.round ?? null,
+            turnRequest.reason,
+            turnRequest.priority,
+            turnRequest.granted ? 1 : 0,
+            turnRequest.pushback ?? null,
+            turnRequest.resolved,
             isoNow(),
           );
       }
@@ -503,11 +503,11 @@ export class MeetingDatabase {
     }
   }
 
-  getInterjections(meetingId) {
+  getTurnRequests(meetingId) {
     const rows = this.#db
       .prepare(
         `SELECT id, participant_id, target_participant_id, round, content as reason, priority, granted, pushback, resolved, created_at
-         FROM interjections WHERE meeting_id = ? ORDER BY id ASC`,
+         FROM turn_requests WHERE meeting_id = ? ORDER BY id ASC`,
       )
       .all(meetingId);
     return rows.map((r) => ({
@@ -721,10 +721,10 @@ export class MeetingDatabase {
       )
       .all(meetingId);
 
-    const interjections = this.#db
+    const turnRequests = this.#db
       .prepare(
         `SELECT id, participant_id, target_participant_id, round, content as reason, priority, granted, pushback, resolved, created_at
-         FROM interjections WHERE meeting_id = ? ORDER BY id ASC`,
+         FROM turn_requests WHERE meeting_id = ? ORDER BY id ASC`,
       )
       .all(meetingId);
 
@@ -746,16 +746,16 @@ export class MeetingDatabase {
       });
     }
 
-    for (const ij of interjections) {
-      const roundNum = ij.round ?? 1;
+    for (const tr of turnRequests) {
+      const roundNum = tr.round ?? 1;
       if (!roundMap.has(roundNum)) {
         roundMap.set(roundNum, { number: roundNum, contributions: [], turn_requests: [], summary: summaries[roundNum] ?? "" });
       }
       roundMap.get(roundNum).turn_requests.push({
-        participant_id: ij.participant_id,
-        target: ij.target_participant_id ?? "",
-        priority: ij.priority,
-        reason: ij.reason,
+        participant_id: tr.participant_id,
+        target: tr.target_participant_id ?? "",
+        priority: tr.priority,
+        reason: tr.reason,
       });
     }
 
@@ -798,7 +798,7 @@ export class MeetingDatabase {
     try {
       this.#db.prepare(
         `INSERT OR REPLACE INTO meeting_metrics
-         (meeting_id, counters, latencies, input_tokens, output_tokens, duration_ms, rounds, contributions, interjections, created_at)
+         (meeting_id, counters, latencies, input_tokens, output_tokens, duration_ms, rounds, contributions, turn_requests, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         this.#meetingId,
@@ -809,7 +809,7 @@ export class MeetingDatabase {
         metrics.duration_ms ?? 0,
         metrics.rounds ?? 0,
         metrics.contributions ?? 0,
-        metrics.interjections ?? 0,
+        metrics.turn_requests ?? 0,
         isoNow(),
       );
     } catch (err) {

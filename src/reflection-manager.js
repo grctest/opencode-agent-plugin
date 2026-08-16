@@ -111,7 +111,7 @@ export async function runMidRoundReflections(round, triggerParticipant, listener
         db.setParticipantReflection(listener.config.id, text.trim());
 
         // Persist contribution
-        db.addContributionWithInterjection(stateManager.getMeetingId(), contribution, null);
+        db.addContributionWithTurnRequest(stateManager.getMeetingId(), contribution, null);
 
       } catch (err) {
         const info = extractErrorInfo(err);

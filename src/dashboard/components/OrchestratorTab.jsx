@@ -1,6 +1,5 @@
 import { useMemo, memo } from "react";
 import { List } from "react-window";
-import { cn } from "../utils.js";
 
 const TYPE_LABELS = {
   domain: "Domain Detection",
@@ -9,7 +8,6 @@ const TYPE_LABELS = {
   compaction: "Context Compaction",
   summary: "Round Summary",
   orchestrator: "Orchestrator",
-  governance: "Governance Directive",
 };
 
 const EXCHANGE_HEIGHT = 300;
@@ -32,7 +30,7 @@ const OrchestratorRow = memo(({ index, style, grouped }) => {
         {group.query && (
           <div className="loom-orchestrator-query">
             <div className="loom-orchestrator-meta">
-              <span className={cn("loom-orchestrator-type", group.query.type === "governance" && "loom-orchestrator-type-governance")}>
+              <span className="loom-orchestrator-type">
                 {TYPE_LABELS[group.query.type] || group.query.type}
               </span>
               <span className="loom-text-xs loom-text-muted">Query</span>

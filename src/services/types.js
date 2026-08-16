@@ -58,13 +58,6 @@
  */
 
 /**
- * @typedef {Object} GovernanceDirective
- * @property {'extend_rounds'|'force_converge'|'raise_objection'|'request_topic'|'nominate_synthesizer'|'escalate'} directive
- * @property {number|string} [value]
- * @property {string} [reason]
- */
-
-/**
  * @typedef {Object} TurnRequest
  * @property {string} participant_id
  * @property {string} target - Target participant ID or "Self"
@@ -77,7 +70,6 @@
  * @property {number} number
  * @property {Contribution[]} contributions
  * @property {TurnRequest[]} turn_requests
- * @property {GovernanceDirective[]} [governance]
  * @property {string[]} token_path
  * @property {string} summary
  */

@@ -18,14 +18,6 @@ export const ContributionTypeSchema = z.enum([
   'refuse',
 ]);
 
-// Governance directive types that can be embedded in agent responses
-export const GovernanceDirectiveSchema = z.object({
-  directive: z.enum(['extend_rounds', 'force_converge', 'raise_objection', 'request_topic', 'nominate_synthesizer', 'escalate']),
-  value: z.union([z.number(), z.string()]).optional(),
-  reason: z.string().max(500).optional(),
-  target_id: z.string().optional(),
-});
-
 // Turn order request directive from agent response (replaces interjection)
 export const RequestNextSchema = z.object({
   priority: z.number().int().min(1).max(10),
@@ -38,7 +30,6 @@ export const AgentResponseSchema = z.object({
   content: z.string().max(5000),
   type: ContributionTypeSchema,
   request_next: RequestNextSchema,
-  governance: GovernanceDirectiveSchema.optional(),
 });
 
 // Raw parsing (extracted from validation.js) - EXPORTED for reuse
@@ -66,7 +57,6 @@ export function parseAgentResponseRaw(response, tier) {
 
   let type = 'propose';
   let contentStart = 0;
-  let governance = null;
   let refuseReason = null;
 
   for (const [prefix, t] of Object.entries(TYPE_PREFIXES)) {
@@ -112,41 +102,9 @@ export function parseAgentResponseRaw(response, tier) {
     cleanContent = beforeRN;
   }
 
-  // Parse governance directive
-  const govMatch = cleanContent.match(
-    /\[GOVERNANCE:\s*(\w+)(?::\s*([^\]]+?))?\s*\]/i,
-  );
-
-  if (govMatch) {
-    const directiveKey = govMatch[1].toLowerCase();
-    const valueStr = govMatch[2];
-    const directiveMap = {
-      extend_rounds: 'extend_rounds',
-      force_converge: 'force_converge',
-      raise_objection: 'raise_objection',
-      request_topic: 'request_topic',
-      nominate_synthesizer: 'nominate_synthesizer',
-      escalate: 'escalate',
-    };
-    const directive = directiveMap[directiveKey];
-    if (directive) {
-      let value;
-      if (directive === 'extend_rounds' && valueStr) {
-        const parsedNum = parseInt(valueStr, 10);
-        if (Number.isFinite(parsedNum)) value = parsedNum;
-      } else if (valueStr) {
-        value = valueStr.trim();
-      }
-      governance = { directive, ...(value !== undefined ? { value } : {}), reason: valueStr || undefined };
-    }
-    cleanContent = cleanContent.slice(0, govMatch.index).trim() + cleanContent.slice(govMatch.index + govMatch[0].length).trim();
-    cleanContent = cleanContent.trim();
-  }
-
   return {
     content: refuseReason ? `${refuseReason}. ${cleanContent}`.trim() : cleanContent,
     type,
     request_next,
-    governance,
   };
 }

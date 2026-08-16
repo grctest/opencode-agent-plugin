@@ -12,7 +12,6 @@ export class SessionManager {
   #logger;
   #progressFailureCount = 0;
   #progressAlerted = false;
-  #orchestratorSessionId = null;
   #sessionMeetingMap = new Map();
 
   constructor(client, directory, parentSessionId, logger = null) {
@@ -20,10 +19,6 @@ export class SessionManager {
     this.#directory = directory;
     this.#parentSessionId = parentSessionId;
     this.#logger = logger;
-  }
-
-  setOrchestratorSessionId(sessionId) {
-    this.#orchestratorSessionId = sessionId;
   }
 
   getParentSessionId() {
@@ -91,10 +86,6 @@ export class SessionManager {
     return this.#createSessionWithRetry(`Loom · Synthesizer (${synthesizer.config.tier})`);
   }
 
-  async createOrchestratorSession() {
-    return this.#createSessionWithRetry("Loom · Orchestrator");
-  }
-
   /**
    * Creates a short-lived ephemeral session for a single agent turn.
    * The caller is responsible for deleting it after use.
@@ -123,28 +114,35 @@ export class SessionManager {
   }
 
   /**
-   * Prompts the orchestrator session. Resolves with { text, tokens } so callers can
-   * accumulate usage stats. tokens is undefined when the provider omits usage data.
+   * Prompts via a fresh ephemeral session. Each call is stateless — no accumulated
+   * history from prior calls. Creates a session, sends the prompt, and deletes the
+   * session in a finally block. Resolves with { text, tokens }.
    * @returns {Promise<{ text: string, tokens?: { input: number; output: number } }>}
    */
   async promptOrchestrator(system, model, message) {
-    return withRetry(async () => {
-      const result = await withTimeout(
-        this.#client.session.prompt({
-          path: { id: this.#orchestratorSessionId },
-          body: { system, model, tools: {}, parts: [{ type: "text", text: message }] },
-          query: { directory: this.#directory },
-        }),
-        getConfig().agentTimeoutMs,
-      );
-      if (result.error) throw new Error(JSON.stringify(result.error));
+    const sessionId = await this.#createSessionWithRetry("Loom · Orchestrator (ephemeral)");
+    try {
+      const result = await withRetry(async () => {
+        const inner = await withTimeout(
+          this.#client.session.prompt({
+            path: { id: sessionId },
+            body: { system, model, tools: {}, parts: [{ type: "text", text: message }] },
+            query: { directory: this.#directory },
+          }),
+          getConfig().agentTimeoutMs,
+        );
+        if (inner.error) throw new Error(JSON.stringify(inner.error));
+        return inner;
+      }, {
+        maxAttempts: getConfig().maxRetryAttempts,
+        baseDelayMs: getConfig().retryBaseDelayMs,
+        maxDelayMs: getConfig().retryMaxDelayMs,
+        retryable: isRetryableError,
+      });
       return { text: extractText(result.data), tokens: result.data?.tokens };
-    }, {
-      maxAttempts: getConfig().maxRetryAttempts,
-      baseDelayMs: getConfig().retryBaseDelayMs,
-      maxDelayMs: getConfig().retryMaxDelayMs,
-      retryable: isRetryableError,
-    });
+    } finally {
+      this.deleteEphemeralSession(sessionId);
+    }
   }
 
   async deleteSession(sessionId) {

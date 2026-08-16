@@ -124,7 +124,7 @@ Each item includes: current state, value assessment, feasibility, production ris
 
 These items require foundational features to exist first or carry significant production risk:
 
-- **Agent-initiated round extension** — agent requests "one more round" before convergence. Requires agent-to-orchestrator signaling beyond current contribution types. (Semantic convergence already auto-extends by one round when the discussion is close.)
+- **Agent-initiated round extension** — agent requests "one more round" before convergence. Requires agent-to-orchestrator signaling beyond current contribution types.
 - **Cross-round memory** — agents reference their own prior contributions explicitly. Partially addressed: stable `[#id]` references and persisted reflections appear in agent prompts.
 - **Governance directives ([VETO], [FORCE_END], [CALL_VOTE])** — prerequisite for enforced seniority rights.
 

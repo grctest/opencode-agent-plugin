@@ -201,7 +201,7 @@ export const TurnRequestItem = memo(({ turnRequest, participantName }) => {
     <div className="loom-card loom-card-dashed">
       <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center loom-mb-xs">
         <span className="loom-title-sm">{participantName}</span>
-        <span className="loom-badge loom-badge-interjection">turn request</span>
+        <span className="loom-badge loom-badge-turn-request">turn request</span>
         <span className="loom-text-xs loom-text-muted">priority {turnRequest.priority}</span>
         {turnRequest.target && (
           <span className="loom-text-xs loom-text-muted">→ {turnRequest.target}</span>

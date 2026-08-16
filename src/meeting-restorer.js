@@ -89,17 +89,17 @@ export function restoreStateFromDb({ db, stateManager, meetingId, options }) {
     });
   }
 
-  const interjections = db.getInterjections(meetingId);
-  for (const ij of interjections) {
-    const roundNum = ij.round ?? 1;
+  const turnRequests = db.getTurnRequests(meetingId);
+  for (const tr of turnRequests) {
+    const roundNum = tr.round ?? 1;
     if (!roundMap.has(roundNum)) {
       roundMap.set(roundNum, { number: roundNum, contributions: [], turn_requests: [], summary: summaries[roundNum] ?? "" });
     }
     roundMap.get(roundNum).turn_requests.push({
-      participant_id: ij.participant_id,
-      target: ij.target_participant_id ?? "",
-      priority: ij.priority,
-      reason: ij.reason,
+      participant_id: tr.participant_id,
+      target: tr.target_participant_id ?? "",
+      priority: tr.priority,
+      reason: tr.reason,
     });
   }
 

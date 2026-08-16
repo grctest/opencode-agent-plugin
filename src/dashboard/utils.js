@@ -31,7 +31,7 @@ const TYPE_COLORS = {
   dissent: "loom-badge-dissent",
   synthesize: "loom-badge-synthesize",
   question: "loom-badge-question",
-  interjection: "loom-badge-interjection",
+  turn_request: "loom-badge-turn-request",
   reflection: "loom-badge-reflection",
 };
 

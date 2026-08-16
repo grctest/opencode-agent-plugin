@@ -1,6 +1,6 @@
 /**
  * Shared NLP utilities: tokenization, TF-IDF, cosine similarity.
- * Used by composer (persona matching) and convergence-orchestrator (discussion stall detection).
+ * Used by composer (persona matching) and vector search (similarity).
  */
 
 const STOPWORDS = new Set([
