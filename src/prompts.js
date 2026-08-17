@@ -373,7 +373,7 @@ ${tierGuidance}
 
 ## Rules
 1. Read the shared context and recent contributions carefully
-2. If you have something meaningful to add, state it concisely (aim for under 200 words)
+2. If you have something meaningful to add, state your position clearly with supporting reasoning
 3. If you have nothing to add, respond with exactly: [PASS]
 4. Tag your type: [PROPOSE], [CHALLENGE], [REFINE], [SUPPORT], [DISSENT], [SYNTHESIZE], [QUESTION], or [REFUSE]
 ${requestNextRule}

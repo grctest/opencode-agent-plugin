@@ -1,7 +1,7 @@
 import { useMemo, memo } from "react";
 import { cn } from "../utils.js";
 
-export const ParticipationMatrix = memo(function ParticipationMatrix({ participants, contributions, agentErrors, rounds }) {
+export const ParticipationMatrix = memo(function ParticipationMatrix({ participants, contributions, agentErrors, rounds, activeRound }) {
   const roundData = useMemo(() => {
     const contribMap = new Map();
     for (const c of contributions) {
@@ -48,6 +48,8 @@ export const ParticipationMatrix = memo(function ParticipationMatrix({ participa
           row[p.id] = { status: "error", order: null, reflectionCount };
         } else if (p.status === "passed") {
           row[p.id] = { status: "passed", order: null, reflectionCount };
+        } else if (activeRound && r > activeRound) {
+          row[p.id] = { status: "future", order: null, reflectionCount };
         } else {
           row[p.id] = { status: "none", order: null, reflectionCount };
         }
@@ -55,7 +57,7 @@ export const ParticipationMatrix = memo(function ParticipationMatrix({ participa
       data.push({ round: r, participants: row });
     }
     return { data, errorRounds };
-  }, [participants, contributions, agentErrors, rounds]);
+  }, [participants, contributions, agentErrors, rounds, activeRound]);
 
   if (rounds === 0 || participants.length === 0) return null;
 

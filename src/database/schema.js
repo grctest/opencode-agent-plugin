@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 17;
+export const SCHEMA_VERSION = 19;
 
 export function initSchema(db) {
   db.exec(`
@@ -49,6 +49,7 @@ export function initSchema(db) {
       type TEXT NOT NULL,
       content TEXT NOT NULL,
       target_which TEXT,
+      tool_calls TEXT,
       created_at TEXT NOT NULL
     );
 
@@ -386,6 +387,14 @@ export function migrateSchema(db) {
       )`);
     } catch { /* sqlite-vec not loaded */ }
     db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '17')`);
+  }
+  if (currentVersion < 18) {
+    try { db.exec(`ALTER TABLE contributions ADD COLUMN tool_calls TEXT`); } catch { /* exists */ }
+    db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '18')`);
+  }
+  if (currentVersion < 19) {
+    try { db.exec(`ALTER TABLE meetings ADD COLUMN reflecting_participants TEXT`); } catch { /* exists */ }
+    db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '19')`);
   }
   db.exec("COMMIT");
   } catch (err) {

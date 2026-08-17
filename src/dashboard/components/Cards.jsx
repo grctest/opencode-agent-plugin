@@ -81,7 +81,7 @@ export const ContentDialog = memo(({ open, onClose, title, className, children }
   );
 });
 
-export const ParticipantCard = memo(({ participant, error, contributionsByRound, onSelect }) => {
+export const ParticipantCard = memo(({ participant, error, contributionsByRound, isReflecting, onSelect }) => {
   const totalContribs = useMemo(
     () => Object.values(contributionsByRound ?? {}).reduce((a, b) => a + b, 0),
     [contributionsByRound]
@@ -93,7 +93,7 @@ export const ParticipantCard = memo(({ participant, error, contributionsByRound,
     if (error) {
       return <span className="loom-agent-status loom-agent-error" title={`${error.error_type}: ${error.error_message}`} />;
     }
-    if (participant.status === "speaking") {
+    if (participant.status === "speaking" || isReflecting) {
       return <span className="loom-agent-status loom-agent-thinking" />;
     }
     if (participant.status === "passed") {

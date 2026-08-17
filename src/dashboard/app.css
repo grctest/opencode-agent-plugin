@@ -664,6 +664,18 @@ input {
 .loom-thinking-placeholders { margin-bottom: 1rem; }
 .loom-thinking-placeholders > * + * { margin-top: 0.5rem; }
 
+/* Thinking placeholder rows in timeline */
+.loom-thinking-placeholder-row {
+  border-style: dashed;
+  opacity: 0.7;
+  padding: 0.5rem 0.75rem;
+}
+
+.loom-thinking-placeholder-row.loom-contrib-type-reflection {
+  border-left: 2px solid #6366f1;
+  background: color-mix(in oklch, #6366f1 4%, var(--color-card));
+}
+
 /* Contribution card */
 .loom-contribution-card {
   border-left: 3px solid transparent;
@@ -1005,7 +1017,10 @@ input {
 .loom-prose ul { margin: 0 0 0.5rem; padding-left: 1.5rem; list-style-type: disc; }
 .loom-prose ol { margin: 0 0 0.5rem; padding-left: 1.5rem; list-style-type: decimal; }
 .loom-prose li { margin-bottom: 0.25rem; }
-.loom-prose h1, .loom-prose h2, .loom-prose h3 { margin-top: 1rem; margin-bottom: 0.5rem; }
+.loom-prose h1, .loom-prose h2, .loom-prose h3, .loom-prose h4, .loom-prose h5, .loom-prose h6 {
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+}
 .loom-prose code {
   background: var(--color-secondary);
   padding: 0.125rem 0.25rem;
@@ -1020,6 +1035,39 @@ input {
 }
 .loom-prose pre code { background: none; padding: 0; }
 .loom-prose a { color: var(--color-primary); text-decoration: underline; }
+.loom-prose table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.5rem 0;
+  font-size: 0.8125rem;
+}
+.loom-prose th,
+.loom-prose td {
+  border: 1px solid var(--color-border);
+  padding: 0.375rem 0.625rem;
+  text-align: left;
+}
+.loom-prose th {
+  font-weight: 600;
+  background: var(--color-secondary);
+}
+.loom-prose blockquote {
+  border-left: 3px solid var(--color-border);
+  margin: 0.5rem 0;
+  padding: 0.375rem 0.75rem;
+  color: var(--color-muted-foreground);
+  background: var(--color-secondary);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+.loom-prose hr {
+  border: none;
+  border-top: 1px solid var(--color-border);
+  margin: 1rem 0;
+}
+.loom-prose img {
+  max-width: 100%;
+  border-radius: var(--radius-sm);
+}
 
 /* Overview */
 .loom-overview { padding-top: 1rem; }
@@ -1220,6 +1268,7 @@ input {
 .loom-matrix-error { background: #ef4444; }
 .loom-matrix-passed { background: var(--color-muted-foreground); opacity: 0.4; }
 .loom-matrix-none { background: #f59e0b; opacity: 1; }
+.loom-matrix-future { background: transparent; }
 
 .loom-matrix-row-error td {
   background: color-mix(in oklch, var(--color-destructive) 4%, transparent);
@@ -1422,7 +1471,7 @@ input {
   background: var(--color-card);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
-  max-width: 640px;
+  max-width: 860px;
   width: calc(100% - 2rem);
   max-height: 75vh;
   display: flex;
@@ -1498,31 +1547,196 @@ input {
 
 /* Dialog type accents */
 .loom-dialog-type-propose { border-left: 3px solid #15803d; }
-.loom-dialog-type-propose .loom-dialog-header { background: color-mix(in oklch, #15803d 15%, var(--color-card)); }
+.loom-dialog-type-propose .loom-dialog-header { background: color-mix(in oklch, #15803d 25%, var(--color-card)); }
 
 .loom-dialog-type-challenge { border-left: 3px solid #b91c1c; }
-.loom-dialog-type-challenge .loom-dialog-header { background: color-mix(in oklch, #b91c1c 15%, var(--color-card)); }
+.loom-dialog-type-challenge .loom-dialog-header { background: color-mix(in oklch, #b91c1c 25%, var(--color-card)); }
 
 .loom-dialog-type-refine { border-left: 3px solid #1d4ed8; }
-.loom-dialog-type-refine .loom-dialog-header { background: color-mix(in oklch, #1d4ed8 15%, var(--color-card)); }
+.loom-dialog-type-refine .loom-dialog-header { background: color-mix(in oklch, #1d4ed8 25%, var(--color-card)); }
 
 .loom-dialog-type-support { border-left: 3px solid #047857; }
-.loom-dialog-type-support .loom-dialog-header { background: color-mix(in oklch, #047857 15%, var(--color-card)); }
+.loom-dialog-type-support .loom-dialog-header { background: color-mix(in oklch, #047857 25%, var(--color-card)); }
 
 .loom-dialog-type-dissent { border-left: 3px solid #c2410c; }
-.loom-dialog-type-dissent .loom-dialog-header { background: color-mix(in oklch, #c2410c 15%, var(--color-card)); }
+.loom-dialog-type-dissent .loom-dialog-header { background: color-mix(in oklch, #c2410c 25%, var(--color-card)); }
 
 .loom-dialog-type-synthesize { border-left: 3px solid #7e22ce; }
-.loom-dialog-type-synthesize .loom-dialog-header { background: color-mix(in oklch, #7e22ce 15%, var(--color-card)); }
+.loom-dialog-type-synthesize .loom-dialog-header { background: color-mix(in oklch, #7e22ce 25%, var(--color-card)); }
 
 .loom-dialog-type-question { border-left: 3px solid #0e7490; }
-.loom-dialog-type-question .loom-dialog-header { background: color-mix(in oklch, #0e7490 15%, var(--color-card)); }
+.loom-dialog-type-question .loom-dialog-header { background: color-mix(in oklch, #0e7490 25%, var(--color-card)); }
+
+.loom-dialog-type-refuse { border-left: 3px solid #6b7280; }
+.loom-dialog-type-refuse .loom-dialog-header { background: color-mix(in oklch, #6b7280 25%, var(--color-card)); }
 
 .loom-dialog-type-turn_request { border-left: 3px solid #be185d; }
-.loom-dialog-type-turn_request .loom-dialog-header { background: color-mix(in oklch, #be185d 15%, var(--color-card)); }
+.loom-dialog-type-turn_request .loom-dialog-header { background: color-mix(in oklch, #be185d 25%, var(--color-card)); }
 
 .loom-dialog-type-reflection { border-left: 3px solid #6366f1; }
-.loom-dialog-type-reflection .loom-dialog-header { background: color-mix(in oklch, #6366f1 15%, var(--color-card)); }
+.loom-dialog-type-reflection .loom-dialog-header { background: color-mix(in oklch, #6366f1 25%, var(--color-card)); }
+
+/* Dialog tabs */
+.loom-dialog-tabs-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.loom-dialog-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--color-border);
+  margin: -0.25rem -0.5rem 0.75rem;
+}
+
+.loom-dialog-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 0.5rem 1rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--color-muted-foreground);
+  cursor: pointer;
+  transition: color 100ms ease, border-color 100ms ease;
+}
+
+.loom-dialog-tab:hover {
+  color: var(--color-foreground);
+}
+
+.loom-dialog-tab-active {
+  color: var(--color-foreground);
+  border-bottom-color: #3b82f6;
+}
+
+.loom-dialog-tab-panel {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Tool calls panel */
+.loom-tool-calls-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.loom-tool-calls-empty {
+  padding: 1rem 0;
+  text-align: center;
+}
+
+.loom-tool-calls-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.loom-tool-call-item {
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 0.625rem 0.75rem;
+  background: var(--color-card);
+}
+
+.loom-tool-call-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.375rem;
+}
+
+.loom-tool-call-name {
+  font-weight: 600;
+  font-size: 0.8125rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.loom-tool-call-title {
+  font-size: 0.75rem;
+  color: var(--color-muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.loom-tool-call-status {
+  margin-left: auto;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  padding: 0.125rem 0.375rem;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.loom-tool-call-success {
+  background: color-mix(in oklch, #15803d 15%, var(--color-card));
+  color: #15803d;
+}
+
+.loom-tool-call-error {
+  background: color-mix(in oklch, #b91c1c 15%, var(--color-card));
+  color: #b91c1c;
+}
+
+.loom-tool-call-output,
+.loom-tool-call-error-output {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  padding: 0.5rem;
+  border-radius: 4px;
+  background: var(--color-background);
+  border: 1px solid var(--color-border);
+  max-height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+}
+
+.loom-tool-call-error-output {
+  border-color: color-mix(in oklch, #b91c1c 30%, var(--color-border));
+  color: #b91c1c;
+}
+
+/* Details panel */
+.loom-details-panel {
+  padding: 0.25rem 0;
+}
+
+.loom-details-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+
+.loom-details-table tr + tr {
+  border-top: 1px solid var(--color-border);
+}
+
+.loom-details-label {
+  padding: 0.5rem 0.75rem 0.5rem 0;
+  color: var(--color-muted-foreground);
+  font-weight: 500;
+  white-space: nowrap;
+  vertical-align: top;
+  width: 1%;
+}
+
+.loom-details-value {
+  padding: 0.5rem 0;
+  color: var(--color-foreground);
+}
+
+.loom-details-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.75rem;
+}
 
 /* Clickable contribution card */
 .loom-contrib-clickable {

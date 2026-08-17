@@ -241,6 +241,41 @@ export class MeetingDatabase {
   }
 
   /**
+   * Inserts composed participants into the participants table.
+   * Used after composeRoomWithSimilarity() returns participants in memory
+   * that need to be persisted for dashboard display and meeting resumption.
+   */
+  insertParticipants(participants) {
+    const insertParticipant = this.#db.prepare(
+      `INSERT INTO participants (id, meeting_id, name, persona, agenda, tier, provider_id, model_id, session_id, known_biases, communication_style, preferred_contribution_types)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    this.#db.exec('BEGIN TRANSACTION');
+    try {
+      for (const p of participants) {
+        insertParticipant.run(
+          p.id,
+          this.#meetingId,
+          p.name,
+          p.persona,
+          p.agenda,
+          p.tier,
+          p.model?.providerID ?? null,
+          p.model?.modelID ?? null,
+          null,
+          p.known_biases ? JSON.stringify(p.known_biases) : null,
+          p.communication_style ?? null,
+          p.preferred_contribution_types ? JSON.stringify(p.preferred_contribution_types) : null,
+        );
+      }
+      this.#db.exec('COMMIT');
+    } catch (err) {
+      this.#db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  /**
    * Executes a function within a database transaction.
    * @param {Function} fn - Function to execute, receives the database instance
    * @returns {Promise<any>} Result of the function
@@ -411,11 +446,18 @@ export class MeetingDatabase {
       .run(status, isoNow(), this.#meetingId);
   }
 
+  setReflectingParticipants(participantIds) {
+    const value = participantIds && participantIds.length > 0 ? JSON.stringify(participantIds) : null;
+    this.#db
+      .prepare("UPDATE meetings SET reflecting_participants = ?, updated_at = ? WHERE id = ?")
+      .run(value, isoNow(), this.#meetingId);
+  }
+
   addContribution(meetingId, contribution) {
     this.#db
       .prepare(
-        `INSERT INTO contributions (meeting_id, participant_id, round, type, content, target_which, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO contributions (meeting_id, participant_id, round, type, content, target_which, tool_calls, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         meetingId,
@@ -424,6 +466,7 @@ export class MeetingDatabase {
         contribution.type,
         contribution.content,
         contribution.targets_which ?? null,
+        contribution.tool_calls ? JSON.stringify(contribution.tool_calls) : null,
         contribution.created_at ?? isoNow(),
       );
   }
@@ -431,7 +474,7 @@ export class MeetingDatabase {
   getContributions(meetingId) {
     const rows = this.#db
       .prepare(
-        `SELECT id, participant_id, round, type, content, target_which, created_at
+        `SELECT id, participant_id, round, type, content, target_which, tool_calls, created_at
          FROM contributions WHERE meeting_id = ? ORDER BY id ASC`,
       )
       .all(meetingId);
@@ -442,6 +485,7 @@ export class MeetingDatabase {
       content: r.content,
       type: r.type,
       targets_which: r.target_which != null ? Number(r.target_which) : null,
+      tool_calls: r.tool_calls ? JSON.parse(r.tool_calls) : null,
       created_at: r.created_at,
     }));
   }
@@ -449,7 +493,7 @@ export class MeetingDatabase {
   getRecentContributions(meetingId, count) {
     const rows = this.#db
       .prepare(
-        `SELECT id, participant_id, round, type, content, target_which, created_at
+        `SELECT id, participant_id, round, type, content, target_which, tool_calls, created_at
          FROM contributions WHERE meeting_id = ? ORDER BY id DESC LIMIT ?`,
       )
       .all(meetingId, count);
@@ -460,6 +504,7 @@ export class MeetingDatabase {
       content: r.content,
       type: r.type,
       targets_which: r.target_which != null ? Number(r.target_which) : null,
+      tool_calls: r.tool_calls ? JSON.parse(r.tool_calls) : null,
       created_at: r.created_at,
     }));
   }
@@ -493,8 +538,8 @@ export class MeetingDatabase {
     try {
       this.#db
         .prepare(
-          `INSERT INTO contributions (meeting_id, participant_id, round, type, content, target_which, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO contributions (meeting_id, participant_id, round, type, content, target_which, tool_calls, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           meetingId,
@@ -503,6 +548,7 @@ export class MeetingDatabase {
           contribution.type,
           contribution.content,
           contribution.targets_which ?? null,
+          contribution.tool_calls ? JSON.stringify(contribution.tool_calls) : null,
           contribution.created_at ?? isoNow(),
         );
 

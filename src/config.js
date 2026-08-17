@@ -4,7 +4,6 @@ import { join } from "node:path";
 const DEFAULT_CONFIG = {
   agentTimeoutMs: 120000,
   synthesisTimeoutMs: 180000,
-  maxContributionWords: 250,
   maxTurnRequestWords: 200,
   defaultMaxRounds: 3,
   minRounds: 2,
@@ -53,7 +52,6 @@ const DEFAULT_CONFIG = {
 const CONFIG_SCHEMA = {
   agentTimeoutMs: { type: 'number', min: 10000, max: 600000 },
   synthesisTimeoutMs: { type: 'number', min: 10000, max: 600000 },
-  maxContributionWords: { type: 'number', min: 50, max: 2000 },
   maxTurnRequestWords: { type: 'number', min: 20, max: 1000 },
   defaultMaxRounds: { type: 'number', min: 1, max: 10 },
   minRounds: { type: 'number', min: 1, max: 5 },

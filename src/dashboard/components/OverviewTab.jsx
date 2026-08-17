@@ -4,13 +4,10 @@ import { ParticipationMatrix } from "./Charts.jsx";
 const CALL_COUNTER_KEYS = [
   "agent_prompts",
   "reflection_calls",
-  "turn_request_calls",
   "orchestrator",
-  "domain",
   "moderation",
-  "convergence",
   "summary",
-  "compaction",
+  "turn_order",
   "synthesis",
 ];
 
@@ -22,6 +19,7 @@ export const OverviewTab = memo(({
   agentErrors,
   participantName,
   totalRounds,
+  activeRound,
 }) => {
   const stats = state?.stats ?? {};
   const totalCalls = useMemo(() => CALL_COUNTER_KEYS.reduce((sum, key) => sum + (Number(stats[key]) || 0), 0), [stats]);
@@ -97,6 +95,7 @@ export const OverviewTab = memo(({
           contributions={contributions}
           agentErrors={agentErrors}
           rounds={totalRounds}
+          activeRound={activeRound}
         />
       </div>
       {agentErrors.length > 0 && (

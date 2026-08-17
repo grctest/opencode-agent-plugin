@@ -1,5 +1,3 @@
-import { getConfig } from "./config.js";
-import { enforceWordLimit, getPriorityCap } from "./shared.js";
 import { AgentResponseSchema, parseAgentResponseRaw } from "./schemas.js";
 import { Logger } from "./logger.js";
 
@@ -28,14 +26,10 @@ export function parseAgentResponse(participantId, response, tier) {
   const parsed = parseAgentResponseRaw(response, tier);
   if (!parsed) return null;
 
-  // Apply word limit
-  const config = getConfig();
-  const limitedContent = enforceWordLimit(parsed.content, config.maxContributionWords);
-
   // Validate with Zod schema
   const result = AgentResponseSchema.safeParse({
     participant_id: participantId,
-    content: limitedContent,
+    content: parsed.content,
     type: parsed.type,
     request_next: parsed.request_next,
   });
@@ -53,7 +47,7 @@ export function parseAgentResponse(participantId, response, tier) {
   // Fallback: treat malformed output as a challenge so it's visible, not silently accepted as a proposal
   return {
     participant_id: participantId,
-    content: limitedContent,
+    content: parsed.content,
     type: "challenge",
     request_next: null,
   };

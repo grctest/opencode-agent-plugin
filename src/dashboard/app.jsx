@@ -185,17 +185,7 @@ function MeetingHeader({ state, activeAgentCount, errorCount }) {
   );
 }
 
-function ThinkingBanner({ thinkingParticipants }) {
-  if (thinkingParticipants.length === 0) return null;
-  return (
-    <div className="loom-active-round-banner">
-      <span className="loom-thinking-dots"><span /><span /><span /></span>
-      <span className="loom-text-xs loom-text-muted">
-        {thinkingParticipants.map((p) => `${p.name} (${p.tier})`).join(", ")} thinking...
-      </span>
-    </div>
-  );
-}
+
 
 function ExtensionBanner({ banner, onDismiss }) {
   if (!banner) return null;
@@ -371,6 +361,11 @@ export function App() {
     return participants.filter((p) => p.status === "speaking");
   }, [participants]);
 
+  const reflectingParticipants = useMemo(() => {
+    const ids = state?.reflecting_participants ?? [];
+    return participants.filter((p) => ids.includes(p.id));
+  }, [participants, state?.reflecting_participants]);
+
   const contributionsByParticipant = useMemo(() => {
     const map = {};
     for (const c of contributions) {
@@ -435,6 +430,7 @@ export function App() {
             embeddingStatus={embeddingStatus}
             connected={connected}
             reconnectAttempt={reconnectAttempt}
+            reflectingParticipants={reflectingParticipants}
           />
          </ErrorBoundary>
 
@@ -448,10 +444,6 @@ export function App() {
               />
             </ErrorBoundary>
           )}
-
-          <ErrorBoundary fallbackMessage="Failed to render thinking banner">
-            <ThinkingBanner thinkingParticipants={thinkingParticipants} />
-          </ErrorBoundary>
 
           <ErrorBoundary fallbackMessage="Failed to render extension banner">
             <ExtensionBanner
@@ -489,6 +481,7 @@ export function App() {
                   agentErrors={agentErrors}
                   participantName={participantName}
                   totalRounds={totalRounds}
+                  activeRound={activeRound}
                 />
               </div>
             )}
@@ -510,6 +503,7 @@ export function App() {
                   groupedContributions={groupedContributions}
                   isWeaving={isWeaving}
                   thinkingParticipants={thinkingParticipants}
+                  reflectingParticipants={reflectingParticipants}
                   collapsedRounds={collapsedRounds}
                   onToggleCollapse={toggleRoundCollapse}
                   agentErrors={agentErrors}

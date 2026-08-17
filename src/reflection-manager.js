@@ -24,11 +24,14 @@ export async function runMidRoundReflections(round, triggerParticipant, listener
   stateManager,
   db,
   logError,
+  callStats,
 }) {
   if (listeners.length === 0) return;
 
   const config = getConfig();
   const timeoutMs = config.agentTimeoutMs;
+
+  db.setReflectingParticipants(listeners.map((l) => l.config.id));
 
   await Promise.allSettled(
     listeners.map(async (listener) => {
@@ -71,6 +74,15 @@ export async function runMidRoundReflections(round, triggerParticipant, listener
           timeoutMs,
         );
 
+        if (callStats) {
+          callStats.reflection_calls++;
+          const tokens = result?.data?.tokens;
+          if (tokens) {
+            callStats.input_tokens += tokens.input ?? 0;
+            callStats.output_tokens += tokens.output ?? 0;
+          }
+        }
+
         if (result.error) throw new Error(result.error.message || JSON.stringify(result.error));
 
         // Use extractAgentResponse to handle tool call parts
@@ -101,6 +113,14 @@ export async function runMidRoundReflections(round, triggerParticipant, listener
           content: `${header}\n\n${text.trim()}`,
           type: "reflection",
           targets_which: triggerParticipant.currentContributionId,
+          tool_calls: toolResults.length > 0 ? toolResults.map(t => ({
+            tool: t.tool,
+            callID: t.callID,
+            title: t.title ?? null,
+            output: t.output ? String(t.output).slice(0, 2000) : null,
+            error: t.error ? String(t.error).slice(0, 500) : null,
+            metadata: t.metadata ?? null,
+          })) : null,
           created_at: new Date().toISOString(),
         };
 
@@ -124,4 +144,6 @@ export async function runMidRoundReflections(round, triggerParticipant, listener
       }
     })
   );
+
+  db.setReflectingParticipants(null);
 }

@@ -221,6 +221,12 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
 
         composedRoom = await composeRoomWithSimilarity(args.question, seed, meetingDb);
         participants = composedRoom.participants;
+
+        if (modelMap.size === 0 && available.length > 0) {
+          participants = assignModelsToParticipants(participants, available, sessionModel);
+        }
+
+        meetingDb.insertParticipants(participants);
       } catch (err) {
         logger.warn("similarity_composition_failed", "Similarity-based composition failed — using fallback", extractErrorInfo(err));
         composedRoom = { participants: [], tags: [], estimated_rounds: 2, reasoning: "Fallback composition" };
@@ -232,7 +238,7 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
       }
     }
 
-    if (modelMap.size === 0 && available.length > 0) {
+    if (modelMap.size === 0 && available.length > 0 && participants.length > 0 && !participants[0]?.model) {
       participants = assignModelsToParticipants(participants, available, sessionModel);
     }
 

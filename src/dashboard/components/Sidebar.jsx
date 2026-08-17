@@ -47,7 +47,7 @@ function RoundIndicator({ current, max, status }) {
   );
 }
 
-const ParticipantRow = memo(({ index, style, participants, errorByParticipant, contributionsByParticipant, onSelect }) => {
+const ParticipantRow = memo(({ index, style, participants, errorByParticipant, contributionsByParticipant, reflectingParticipantIds, onSelect }) => {
   const p = participants[index];
   return (
     <div style={style} className="loom-sidebar-participant-row">
@@ -55,6 +55,7 @@ const ParticipantRow = memo(({ index, style, participants, errorByParticipant, c
         participant={p}
         error={errorByParticipant.get(p.id)}
         contributionsByRound={contributionsByParticipant[p.id] ?? {}}
+        isReflecting={reflectingParticipantIds.has(p.id)}
         onSelect={onSelect}
       />
     </div>
@@ -73,6 +74,7 @@ const Sidebar = memo(function Sidebar({
   embeddingStatus,
   connected,
   reconnectAttempt,
+  reflectingParticipants,
 }) {
   const [selectedParticipant, setSelectedParticipant] = useState(null);
   const [modelDialogOpen, setModelDialogOpen] = useState(false);
@@ -86,6 +88,10 @@ const Sidebar = memo(function Sidebar({
     }
     return map;
   }, [agentErrors]);
+
+  const reflectingParticipantIds = useMemo(() => {
+    return new Set((reflectingParticipants ?? []).map((p) => p.id));
+  }, [reflectingParticipants]);
 
   const modelName = embeddingStatus?.model?.split("/").pop() ?? embeddingStatus?.model;
 
@@ -192,7 +198,7 @@ const Sidebar = memo(function Sidebar({
               rowCount={participants.length}
               rowHeight={75}
               rowComponent={ParticipantRow}
-              rowProps={{ participants, errorByParticipant, contributionsByParticipant, onSelect: setSelectedParticipant }}
+              rowProps={{ participants, errorByParticipant, contributionsByParticipant, reflectingParticipantIds, onSelect: setSelectedParticipant }}
               width="100%"
               overscanCount={3}
             />

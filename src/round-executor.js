@@ -1,7 +1,7 @@
 import { buildAgentSystemPrompt, buildAgentUserPrompt } from "./prompts.js";
 import { parseAgentResponse } from "./validation.js";
 import { getConfig } from "./config.js";
-import { extractText, extractAgentResponse, truncate, withTimeout, enforceWordLimit } from "./shared.js";
+import { extractText, extractAgentResponse, truncate, withTimeout } from "./shared.js";
 import { Logger, extractErrorInfo } from "./logger.js";
 import { runMidRoundReflections } from "./reflection-manager.js";
 import { sanitizeForPrompt, sanitizeForDisplay } from "./utils/sanitize.js";
@@ -129,6 +129,7 @@ export class RoundExecutor {
             stateManager: this.#stateManager,
             db: this.#db,
             logError: this.#logError,
+            callStats: this.#callStats,
           });
         }
       }
@@ -180,6 +181,7 @@ export class RoundExecutor {
       content: safeContent,
       type: result.type,
       targets_which: null,
+      tool_calls: result.tool_calls ?? null,
       created_at: new Date().toISOString(),
     };
 
@@ -336,6 +338,15 @@ export class RoundExecutor {
       const safeContent = sanitizeForPrompt(agentText);
       const response = parseAgentResponse(participant.config.id, safeContent);
       if (!response) return null;
+
+      response.tool_calls = toolResults.length > 0 ? toolResults.map(t => ({
+        tool: t.tool,
+        callID: t.callID,
+        title: t.title ?? null,
+        output: t.output ? String(t.output).slice(0, 2000) : null,
+        error: t.error ? String(t.error).slice(0, 500) : null,
+        metadata: t.metadata ?? null,
+      })) : null;
 
       this.#recordModelSuccess(model);
       this.#options.onAgentComplete?.(participant.config.id, response.content);

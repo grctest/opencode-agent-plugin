@@ -113,7 +113,7 @@ export class DashboardApi {
   getState() {
     const row = this.#db
       .prepare(
-        `SELECT id as meeting_id, question, context, status, round, max_rounds, convergence, fabric, domain, stats, created_at
+        `SELECT id as meeting_id, question, context, status, round, max_rounds, convergence, fabric, domain, stats, reflecting_participants, created_at
          FROM meetings LIMIT 1`,
       )
       .get();
@@ -124,6 +124,15 @@ export class DashboardApi {
       } catch {
         row.stats = {};
       }
+    }
+    if (row.reflecting_participants) {
+      try {
+        row.reflecting_participants = JSON.parse(row.reflecting_participants);
+      } catch {
+        row.reflecting_participants = [];
+      }
+    } else {
+      row.reflecting_participants = [];
     }
     return row;
   }
@@ -191,7 +200,7 @@ export class DashboardApi {
   getContributions(limit = 100, offset = 0) {
     return this.#db
       .prepare(
-        `SELECT id, participant_id, round, type, content, target_which, created_at
+        `SELECT id, participant_id, round, type, content, target_which, tool_calls, created_at
          FROM contributions ORDER BY round ASC, id ASC LIMIT ? OFFSET ?`,
       )
       .all(limit, offset)
@@ -202,6 +211,7 @@ export class DashboardApi {
         type: r.type,
         content: r.content,
         targets_which: r.target_which != null ? Number(r.target_which) : null,
+        tool_calls: r.tool_calls ? JSON.parse(r.tool_calls) : null,
         created_at: r.created_at,
       }));
   }
@@ -214,7 +224,7 @@ export class DashboardApi {
   getContributionsSince(sinceId) {
     return this.#db
       .prepare(
-        `SELECT id, participant_id, round, type, content, target_which, created_at
+        `SELECT id, participant_id, round, type, content, target_which, tool_calls, created_at
          FROM contributions WHERE id > ? ORDER BY id ASC`,
       )
       .all(sinceId)
@@ -225,6 +235,7 @@ export class DashboardApi {
         type: r.type,
         content: r.content,
         targets_which: r.target_which != null ? Number(r.target_which) : null,
+        tool_calls: r.tool_calls ? JSON.parse(r.tool_calls) : null,
         created_at: r.created_at,
       }));
   }

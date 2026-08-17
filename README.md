@@ -95,18 +95,12 @@ Models are stored globally at:
 /knit "Should we migrate our authentication from sessions to JWT?"
 ```
 
-`/knit` runs the deliberation directly — no dry run preview. The chat shows a concise summary (rounds, participants, decision); the full report is saved to `.opencode/loom/meetings/<id>.md` and is always available in the dashboard's Output tab.
+`/knit` runs the deliberation directly. The chat shows a concise summary (rounds, participants, decision); the full report is saved to `.opencode/loom/meetings/<id>.md` and is always available in the dashboard's Output tab.
 
 Preview available models before running:
 
 ```
 /knit_models
-```
-
-Preview the composed room without deliberating (only when explicitly requested):
-
-```
-/knit "Your question" --dry_run
 ```
 
 Launch the dashboard:
@@ -136,7 +130,6 @@ loom_viz
 | `models` | Per-tier model assignments (use `/knit_models` to discover) | auto-assigned |
 | `meeting_timeout` | Maximum meeting duration in ms (60000–1800000) | `900000` (15 min) |
 | `seed` | Random seed for room composition | current time |
-| `dry_run` | Preview the composed room without deliberating (only if explicitly requested) | `false` |
 | `fresh` | Force a fresh loom even if a previous meeting exists | `false` |
 | `turn_mode` | `sequential` (default), `staged` (2-at-a-time), or `parallel` (all concurrently) | `sequential` |
 
