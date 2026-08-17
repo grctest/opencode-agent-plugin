@@ -289,6 +289,9 @@ function pickPersona(tier, used, domains, rng, existingPersonas, idf) {
         known_biases: persona.known_biases,
         communication_style: persona.communication_style,
         preferred_contribution_types: persona.preferred_contribution_types,
+        anti_patterns: persona.anti_patterns,
+        reflection_guidance: persona.reflection_guidance,
+        tier_guidance: persona.tier_guidance,
       };
     }
   }
@@ -307,6 +310,9 @@ function pickPersona(tier, used, domains, rng, existingPersonas, idf) {
     known_biases: fallback.known_biases,
     communication_style: fallback.communication_style,
     preferred_contribution_types: fallback.preferred_contribution_types,
+    anti_patterns: fallback.anti_patterns,
+    reflection_guidance: fallback.reflection_guidance,
+    tier_guidance: fallback.tier_guidance,
   };
 }
 

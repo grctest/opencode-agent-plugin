@@ -389,11 +389,21 @@ You have access to tools that let you research and explore. Use them to ground y
   const contribTypes = Array.isArray(cfg.preferred_contribution_types) && cfg.preferred_contribution_types.length > 0
     ? cfg.preferred_contribution_types.join(", ")
     : null;
+  const antiPatterns = Array.isArray(cfg.anti_patterns) && cfg.anti_patterns.length > 0
+    ? cfg.anti_patterns.map((a) => `- ${a}`).join("\n")
+    : null;
 
   const dispositionSection = (biases || style || contribTypes)
     ? `
 ## Your Disposition
 ${biases ? `You are prone to these known tendencies — name them when they might be coloring your view, and actively check them:\n${biases}\n` : ""}${style ? `Communicate in this register: ${style}\n` : ""}${contribTypes ? `You naturally contribute via: ${contribTypes}. Lean into these, but stay open to others when the moment calls for it.\n` : ""}`
+    : "";
+
+  const antiPatternsSection = antiPatterns
+    ? `
+## What NOT to Do
+${antiPatterns}
+`
     : "";
 
   return `You are **${cfg.name}** (${cfg.tier}) in a structured multi-agent deliberation called "Loom."
@@ -404,6 +414,7 @@ ${cfg.persona}
 ## Your Agenda
 ${cfg.agenda}
 ${dispositionSection}
+${antiPatternsSection}
 
 ## Your Tier Guidance
 ${tierGuidance}
