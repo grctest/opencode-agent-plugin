@@ -52,7 +52,11 @@ export function getDefaultTemperatureForTier(tier) {
   }
 }
 
-/** Returns tier-specific behavioral guidance for agent system prompts. */
+/**
+ * @deprecated Use participant.config.tier_guidance from persona files instead.
+ * This function is kept for backward compatibility only.
+ * Tier guidance should now be defined in each persona's tier_guidance field.
+ */
 export function getPromptForTier(tier) {
   switch (tier) {
     case "junior":
@@ -81,7 +85,7 @@ export function getTierConfig(tier, overrides) {
     model: overrides?.model ?? "",
     temperature: overrides?.temperature ?? getDefaultTemperatureForTier(tier),
     reasoning_effort: overrides?.reasoning_effort,
-    system_prompt_addendum: getPromptForTier(tier),
+    // system_prompt_addendum removed — tier guidance now comes from persona files via participant.config.tier_guidance
     rights: getRightsForTier(tier),
   };
 }

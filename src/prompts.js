@@ -1,4 +1,4 @@
-import { getPromptForTier, TURN_REQUEST_PRIORITY_CAP } from "./shared.js";
+import { TURN_REQUEST_PRIORITY_CAP } from "./shared.js";
 import { sanitizeForDisplay } from "./utils/sanitize.js";
 import { getConfig } from "./config.js";
 
@@ -18,24 +18,15 @@ export function delimitContext(context, label) {
 }
 
 /** Builds a prompt asking a listener to reflect on a speaker's contribution. */
-export function buildReflectionPrompt(listener, triggerParticipant, contribution, roundContributions) {
+export function buildReflectionPrompt(listener, triggerParticipant, contribution, roundContributions, currentRound, maxRounds) {
   const safeSpeaker = sanitizeForDisplay(triggerParticipant.config.name);
   const safeContribution = sanitizeForDisplay(contribution);
-  const tier = listener.config.tier;
-
-  const tierReflectionGuidance = {
-    junior: "React instinctively — what excites you, what feels wrong, what reminds you of something unrelated? Don't worry about being right.",
-    mid: "Evaluate the reasoning structure. Where does the logic hold? Where does it break? What evidence would change your mind?",
-    senior: "Assess risk and feasibility. What has worked before in similar situations? What assumptions are most dangerous to leave unchallenged?",
-    principal: "Determine if this contribution moves the deliberation forward or merely restates what's already known. Is it actionable?",
-  };
-
-  const guidance = tierReflectionGuidance[tier] || tierReflectionGuidance.mid;
+  const guidance = listener.config.reflection_guidance || "Reflect on this contribution and update your position.";
 
   const previousReflection = listener.reflection || "";
   const reflectionBlock = previousReflection
     ? `Your previous reflection on this deliberation:\n"${sanitizeForDisplay(previousReflection)}"`
-    : "(No prior reflection — this is your first)";
+    : "";
 
   const myContributions = (roundContributions || [])
     .filter((c) => c.participant_id === listener.config.id && c.type !== "pass")
@@ -43,6 +34,33 @@ export function buildReflectionPrompt(listener, triggerParticipant, contribution
     .map((c) => sanitizeForDisplay(c.content));
   const recentBlock = myContributions.length > 0
     ? `Your recent contributions:\n${myContributions.map((c) => `- "${c}"`).join("\n")}`
+    : "";
+
+  // Topic relevance detection
+  const listenerDomains = listener.config.domains || [];
+  const listenerExpertise = listener.config.expertise || [];
+  const contributionLower = contribution.toLowerCase();
+  const topicRelevance = detectTopicRelevance(contributionLower, listenerDomains, listenerExpertise);
+
+  // Seniority relationship
+  const TIER_ORDER = { junior: 0, mid: 1, senior: 2, principal: 3 };
+  const listenerTierLevel = TIER_ORDER[listener.config.tier] ?? 1;
+  const triggerTierLevel = TIER_ORDER[triggerParticipant.config.tier] ?? 1;
+  const seniorityContext = buildSeniorityContext(
+    listener.config.name,
+    listener.config.tier,
+    triggerParticipant.config.name,
+    triggerParticipant.config.tier,
+    listenerTierLevel,
+    triggerTierLevel
+  );
+
+  // Round context
+  const roundContext = buildRoundContext(currentRound, maxRounds);
+
+  // Prior stance context
+  const priorStanceContext = previousReflection
+    ? `You have already reflected on this deliberation. Your current position is recorded above. Update it based on this new contribution — keep what still holds, revise what has changed, add what's new.`
     : "";
 
   const agentToolsConfig = getConfig().agentTools;
@@ -70,12 +88,86 @@ ${reflectionBlock}
 Now **${safeSpeaker}** said:
 "${safeContribution}"
 
+## Context for This Reflection
+
+**Topic relevance:**
+${topicRelevance}
+
+**Seniority relationship:**
+${seniorityContext}
+
+**Round context:**
+${roundContext}
+
+${priorStanceContext ? `**Your prior stance:** ${priorStanceContext}` : ""}
+
+## Your Reflection Guidance
 ${guidance}
+
 ${reflectionToolUsageSection}
 
-Write your reflection on this contribution. Update your previous reflection:
-keep what still holds, revise what has changed, add what's new.
+Write your reflection on this contribution.
 This reflection will be visible to other participants in the deliberation.`;
+}
+
+/**
+ * Detects how relevant the contribution is to the listener's domains and expertise.
+ * Returns a context string for the reflection prompt.
+ */
+function detectTopicRelevance(contributionLower, listenerDomains, listenerExpertise) {
+  // Combine domains and expertise into keywords for matching
+  const keywords = [
+    ...listenerDomains.map(d => d.toLowerCase()),
+    ...listenerExpertise.map(e => e.toLowerCase().replace(/-/g, " "))
+  ];
+
+  if (keywords.length === 0) {
+    return "The contribution's relevance to your domain cannot be automatically determined. Use your judgment.";
+  }
+
+  // Check for keyword matches
+  const matches = keywords.filter(kw => contributionLower.includes(kw));
+
+  if (matches.length >= 2) {
+    return `This contribution directly touches your expertise (${matches.slice(0, 3).join(", ")}). Evaluate it through your professional lens.`;
+  } else if (matches.length === 1) {
+    return `This contribution may relate to your expertise (${matches[0]}). Assess whether it falls within your domain.`;
+  } else {
+    return `This contribution appears to be outside your primary domain. Focus on what's relevant to your expertise, or note what's missing from your perspective.`;
+  }
+}
+
+/**
+ * Builds context about the seniority relationship between the reflecting agent
+ * and the agent who triggered the reflection.
+ */
+function buildSeniorityContext(listenerName, listenerTier, triggerName, triggerTier, listenerLevel, triggerLevel) {
+  if (triggerLevel > listenerLevel) {
+    return `${triggerName} (${triggerTier}) outranks you (${listenerTier}). If their challenge has merit, update your position seriously. If it doesn't, hold your ground with evidence.`;
+  } else if (triggerLevel < listenerLevel) {
+    return `${triggerName} (${triggerTier}) is more junior than you (${listenerTier}). Evaluate their challenge on its merits, not seniority. Junior agents sometimes see what seniors miss.`;
+  } else {
+    return `${triggerName} (${triggerTier}) is your peer. Engage directly and challenge back if you disagree.`;
+  }
+}
+
+/**
+ * Builds context about the current round's position in the deliberation.
+ */
+function buildRoundContext(currentRound, maxRounds) {
+  if (!currentRound || !maxRounds) {
+    return "Deliberation round unknown. Reflect on the contribution's substance.";
+  }
+
+  const progress = currentRound / maxRounds;
+
+  if (progress <= 0.33) {
+    return `Early deliberation (round ${currentRound}/${maxRounds}). Be exploratory — this is the time to surface concerns and test assumptions.`;
+  } else if (progress <= 0.66) {
+    return `Mid deliberation (round ${currentRound}/${maxRounds}). Start converging — identify what's settled and what remains contested.`;
+  } else {
+    return `Late deliberation (round ${currentRound}/${maxRounds}). Focus on unresolved issues. Avoid re-litigating points already settled.`;
+  }
 }
 
 /** Builds a prompt for the moderator to plan turn order for the next round. */
@@ -264,7 +356,7 @@ export function buildAgentSystemPrompt(participant) {
   const tier = participant.config.tier;
   const cfg = participant.config;
 
-  const tierGuidance = getPromptForTier(tier);
+  const tierGuidance = cfg.tier_guidance || "Contribute your expertise to the deliberation. Challenge assumptions and propose alternatives.";
 
   const priorityCap = TURN_REQUEST_PRIORITY_CAP[tier] ?? 5;
   const requestNextRule = `5. To request priority for the next round, add: [REQUEST_NEXT: Priority: <1-${priorityCap}>, Reason: "why you must speak next round"] — place this at the end of your response`;

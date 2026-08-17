@@ -25,8 +25,16 @@ function personasBasePath() {
 function userPersonasPath() {
   const configDir = process.env.LOOM_CONFIG_DIR || join(process.env.HOME || "/root", ".config", "opencode", "loom");
   const personasDir = join(configDir, "personas");
+  // Support both legacy (domains.json at root) and new (tier subdirectories) structures
   if (existsSync(join(personasDir, "domains.json"))) {
     return personasDir;
+  }
+  // Check if any tier subdirectory exists
+  const tiers = ["junior", "mid", "senior", "principal"];
+  for (const tier of tiers) {
+    if (existsSync(join(personasDir, tier))) {
+      return personasDir;
+    }
   }
   return null;
 }
@@ -62,26 +70,44 @@ function loadPersonasFromPath(base) {
 
   for (const tier of tiers) {
     try {
-      const path = join(base, `${tier}.json`);
-      const data = readFileSync(path, "utf-8");
-      const raw = JSON.parse(data);
-      if (!result[tier]) result[tier] = [];
-      for (let i = 0; i < raw.length; i++) {
-        const p = raw[i];
-        const errors = validatePersona(p);
-        if (errors.length > 0) {
-          composerLogger.warn("invalid_persona", `Invalid persona at ${tier}[${i}] (${p.name ?? "unnamed"})`, { errors });
-          totalRejected++;
-          continue;
+      const tierDir = join(base, tier);
+      if (!existsSync(tierDir)) {
+        // Fall back to legacy format: single array file per tier
+        const legacyPath = join(base, `${tier}.json`);
+        if (existsSync(legacyPath)) {
+          result[tier] = loadLegacyPersonaFile(legacyPath, tier);
+          totalLoaded += result[tier].length;
+        } else {
+          result[tier] = [];
         }
-        result[tier].push(normalizePersona(p));
-        totalLoaded++;
+        continue;
+      }
+
+      result[tier] = [];
+      const files = readdirSync(tierDir).filter((f) => f.endsWith(".json"));
+      for (const file of files) {
+        try {
+          const filePath = join(tierDir, file);
+          const data = readFileSync(filePath, "utf-8");
+          const p = JSON.parse(data);
+          const errors = validatePersona(p);
+          if (errors.length > 0) {
+            composerLogger.warn("invalid_persona", `Invalid persona at ${tier}/${file} (${p.name ?? "unnamed"})`, { errors });
+            totalRejected++;
+            continue;
+          }
+          result[tier].push(normalizePersona(p));
+          totalLoaded++;
+        } catch (err) {
+          composerLogger.warn("persona_load_failed", `Failed to load persona from ${tier}/${file}`, { error: err.message });
+          totalRejected++;
+        }
       }
     } catch (err) {
       if (!result[tier]) result[tier] = [];
       if (err.code !== "ENOENT") {
-          composerLogger.warn("persona_load_failed", `Failed to load personas from ${base}/${tier}.json`, { error: err.message });
-        }
+        composerLogger.warn("persona_load_failed", `Failed to load personas from ${base}/${tier}/`, { error: err.message });
+      }
     }
   }
 
@@ -90,6 +116,27 @@ function loadPersonasFromPath(base) {
   }
 
   return result;
+}
+
+function loadLegacyPersonaFile(filePath, tier) {
+  try {
+    const data = readFileSync(filePath, "utf-8");
+    const raw = JSON.parse(data);
+    const personas = [];
+    for (let i = 0; i < raw.length; i++) {
+      const p = raw[i];
+      const errors = validatePersona(p);
+      if (errors.length > 0) {
+        composerLogger.warn("invalid_persona", `Invalid persona at ${tier}[${i}] (${p.name ?? "unnamed"})`, { errors });
+        continue;
+      }
+      personas.push(normalizePersona(p));
+    }
+    return personas;
+  } catch (err) {
+    composerLogger.warn("persona_load_failed", `Failed to load legacy persona file ${filePath}`, { error: err.message });
+    return [];
+  }
 }
 
 let personaCache = null;

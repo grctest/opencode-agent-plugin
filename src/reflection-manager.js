@@ -40,6 +40,8 @@ export async function runMidRoundReflections(round, triggerParticipant, listener
           triggerParticipant,
           triggerParticipant.currentContribution,
           round.contributions,
+          stateManager.getCurrentRound(),
+          stateManager.getMaxRounds(),
         );
 
         // Build tools map for reflection (reduced set: web_fetch, web_search, read, loom_vector_search)

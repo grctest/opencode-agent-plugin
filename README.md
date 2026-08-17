@@ -159,7 +159,7 @@ When you ask a question, the Loom uses an LLM to analyze the domain and select r
 | "How do we design our API?" | engineering, creative |
 | "What's our go-to-market strategy?" | business, operations |
 
-Each tier has different behavioral guidance — juniors ask questions and propose ideas, seniors demand evidence and can veto conclusions, and principals can end deliberation when consensus is reached. Personas can be customized by editing the JSON files in the `personas/` directory.
+Each tier has different behavioral guidance defined in each persona's `tier_guidance` field. Personas also include a `reflection_guidance` field that specifies how they should approach reflections. Personas can be customized by editing the JSON files in the `personas/` directory.
 
 ## Dashboard
 

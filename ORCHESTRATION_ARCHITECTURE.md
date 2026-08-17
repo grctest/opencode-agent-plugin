@@ -115,12 +115,19 @@ Four tiers determine agent behavior, authority, and LLM parameters:
 | senior | 0.3 | Priority 9 | contribute, request_turn, call_vote, veto |
 | principal | 0.2 | Priority 10 | contribute, request_turn, call_vote, veto, force_end |
 
-**Behavioral guidance injected into system prompts:**
+**Behavioral guidance is now defined in each persona's `tier_guidance` field:**
 
-- **junior**: "Think creatively and bring fresh perspectives. Wild ideas are welcome — you won't be penalized for being wrong. Challenge senior thinking with naive questions that expose hidden assumptions."
-- **mid**: "Balance creativity with evidence. When you disagree, explain why with specific reasoning. Synthesize others' points before adding your own."
-- **senior**: "Prioritize accuracy and risk assessment. Cite patterns from experience. Be conservative with claims but commit fully when you do. Flag irreversible decisions."
-- **principal**: "See the whole system. Cut through noise and circular argument. When consensus is impossible, decide. Your primary role is to ensure this deliberation produces a clear, actionable answer."
+Each persona file contains a `tier_guidance` field that specifies the behavioral expectations for that tier. This makes each persona self-contained and user-editable. Example:
+
+```json
+{
+  "name": "Security Engineer",
+  "persona": "You assume breach...",
+  "agenda": "Identify security implications...",
+  "tier_guidance": "Prioritize accuracy and risk assessment. Cite patterns from experience. Be conservative with claims but commit fully when you do. Flag irreversible decisions.",
+  "reflection_guidance": "When reflecting, walk through the exploit path of the proposed change. Ask: 'What new attack surface does this create?' or 'What existing defense does this weaken?'"
+}
+```
 
 ### Persona Structure
 
@@ -134,7 +141,9 @@ Each agent is loaded from a JSON persona file. Example structure:
   "domains": ["engineering", "security"],
   "known_biases": ["Over-indexes on security at the expense of UX"],
   "communication_style": "Technical and precise, references OWASP and CVE patterns",
-  "preferred_contribution_types": ["challenge", "refine"]
+  "preferred_contribution_types": ["challenge", "refine"],
+  "tier_guidance": "Prioritize accuracy and risk assessment...",
+  "reflection_guidance": "When reflecting, walk through the exploit path..."
 }
 ```
 
@@ -152,13 +161,14 @@ Each agent is loaded from a JSON persona file. Example structure:
     domains: ["engineering", "security"],
     known_biases: ["Over-indexes on security at the expense of UX"],
     communication_style: "Technical and precise",
-    preferred_contribution_types: ["challenge", "refine"]
+    preferred_contribution_types: ["challenge", "refine"],
+    tier_guidance: "Prioritize accuracy and risk assessment...",
+    reflection_guidance: "When reflecting, walk through the exploit path..."
   },
   tier_config: {
     model: "anthropic/claude-sonnet-4-20250514",
     temperature: 0.3,
     reasoning_effort: null,
-    system_prompt_addendum: "Prioritize accuracy and risk assessment...",
     rights: { contribute: true, request_turn: true, call_vote: true, veto: true, force_end: false }
   },
   session_id: "",           // unused in ephemeral mode — reserved for future use
@@ -997,10 +1007,12 @@ Agent 4 immediately sees: "The architect reflected on the security engineer's ch
 
 ### Context-Aware Prompts
 
-Reflection prompts are composed from three axes:
-- **Tier** — analytical lens (junior: instinctive, mid: structural, senior: risk/feasibility, principal: actionability)
+Reflection prompts are now persona-driven, using fields defined in each persona file:
+- **Reflection Guidance** — persona-specific instructions for how to approach reflection (e.g., "When reflecting, walk through the exploit path of the proposed change...")
 - **Persona** — the agent's role and agenda
 - **Recency** — the agent's own last 2 contributions (avoids repetition)
+
+Each persona file contains a `reflection_guidance` field that defines how that specific persona should approach reflections, replacing the previous static tier-based guidance.
 
 ### Storage
 
