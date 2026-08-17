@@ -12,14 +12,10 @@ import {
 
 const dbLogger = new Logger();
 
-// sqlite-vec extension loader — loaded once, reused across all databases
-let sqliteVecLoadFn = null;
-try {
-  const sqliteVec = await import("sqlite-vec");
-  sqliteVecLoadFn = sqliteVec.load;
-} catch {
-  dbLogger.info("sqlite_vec_not_available", "sqlite-vec package not found — vector search disabled");
-}
+// sqlite-vec native extension path — load directly via db.loadExtension()
+// This bypasses the sqlite-vec npm package which fails in bundled context
+// because import.meta.resolve() can't find vec0.so when code is bundled.
+const VEC0_PATH = join(import.meta.dir, 'deps', 'node_modules', 'sqlite-vec-linux-x64', 'vec0.so');
 
 // Single bun:sqlite import point — all DB access goes through this
 let DatabaseClass = null;
@@ -114,10 +110,14 @@ export class MeetingDatabase {
     this.#db = db;
     this.#db.exec("PRAGMA journal_mode = WAL");
     this.#db.exec("PRAGMA foreign_keys = ON");
-    if (sqliteVecLoadFn) {
-      try { sqliteVecLoadFn(this.#db); } catch (err) {
-        dbLogger.debug("sqlite_vec_load_error", "Failed to load sqlite-vec on this connection", extractErrorInfo(err));
+    if (existsSync(VEC0_PATH)) {
+      try {
+        this.#db.loadExtension(VEC0_PATH);
+      } catch (err) {
+        dbLogger.warn("sqlite_vec_load_error", "Failed to load sqlite-vec extension", extractErrorInfo(err));
       }
+    } else {
+      dbLogger.warn("sqlite_vec_not_found", "sqlite-vec extension not found — vector search disabled", { expectedPath: VEC0_PATH });
     }
     initSchema(this.#db);
     migrateSchema(this.#db);
@@ -130,12 +130,11 @@ export class MeetingDatabase {
     try {
       this.#db.exec(`
         CREATE VIRTUAL TABLE IF NOT EXISTS vec_fabric_chunks_${dim} USING vec0(
-          id INTEGER PRIMARY KEY,
           embedding float[${dim}]
         )
       `);
     } catch (err) {
-      dbLogger.debug("vec_table_init_failed", "Could not create vector table — sqlite-vec may not be loaded", extractErrorInfo(err));
+      dbLogger.warn("vec_table_init_failed", "Could not create vector table — sqlite-vec may not be loaded", extractErrorInfo(err));
     }
   }
 
@@ -162,8 +161,8 @@ export class MeetingDatabase {
   initializeMeeting(input) {
     const now = isoNow();
     const insertMeeting = this.#db.prepare(
-      `INSERT INTO meetings (id, question, context, status, round, fabric, max_rounds, convergence, domain, parent_session_id, opencode_session_id, embedding_model, embedding_dim, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT OR REPLACE INTO meetings (id, question, context, status, round, fabric, max_rounds, convergence, domain, tags, parent_session_id, opencode_session_id, embedding_model, embedding_dim, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     const insertParticipant = this.#db.prepare(
       `INSERT INTO participants (id, meeting_id, name, persona, agenda, tier, provider_id, model_id, session_id, known_biases, communication_style, preferred_contribution_types)
@@ -181,6 +180,7 @@ export class MeetingDatabase {
         input.maxRounds,
         input.convergence,
         input.domain ?? null,
+        JSON.stringify(input.tags ?? []),
         input.parentSessionId,
         input.opencodeSessionId,
         input.embedding_model ?? null,
@@ -214,6 +214,30 @@ export class MeetingDatabase {
 
     const dbPath = this.getDatabasePath();
     _indexMeeting(dbPath, this.#meetingId, input.opencodeSessionId);
+  }
+
+  /**
+   * Upserts a meeting row — inserts if missing, updates if already present.
+   * Unlike initializeMeeting, this does NOT delete existing persona embeddings
+   * (no CASCADE), making it safe to call after composition-phase indexing.
+   */
+  upsertMeeting(input) {
+    const now = isoNow();
+    const existing = this.#db.prepare(`SELECT id FROM meetings WHERE id = ?`).get(this.#meetingId);
+    if (existing) {
+      this.#db.prepare(`
+        UPDATE meetings SET question = ?, context = ?, max_rounds = ?, convergence = ?, domain = ?,
+          tags = ?, parent_session_id = ?, opencode_session_id = ?, embedding_model = ?, embedding_dim = ?, updated_at = ?
+        WHERE id = ?
+      `).run(
+        input.question, input.context ?? "", input.maxRounds, input.convergence,
+        input.domain ?? null, JSON.stringify(input.tags ?? []),
+        input.parentSessionId, input.opencodeSessionId,
+        input.embedding_model ?? null, input.embedding_dim ?? null, now, this.#meetingId,
+      );
+    } else {
+      this.initializeMeeting(input);
+    }
   }
 
   /**
@@ -303,6 +327,12 @@ export class MeetingDatabase {
     this.#db
       .prepare("UPDATE meetings SET domain = ?, updated_at = ? WHERE id = ?")
       .run(domain, isoNow(), meetingId);
+  }
+
+  updateMeetingTags(meetingId, tags) {
+    this.#db
+      .prepare("UPDATE meetings SET tags = ?, updated_at = ? WHERE id = ?")
+      .run(JSON.stringify(tags), isoNow(), meetingId);
   }
 
   addOrchestratorMessage(msgType, role, content) {
@@ -605,7 +635,7 @@ export class MeetingDatabase {
   getMeeting() {
     const row = this.#db
       .prepare(
-        `SELECT id, question, context, status, round, fabric, max_rounds, convergence, domain, parent_session_id, opencode_session_id, next_speaker_id, state_of_play, stats, embedding_model, embedding_dim, created_at
+        `SELECT id, question, context, status, round, fabric, max_rounds, convergence, domain, tags, parent_session_id, opencode_session_id, next_speaker_id, state_of_play, stats, embedding_model, embedding_dim, created_at
          FROM meetings WHERE id = ?`,
       )
       .get(this.#meetingId);
@@ -863,7 +893,7 @@ export class MeetingDatabase {
       // Ensure the vector table exists for this dimension
       this.#initVectorTable(dim);
       this.#db.prepare(
-        `INSERT INTO vec_fabric_chunks_${dim} (id, embedding) VALUES (?, ?)`
+        `INSERT INTO vec_fabric_chunks_${dim}(rowid, embedding) VALUES (?, vec_f32(?))`
       ).run(chunkId, embedding);
     } catch (err) {
       dbLogger.debug("store_embedding_failed", "Failed to store fabric embedding", extractErrorInfo(err));
@@ -914,17 +944,113 @@ export class MeetingDatabase {
    */
   searchFabricVectors(queryEmbedding, topK = 5, dim = 384) {
     try {
+      const limit = Math.max(1, Math.floor(Number(topK) || 5));
       return this.#db.prepare(`
-        SELECT v.id, v.distance, f.content, f.round, f.source
+        SELECT v.rowid, v.distance, f.content, f.round, f.source
         FROM vec_fabric_chunks_${dim} v
-        JOIN fabric_chunks f ON f.id = v.id AND f.meeting_id = ?
-        WHERE v.embedding MATCH ?
+        JOIN fabric_chunks f ON f.id = v.rowid AND f.meeting_id = ?
+        WHERE v.embedding MATCH ? AND k = ${limit}
         ORDER BY v.distance
-        LIMIT ?
-      `).all(this.#meetingId, queryEmbedding, topK);
+      `).all(this.#meetingId, queryEmbedding);
     } catch {
       return [];
     }
+  }
+
+  // ── Persona Embedding Methods ────────────────────────────────────────────
+
+  #initPersonaVectorTable(dim = 384) {
+    try {
+      this.#db.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS vec_persona_embeddings_${dim} USING vec0(
+          embedding float[${dim}],
+          tier text
+        )
+      `);
+    } catch (err) {
+      dbLogger.warn("persona_vec_table_init_failed", "Could not create persona vector table — sqlite-vec may not be loaded", extractErrorInfo(err));
+    }
+  }
+
+  /**
+   * Stores a persona embedding in the persona_embeddings table and its vector.
+   * @param {string} personaName
+   * @param {string} tier
+   * @param {string[]} tags
+   * @param {string} embeddingText - the text that was embedded
+   * @param {Float32Array} embedding
+   * @param {number} dim
+   * @returns {number|null} row ID
+   */
+  storePersonaEmbedding(personaName, tier, tags, embeddingText, embedding, dim = 384) {
+    try {
+      this.#initPersonaVectorTable(dim);
+      const result = this.#db.prepare(
+        `INSERT INTO persona_embeddings (meeting_id, persona_name, tier, tags, embedding_text, created_at) VALUES (?, ?, ?, ?, ?, ?)`
+      ).run(this.#meetingId, personaName, tier, JSON.stringify(tags), embeddingText, isoNow());
+      const rowId = result.lastInsertRowid;
+      this.#db.prepare(
+        `INSERT INTO vec_persona_embeddings_${dim}(rowid, embedding, tier) VALUES (?, vec_f32(?), ?)`
+      ).run(rowId, embedding, tier);
+      return rowId;
+    } catch (err) {
+      dbLogger.debug("store_persona_embedding_failed", "Failed to store persona embedding", extractErrorInfo(err));
+      return null;
+    }
+  }
+
+  /**
+   * Searches persona embeddings by vector similarity, filtered by tier.
+   * @param {Float32Array} queryEmbedding
+   * @param {string} tier
+   * @param {number} topK
+   * @param {number} dim
+   * @returns {Array<{id: number, distance: number, persona_name: string, tier: string, tags: string, embedding_text: string}>}
+   */
+  searchPersonaEmbeddings(queryEmbedding, tier, topK = 5, dim = 384) {
+    try {
+      this.#initPersonaVectorTable(dim);
+      const limit = Math.max(1, Math.floor(Number(topK) || 5));
+      return this.#db.prepare(`
+        SELECT v.rowid, v.distance, p.persona_name, p.tier, p.tags, p.embedding_text
+        FROM vec_persona_embeddings_${dim} v
+        JOIN persona_embeddings p ON p.id = v.rowid AND p.meeting_id = ?
+        WHERE v.tier = ? AND v.embedding MATCH ? AND k = ${limit}
+        ORDER BY v.distance
+      `).all(this.#meetingId, tier, queryEmbedding);
+    } catch (err) {
+      dbLogger.warn("search_persona_embeddings_failed", "Persona vector search failed", extractErrorInfo(err));
+      return [];
+    }
+  }
+
+  /**
+   * Clears all persona embeddings for this meeting.
+   */
+  /**
+   * Returns the number of persona embeddings indexed for this meeting.
+   * @returns {number}
+   */
+  countPersonaEmbeddings() {
+    try {
+      const row = this.#db.prepare(`SELECT COUNT(*) as count FROM persona_embeddings WHERE meeting_id = ?`).get(this.#meetingId);
+      return row?.count ?? 0;
+    } catch { /* table may not exist yet */ }
+    return 0;
+  }
+
+  countPersonaVecEmbeddings(dim = 384) {
+    try {
+      const row = this.#db.prepare(`SELECT COUNT(*) as count FROM vec_persona_embeddings_${dim}`).get();
+      return row?.count ?? 0;
+    } catch { /* table may not exist yet */ }
+    return 0;
+  }
+
+  clearPersonaEmbeddings() {
+    try {
+      this.#db.prepare(`DELETE FROM persona_embeddings WHERE meeting_id = ?`).run(this.#meetingId);
+    } catch { /* table may not exist yet */ }
   }
 }
 

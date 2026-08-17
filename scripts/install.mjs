@@ -90,18 +90,14 @@ function installFiles(opencodeDir) {
     }
   }
 
-  // Copy personas folder
+  // Copy personas folder (recursively, preserving tier subdirectories)
   const personasSrcDir = join(PROJECT_ROOT, "personas");
   const personasTargetDir = join(opencodeDir, "personas", "loom");
   if (existsSync(personasSrcDir)) {
     if (existsSync(personasTargetDir)) {
       rmSync(personasTargetDir, { recursive: true });
     }
-    mkdirSync(personasTargetDir, { recursive: true });
-    const personaFiles = readdirSync(personasSrcDir).filter((f) => f.endsWith(".json"));
-    for (const file of personaFiles) {
-      cpSync(join(personasSrcDir, file), join(personasTargetDir, file));
-    }
+    cpSync(personasSrcDir, personasTargetDir, { recursive: true });
     logInfo(`  Installed personas → ${personasTargetDir}`);
   }
 
@@ -234,13 +230,14 @@ try {
     logInfo("You can download it manually later with: npm run model:download");
   }
 
-  // Install runtime deps (onnxruntime-node, @huggingface/tokenizers) into the
-  // config's loom/deps dir so the deployed plugin can resolve them at runtime
-  // (bare imports resolve relative to the plugin file, not the project).
+  // Install runtime deps into the config's plugins/deps dir so the deployed
+  // plugin can resolve them at runtime. Path must match import.meta.dir of the
+  // bundled plugin file (plugins/loom.js → plugins/deps/node_modules/).
+  const runtimeDepsDir = join(opencodeDir, "plugins", "deps");
   console.log("");
-  logInfo("Installing runtime deps (onnxruntime-node, @huggingface/tokenizers)...");
+  logInfo("Installing runtime deps (onnxruntime-node, @huggingface/tokenizers, sqlite-vec)...");
   try {
-    execSync("npm install --prefix " + join(opencodeDir, "loom", "deps") + " onnxruntime-node@^1.27.0 @huggingface/tokenizers@^0.1.3", {
+    execSync("npm install --prefix " + runtimeDepsDir + " onnxruntime-node@^1.27.0 @huggingface/tokenizers@^0.1.3 sqlite-vec", {
       cwd: PROJECT_ROOT,
       stdio: "inherit",
       timeout: 300000 // 5 minute timeout
@@ -248,7 +245,7 @@ try {
     logInfo("Runtime deps installed successfully.");
   } catch (err) {
     logWarn(`Could not install runtime deps: ${err.message}`);
-    logInfo("Run: npm install --prefix " + join(opencodeDir, "loom", "deps") + " onnxruntime-node@^1.27.0 @huggingface/tokenizers@^0.1.3");
+    logInfo("Run: npm install --prefix " + runtimeDepsDir + " onnxruntime-node@^1.27.0 @huggingface/tokenizers@^0.1.3 sqlite-vec");
   }
 } catch (err) {
   logError(err.message || "Installation failed");

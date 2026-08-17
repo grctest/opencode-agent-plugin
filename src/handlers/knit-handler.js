@@ -1,5 +1,5 @@
 import { MeetingOrchestrator } from "../orchestrator.js";
-import { composeRoomWithDomains, formatRoomPreview, detectDomainsWithLLM } from "../composer.js";
+import { composeRoomWithSimilarity, formatRoomPreview } from "../composer.js";
 import { createModelPlan, formatModelPlan } from "../model-discovery.js";
 import { findMeetingBySessionId, getDbPathForMeeting, MeetingDatabase } from "../database.js";
 import {
@@ -8,7 +8,7 @@ import {
 } from "../services/model-service.js";
 import { Logger, extractErrorInfo } from "../logger.js";
 import { getConfig } from "../config.js";
-import { resolveLoomBaseDir } from "../paths.js";
+import { resolveLoomBaseDir, getMeetingDbPath } from "../paths.js";
 import { unlinkSync, writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
 import { sanitizeForPrompt } from "../utils/sanitize.js";
@@ -154,8 +154,9 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
     }
 
     let participants;
-    let detectedDomains = [];
     let composedRoom = null;
+    let meetingId = null;
+    let meetingDb = null;
 
     const modelMap = new Map();
     const explicitModels = args.models ?? pendingModels;
@@ -186,51 +187,49 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
         agenda: p.agenda,
         tier: p.tier,
         model: modelMap.get(p.tier),
-        domain: "general",
-        domains: ["general"],
+        tags: p.tags || p.expertise || ["general"],
+        expertise: p.expertise || [],
         known_biases: p.known_biases,
         communication_style: p.communication_style,
         preferred_contribution_types: p.preferred_contribution_types,
       }));
     } else {
-      // Create a temporary session for domain detection via LLM
-      let tempSessionId = null;
+      const seed = args.seed ?? Date.now();
+      meetingId = crypto.randomUUID();
+      const dbPath = getMeetingDbPath(directory, meetingId);
       try {
-        const tempSession = await client.session.create({
-          body: { title: "Loom domain detection", parentID: sessionID },
-          query: { directory },
+        meetingDb = await MeetingDatabase.create(dbPath, meetingId);
+
+        // Insert a meeting row BEFORE composition so the FK constraint on
+        // persona_embeddings(meeting_id -> meetings(id)) is satisfied when
+        // PersonaIndex stores embeddings during similarity search.
+        const question = args.question ? sanitizeForPrompt(args.question, 5000) : '';
+        const sanitizedContext = args.context ? sanitizeForPrompt(args.context, 8000) : 'No additional context provided.';
+        const maxRounds = args.max_rounds ?? getConfig().defaultMaxRounds;
+        meetingDb.initializeMeeting({
+          question,
+          context: sanitizedContext,
+          maxRounds,
+          convergence: args.convergence ?? "moderator_forces",
+          tags: [],
+          parentSessionId: sessionID,
+          opencodeSessionId: sessionID,
+          embedding_model: null,
+          embedding_dim: null,
+          participants: [],
         });
-        if (tempSession.error) throw new Error(JSON.stringify(tempSession.error));
-        tempSessionId = tempSession.data?.id;
 
-        const promptFn = async (system, model, message) => {
-          const result = await client.session.prompt({
-            path: { id: tempSessionId },
-            body: { system, model, tools: {}, parts: [{ type: "text", text: message }] },
-            query: { directory },
-          });
-          if (result.error) throw new Error(JSON.stringify(result.error));
-          return result.data?.parts?.[0]?.text ?? "";
-        };
-
-        detectedDomains = await detectDomainsWithLLM(
-          args.question,
-          promptFn,
-          () => sessionModel,
-        );
+        composedRoom = await composeRoomWithSimilarity(args.question, seed, meetingDb);
+        participants = composedRoom.participants;
       } catch (err) {
-        logger.warn("domain_detection_failed", "LLM domain detection failed — using general domain", extractErrorInfo(err));
-        detectedDomains = [];
+        logger.warn("similarity_composition_failed", "Similarity-based composition failed — using fallback", extractErrorInfo(err));
+        composedRoom = { participants: [], tags: [], estimated_rounds: 2, reasoning: "Fallback composition" };
+        participants = [];
       } finally {
-        if (tempSessionId) {
-          try { await client.session.delete({ path: { id: tempSessionId }, query: { directory } }); } catch { /* cleanup */ }
+        if (meetingDb) {
+          try { meetingDb.close(); } catch { /* cleanup */ }
         }
       }
-
-      const seed = args.seed ?? Date.now();
-      composedRoom = composeRoomWithDomains(args.question, undefined, detectedDomains, seed);
-      participants = composedRoom.participants;
-      detectedDomains = composedRoom.domains;
     }
 
     if (modelMap.size === 0 && available.length > 0) {
@@ -243,7 +242,7 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
         estimated_rounds: args.max_rounds ?? composedRoom?.estimated_rounds ?? participants.length,
         reasoning: args.participants
           ? "Custom room"
-          : composedRoom.reasoning,
+          : composedRoom?.reasoning ?? "Custom room",
       };
       return {
         title: "Loom Room Preview",
@@ -263,11 +262,12 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
     const question = args.question ? sanitizeForPrompt(args.question, 5000) : '';
     const sanitizedContext = args.context ? sanitizeForPrompt(args.context, 8000) : 'No additional context provided.';
 
-    const primaryDomain = detectedDomains.length > 0 ? detectedDomains[0] : null;
+    const derivedTags = composedRoom?.tags ?? [];
 
     const engine = new MeetingOrchestrator({
       client,
       directory,
+      meetingId,
       question,
       context: sanitizedContext,
       parentSessionId: sessionID,
@@ -276,8 +276,7 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
       maxRounds,
       convergence: args.convergence ?? "moderator_forces",
       meetingTimeoutMs: args.meeting_timeout,
-      domain: primaryDomain,
-      detectDomains: true,
+      tags: derivedTags,
       agentTools,
       ...meetingCallbacks,
     });

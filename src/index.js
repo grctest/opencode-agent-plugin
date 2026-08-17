@@ -366,7 +366,7 @@ export const Loom = async (input) => {
             result.round = state.current_round;
             result.maxRounds = state.max_rounds;
             result.convergenceMode = state.convergence_mode;
-            result.domain = state.domain;
+            result.tags = state.tags;
             result.question = state.question;
             result.context = state.context;
           }

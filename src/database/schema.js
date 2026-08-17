@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 16;
+export const SCHEMA_VERSION = 17;
 
 export function initSchema(db) {
   db.exec(`
@@ -12,6 +12,7 @@ export function initSchema(db) {
       max_rounds INTEGER NOT NULL,
       convergence TEXT NOT NULL,
       domain TEXT,
+      tags TEXT,
       parent_session_id TEXT,
       opencode_session_id TEXT,
       next_speaker_id TEXT,
@@ -359,6 +360,32 @@ export function migrateSchema(db) {
       db.exec(`ALTER TABLE meeting_metrics RENAME COLUMN interjections TO turn_requests`);
     } catch { /* column doesn't exist or already renamed */ }
     db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '16')`);
+  }
+
+  if (currentVersion < 17) {
+    try { db.exec(`ALTER TABLE meetings ADD COLUMN tags TEXT`); } catch { /* exists */ }
+    try {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS persona_embeddings (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+          persona_name TEXT NOT NULL,
+          tier TEXT NOT NULL,
+          tags TEXT NOT NULL,
+          embedding_text TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        )
+      `);
+    } catch { /* exists */ }
+    try { db.exec(`CREATE INDEX IF NOT EXISTS idx_persona_embeddings_meeting ON persona_embeddings(meeting_id)`); } catch { /* exists */ }
+    try { db.exec(`CREATE INDEX IF NOT EXISTS idx_persona_embeddings_tier ON persona_embeddings(meeting_id, tier)`); } catch { /* exists */ }
+    try {
+      db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS vec_persona_embeddings USING vec0(
+        id INTEGER PRIMARY KEY,
+        embedding float[384]
+      )`);
+    } catch { /* sqlite-vec not loaded */ }
+    db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '17')`);
   }
   db.exec("COMMIT");
   } catch (err) {

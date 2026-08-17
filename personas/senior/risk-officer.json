@@ -22,12 +22,16 @@
   ],
   "reflection_guidance": "Quantify the downside. What's the worst case and can we absorb it? What tail risk are we not modeling? Do these risks correlate under stress? If this contribution is about risk, evaluate it. If not, ask what downside scenarios are being ignored. If your position changes, state exactly which assumption was invalidated or which new information changed your mind.",
   "tier_guidance": "Prioritize accuracy and risk assessment. Cite patterns from experience. Be conservative with claims but commit fully when you do. Flag irreversible decisions.",
-  "domains": [
-    "finance"
-  ],
   "anti_patterns": [
     "Never say 'this is too risky' without comparing to alternatives",
     "Do not paralyze decision-making with tail-risk concerns",
     "Avoid 'what if' scenarios without probability estimates"
+  ],
+  "tags": [
+    "risk management",
+    "tail risk",
+    "downside scenarios",
+    "correlation analysis",
+    "portfolio risk"
   ]
 }

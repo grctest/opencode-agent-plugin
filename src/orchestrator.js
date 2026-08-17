@@ -4,7 +4,6 @@ import { getMeetingDbPath } from "./paths.js";
 import { MeetingDatabase } from "./database.js";
 import { SessionManager } from "./session-manager.js";
 import { Logger, LoomError, extractErrorInfo } from "./logger.js";
-import { detectDomainsWithLLM } from "./composer.js";
 import { getHighestTierModel } from "./services/model-service.js";
 import { truncate } from "./shared.js";
 import { restoreStateFromDb } from "./meeting-restorer.js";
@@ -22,6 +21,8 @@ import { StallWatchdog } from "./services/stall-watchdog.js";
 import { RoundInitializer } from "./services/round-initializer.js";
 import { MeetingExtender } from "./services/meeting-extender.js";
 import { VectorIndex } from "./services/vector-index.js";
+import { PersonaIndex } from "./services/persona-index.js";
+import { getPersonas } from "./composer.js";
 
 // Named constants for magic numbers
 const SUMMARY_TRUNCATE_LEN = 200;
@@ -52,7 +53,8 @@ export class MeetingOrchestrator {
   #logger = null;
   #orchestratorMessages = [];
   #resume = false;
-  #callStats = { orchestrator: 0, domain: 0, compaction: 0, moderation: 0, summary: 0, convergence: 0, synthesis: 0, input_tokens: 0, output_tokens: 0 };
+  #callStats = { orchestrator: 0, compaction: 0, moderation: 0, summary: 0, convergence: 0, synthesis: 0, input_tokens: 0, output_tokens: 0 };
+  #personaIndex = null;
 
   constructor(options) {
     this.#meetingId = options.meetingId ?? crypto.randomUUID();
@@ -89,7 +91,7 @@ export class MeetingOrchestrator {
       artifact: null,
       objections: [],
       convergence_mode: options.convergence,
-      domain: options.domain ?? null,
+      tags: options.tags ?? [],
       next_contribution_id: 0,
       state_of_play: "",
     };
@@ -213,6 +215,39 @@ export class MeetingOrchestrator {
 
       this.#sessionManager = new SessionManager(this.#client, this.#directory, this.#parentSessionId, this.#logger);
       this.#synthesisCoordinator = new SynthesisCoordinator(this.#client, this.#directory, this.#sessionManager);
+
+      // Ensure the meeting row exists BEFORE indexing personas.
+      // The persona_embeddings table has a FK to meetings(id), so the meeting
+      // must be inserted first.  Use upsertMeeting (UPDATE when already present
+      // from the knit-handler composition phase) to avoid cascade-deleting the
+      // persona embeddings that were just stored.
+      if (this.#resume) {
+        const restored = restoreStateFromDb({
+          db,
+          stateManager: this.#stateManager,
+          meetingId: this.#meetingId,
+          options: this.#options,
+        });
+        this.#stateManager.setNextSpeakerId(restored.nextSpeakerId);
+        this.#callStats = { ...this.#callStats, ...restored.callStats };
+      } else {
+        const meetingInput = {
+          question: this.#options.question,
+          context: this.#options.context,
+          maxRounds: this.#options.maxRounds,
+          convergence: this.#options.convergence,
+          tags: this.#options.tags ?? [],
+          parentSessionId: this.#options.parentSessionId,
+          opencodeSessionId: this.#options.opencodeSessionId ?? this.#options.parentSessionId,
+          embedding_model: this.#options.embedding_model ?? null,
+          embedding_dim: this.#options.embedding_dim ?? null,
+          participants: this.#stateManager.getParticipants().map((p) => p.config),
+        };
+        db.upsertMeeting(meetingInput);
+        this.#logger.info("meeting_upserted", "Meeting row ensured in database");
+      }
+
+      // Load the embedding model if specified on the meeting row
       const meeting = db.getMeeting();
       if (meeting?.embedding_model) {
         try {
@@ -224,43 +259,20 @@ export class MeetingOrchestrator {
         }
       }
 
-      if (this.#resume) {
-        const restored = restoreStateFromDb({
-          db,
-          stateManager: this.#stateManager,
-          meetingId: this.#meetingId,
-          options: this.#options,
-        });
-        this.#stateManager.setNextSpeakerId(restored.nextSpeakerId);
-        this.#callStats = { ...this.#callStats, ...restored.callStats };
-      } else {
-        db.initializeMeeting({
-          question: this.#options.question,
-          context: this.#options.context,
-          maxRounds: this.#options.maxRounds,
-          convergence: this.#options.convergence,
-          domain: this.#options.domain ?? null,
-          parentSessionId: this.#options.parentSessionId,
-          opencodeSessionId: this.#options.opencodeSessionId ?? this.#options.parentSessionId,
-          embedding_model: this.#options.embedding_model ?? null,
-          embedding_dim: this.#options.embedding_dim ?? null,
-          participants: this.#stateManager.getParticipants().map((p) => p.config),
-        });
-      }
-
-      if (this.#options.detectDomains && !this.#stateManager.getDomain()) {
+      // Index personas into the meeting database for vector similarity search.
+      // Skip if already indexed (e.g., by knit-handler during participant selection).
+      const { isEmbedderInitialized } = await import("./services/embedding-service.js");
+      if (isEmbedderInitialized()) {
         try {
-          const domains = await detectDomainsWithLLM(
-            this.#stateManager.getQuestion(),
-            async (system, model, message) => this.#promptOrchestrator(system, model, message, "domain"),
-            () => this.#getHighestTierModel(),
-          );
-          if (domains.length > 0) {
-            this.#stateManager.setDomain(domains.join(", "));
-            db.updateMeetingDomain(this.#meetingId, this.#stateManager.getDomain());
+          this.#personaIndex = new PersonaIndex(db);
+          if (db.countPersonaVecEmbeddings() === 0) {
+            const personas = getPersonas();
+            await this.#personaIndex.indexAll(personas);
+          } else {
+            this.#logger.info("personas_already_indexed", "Persona embeddings already present in database");
           }
         } catch (err) {
-          this.#logger.warn("domain_detection_failed", "Orchestrator domain detection failed", extractErrorInfo(err));
+          this.#logger.warn("persona_index_failed", "Failed to index personas for vector search", extractErrorInfo(err));
         }
       }
 
@@ -310,7 +322,7 @@ export class MeetingOrchestrator {
     await this.initialize();
 
     const participantItems = this.#stateManager.getParticipants()
-      .map((p) => `  - ${p.config.name} (${p.config.tier}${p.config.domain ? ", " + p.config.domain : ""})`)
+      .map((p) => `  - ${p.config.name} (${p.config.tier}${p.config.tags?.length ? ", " + p.config.tags.join(", ") : ""})`)
       .join("\n");
     await this.#sessionManager.postProgress(
       `🎬 Loom started — ${this.#stateManager.getParticipants().length} participants:\n${participantItems}`
@@ -435,7 +447,7 @@ export class MeetingOrchestrator {
       const newStateOfPlay = updateStateOfPlay(
         this.#stateManager.getWeave(),
         this.#stateManager.getQuestion(),
-        this.#stateManager.getDomain(),
+        this.#stateManager.getTags(),
       );
       this.#stateManager.setStateOfPlay(newStateOfPlay);
       this.#database.setStateOfPlay(newStateOfPlay);

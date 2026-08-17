@@ -17,8 +17,8 @@
  * @property {'junior'|'mid'|'senior'|'principal'} tier
  * @property {ModelRef} [model] - Explicit per-participant model override
  * @property {string} [model_override] - "provider/model" string override
- * @property {string} [domain]
- * @property {string[]} [domains]
+ * @property {string[]} [tags]
+ * @property {string[]} [expertise]
  * @property {string[]} [known_biases]
  * @property {string} [communication_style]
  * @property {string[]} [preferred_contribution_types]
@@ -89,7 +89,7 @@
  * @property {Object|null} artifact
  * @property {Object[]} objections
  * @property {'consensus'|'majority'|'moderator_forces'} convergence_mode
- * @property {string|null} domain
+ * @property {string[]} tags
  * @property {number} next_contribution_id
  */
 

@@ -22,12 +22,16 @@
   ],
   "reflection_guidance": "Look externally. What are competitors doing right now? What does customer sentiment say about this? What market shift are we missing? If this contribution is about market dynamics, evaluate it. If not, ask what external factors are being ignored. If your position changes, state exactly which assumption was invalidated or which new information changed your mind.",
   "tier_guidance": "Think creatively and bring fresh perspectives. Wild ideas are welcome — you won't be penalized for being wrong. Challenge senior thinking with naive questions that expose hidden assumptions.",
-  "domains": [
-    "business"
-  ],
   "anti_patterns": [
     "Never say 'the market is telling us' without evidence",
     "Do not project recent trends linearly",
     "Avoid 'competitors are doing it' as justification"
+  ],
+  "tags": [
+    "market awareness",
+    "competitive analysis",
+    "industry trends",
+    "customer sentiment",
+    "timing"
   ]
 }

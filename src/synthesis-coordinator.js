@@ -65,7 +65,7 @@ export class SynthesisCoordinator {
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       const userPrompt =
-        buildSynthesisPrompt(transcriptData.question, transcript, allParticipants, transcriptData.domain ?? null, stateOfPlay, objections) +
+        buildSynthesisPrompt(transcriptData.question, transcript, allParticipants, transcriptData.tags ?? [], stateOfPlay, objections) +
         additionalFeedback;
 
       const llmStart = Date.now();

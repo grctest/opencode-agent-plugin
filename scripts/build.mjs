@@ -49,6 +49,7 @@ const steps = [
         "bun:sqlite",
         "onnxruntime-node",
         "@huggingface/tokenizers",
+        "sqlite-vec",
       ],
     },
   },
@@ -61,7 +62,7 @@ const steps = [
       format: "esm",
       platform: "node",
       outfile: join(DASHBOARD_DIST, "server.js"),
-      external: ["bun:sqlite", "onnxruntime-node", "@huggingface/tokenizers"],
+      external: ["bun:sqlite", "sqlite-vec", "onnxruntime-node", "@huggingface/tokenizers"],
     },
   },
   {

@@ -18,7 +18,7 @@ function cleanContent(content) {
  * Classification uses the parsed contribution type tag (c.type) as the primary
  * signal. Falls back to keyword matching only when c.type is missing or unknown.
  */
-export function updateStateOfPlay(weave, question, domain) {
+export function updateStateOfPlay(weave, question, tags) {
   if (!weave || weave.length === 0) return "";
 
   const decisions = [];
@@ -44,7 +44,7 @@ export function updateStateOfPlay(weave, question, domain) {
     }
   }
 
-  return formatStateOfPlay({ decisions, agreements, disagreements, openQuestions, keyFacts }, question, domain);
+  return formatStateOfPlay({ decisions, agreements, disagreements, openQuestions, keyFacts }, question, tags);
 }
 
 /**
@@ -89,10 +89,10 @@ function classifyByKeywords(content) {
 /**
  * Formats structured state-of-play sections into a concise markdown summary.
  */
-export function formatStateOfPlay(sections, question, domain) {
+export function formatStateOfPlay(sections, question, tags) {
   const lines = [];
   if (question) lines.push(`## Question\n${question}`);
-  if (domain) lines.push(`## Domain\n${domain}`);
+  if (tags?.length > 0) lines.push(`## Tags\n${tags.join(", ")}`);
 
   if (sections.decisions.length > 0) {
     lines.push(`## Decisions & Proposals\n${sections.decisions.slice(-5).map((d) => `- ${d.slice(0, 300)}`).join("\n")}`);

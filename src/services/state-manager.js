@@ -28,7 +28,7 @@ export class StateManager {
    * @param {Object|null} initialState.artifact
    * @param {Array} initialState.objections
    * @param {string} initialState.convergence_mode
-   * @param {string|null} initialState.domain
+   * @param {Array} initialState.tags
    * @param {number} initialState.next_contribution_id
    * @param {Object} [initialState.parent_session_id]
    * @param {Object} [initialState.opencode_session_id]
@@ -118,8 +118,8 @@ export class StateManager {
     return this.#state.context;
   }
 
-  getDomain() {
-    return this.#state.domain;
+  getTags() {
+    return this.#state.tags ?? [];
   }
 
   getStateOfPlay() {
@@ -230,8 +230,8 @@ export class StateManager {
     this.#state.objections = objections;
   }
 
-  setDomain(domain) {
-    this.#state.domain = domain;
+  setTags(tags) {
+    this.#state.tags = tags;
   }
 
   setStateOfPlay(stateOfPlay) {
@@ -242,14 +242,14 @@ export class StateManager {
    * Restores all mutable state properties from a database-loaded meeting.
    * Used by the orchestrator when resuming a persisted meeting.
    */
-  restore({ participants, question, context, fabric, max_rounds, convergence_mode, domain, current_round, status, weave, next_contribution_id, state_of_play }) {
+  restore({ participants, question, context, fabric, max_rounds, convergence_mode, tags, current_round, status, weave, next_contribution_id, state_of_play }) {
     if (participants !== undefined) this.#state.participants = participants;
     if (question !== undefined) this.#state.question = question;
     if (context !== undefined) this.#state.context = context;
     if (fabric !== undefined) this.#state.fabric = fabric;
     if (max_rounds !== undefined) this.#state.max_rounds = max_rounds;
     if (convergence_mode !== undefined) this.#state.convergence_mode = convergence_mode;
-    if (domain !== undefined) this.#state.domain = domain;
+    if (tags !== undefined) this.#state.tags = tags;
     if (current_round !== undefined) this.#state.current_round = current_round;
     if (status !== undefined) this.#state.status = status;
     if (weave !== undefined) this.#state.weave = weave;

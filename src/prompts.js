@@ -36,12 +36,6 @@ export function buildReflectionPrompt(listener, triggerParticipant, contribution
     ? `Your recent contributions:\n${myContributions.map((c) => `- "${c}"`).join("\n")}`
     : "";
 
-  // Topic relevance detection
-  const listenerDomains = listener.config.domains || [];
-  const listenerExpertise = listener.config.expertise || [];
-  const contributionLower = contribution.toLowerCase();
-  const topicRelevance = detectTopicRelevance(contributionLower, listenerDomains, listenerExpertise);
-
   // Seniority relationship
   const TIER_ORDER = { junior: 0, mid: 1, senior: 2, principal: 3 };
   const listenerTierLevel = TIER_ORDER[listener.config.tier] ?? 1;
@@ -90,9 +84,6 @@ Now **${safeSpeaker}** said:
 
 ## Context for This Reflection
 
-**Topic relevance:**
-${topicRelevance}
-
 **Seniority relationship:**
 ${seniorityContext}
 
@@ -108,33 +99,6 @@ ${reflectionToolUsageSection}
 
 Write your reflection on this contribution.
 This reflection will be visible to other participants in the deliberation.`;
-}
-
-/**
- * Detects how relevant the contribution is to the listener's domains and expertise.
- * Returns a context string for the reflection prompt.
- */
-function detectTopicRelevance(contributionLower, listenerDomains, listenerExpertise) {
-  // Combine domains and expertise into keywords for matching
-  const keywords = [
-    ...listenerDomains.map(d => d.toLowerCase()),
-    ...listenerExpertise.map(e => e.toLowerCase().replace(/-/g, " "))
-  ];
-
-  if (keywords.length === 0) {
-    return "The contribution's relevance to your domain cannot be automatically determined. Use your judgment.";
-  }
-
-  // Check for keyword matches
-  const matches = keywords.filter(kw => contributionLower.includes(kw));
-
-  if (matches.length >= 2) {
-    return `This contribution directly touches your expertise (${matches.slice(0, 3).join(", ")}). Evaluate it through your professional lens.`;
-  } else if (matches.length === 1) {
-    return `This contribution may relate to your expertise (${matches[0]}). Assess whether it falls within your domain.`;
-  } else {
-    return `This contribution appears to be outside your primary domain. Focus on what's relevant to your expertise, or note what's missing from your perspective.`;
-  }
 }
 
 /**
@@ -266,14 +230,14 @@ IMPORTANT: Respond ONLY with the <ruling> block above. Do not include any other 
 }
 
 /** Builds a prompt for synthesizing the final deliberation artifact from all contributions. */
-export function buildSynthesisPrompt(question, transcript, participants = [], domain = null, stateOfPlay = "", objections = []) {
+export function buildSynthesisPrompt(question, transcript, participants = [], tags = [], stateOfPlay = "", objections = []) {
   const safeQuestion = sanitizeForDisplay(question);
   const safeTranscript = sanitizeForDisplay(transcript, 15000);
   const participantsSection = participants.length > 0
     ? `\n## Participants\n${participants.map((p) => `- ${p.config.name} (${p.config.tier}): ${p.contributions_count} contributions`).join("\n")}\n`
     : "";
 
-  const domainGuidance = domain ? getDomainSynthesisGuidance(domain) : "";
+  const tagContext = tags?.length > 0 ? tags.join(", ") : null;
 
   const stateOfPlaySection = stateOfPlay
     ? `\n## State of Play (Final)\n${sanitizeForDisplay(stateOfPlay, 3000)}\n`
@@ -288,7 +252,7 @@ export function buildSynthesisPrompt(question, transcript, participants = [], do
 
 ## Original Question
 ${safeQuestion}
-${domain ? `\n## Domain Context\nThis is a ${domain} question. ${domainGuidance}\n` : ""}
+${tagContext ? `\n## Tags\n${tagContext}\n` : ""}
 ${stateOfPlaySection}${objectionsSection}
 ## Deliberation Transcript
 ${safeTranscript}
@@ -337,18 +301,6 @@ The Engineering Director advocated for a faster timeline, arguing that the team 
 
 ## Confidence
 High`;
-}
-
-function getDomainSynthesisGuidance(domain) {
-  const guidance = {
-    engineering: "Focus on technical tradeoffs, implementation feasibility, and risk mitigation. Prioritize solutions that balance correctness with pragmatism.",
-    finance: "Focus on risk-return tradeoffs, quantitative reasoning, and practical constraints. Acknowledge uncertainty in projections.",
-    business: "Focus on strategic alignment, market dynamics, and actionable next steps. Prioritize decisions that can be executed.",
-    creative: "Focus on originality, user experience, and feasibility. Balance creative ambition with practical constraints.",
-    executive: "Focus on organizational impact, stakeholder alignment, and decision-making clarity. Prioritize decisions that move the organization forward.",
-    operations: "Focus on process efficiency, reliability, and scalability. Prioritize solutions that reduce toil and improve consistency.",
-  };
-  return guidance[domain] || "Provide a balanced analysis that considers multiple stakeholder perspectives.";
 }
 
 /** Builds the system prompt for an agent in the multi-session architecture (identity + rules). */
@@ -446,7 +398,7 @@ ${toolUsageSection}
  * System Prompt + State of Play + Vector RAG + Recent Contributions.
  * Each turn is stateless — fresh ephemeral session carries no prior history.
  */
-export function buildAgentUserPrompt(participant, stateOfPlay, ragContext, recentContributions, round, question, domain = null) {
+export function buildAgentUserPrompt(participant, stateOfPlay, ragContext, recentContributions, round, question, tags = []) {
   const transcript =
     recentContributions.length === 0
       ? "*(No contributions yet — you are the first to speak)*"
@@ -462,11 +414,11 @@ export function buildAgentUserPrompt(participant, stateOfPlay, ragContext, recen
   const stateOfPlayDelimited = stateOfPlay ? delimitContext(stateOfPlay, "STATE_OF_PLAY") : "";
   const transcriptDelimited = delimitContext(transcript, "CONTRIBUTIONS");
   const safeQuestion = sanitizeForDisplay(question);
-  const safeDomain = domain ? sanitizeForDisplay(domain) : null;
+  const tagContext = tags?.length > 0 ? tags.join(", ") : null;
 
   return `## Question
 ${safeQuestion}
-${safeDomain ? `\n## Domain: ${safeDomain}\n` : ""}
+${tagContext ? `\n## Tags: ${tagContext}\n` : ""}
 ## Round ${round}
 
 ${stateOfPlayDelimited ? `## State of Play\n${stateOfPlayDelimited}\n` : ""}

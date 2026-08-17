@@ -291,7 +291,7 @@ export class RoundExecutor {
               recentForPrompt,
               currentRound,
               this.#stateManager.getQuestion(),
-              this.#stateManager.getDomain(),
+              this.#stateManager.getTags(),
             ) }],
             tools: toolsMap,
           },
