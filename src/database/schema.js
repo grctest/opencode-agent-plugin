@@ -95,6 +95,7 @@ export function initSchema(db) {
       msg_type TEXT NOT NULL,
       role TEXT NOT NULL,
       content TEXT NOT NULL,
+      round INTEGER,
       created_at TEXT NOT NULL
     );
 
@@ -412,6 +413,10 @@ export function migrateSchema(db) {
   if (currentVersion < 23) {
     try { db.exec(`ALTER TABLE contributions ADD COLUMN prompt_context TEXT`); } catch { /* exists */ }
     db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '23')`);
+  }
+  if (currentVersion < 24) {
+    try { db.exec(`ALTER TABLE orchestrator_messages ADD COLUMN round INTEGER`); } catch { /* exists */ }
+    db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '24')`);
   }
   db.exec("COMMIT");
   } catch (err) {

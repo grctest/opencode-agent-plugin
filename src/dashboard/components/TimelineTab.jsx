@@ -1,6 +1,6 @@
 import { useRef, useMemo, useCallback, useState, memo } from "react";
 import { cn, relativeTime } from "../utils.js";
-import { ContributionItem, TurnRequestItem, ThinkingCard, ReflectionRow, QueryResponseRow, EvidenceResponseRow, SummonedResponseRow, ContentDialog, renderMarkdown } from "./Cards.jsx";
+import { ContributionItem, TurnRequestItem, ThinkingCard, ReflectionRow, QueryResponseRow, EvidenceResponseRow, SummonedResponseRow, OrchestratorItem, ORCHESTRATOR_TYPE_META, ContentDialog, renderMarkdown } from "./Cards.jsx";
 import { LoadingSkeleton } from "./Skeleton.jsx";
 import { List } from "react-window";
 
@@ -18,6 +18,7 @@ const REFLECTION_HEIGHT = 80;
 const QUERY_RESPONSE_HEIGHT = 80;
 const EVIDENCE_RESPONSE_HEIGHT = 80;
 const SUMMONED_RESPONSE_HEIGHT = 80;
+const ORCHESTRATOR_ITEM_HEIGHT = 80;
 
 function getRowHeight(item) {
   if (item.type === "header") {
@@ -28,6 +29,7 @@ function getRowHeight(item) {
   if (item.type === "query_response") return QUERY_RESPONSE_HEIGHT;
   if (item.type === "evidence_response") return EVIDENCE_RESPONSE_HEIGHT;
   if (item.type === "summoned_response") return SUMMONED_RESPONSE_HEIGHT;
+  if (item.type === "orchestrator") return ORCHESTRATOR_ITEM_HEIGHT;
   if (item.type === "thinking_turn") return THINKING_TURN_HEIGHT;
   if (item.type === "thinking_reflection") return THINKING_REFLECTION_HEIGHT;
   if (item.type === "thinking_query") return THINKING_QUERY_HEIGHT;
@@ -39,7 +41,7 @@ function getRowHeight(item) {
   return 115;
 }
 
-const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantName, onDialogOpen, contributions }) => {
+const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantName, onDialogOpen, onOrchestratorDialogOpen, contributions }) => {
   const item = items[index];
   if (!item) return null;
   if (item.type === "header") {
@@ -210,6 +212,13 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
       </div>
     );
   }
+  if (item.type === "orchestrator") {
+    return (
+      <div style={style} className="loom-vrow">
+        <OrchestratorItem group={item.group} onDialogOpen={onOrchestratorDialogOpen} />
+      </div>
+    );
+  }
   return (
     <div style={style} className="loom-vrow">
       <TurnRequestItem turnRequest={item.turnRequest} participantName={participantName(item.turnRequest.participant_id)} />
@@ -234,14 +243,22 @@ const TimelineTabBase = ({
   extensions,
   activeRound,
   maxRounds,
+  orchestratorMessages,
 }) => {
   const listRef = useRef(null);
   const [dialogContribution, setDialogContribution] = useState(null);
+  const [dialogOrchestratorGroup, setDialogOrchestratorGroup] = useState(null);
   const [activeTab, setActiveTab] = useState("response");
+  const [orchestratorActiveTab, setOrchestratorActiveTab] = useState("prompt");
 
   const handleDialogOpen = useCallback((data) => {
     setDialogContribution(data);
     setActiveTab("response");
+  }, []);
+
+  const handleOrchestratorDialogOpen = useCallback((data) => {
+    setDialogOrchestratorGroup(data.orchestratorGroup);
+    setOrchestratorActiveTab("prompt");
   }, []);
 
   const flatItems = useMemo(() => {
@@ -397,6 +414,30 @@ const TimelineTabBase = ({
           items.push({ type: "turn_request", turnRequest: tr });
         }
 
+        const roundOrchestratorMessages = orchestratorMessages
+          ? orchestratorMessages
+              .filter((m) => m.round === round && (m.role === "user" || m.role === "assistant"))
+              .sort((a, b) => (a.id ?? 0) - (b.id ?? 0))
+          : [];
+
+        const orchestratorGroups = [];
+        let i = 0;
+        while (i < roundOrchestratorMessages.length) {
+          const msg = roundOrchestratorMessages[i];
+          if (msg.role === "user") {
+            const response = roundOrchestratorMessages[i + 1]?.role === "assistant" ? roundOrchestratorMessages[i + 1] : null;
+            orchestratorGroups.push({ query: msg, response });
+            i += response ? 2 : 1;
+          } else {
+            orchestratorGroups.push({ query: null, response: msg });
+            i += 1;
+          }
+        }
+
+        for (const og of orchestratorGroups) {
+          items.push({ type: "orchestrator", group: og });
+        }
+
         if (round === activeRound && isWeaving && thinkingParticipants.length > 0) {
           const thinkingIds = new Set(thinkingParticipants.map((p) => p.id));
           const agentIdsInRound = new Set(regularByAgent.keys());
@@ -474,7 +515,7 @@ const TimelineTabBase = ({
       }
     }
     return items;
-  }, [groupedContributions, collapsedRounds, activeRound, agentErrors, turnRequests, extensions, maxRounds, isWeaving, thinkingParticipants, reflectingParticipants, queryingParticipants, evidenceParticipants, summoningParticipants, participantName]);
+  }, [groupedContributions, collapsedRounds, activeRound, agentErrors, turnRequests, extensions, maxRounds, isWeaving, thinkingParticipants, reflectingParticipants, queryingParticipants, evidenceParticipants, summoningParticipants, participantName, orchestratorMessages]);
 
   const rowHeightFn = useCallback((index, cellProps) => {
     const item = cellProps.items[index];
@@ -490,8 +531,9 @@ const TimelineTabBase = ({
     onToggleCollapse,
     participantName,
     onDialogOpen: handleDialogOpen,
+    onOrchestratorDialogOpen: handleOrchestratorDialogOpen,
     contributions,
-  }), [flatItems, onToggleCollapse, participantName, contributions, handleDialogOpen]);
+  }), [flatItems, onToggleCollapse, participantName, contributions, handleDialogOpen, handleOrchestratorDialogOpen]);
 
   return (
     <div className="loom-main-content">
@@ -800,6 +842,73 @@ const TimelineTabBase = ({
                     </p>
                   )}
                 </div>
+              )}
+            </div>
+          </div>
+        )}
+      </ContentDialog>
+      <ContentDialog
+        open={dialogOrchestratorGroup !== null}
+        onClose={() => setDialogOrchestratorGroup(null)}
+        title={(() => {
+          if (!dialogOrchestratorGroup) return "";
+          const meta = ORCHESTRATOR_TYPE_META[(dialogOrchestratorGroup.query ?? dialogOrchestratorGroup.response)?.type] || { label: "Orchestrator" };
+          return meta.label;
+        })()}
+        className="loom-dialog-type-orchestrator"
+      >
+        {dialogOrchestratorGroup && (
+          <div className="loom-dialog-tabs-container">
+            <div className="loom-dialog-tabs" role="tablist">
+              <button
+                role="tab"
+                aria-selected={orchestratorActiveTab === "prompt"}
+                className={cn("loom-dialog-tab", orchestratorActiveTab === "prompt" && "loom-dialog-tab-active")}
+                onClick={() => setOrchestratorActiveTab("prompt")}
+              >
+                Prompt
+              </button>
+              <button
+                role="tab"
+                aria-selected={orchestratorActiveTab === "response"}
+                className={cn("loom-dialog-tab", orchestratorActiveTab === "response" && "loom-dialog-tab-active")}
+                onClick={() => setOrchestratorActiveTab("response")}
+              >
+                Response
+              </button>
+            </div>
+            <div className="loom-dialog-tab-panel" role="tabpanel">
+              {orchestratorActiveTab === "prompt" && dialogOrchestratorGroup.query && (
+                <>
+                  <pre className="loom-orchestrator-full-content">{dialogOrchestratorGroup.query.content}</pre>
+                  <div className="loom-dialog-footer">
+                    <button
+                      className="pure-button pure-button-small loom-copy-btn"
+                      onClick={() => navigator.clipboard.writeText(dialogOrchestratorGroup.query?.content ?? "")}
+                    >
+                      Copy text
+                    </button>
+                  </div>
+                </>
+              )}
+              {orchestratorActiveTab === "prompt" && !dialogOrchestratorGroup.query && (
+                <p className="loom-text loom-text-muted">No prompt recorded for this exchange.</p>
+              )}
+              {orchestratorActiveTab === "response" && dialogOrchestratorGroup.response && (
+                <>
+                  <pre className="loom-orchestrator-full-content">{dialogOrchestratorGroup.response.content}</pre>
+                  <div className="loom-dialog-footer">
+                    <button
+                      className="pure-button pure-button-small loom-copy-btn"
+                      onClick={() => navigator.clipboard.writeText(dialogOrchestratorGroup.response?.content ?? "")}
+                    >
+                      Copy text
+                    </button>
+                  </div>
+                </>
+              )}
+              {orchestratorActiveTab === "response" && !dialogOrchestratorGroup.response && (
+                <p className="loom-text loom-text-muted">No response recorded for this exchange.</p>
               )}
             </div>
           </div>

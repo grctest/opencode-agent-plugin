@@ -370,19 +370,19 @@ export class MeetingDatabase {
       .run(JSON.stringify(tags), isoNow(), meetingId);
   }
 
-  addOrchestratorMessage(msgType, role, content) {
+  addOrchestratorMessage(msgType, role, content, round = null) {
     this.#db
       .prepare(
-        `INSERT INTO orchestrator_messages (meeting_id, msg_type, role, content, created_at)
-         VALUES (?, ?, ?, ?, ?)`,
+        `INSERT INTO orchestrator_messages (meeting_id, msg_type, role, content, round, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
       )
-      .run(this.#meetingId, msgType, role, content, isoNow());
+      .run(this.#meetingId, msgType, role, content, round, isoNow());
   }
 
   getOrchestratorMessages(meetingId) {
     return this.#db
       .prepare(
-        `SELECT id, msg_type, role, content, created_at
+        `SELECT id, msg_type, role, content, round, created_at
          FROM orchestrator_messages WHERE meeting_id = ? ORDER BY id ASC`,
       )
       .all(meetingId)
@@ -391,6 +391,7 @@ export class MeetingDatabase {
         type: r.msg_type,
         role: r.role,
         content: r.content,
+        round: r.round,
         created_at: r.created_at,
       }));
   }

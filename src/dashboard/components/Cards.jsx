@@ -82,11 +82,6 @@ export const ContentDialog = memo(({ open, onClose, title, className, children }
 });
 
 export const ParticipantCard = memo(({ participant, error, contributionsByRound, isReflecting, onSelect }) => {
-  const totalContribs = useMemo(
-    () => Object.values(contributionsByRound ?? {}).reduce((a, b) => a + b, 0),
-    [contributionsByRound]
-  );
-
   const personaTitle = participant.name;
 
   const statusIndicator = () => {
@@ -115,17 +110,8 @@ export const ParticipantCard = memo(({ participant, error, contributionsByRound,
         <span className="loom-participant-card-title">{personaTitle}</span>
         <TierBadge tier={participant.tier} />
       </div>
-      {totalContribs > 0 && (
-        <span className="loom-contrib-count">{totalContribs} contribution{totalContribs !== 1 ? "s" : ""}</span>
-      )}
       {participant.model_id && (
         <span className="loom-participant-model">{participant.model_id}</span>
-      )}
-      {error && (
-        <div className="loom-error-detail">
-          <span className="loom-error-type">{error.error_type}</span>
-          <span className="loom-error-message">{error.error_message}</span>
-        </div>
       )}
     </div>
   );
@@ -458,6 +444,48 @@ export const AgentPerspective = memo(({ participant, stateOfPlay, recentContribu
           </div>
         )}
       </div>
+    </div>
+  );
+});
+
+export const ORCHESTRATOR_TYPE_META = {
+  turn_order: { emoji: "🔄", label: "Turn Planning" },
+  summary: { emoji: "📝", label: "Round Summary" },
+  moderation: { emoji: "🛡️", label: "Moderation" },
+  convergence: { emoji: "🎯", label: "Convergence Check" },
+  compaction: { emoji: "📦", label: "Context Compaction" },
+  domain: { emoji: "🔍", label: "Domain Detection" },
+  orchestrator: { emoji: "🎛️", label: "Orchestrator" },
+};
+
+export const OrchestratorItem = memo(({ group, onDialogOpen }) => {
+  const msg = group.query ?? group.response;
+  const meta = ORCHESTRATOR_TYPE_META[msg.type] || { emoji: "❓", label: msg.type };
+  const content = msg.content ?? "";
+  const timestamp = msg.created_at;
+
+  const openDialog = () => onDialogOpen?.({ orchestratorGroup: group, type: msg.type });
+  const onKeyDown = (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openDialog();
+    }
+  };
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      className="loom-card loom-card-dashed loom-orchestrator-item"
+      onClick={openDialog}
+      onKeyDown={onKeyDown}
+    >
+      <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center loom-mb-xs">
+        <span className="loom-orchestrator-item-emoji" aria-hidden="true">{meta.emoji}</span>
+        <span className="loom-badge loom-badge-orchestrator">{meta.label}</span>
+        <span className="loom-text-xs loom-text-muted">{relativeTime(timestamp)}</span>
+      </div>
+      <p className="loom-text loom-text-muted">{content.slice(0, 150)}{content.length > 150 ? "..." : ""}</p>
     </div>
   );
 });

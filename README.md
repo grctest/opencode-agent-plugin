@@ -23,7 +23,7 @@ A real-time web dashboard shows every agent contributing as it happens. If you r
 - **Auto-composed rooms** — persona selection based on your question's domain
 - **Model discovery** — finds available models from your opencode providers, assigns per tier
 - **Custom rooms** — bring your own participants, models, convergence mode, and round limits
-- **Real-time dashboard** — five tabs: Overview, Orchestrator, Timeline, Output, and Fabric
+- **Real-time dashboard** — tabs for Overview, Timeline, and Output
 - **Markdown export** — download the full transcript from the dashboard
 - **Configurable** — tune timeouts, word limits, convergence, and more via config
 
@@ -159,24 +159,10 @@ Each tier has different behavioral guidance defined in each persona's `tier_guid
 Run `/loom_viz` to start the real-time web dashboard. It auto-detects the most recent meeting and streams updates as they happen.
 
 - **Overview** — stats, participation matrix, contribution types, and timeline chart
-- **Orchestrator** — internal feed showing domain detection, moderation, convergence checks, and round summaries
-- **Timeline** — per-round contributions and turn requests; click any contribution card to view the full output in a dialog
+- **Timeline** — per-round contributions, turn requests, and orchestrator decisions (moderation, turn ordering, summaries) interleaved; click any item to view full details in a dialog
 - **Output** — the final synthesis artifact: decisions, action items, open questions, dissent, confidence, and full text
-- **Fabric** — the evolving shared context and each agent's perspective (persona, agenda, model)
 
 The dashboard supports light, dark, and system themes. Export the current meeting as Markdown from the header.
-
-### Keyboard Shortcuts
-
-| Key | Action |
-|-----|--------|
-| `j` | Scroll down |
-| `k` | Scroll up |
-| `o` | Overview tab |
-| `r` | Orchestrator tab |
-| `t` | Timeline tab |
-| `u` | Output tab |
-| `w` | Fabric tab |
 
 ## Configuration
 

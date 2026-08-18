@@ -1465,8 +1465,7 @@ All three response types flow into the weave, appear in later agents' recent con
 ### UI Tabs
 
 - **Overview** — participants (cards with status/tier/model/reflection, contribution counts), recent contributions, turn requests, errors, an agent-perspective panel, and the final artifact when present.
-- **Orchestrator** — chronologically logged orchestrator messages (moderator rulings, turn-order plans, summaries) with user/assistant roles.
-- **Timeline** — per-round contribution timeline, participation matrix, contribution-type chart, and inline reflection/query/evidence/summon rows.
+- **Timeline** — per-round contribution timeline, orchestrator decision log (moderator rulings, turn-order plans, summaries) interleaved per round, participation matrix, contribution-type chart, and inline reflection/query/evidence/summon rows.
 - **Output** — the final artifact with structured fields; export actions.
 
 ### Key API Endpoints

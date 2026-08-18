@@ -168,7 +168,7 @@ export class MeetingOrchestrator {
     );
   }
 
-  async #promptOrchestrator(system, model, message, type = "orchestrator") {
+  async #promptOrchestrator(system, model, message, type = "orchestrator", round = null) {
     const fastPathModel = getConfig().fastPathModel;
     const useModel = (fastPathModel && (type === "moderation" || type === "compaction" || type === "summary" || type === "domain"))
       ? fastPathModel
@@ -178,9 +178,9 @@ export class MeetingOrchestrator {
     if (this.#orchestratorMessages.length >= MAX_ORCHESTRATOR_MESSAGES) {
       this.#orchestratorMessages.shift();
     }
-    this.#orchestratorMessages.push({ type, role: "user", content: message, timestamp: Date.now() });
+    this.#orchestratorMessages.push({ type, role: "user", content: message, round, timestamp: Date.now() });
     if (this.#database) {
-      this.#database.addOrchestratorMessage(type, "user", message);
+      this.#database.addOrchestratorMessage(type, "user", message, round);
     }
     const { text: response, tokens } = await this.#sessionManager.promptOrchestrator(system, useModel, message);
     if (tokens) {
@@ -190,9 +190,9 @@ export class MeetingOrchestrator {
     if (this.#orchestratorMessages.length >= MAX_ORCHESTRATOR_MESSAGES) {
       this.#orchestratorMessages.shift();
     }
-    this.#orchestratorMessages.push({ type, role: "assistant", content: response, timestamp: Date.now() });
+    this.#orchestratorMessages.push({ type, role: "assistant", content: response, round, timestamp: Date.now() });
     if (this.#database) {
-      this.#database.addOrchestratorMessage(type, "assistant", response);
+      this.#database.addOrchestratorMessage(type, "assistant", response, round);
     }
     return response;
   }
@@ -438,7 +438,7 @@ export class MeetingOrchestrator {
     const { round: updatedRound } = await this.#roundService.runRound({
       round,
       activeParticipants,
-      promptOrchestrator: async (system, model, message, type) => this.#promptOrchestrator(system, model, message, type),
+      promptOrchestrator: async (system, model, message, type) => this.#promptOrchestrator(system, model, message, type, round),
       getHighestTierModel: () => this.#getHighestTierModel(),
       state: this.#stateManager.getState(),
     });
@@ -485,7 +485,7 @@ export class MeetingOrchestrator {
         weave: this.#stateManager.getWeave(),
         currentRound: this.#stateManager.getCurrentRound(),
         maxRounds: this.#stateManager.getMaxRounds(),
-        promptOrchestrator: async (system, model, message) => this.#promptOrchestrator(system, model, message, "moderation"),
+        promptOrchestrator: async (system, model, message) => this.#promptOrchestrator(system, model, message, "moderation", updatedRound.number),
         getHighestTierModel: () => this.#getHighestTierModel(),
         postProgress: async (message) => this.#sessionManager.postProgress(message),
         stateOfPlay: this.#stateManager.getStateOfPlay(),
@@ -509,7 +509,7 @@ export class MeetingOrchestrator {
           roundSummary: updatedRound.summary || "",
           turnRequests,
           participants: this.#stateManager.getParticipants(),
-          promptOrchestrator: async (system, model, message) => this.#promptOrchestrator(system, model, message, "turn_order"),
+          promptOrchestrator: async (system, model, message) => this.#promptOrchestrator(system, model, message, "turn_order", updatedRound.number),
           getHighestTierModel: () => this.#getHighestTierModel(),
         });
         

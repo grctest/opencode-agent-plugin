@@ -3,7 +3,6 @@ import { createRoot } from "react-dom/client";
 import { cn } from "./utils.js";
 import { Sidebar } from "./components/Sidebar.jsx";
 import { OverviewTab } from "./components/OverviewTab.jsx";
-import { OrchestratorTab } from "./components/OrchestratorTab.jsx";
 import { TimelineTab } from "./components/TimelineTab.jsx";
 import { OutputTab } from "./components/OutputTab.jsx";
 import { ErrorBoundary } from "./ErrorBoundary.jsx";
@@ -314,22 +313,6 @@ export function App() {
     };
   }, []);
 
-  useEffect(() => {
-    const handleKey = (e) => {
-      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
-      if (e.key === "j") {
-        window.scrollBy(0, 200);
-      } else if (e.key === "k") {
-        window.scrollBy(0, -200);
-      }       else if (e.key === "o") setActiveTab("overview");
-      else if (e.key === "r") setActiveTab("orchestrator");
-      else if (e.key === "t") setActiveTab("timeline");
-      else if (e.key === "u") setActiveTab("output");
-    };
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [setActiveTab]);
-
   const participantNameMap = useMemo(() => {
     const map = new Map();
     for (const p of participants) map.set(p.id, p.name);
@@ -467,7 +450,7 @@ export function App() {
 
           <div className="pure-menu pure-menu-horizontal loom-tabs" role="tablist" aria-label="Meeting views">
             <ul className="pure-menu-list">
-              {["overview", "timeline", "output", "orchestrator"].map((tab) => (
+              {["overview", "timeline", "output"].map((tab) => (
                 <li key={tab} className={cn("pure-menu-item", activeTab === tab && "pure-menu-selected")} role="presentation">
                   <button
                     className="pure-menu-link"
@@ -500,15 +483,7 @@ export function App() {
             )}
           </ErrorBoundary>
 
-          <ErrorBoundary fallbackMessage="Failed to render the orchestrator tab">
-            {activeTab === "orchestrator" && (
-              <div id="panel-orchestrator" role="tabpanel" aria-label="Orchestrator">
-                <OrchestratorTab messages={orchestratorMessages} />
-              </div>
-            )}
-          </ErrorBoundary>
-
-          <ErrorBoundary fallbackMessage="Failed to render the timeline tab">
+           <ErrorBoundary fallbackMessage="Failed to render the timeline tab">
             {activeTab === "timeline" && (
               <div id="panel-timeline" role="tabpanel" aria-label="Timeline">
                 <TimelineTab
@@ -524,11 +499,12 @@ export function App() {
                   onToggleCollapse={toggleRoundCollapse}
                   agentErrors={agentErrors}
                   participantName={participantName}
-                  turnRequests={turnRequests}
-                  extensions={extensions}
-                  activeRound={activeRound}
-                  maxRounds={state?.max_rounds}
-                />
+                 turnRequests={turnRequests}
+                   extensions={extensions}
+                   activeRound={activeRound}
+                   maxRounds={state?.max_rounds}
+                   orchestratorMessages={orchestratorMessages}
+                 />
               </div>
             )}
           </ErrorBoundary>
