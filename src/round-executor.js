@@ -126,19 +126,17 @@ export class RoundExecutor {
       }
 
       // Mid-round reflections: if this agent challenged/dissented,
-      // trigger reflections for agents that spoke BEFORE them
+      // trigger reflection for the most persona-similar active participant
       if (result && (result.type === "challenge" || result.type === "dissent")) {
-        const preChallengeAgents = spokenOrder.filter(
-          (sp) => sp.config.id !== p.config.id && sp.status !== "passed" && sp.status !== "failed"
-        );
+        const allActive = this.#stateManager.getActiveParticipants();
 
-        if (preChallengeAgents.length > 0) {
+        if (allActive.length > 1) {
           // Store the challenge/dissent content and type for the reflection prompt
           p.currentContribution = result.content;
           p.currentContributionId = round.contributions[round.contributions.length - 1]?.id;
           p.currentContributionType = result.type;
 
-          await runMidRoundReflections(round, p, preChallengeAgents, {
+          await runMidRoundReflections(round, p, allActive, {
             client: this.#client,
             directory: this.#directory,
             sessionManager: this.#sessionManager,

@@ -12,3 +12,4 @@ export {
   getRightsForTier,
 } from "./utils/tier.js";
 export { parseReflections, parseStats } from "./utils/db-parsing.js";
+export { cosineSimilarity, findMostSimilar } from "./utils/vector.js";

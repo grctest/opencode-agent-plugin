@@ -1105,6 +1105,54 @@ export class MeetingDatabase {
       this.#db.prepare(`DELETE FROM persona_embeddings WHERE meeting_id = ?`).run(this.#meetingId);
     } catch { /* table may not exist yet */ }
   }
+
+  /**
+   * Retrieves a single persona embedding by persona name.
+   * @param {string} personaName
+   * @param {number} dim
+   * @returns {Float32Array|null}
+   */
+  getPersonaEmbeddingByName(personaName, dim = 384) {
+    try {
+      this.#initPersonaVectorTable(dim);
+      const row = this.#db.prepare(`
+        SELECT v.embedding
+        FROM vec_persona_embeddings_${dim} v
+        JOIN persona_embeddings p ON p.id = v.rowid AND p.meeting_id = ?
+        WHERE p.persona_name = ?
+      `).get(this.#meetingId, personaName);
+      return row?.embedding ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Retrieves embeddings for multiple persona names in a single query.
+   * @param {string[]} personaNames
+   * @param {number} dim
+   * @returns {Map<string, Float32Array>}
+   */
+  getPersonaEmbeddingsByNames(personaNames, dim = 384) {
+    if (!personaNames || personaNames.length === 0) return new Map();
+    try {
+      this.#initPersonaVectorTable(dim);
+      const placeholders = personaNames.map(() => '?').join(',');
+      const rows = this.#db.prepare(`
+        SELECT p.persona_name, v.embedding
+        FROM vec_persona_embeddings_${dim} v
+        JOIN persona_embeddings p ON p.id = v.rowid AND p.meeting_id = ?
+        WHERE p.persona_name IN (${placeholders})
+      `).all(this.#meetingId, ...personaNames);
+      const map = new Map();
+      for (const row of rows) {
+        map.set(row.persona_name, row.embedding);
+      }
+      return map;
+    } catch {
+      return new Map();
+    }
+  }
 }
 
 // Re-export session index functions for backward compatibility

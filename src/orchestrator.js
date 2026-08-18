@@ -12,7 +12,7 @@ import { collectObjections } from "./objection-collector.js";
 import { StateManager } from "./services/state-manager.js";
 import { PersistenceService } from "./services/persistence-service.js";
 import { ModeratorService } from "./services/moderator-service.js";
-import { ConvergenceService } from "./services/convergence-service.js";
+
 import { SynthesisCoordinator } from "./synthesis-coordinator.js";
 import { updateStateOfPlay } from "./fabric-manager.js";
 import { RoundService } from "./services/round-service.js";
@@ -33,7 +33,6 @@ export class MeetingOrchestrator {
   #stateManager;
   #persistenceService;
   #moderatorService;
-  #convergenceService;
   #synthesisCoordinator;
   #roundService;
   #roundInitializer;
@@ -53,7 +52,7 @@ export class MeetingOrchestrator {
   #logger = null;
   #orchestratorMessages = [];
   #resume = false;
-  #callStats = { orchestrator: 0, compaction: 0, moderation: 0, summary: 0, convergence: 0, synthesis: 0, input_tokens: 0, output_tokens: 0 };
+  #callStats = { orchestrator: 0, compaction: 0, moderation: 0, summary: 0, synthesis: 0, input_tokens: 0, output_tokens: 0 };
   #personaIndex = null;
 
   constructor(options) {
@@ -98,7 +97,6 @@ export class MeetingOrchestrator {
 
     this.#stateManager = new StateManager(initialState);
     this.#moderatorService = new ModeratorService();
-    this.#convergenceService = new ConvergenceService();
     this.#roundInitializer = new RoundInitializer();
     this.#meetingExtender = new MeetingExtender();
     this.#stallWatchdog = new StallWatchdog({
@@ -273,6 +271,18 @@ export class MeetingOrchestrator {
           }
         } catch (err) {
           this.#logger.warn("persona_index_failed", "Failed to index personas for vector search", extractErrorInfo(err));
+        }
+
+        // Load persona embeddings onto participant objects for reflection targeting
+        try {
+          const participants = this.#stateManager.getParticipants();
+          const names = participants.map((p) => p.config.name);
+          const embeddingMap = db.getPersonaEmbeddingsByNames(names);
+          for (const p of participants) {
+            p.embedding = embeddingMap.get(p.config.name) ?? null;
+          }
+        } catch (err) {
+          this.#logger.warn("embedding_load_failed", "Failed to load embeddings onto participants", extractErrorInfo(err));
         }
       }
 
@@ -514,20 +524,11 @@ export class MeetingOrchestrator {
         }
       }
 
-      const convergenceResult = await this.#convergenceService.check({
-        state: this.#stateManager.getState(),
-        round: updatedRound,
-        postProgress: async (message) => this.#sessionManager.postProgress(message),
-      });
-
-      if (convergenceResult.shouldStop) {
+      const participants = this.#stateManager.getParticipants();
+      const activeCount = participants.filter((p) => p.status !== "passed" && p.status !== "failed").length;
+      const allPassed = activeCount === 0 && participants.length > 0;
+      if (allPassed || this.#stateManager.getCurrentRound() >= this.#stateManager.getMaxRounds()) {
         this.#stateManager.transitionTo("converged");
-        await this.#persistState();
-        return false;
-      }
-
-      if (this.#stateManager.getCurrentRound() >= this.#stateManager.getMaxRounds()) {
-        this.#stateManager.transitionTo("max_rounds_reached");
         await this.#persistState();
         return false;
       }

@@ -10,7 +10,6 @@ const counters = {
   turn_requests_granted: 0,
   turn_requests_denied: 0,
   reflections_generated: 0,
-  convergence_checks: 0,
   syntheses_completed: 0,
   syntheses_failed: 0,
   meetings_started: 0,
