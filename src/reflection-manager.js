@@ -88,11 +88,25 @@ export async function runMidRoundReflections(round, triggerParticipant, activePa
       if (agentToolsConfig?.loom?.loom_vector_search) reflectionTools.loom_vector_search = true;
     }
 
+    const systemPrompt = `You are ${listener.config.name} (${listener.config.tier}). This is your reflection on the deliberation — it will be visible to other participants.`;
+    const promptContext = {
+      type: "reflection",
+      system_prompt: systemPrompt,
+      user_prompt: prompt,
+      trigger_contribution_id: triggerParticipant.currentContributionId,
+      trigger_participant_id: triggerParticipant.config.id,
+      trigger_type: triggerParticipant.currentContributionType,
+      round_contributions_used: round.contributions.slice(-4).map((c) => ({
+        id: c.id, participant_id: c.participant_id, type: c.type, content: c.content,
+      })),
+      round: stateManager.getCurrentRound(),
+    };
+
     const result = await withTimeout(
       client.session.prompt({
         path: { id: sessionId },
         body: {
-          system: `You are ${listener.config.name} (${listener.config.tier}). This is your reflection on the deliberation — it will be visible to other participants.`,
+          system: systemPrompt,
           model,
           temperature: listener.tier_config.temperature,
           parts: [{ type: "text", text: prompt }],
@@ -151,6 +165,7 @@ export async function runMidRoundReflections(round, triggerParticipant, activePa
         error: t.error ? String(t.error).slice(0, 500) : null,
         metadata: t.metadata ?? null,
       })) : null,
+      prompt_context: promptContext,
       created_at: new Date().toISOString(),
     };
 

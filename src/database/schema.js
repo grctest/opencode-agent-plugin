@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 19;
+export const SCHEMA_VERSION = 23;
 
 export function initSchema(db) {
   db.exec(`
@@ -50,6 +50,7 @@ export function initSchema(db) {
       content TEXT NOT NULL,
       target_which TEXT,
       tool_calls TEXT,
+      prompt_context TEXT,
       created_at TEXT NOT NULL
     );
 
@@ -399,6 +400,18 @@ export function migrateSchema(db) {
   if (currentVersion < 20) {
     try { db.exec(`ALTER TABLE meetings ADD COLUMN querying_participants TEXT`); } catch { /* exists */ }
     db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '20')`);
+  }
+  if (currentVersion < 21) {
+    try { db.exec(`ALTER TABLE meetings ADD COLUMN evidence_participants TEXT`); } catch { /* exists */ }
+    db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '21')`);
+  }
+  if (currentVersion < 22) {
+    try { db.exec(`ALTER TABLE meetings ADD COLUMN summoning_participants TEXT`); } catch { /* exists */ }
+    db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '22')`);
+  }
+  if (currentVersion < 23) {
+    try { db.exec(`ALTER TABLE contributions ADD COLUMN prompt_context TEXT`); } catch { /* exists */ }
+    db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '23')`);
   }
   db.exec("COMMIT");
   } catch (err) {

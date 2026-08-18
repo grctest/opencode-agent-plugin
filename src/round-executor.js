@@ -1,4 +1,4 @@
-import { buildAgentSystemPrompt, buildAgentUserPrompt, buildQueryPrompt } from "./prompts.js";
+import { buildAgentSystemPrompt, buildAgentUserPrompt, buildQueryPrompt, buildEvidencePrompt, buildSummonPrompt } from "./prompts.js";
 import { parseAgentResponse } from "./validation.js";
 import { getConfig } from "./config.js";
 import { extractText, extractAgentResponse, truncate, withTimeout } from "./shared.js";
@@ -125,6 +125,35 @@ export class RoundExecutor {
         }
       }
 
+      // Evidence requests: if this agent requested evidence from specific participants
+      if (result?.evidence && result.evidence.targets.length > 0 && result.content !== "[PASS]") {
+        const sourceContribution = round.contributions[round.contributions.length - 1];
+        if (sourceContribution) {
+          p.currentContribution = result.content;
+          await this.executeEvidenceRequests(round, p, result.evidence, sourceContribution.id, {
+            client: this.#client,
+            directory: this.#directory,
+            sessionManager: this.#sessionManager,
+            getParticipantModel: this.#getParticipantModel,
+            stateManager: this.#stateManager,
+            db: this.#db,
+            callStats: this.#callStats,
+          });
+        }
+      }
+
+      // Persona summons: if this agent summoned an external expert
+      if (result?.summon && result.content !== "[PASS]") {
+        await this.executeSummons(round, p, result.summon, {
+          client: this.#client,
+          directory: this.#directory,
+          sessionManager: this.#sessionManager,
+          stateManager: this.#stateManager,
+          db: this.#db,
+          callStats: this.#callStats,
+        });
+      }
+
       // Mid-round reflections: if this agent challenged/dissented,
       // trigger reflection for the most persona-similar active participant
       if (result && (result.type === "challenge" || result.type === "dissent")) {
@@ -245,11 +274,25 @@ export class RoundExecutor {
             if (agentToolsConfig?.loom?.loom_vector_search) queryTools.loom_vector_search = true;
           }
 
+          const systemPrompt = `You are ${target.config.name} (${target.config.tier}). A fellow participant has directed a question to you. Respond directly and stay in character.`;
+          const promptContext = {
+            type: "query_response",
+            system_prompt: systemPrompt,
+            user_prompt: prompt,
+            source_contribution_id: sourceContributionId,
+            source_participant_id: sourceParticipant.config.id,
+            question: query.question,
+            round_contributions_used: round.contributions.slice(-4).map((c) => ({
+              id: c.id, participant_id: c.participant_id, type: c.type, content: c.content,
+            })),
+            round: stateManager.getCurrentRound(),
+          };
+
           const result = await withTimeout(
             client.session.prompt({
               path: { id: sessionId },
               body: {
-                system: `You are ${target.config.name} (${target.config.tier}). A fellow participant has directed a question to you. Respond directly and stay in character.`,
+                system: systemPrompt,
                 model,
                 temperature: target.tier_config.temperature,
                 parts: [{ type: "text", text: prompt }],
@@ -292,6 +335,7 @@ export class RoundExecutor {
               error: t.error ? String(t.error).slice(0, 500) : null,
               metadata: t.metadata ?? null,
             })) : null,
+            prompt_context: promptContext,
             created_at: new Date().toISOString(),
           };
 
@@ -323,6 +367,319 @@ export class RoundExecutor {
     db.setQueryingParticipants(null);
   }
 
+  async executeEvidenceRequests(round, sourceParticipant, evidence, sourceContributionId, {
+    client,
+    directory,
+    sessionManager,
+    getParticipantModel,
+    stateManager,
+    db,
+    callStats,
+  }) {
+    const config = getConfig();
+    const timeoutMs = config.agentTimeoutMs;
+    const allParticipants = stateManager.getParticipants();
+
+    const targets = evidence.targets
+      .map((id) => allParticipants.find((p) => p.config.id === id))
+      .filter((p) => p && p.config.id !== sourceParticipant.config.id && p.status !== "failed" && p.status !== "passed");
+
+    if (targets.length === 0) return;
+
+    const sourceName = sourceParticipant.config.name;
+
+    db.setEvidenceParticipants(targets.map((t) => t.config.id));
+
+    await Promise.allSettled(
+      targets.map(async (target) => {
+        const model = getParticipantModel(target);
+        const sessionId = await sessionManager.createEphemeralSession(target);
+        try {
+          const previousStatus = target.status;
+          target.status = "speaking";
+          db.setParticipantStatus(target.config.id, "speaking");
+
+          const prompt = buildEvidencePrompt(
+            sourceParticipant,
+            target,
+            sourceParticipant.currentContribution || sourceParticipant.config.name,
+            evidence.question,
+            round.contributions,
+            stateManager.getCurrentRound(),
+            stateManager.getMaxRounds(),
+          );
+
+          // Build tools map for evidence (same as queries but with tool_choice: required)
+          const agentToolsConfig = getConfig().agentTools;
+          const evidenceTools = {};
+          if (agentToolsConfig?.enabled) {
+            if (agentToolsConfig?.builtIn?.web_fetch) evidenceTools.web_fetch = true;
+            if (agentToolsConfig?.builtIn?.web_search) evidenceTools.web_search = true;
+            if (agentToolsConfig?.builtIn?.read) evidenceTools.read = true;
+            if (agentToolsConfig?.loom?.loom_vector_search) evidenceTools.loom_vector_search = true;
+          }
+
+          const systemPrompt = `You are ${target.config.name} (${target.config.tier}). A fellow participant has requested evidence from you. You MUST use research tools to find concrete evidence. Respond with your findings and stay in character.`;
+          const promptContext = {
+            type: "evidence_response",
+            system_prompt: systemPrompt,
+            user_prompt: prompt,
+            source_contribution_id: sourceContributionId,
+            source_participant_id: sourceParticipant.config.id,
+            question: evidence.question,
+            round_contributions_used: round.contributions.slice(-4).map((c) => ({
+              id: c.id, participant_id: c.participant_id, type: c.type, content: c.content,
+            })),
+            round: stateManager.getCurrentRound(),
+          };
+
+          const result = await withTimeout(
+            client.session.prompt({
+              path: { id: sessionId },
+              body: {
+                system: systemPrompt,
+                model,
+                temperature: target.tier_config.temperature,
+                parts: [{ type: "text", text: prompt }],
+                tools: evidenceTools,
+                tool_choice: Object.keys(evidenceTools).length > 0 ? "required" : undefined,
+              },
+              query: { directory },
+            }),
+            timeoutMs,
+          );
+
+          if (callStats) {
+            callStats.reflection_calls++;
+            const tokens = result?.data?.tokens;
+            if (tokens) {
+              callStats.input_tokens += tokens.input ?? 0;
+              callStats.output_tokens += tokens.output ?? 0;
+            }
+          }
+
+          if (result.error) throw new Error(result.error.message || JSON.stringify(result.error));
+
+          const { text, toolResults } = extractAgentResponse(result.data);
+
+          if (!text || text.trim().length < 10) return;
+
+          const contribution = {
+            id: stateManager.nextContributionId(),
+            round: stateManager.getCurrentRound(),
+            participant_id: target.config.id,
+            content: `[Evidence from ${target.config.name} on ${sourceName}'s ${round.contributions[round.contributions.length - 1]?.type ?? "contribution"}]\n\n${text.trim()}`,
+            type: "evidence_response",
+            targets_which: sourceContributionId,
+            tool_calls: toolResults.length > 0 ? toolResults.map(t => ({
+              tool: t.tool,
+              callID: t.callID,
+              title: t.title ?? null,
+              output: t.output ? String(t.output).slice(0, 2000) : null,
+              error: t.error ? String(t.error).slice(0, 500) : null,
+              metadata: t.metadata ?? null,
+            })) : null,
+            prompt_context: promptContext,
+            created_at: new Date().toISOString(),
+          };
+
+          stateManager.addContribution(contribution);
+          round.contributions.push(contribution);
+
+          db.addContributionWithTurnRequest(stateManager.getMeetingId(), contribution, null);
+
+          target.status = previousStatus;
+          db.setParticipantStatus(target.config.id, previousStatus);
+
+          this.#options.onProgress?.(`${target.config.name} (${target.config.tier}) — evidence_response to ${sourceName}`);
+          this.#options.onContribution?.(target.config.name, stateManager.getCurrentRound(), "evidence_response");
+
+        } catch (err) {
+          const info = extractErrorInfo(err);
+          this.#logError(`evidence response for ${target.config.name}`, err);
+          this.#logger.warn("evidence_failed", `Evidence response for ${target.config.name} failed`, info);
+          target.status = "listening";
+          db.setParticipantStatus(target.config.id, "listening");
+        } finally {
+          await sessionManager.deleteEphemeralSession(sessionId).catch(() => {});
+        }
+      }),
+    );
+
+    db.setEvidenceParticipants(null);
+  }
+
+  async executeSummons(round, sourceParticipant, summon, {
+    client,
+    directory,
+    sessionManager,
+    stateManager,
+    db,
+    callStats,
+  }) {
+    const config = getConfig();
+    const timeoutMs = config.agentTimeoutMs;
+
+    // Rate limiting
+    if (!round.summons) round.summons = [];
+    if (round.summons.length >= (config.maxSummonsPerRound ?? 2)) return;
+    const agentSummons = round.summons.filter((s) => s.requesterId === sourceParticipant.config.id);
+    if (agentSummons.length >= (config.maxSummonsPerAgent ?? 1)) return;
+
+    // Resolve persona from loaded persona pool
+    const { getPersonas } = await import("./composer.js");
+    const allPersonas = getPersonas();
+    let resolvedPersona = null;
+    for (const tier of Object.keys(allPersonas)) {
+      const match = allPersonas[tier].find(
+        (p) => p.name.toLowerCase() === summon.persona_name.toLowerCase()
+      );
+      if (match) { resolvedPersona = { ...match, tier }; break; }
+    }
+
+    if (!resolvedPersona) {
+      this.#logger.warn("summon_persona_not_found", `Persona "${summon.persona_name}" not found`);
+      return;
+    }
+
+    const summonedId = `summoned_${resolvedPersona.name.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
+
+    db.setSummoningParticipants([summonedId]);
+
+    const summonedConfig = {
+      config: {
+        id: summonedId,
+        name: resolvedPersona.name,
+        tier: resolvedPersona.tier,
+        persona: resolvedPersona.persona,
+        expertise: resolvedPersona.expertise,
+        communication_style: resolvedPersona.communication_style,
+      },
+      tier_config: { temperature: 0.7 },
+    };
+
+    const sessionId = await sessionManager.createEphemeralSession(summonedConfig);
+    try {
+      const prompt = buildSummonPrompt(
+        resolvedPersona,
+        sourceParticipant,
+        summon.issue,
+        round.contributions,
+        stateManager.getCurrentRound(),
+        stateManager.getMaxRounds(),
+      );
+
+      // Full tool access for summoned experts
+      const agentToolsConfig = getConfig().agentTools;
+      const toolsMap = {};
+      if (agentToolsConfig?.enabled) {
+        if (agentToolsConfig?.builtIn?.web_fetch) toolsMap.web_fetch = true;
+        if (agentToolsConfig?.builtIn?.web_search) toolsMap.web_search = true;
+        if (agentToolsConfig?.builtIn?.read) toolsMap.read = true;
+        if (agentToolsConfig?.builtIn?.bash?.enabled || agentToolsConfig?.builtIn?.bash === true) toolsMap.bash = true;
+        if (agentToolsConfig?.builtIn?.glob) toolsMap.glob = true;
+        if (agentToolsConfig?.builtIn?.grep) toolsMap.grep = true;
+        if (agentToolsConfig?.loom?.loom_vector_search) toolsMap.loom_vector_search = true;
+      }
+
+      // Use requester's model
+      let model = null;
+      try {
+        const { getParticipantModel } = await import("./orchestrator.js");
+        // Fallback: use a generic model lookup
+      } catch {}
+      // Direct model access from source participant config
+      model = sourceParticipant.config.model;
+
+      if (!model) {
+        this.#logger.warn("summon_no_model", "No model available for summoned persona");
+        return;
+      }
+
+      const systemPrompt = `You are ${resolvedPersona.name} (${resolvedPersona.tier}), a guest expert summoned into this deliberation. Respond in character.`;
+      const promptContext = {
+        type: "summoned_response",
+        system_prompt: systemPrompt,
+        user_prompt: prompt,
+        persona_name: resolvedPersona.name,
+        persona_tier: resolvedPersona.tier,
+        source_participant_id: sourceParticipant.config.id,
+        issue: summon.issue,
+        round_contributions_used: round.contributions.slice(-4).map((c) => ({
+          id: c.id, participant_id: c.participant_id, type: c.type, content: c.content,
+        })),
+        round: stateManager.getCurrentRound(),
+      };
+
+      const result = await withTimeout(
+        client.session.prompt({
+          path: { id: sessionId },
+          body: {
+            system: systemPrompt,
+            model,
+            temperature: 0.7,
+            parts: [{ type: "text", text: prompt }],
+            tools: toolsMap,
+            tool_choice: Object.keys(toolsMap).length > 0 ? "auto" : undefined,
+          },
+          query: { directory },
+        }),
+        timeoutMs,
+      );
+
+      if (callStats) {
+        callStats.reflection_calls++;
+        const tokens = result?.data?.tokens;
+        if (tokens) {
+          callStats.input_tokens += tokens.input ?? 0;
+          callStats.output_tokens += tokens.output ?? 0;
+        }
+      }
+
+      if (result.error) throw new Error(result.error.message || JSON.stringify(result.error));
+
+      const { text, toolResults } = extractAgentResponse(result.data);
+
+      if (!text || text.trim().length < 10) return;
+
+      const contribution = {
+        id: stateManager.nextContributionId(),
+        round: stateManager.getCurrentRound(),
+        participant_id: summonedId,
+        content: `[Summoned: ${resolvedPersona.name} (${resolvedPersona.tier})]\n\n${text.trim()}`,
+        type: "summoned_response",
+        targets_which: null,
+        tool_calls: toolResults.length > 0 ? toolResults.map(t => ({
+          tool: t.tool,
+          callID: t.callID,
+          title: t.title ?? null,
+          output: t.output ? String(t.output).slice(0, 2000) : null,
+          error: t.error ? String(t.error).slice(0, 500) : null,
+          metadata: t.metadata ?? null,
+        })) : null,
+        prompt_context: promptContext,
+        created_at: new Date().toISOString(),
+      };
+
+      stateManager.addContribution(contribution);
+      round.contributions.push(contribution);
+      round.summons.push({ requesterId: sourceParticipant.config.id, personaName: resolvedPersona.name });
+
+      db.addContributionWithTurnRequest(stateManager.getMeetingId(), contribution, null);
+
+      this.#options.onProgress?.(`${resolvedPersona.name} (${resolvedPersona.tier}) — summoned by ${sourceParticipant.config.name}`);
+      this.#options.onContribution?.(resolvedPersona.name, stateManager.getCurrentRound(), "summoned_response");
+
+    } catch (err) {
+      const info = extractErrorInfo(err);
+      this.#logError(`summon for ${resolvedPersona.name}`, err);
+      this.#logger.warn("summon_failed", `Summon of ${resolvedPersona.name} failed`, info);
+    } finally {
+      await sessionManager.deleteEphemeralSession(sessionId).catch(() => {});
+      db.setSummoningParticipants(null);
+    }
+  }
+
   #storeContribution(participant, result, round) {
     const id = this.#stateManager.nextContributionId();
     const safeContent = sanitizeForPrompt(result.content);
@@ -334,6 +691,7 @@ export class RoundExecutor {
       type: result.type,
       targets_which: null,
       tool_calls: result.tool_calls ?? null,
+      prompt_context: result.prompt_context ?? null,
       created_at: new Date().toISOString(),
     };
 
@@ -431,22 +789,42 @@ export class RoundExecutor {
         if (agentToolsConfig.loom?.loom_vector_search) toolsMap.loom_vector_search = true;
       }
 
+      const systemPrompt = buildAgentSystemPrompt(participant);
+      const userPrompt = buildAgentUserPrompt(
+        participant,
+        this.#stateManager.getStateOfPlay(),
+        ragContext,
+        recentForPrompt,
+        currentRound,
+        this.#stateManager.getQuestion(),
+        this.#stateManager.getTags(),
+      );
+
+      const promptContext = {
+        type: "agent_turn",
+        system_prompt: systemPrompt,
+        user_prompt: userPrompt,
+        state_of_play: this.#stateManager.getStateOfPlay(),
+        rag_query_text: queryText,
+        rag_chunks_used: ragChunks.map((c) => `[Round ${c.round}] ${c.content}`),
+        recent_contributions: recentForPrompt.map((c) => ({
+          id: c.id, participant_id: c.participant_id, type: c.type,
+          content: c.content, targets_which: c.targets_which,
+        })),
+        reflection: participant.reflection || null,
+        question: this.#stateManager.getQuestion(),
+        tags: this.#stateManager.getTags(),
+        round: currentRound,
+      };
+
       const result = await withTimeout(
         this.#client.session.prompt({
           path: { id: ephemeralSessionId },
           body: {
-            system: buildAgentSystemPrompt(participant),
+            system: systemPrompt,
             model,
             temperature: participant.tier_config.temperature,
-            parts: [{ type: "text", text: buildAgentUserPrompt(
-              participant,
-              this.#stateManager.getStateOfPlay(),
-              ragContext,
-              recentForPrompt,
-              currentRound,
-              this.#stateManager.getQuestion(),
-              this.#stateManager.getTags(),
-            ) }],
+            parts: [{ type: "text", text: userPrompt }],
             tools: toolsMap,
             tool_choice: Object.keys(toolsMap).length > 0 ? "auto" : undefined,
           },
@@ -502,6 +880,7 @@ export class RoundExecutor {
       })) : null;
 
       this.#recordModelSuccess(model);
+      response.prompt_context = promptContext;
       this.#options.onAgentComplete?.(participant.config.id, response.content);
       ephemeralSessionIdToDelete = null;
       return response;

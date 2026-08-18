@@ -5,7 +5,6 @@ import { Sidebar } from "./components/Sidebar.jsx";
 import { OverviewTab } from "./components/OverviewTab.jsx";
 import { OrchestratorTab } from "./components/OrchestratorTab.jsx";
 import { TimelineTab } from "./components/TimelineTab.jsx";
-import { FabricTab } from "./components/FabricTab.jsx";
 import { OutputTab } from "./components/OutputTab.jsx";
 import { ErrorBoundary } from "./ErrorBoundary.jsx";
 import { usePersistedState, useMeetingApi, useSSEReset, useEmbeddingStatus } from "./hooks.js";
@@ -322,11 +321,10 @@ export function App() {
         window.scrollBy(0, 200);
       } else if (e.key === "k") {
         window.scrollBy(0, -200);
-      } else if (e.key === "o") setActiveTab("overview");
+      }       else if (e.key === "o") setActiveTab("overview");
       else if (e.key === "r") setActiveTab("orchestrator");
       else if (e.key === "t") setActiveTab("timeline");
       else if (e.key === "u") setActiveTab("output");
-      else if (e.key === "w") setActiveTab("fabric");
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
@@ -370,6 +368,16 @@ export function App() {
     const ids = state?.querying_participants ?? [];
     return participants.filter((p) => ids.includes(p.id));
   }, [participants, state?.querying_participants]);
+
+  const evidenceParticipants = useMemo(() => {
+    const ids = state?.evidence_participants ?? [];
+    return participants.filter((p) => ids.includes(p.id));
+  }, [participants, state?.evidence_participants]);
+
+  const summoningParticipants = useMemo(() => {
+    const ids = state?.summoning_participants ?? [];
+    return participants.filter((p) => ids.includes(p.id));
+  }, [participants, state?.summoning_participants]);
 
   const contributionsByParticipant = useMemo(() => {
     const map = {};
@@ -459,7 +467,7 @@ export function App() {
 
           <div className="pure-menu pure-menu-horizontal loom-tabs" role="tablist" aria-label="Meeting views">
             <ul className="pure-menu-list">
-              {["overview", "orchestrator", "timeline", "output", "fabric"].map((tab) => (
+              {["overview", "timeline", "output", "orchestrator"].map((tab) => (
                 <li key={tab} className={cn("pure-menu-item", activeTab === tab && "pure-menu-selected")} role="presentation">
                   <button
                     className="pure-menu-link"
@@ -510,6 +518,8 @@ export function App() {
                   thinkingParticipants={thinkingParticipants}
                   reflectingParticipants={reflectingParticipants}
                   queryingParticipants={queryingParticipants}
+                  evidenceParticipants={evidenceParticipants}
+                  summoningParticipants={summoningParticipants}
                   collapsedRounds={collapsedRounds}
                   onToggleCollapse={toggleRoundCollapse}
                   agentErrors={agentErrors}
@@ -527,14 +537,6 @@ export function App() {
             {activeTab === "output" && (
               <div id="panel-output" role="tabpanel" aria-label="Output">
                 <OutputTab artifact={artifact} participants={participants} />
-              </div>
-            )}
-          </ErrorBoundary>
-
-          <ErrorBoundary fallbackMessage="Failed to render the fabric tab">
-            {activeTab === "fabric" && (
-              <div id="panel-fabric" role="tabpanel" aria-label="Fabric">
-                <FabricTab state={state} participants={participants} />
               </div>
             )}
           </ErrorBoundary>

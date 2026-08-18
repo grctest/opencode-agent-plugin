@@ -1,12 +1,14 @@
 import { useRef, useMemo, useCallback, useState, memo } from "react";
 import { cn, relativeTime } from "../utils.js";
-import { ContributionItem, TurnRequestItem, ThinkingCard, ReflectionRow, QueryResponseRow, ContentDialog, renderMarkdown } from "./Cards.jsx";
+import { ContributionItem, TurnRequestItem, ThinkingCard, ReflectionRow, QueryResponseRow, EvidenceResponseRow, SummonedResponseRow, ContentDialog, renderMarkdown } from "./Cards.jsx";
 import { LoadingSkeleton } from "./Skeleton.jsx";
 import { List } from "react-window";
 
 const THINKING_TURN_HEIGHT = 56;
 const THINKING_REFLECTION_HEIGHT = 56;
 const THINKING_QUERY_HEIGHT = 56;
+const THINKING_EVIDENCE_HEIGHT = 56;
+const THINKING_SUMMON_HEIGHT = 56;
 
 const HEADER_HEIGHT = 48;
 const CONTRIBUTION_HEIGHT = 56;
@@ -14,6 +16,8 @@ const INTERJECTION_HEIGHT = 72;
 const EXTENSION_MARKER_HEIGHT = 32;
 const REFLECTION_HEIGHT = 80;
 const QUERY_RESPONSE_HEIGHT = 80;
+const EVIDENCE_RESPONSE_HEIGHT = 80;
+const SUMMONED_RESPONSE_HEIGHT = 80;
 
 function getRowHeight(item) {
   if (item.type === "header") {
@@ -22,9 +26,13 @@ function getRowHeight(item) {
   if (item.type === "turn_request") return INTERJECTION_HEIGHT;
   if (item.type === "reflection") return REFLECTION_HEIGHT;
   if (item.type === "query_response") return QUERY_RESPONSE_HEIGHT;
+  if (item.type === "evidence_response") return EVIDENCE_RESPONSE_HEIGHT;
+  if (item.type === "summoned_response") return SUMMONED_RESPONSE_HEIGHT;
   if (item.type === "thinking_turn") return THINKING_TURN_HEIGHT;
   if (item.type === "thinking_reflection") return THINKING_REFLECTION_HEIGHT;
   if (item.type === "thinking_query") return THINKING_QUERY_HEIGHT;
+  if (item.type === "thinking_evidence") return THINKING_EVIDENCE_HEIGHT;
+  if (item.type === "thinking_summon") return THINKING_SUMMON_HEIGHT;
   if (item.type === "agent_turn") {
     return 115;
   }
@@ -140,6 +148,61 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
       </div>
     );
   }
+  if (item.type === "thinking_evidence") {
+    return (
+      <div style={style} className="loom-vrow loom-vrow-evidence-response">
+        <div className="loom-card loom-thinking-card loom-thinking-placeholder-row loom-contrib-type-evidence_response">
+          <div className="loom-thinking-content">
+            <span className="loom-thinking-dots">
+              <span /><span /><span />
+            </span>
+            <span className="loom-text loom-text-muted">
+              {item.evidenceAgentName} is finding evidence...
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (item.type === "thinking_summon") {
+    return (
+      <div style={style} className="loom-vrow loom-vrow-summoned-response">
+        <div className="loom-card loom-thinking-card loom-thinking-placeholder-row loom-contrib-type-summoned_response">
+          <div className="loom-thinking-content">
+            <span className="loom-thinking-dots">
+              <span /><span /><span />
+            </span>
+            <span className="loom-text loom-text-muted">
+              Guest expert is being summoned...
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (item.type === "evidence_response") {
+    return (
+      <div style={style} className="loom-vrow loom-vrow-evidence-response">
+        <EvidenceResponseRow
+          evidenceResponse={item.evidenceResponse}
+          contributions={contributions}
+          participantName={participantName}
+          onDialogOpen={onDialogOpen}
+        />
+      </div>
+    );
+  }
+  if (item.type === "summoned_response") {
+    return (
+      <div style={style} className="loom-vrow loom-vrow-summoned-response">
+        <SummonedResponseRow
+          summonedResponse={item.summonedResponse}
+          participantName={participantName}
+          onDialogOpen={onDialogOpen}
+        />
+      </div>
+    );
+  }
   if (item.type === "contribution") {
     return (
       <div style={style} className="loom-vrow">
@@ -161,6 +224,8 @@ const TimelineTabBase = ({
   thinkingParticipants,
   reflectingParticipants,
   queryingParticipants,
+  evidenceParticipants,
+  summoningParticipants,
   collapsedRounds,
   onToggleCollapse,
   agentErrors,
@@ -209,6 +274,10 @@ const TimelineTabBase = ({
         const consumedReflectionIds = new Set();
         const queryResponsesByTarget = new Map();
         const consumedQueryIds = new Set();
+        const evidenceResponsesByTarget = new Map();
+        const consumedEvidenceIds = new Set();
+        const summonedResponses = [];
+        const consumedSummonIds = new Set();
 
         for (const c of contribs) {
           if (c.type === "reflection") {
@@ -223,6 +292,14 @@ const TimelineTabBase = ({
               if (!queryResponsesByTarget.has(targetId)) queryResponsesByTarget.set(targetId, []);
               queryResponsesByTarget.get(targetId).push(c);
             }
+          } else if (c.type === "evidence_response") {
+            const targetId = c.targets_which;
+            if (targetId != null) {
+              if (!evidenceResponsesByTarget.has(targetId)) evidenceResponsesByTarget.set(targetId, []);
+              evidenceResponsesByTarget.get(targetId).push(c);
+            }
+          } else if (c.type === "summoned_response") {
+            summonedResponses.push(c);
           } else {
             const key = c.participant_id;
             if (!regularByAgent.has(key)) regularByAgent.set(key, []);
@@ -259,6 +336,16 @@ const TimelineTabBase = ({
                 });
               }
             }
+            if (evidenceResponsesByTarget.has(c.id)) {
+              for (const er of evidenceResponsesByTarget.get(c.id)) {
+                consumedEvidenceIds.add(er.id);
+                items.push({
+                  type: "evidence_response",
+                  evidenceResponse: er,
+                  round,
+                });
+              }
+            }
           }
         }
 
@@ -284,6 +371,26 @@ const TimelineTabBase = ({
               });
             }
           }
+        }
+
+        for (const [, evidenceResponses] of evidenceResponsesByTarget) {
+          for (const er of evidenceResponses) {
+            if (!consumedEvidenceIds.has(er.id)) {
+              items.push({
+                type: "evidence_response",
+                evidenceResponse: er,
+                round,
+              });
+            }
+          }
+        }
+
+        for (const sr of summonedResponses) {
+          items.push({
+            type: "summoned_response",
+            summonedResponse: sr,
+            round,
+          });
         }
 
         for (const tr of roundTurnRequests) {
@@ -335,11 +442,39 @@ const TimelineTabBase = ({
               });
             }
           }
+
+          // Thinking placeholders for active evidence requests
+          for (const ep of evidenceParticipants) {
+            const hasResponded = contribs.some(
+              (c) => c.type === "evidence_response" && c.participant_id === ep.id
+            );
+            if (!hasResponded) {
+              items.push({
+                type: "thinking_evidence",
+                evidenceAgentName: ep.name,
+                round,
+              });
+            }
+          }
+
+          // Thinking placeholders for active summons
+          for (const sp of summoningParticipants) {
+            const hasResponded = contribs.some(
+              (c) => c.type === "summoned_response" && c.participant_id === sp.id
+            );
+            if (!hasResponded) {
+              items.push({
+                type: "thinking_summon",
+                summonName: sp.name,
+                round,
+              });
+            }
+          }
         }
       }
     }
     return items;
-  }, [groupedContributions, collapsedRounds, activeRound, agentErrors, turnRequests, extensions, maxRounds, isWeaving, thinkingParticipants, reflectingParticipants, queryingParticipants, participantName]);
+  }, [groupedContributions, collapsedRounds, activeRound, agentErrors, turnRequests, extensions, maxRounds, isWeaving, thinkingParticipants, reflectingParticipants, queryingParticipants, evidenceParticipants, summoningParticipants, participantName]);
 
   const rowHeightFn = useCallback((index, cellProps) => {
     const item = cellProps.items[index];
@@ -386,16 +521,24 @@ const TimelineTabBase = ({
       <ContentDialog
         open={dialogContribution !== null}
         onClose={() => setDialogContribution(null)}
-        title={dialogContribution ? (dialogContribution.isReflection
-          ? `Reflection by ${dialogContribution.participantName}`
-          : dialogContribution.isQueryResponse
-          ? `Query response by ${dialogContribution.participantName}`
-          : `${dialogContribution.participantName} — ${dialogContribution.contribution.type}`) : ""}
-        className={dialogContribution ? (dialogContribution.isReflection
-          ? "loom-dialog-type-reflection"
-          : dialogContribution.isQueryResponse
-          ? "loom-dialog-type-query_response"
-          : `loom-dialog-type-${dialogContribution.contribution.type}`) : ""}
+      title={dialogContribution ? (dialogContribution.isReflection
+        ? `Reflection by ${dialogContribution.participantName}`
+        : dialogContribution.isQueryResponse
+        ? `Query response by ${dialogContribution.participantName}`
+        : dialogContribution.isEvidenceResponse
+        ? `Evidence response by ${dialogContribution.participantName}`
+        : dialogContribution.isSummonedResponse
+        ? `Summoned expert: ${dialogContribution.personaName}`
+        : `${dialogContribution.participantName} — ${dialogContribution.contribution.type}`) : ""}
+      className={dialogContribution ? (dialogContribution.isReflection
+        ? "loom-dialog-type-reflection"
+        : dialogContribution.isQueryResponse
+        ? "loom-dialog-type-query_response"
+        : dialogContribution.isEvidenceResponse
+        ? "loom-dialog-type-evidence_response"
+        : dialogContribution.isSummonedResponse
+        ? "loom-dialog-type-summoned_response"
+        : `loom-dialog-type-${dialogContribution.contribution.type}`) : ""}
       >
         {dialogContribution && (
           <div className="loom-dialog-tabs-container">
@@ -423,6 +566,14 @@ const TimelineTabBase = ({
                 onClick={() => setActiveTab("details")}
               >
                 Details
+              </button>
+              <button
+                role="tab"
+                aria-selected={activeTab === "context"}
+                className={cn("loom-dialog-tab", activeTab === "context" && "loom-dialog-tab-active")}
+                onClick={() => setActiveTab("context")}
+              >
+                Context
               </button>
             </div>
             <div className="loom-dialog-tab-panel" role="tabpanel">
@@ -526,8 +677,128 @@ const TimelineTabBase = ({
                           </tr>
                         </>
                       )}
+                      {dialogContribution.isEvidenceResponse && dialogContribution.sourceAgentName && (
+                        <>
+                          <tr>
+                            <td className="loom-details-label">Evidence request from</td>
+                            <td className="loom-details-value">{dialogContribution.sourceAgentName}</td>
+                          </tr>
+                          <tr>
+                            <td className="loom-details-label">Source ID</td>
+                            <td className="loom-details-value loom-details-mono">#{dialogContribution.contribution.targets_which}</td>
+                          </tr>
+                        </>
+                      )}
+                      {dialogContribution.isSummonedResponse && (
+                        <>
+                          <tr>
+                            <td className="loom-details-label">Persona</td>
+                            <td className="loom-details-value">{dialogContribution.personaName} ({dialogContribution.personaTier})</td>
+                          </tr>
+                          <tr>
+                            <td className="loom-details-label">Summoned by</td>
+                            <td className="loom-details-value">A participant</td>
+                          </tr>
+                        </>
+                      )}
                     </tbody>
                   </table>
+                </div>
+              )}
+              {activeTab === "context" && (
+                <div className="loom-context-panel">
+                  {dialogContribution.contribution.prompt_context ? (
+                    (() => {
+                      const ctx = dialogContribution.contribution.prompt_context;
+                      return (
+                        <>
+                          {ctx.system_prompt && (
+                            <div className="loom-context-section">
+                              <h4 className="loom-context-heading">System Prompt</h4>
+                              <pre className="loom-context-block loom-context-raw">{ctx.system_prompt}</pre>
+                            </div>
+                          )}
+                          {ctx.state_of_play && (
+                            <div className="loom-context-section">
+                              <h4 className="loom-context-heading">State of Play (Round {ctx.round})</h4>
+                              <div className="loom-context-block">{ctx.state_of_play}</div>
+                            </div>
+                          )}
+                          {ctx.rag_chunks_used && ctx.rag_chunks_used.length > 0 && (
+                            <div className="loom-context-section">
+                              <h4 className="loom-context-heading">RAG Context (Vector Retrieval)</h4>
+                              <div className="loom-context-block">
+                                {ctx.rag_chunks_used.map((chunk, i) => (
+                                  <div key={i}>{chunk}</div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {ctx.recent_contributions && ctx.recent_contributions.length > 0 && (
+                            <div className="loom-context-section">
+                              <h4 className="loom-context-heading">Recent Contributions</h4>
+                              <div className="loom-context-block">
+                                {ctx.recent_contributions.map((c) => (
+                                  <div key={c.id}>
+                                    <span className="loom-context-contrib-id">#{c.id}</span>
+                                    <span className="loom-context-contrib-type">{c.type}</span>
+                                    [{c.participant_id}]: {c.content}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {ctx.round_contributions_used && ctx.round_contributions_used.length > 0 && (
+                            <div className="loom-context-section">
+                              <h4 className="loom-context-heading">Round Contributions</h4>
+                              <div className="loom-context-block">
+                                {ctx.round_contributions_used.map((c) => (
+                                  <div key={c.id}>
+                                    <span className="loom-context-contrib-id">#{c.id}</span>
+                                    <span className="loom-context-contrib-type">{c.type}</span>
+                                    [{c.participant_id}]: {c.content}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {ctx.reflection && (
+                            <div className="loom-context-section">
+                              <h4 className="loom-context-heading">Agent's Reflection</h4>
+                              <div className="loom-context-block">{ctx.reflection}</div>
+                            </div>
+                          )}
+                          {ctx.trigger_contribution_id && (
+                            <div className="loom-context-section">
+                              <h4 className="loom-context-heading">Triggered By</h4>
+                              <div className="loom-context-block">
+                                Contribution #{ctx.trigger_contribution_id} by {ctx.trigger_participant_id} ({ctx.trigger_type})
+                              </div>
+                            </div>
+                          )}
+                          {ctx.source_contribution_id && (
+                            <div className="loom-context-section">
+                              <h4 className="loom-context-heading">Source</h4>
+                              <div className="loom-context-block">
+                                Contribution #{ctx.source_contribution_id} by {ctx.source_participant_id}
+                                {ctx.question && <span> — Question: "{ctx.question}"</span>}
+                              </div>
+                            </div>
+                          )}
+                          {ctx.user_prompt && (
+                            <div className="loom-context-section">
+                              <h4 className="loom-context-heading">Full User Prompt</h4>
+                              <pre className="loom-context-block loom-context-raw">{ctx.user_prompt}</pre>
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()
+                  ) : (
+                    <p className="loom-text loom-text-muted loom-context-empty">
+                      No prompt context captured for this contribution.
+                    </p>
+                  )}
                 </div>
               )}
             </div>

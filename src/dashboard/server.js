@@ -360,6 +360,20 @@ export function startDashboard(directory, port) {
           return Response.json(api.getArtifact());
         }
 
+        if (url.pathname === "/api/contribution_context") {
+          const { api, error } = getMeetingApi(url, directory);
+          if (error) return error;
+          const contributionId = Number(url.searchParams.get("contribution_id"));
+          if (!contributionId) {
+            return Response.json({ error: "contribution_id required" }, { status: 400 });
+          }
+          const context = api.getContributionContext(contributionId);
+          if (!context) {
+            return Response.json({ error: "Contribution not found" }, { status: 404 });
+          }
+          return Response.json(context);
+        }
+
         if (url.pathname === "/api/orchestrator_messages") {
           const { api, meetingId, error } = getMeetingApi(url, directory);
           if (error) return error;

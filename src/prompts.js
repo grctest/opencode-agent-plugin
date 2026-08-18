@@ -187,6 +187,146 @@ ${queryToolUsageSection}`;
 }
 
 /**
+ * Builds a prompt for an evidence request — the target MUST use tools to find evidence.
+ */
+export function buildEvidencePrompt(sourceAgent, targetAgent, sourceContribution, question, roundContributions, currentRound, maxRounds) {
+  const safeSourceName = sanitizeForDisplay(sourceAgent.config.name);
+  const safeContribution = sanitizeForDisplay(sourceContribution);
+  const safeQuestion = sanitizeForDisplay(question);
+
+  const previousReflection = targetAgent.reflection || "";
+  const reflectionBlock = previousReflection
+    ? `Your previous reflection on this deliberation:\n"${sanitizeForDisplay(previousReflection)}"`
+    : "";
+
+  const myContributions = (roundContributions || [])
+    .filter((c) => c.participant_id === targetAgent.config.id && c.type !== "pass")
+    .slice(-2)
+    .map((c) => sanitizeForDisplay(c.content));
+  const recentBlock = myContributions.length > 0
+    ? `Your recent contributions:\n${myContributions.map((c) => `- "${c}"`).join("\n")}`
+    : "";
+
+  const TIER_ORDER = { junior: 0, mid: 1, senior: 2, principal: 3 };
+  const sourceTierLevel = TIER_ORDER[sourceAgent.config.tier] ?? 1;
+  const targetTierLevel = TIER_ORDER[targetAgent.config.tier] ?? 1;
+  const seniorityContext = buildSeniorityContext(
+    targetAgent.config.name,
+    targetAgent.config.tier,
+    sourceAgent.config.name,
+    sourceAgent.config.tier,
+    targetTierLevel,
+    sourceTierLevel,
+  );
+
+  const roundContext = buildRoundContext(currentRound, maxRounds);
+
+  const agentToolsConfig = getConfig().agentTools;
+  const evidenceToolUsageSection = agentToolsConfig?.enabled
+    ? `
+## Research Tools (REQUIRED)
+
+You MUST use at least one research tool to find concrete evidence. Do NOT speculate or reason from memory alone.
+
+### Tool Selection
+- **web_search**: Search for current facts, data, benchmarks, or claims related to the evidence request
+- **web_fetch**: Deep-dive into a specific source URL for detailed evidence
+- **read**: Examine project files or documents referenced in the discussion
+- **loom_vector_search**: Verify what was actually said in the deliberation
+
+### Reporting Requirements
+- Report what you found and cite sources where possible
+- If evidence is inconclusive or unavailable, explicitly state this
+- Distinguish between strong evidence and weak/indirect evidence`
+    : "";
+
+  return `## Evidence Request
+
+**${safeSourceName}** (${sourceAgent.config.tier}) is requesting evidence regarding:
+
+"${safeContribution}"
+
+---
+**Their evidence question:** "${safeQuestion}"
+
+${recentBlock}
+
+${reflectionBlock}
+
+## Context
+
+**Seniority relationship:**
+${seniorityContext}
+
+**Round context:**
+${roundContext}
+
+## Your Task
+
+Find concrete evidence to address this question. You MUST use research tools — do not speculate.
+Report what you found, cite sources, and note if evidence is inconclusive or unavailable.
+Stay in character.
+Do NOT use contribution type tags ([PROPOSE], [CHALLENGE], etc.) — just present your findings.
+${evidenceToolUsageSection}`;
+}
+
+/**
+ * Builds a prompt for a summoned guest expert persona.
+ */
+export function buildSummonPrompt(summonedPersona, requester, issue, roundContributions, currentRound, maxRounds) {
+  const safeRequesterName = sanitizeForDisplay(requester.config.name);
+  const safeIssue = sanitizeForDisplay(issue);
+  const safePersonaName = sanitizeForDisplay(summonedPersona.name);
+
+  const recentContributions = (roundContributions || [])
+    .slice(-4)
+    .map((c) => {
+      const id = c.id != null ? `[#${c.id}]` : "";
+      return `- ${id} [${c.participant_id}] (${c.type}): ${sanitizeForDisplay(c.content)}`;
+    })
+    .join("\n");
+  const recentBlock = recentContributions.length > 0
+    ? `### Recent Deliberation Context\n${recentContributions}`
+    : "*(No prior contributions yet)*";
+
+  const roundContext = buildRoundContext(currentRound, maxRounds);
+
+  const expertise = Array.isArray(summonedPersona.expertise)
+    ? summonedPersona.expertise.join(", ")
+    : summonedPersona.expertise || "general";
+  const style = summonedPersona.communication_style || "Direct and professional";
+
+  return `## Guest Expertise
+
+You are **${safePersonaName}** (${summonedPersona.tier}), a guest expert summoned into this deliberation.
+
+### Your Persona
+${summonedPersona.persona}
+
+### Your Expertise
+${expertise}
+
+### Your Communication Style
+${style}
+
+---
+
+**${safeRequesterName}** (${requester.config.tier}) has asked you to address the following issue:
+"${safeIssue}"
+
+${recentBlock}
+
+**Round context:**
+${roundContext}
+
+## Your Task
+
+Provide your expert perspective on this issue. Use research tools to ground your response in evidence.
+Stay in character based on your persona. Be direct and specific.
+Do NOT use contribution type tags ([PROPOSE], [CHALLENGE], etc.) — just provide your analysis.`;
+}
+
+/**
  * Builds context about the seniority relationship between the reflecting agent
  * and the agent who triggered the reflection.
  */
@@ -474,6 +614,8 @@ ${requestNextRule}
 6. Stay in character — your persona and agenda shape your contributions
 7. Reference prior contributions using their stable ID from the Recent Contributions list, e.g. [#12]
 8. To query a specific participant directly: [QUERY: @participant_id] your question — their response appears as a contribution. Max 2 targets.
+9. To request evidence from a participant: [EVIDENCE: @participant_id] your evidence question — they must use tools to find concrete evidence. Max 2 targets.
+10. To summon an external expert persona: [SUMMON: Persona Name] the issue you want addressed — they contribute a single response using your model. Use sparingly (max 1 per turn).
 ${toolUsageSection}
 
 ## Example Response
@@ -490,7 +632,17 @@ ${toolUsageSection}
 ## Example With Query
 [CHALLENGE] The migration timeline assumes no integration conflicts, but we've seen collision issues in past rollouts.
 
-[QUERY: @staff-architect] Based on the service dependency graph, which migrations are most likely to collide?`;
+[QUERY: @staff-architect] Based on the service dependency graph, which migrations are most likely to collide?
+
+## Example With Evidence Request
+[CHALLENGE] The budget projections assume 30% YoY growth but industry benchmarks show 12-15% for this sector.
+
+[EVIDENCE: @data-scientist] Find current industry growth benchmarks for SaaS companies in this vertical.
+
+## Example With Summons
+[PROPOSE] We need to evaluate the security implications of this architecture change. I'm not a security expert.
+
+[SUMMON: Security Engineer] What are the attack surfaces introduced by the new authentication flow?`;
 }
 
 /**

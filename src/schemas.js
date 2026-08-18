@@ -17,6 +17,8 @@ export const ContributionTypeSchema = z.enum([
   'question',
   'refuse',
   'query_response',
+  'evidence_response',
+  'summoned_response',
 ]);
 
 // Turn order request directive from agent response (replaces interjection)
@@ -31,6 +33,18 @@ export const QuerySchema = z.object({
   question: z.string().min(1).max(500),
 }).nullable();
 
+// Evidence request directive from agent response
+export const EvidenceSchema = z.object({
+  targets: z.array(z.string()).min(1).max(2),
+  question: z.string().min(1).max(500),
+}).nullable();
+
+// Persona summon directive from agent response
+export const SummonSchema = z.object({
+  persona_name: z.string().min(1).max(100),
+  issue: z.string().min(1).max(500),
+}).nullable();
+
 // Agent response parsed from LLM output
 export const AgentResponseSchema = z.object({
   participant_id: z.string(),
@@ -38,6 +52,8 @@ export const AgentResponseSchema = z.object({
   type: ContributionTypeSchema,
   request_next: RequestNextSchema,
   query: QuerySchema,
+  evidence: EvidenceSchema,
+  summon: SummonSchema,
 });
 
 // Raw parsing (extracted from validation.js) - EXPORTED for reuse
@@ -49,7 +65,7 @@ export function parseAgentResponseRaw(response, tier) {
   }
 
   if (text === '[PASS]') {
-    return { content: '[PASS]', type: 'propose', request_next: null, query: null };
+    return { content: '[PASS]', type: 'propose', request_next: null, query: null, evidence: null, summon: null };
   }
 
   const TYPE_PREFIXES = {
@@ -134,10 +150,57 @@ export function parseAgentResponseRaw(response, tier) {
     };
   }
 
+  // Parse [EVIDENCE: @target1, @target2] directive
+  const EVIDENCE_TAG_RE = /\[EVIDENCE:\s*@([^\]]+)\]\s*/gi;
+  let evidence = null;
+  const evidenceTargets = [];
+  const evidenceMatches = [];
+  let evidenceMatch;
+
+  while ((evidenceMatch = EVIDENCE_TAG_RE.exec(rawContent)) !== null) {
+    const ids = evidenceMatch[1].split(',').map((s) => s.trim()).filter(Boolean);
+    evidenceTargets.push(...ids);
+    evidenceMatches.push(evidenceMatch);
+  }
+
+  if (evidenceTargets.length > 0 && evidenceMatches.length > 0) {
+    const lastMatch = evidenceMatches[evidenceMatches.length - 1];
+    const afterLastTag = lastMatch.index + lastMatch[0].length;
+    const questionText = rawContent.slice(afterLastTag).trim();
+    rawContent = rawContent.replace(EVIDENCE_TAG_RE, '').trim();
+    evidence = {
+      targets: evidenceTargets.slice(0, 2),
+      question: questionText.slice(0, 500),
+    };
+  }
+
+  // Parse [SUMMON: Persona Name] directive
+  const SUMMON_TAG_RE = /\[SUMMON:\s*([^\]]+)\]\s*/gi;
+  let summon = null;
+  const summonMatches = [];
+  let summonMatch;
+
+  while ((summonMatch = SUMMON_TAG_RE.exec(rawContent)) !== null) {
+    summonMatches.push(summonMatch);
+  }
+
+  if (summonMatches.length > 0) {
+    const lastMatch = summonMatches[summonMatches.length - 1];
+    const afterLastTag = lastMatch.index + lastMatch[0].length;
+    const issueText = rawContent.slice(afterLastTag).trim();
+    rawContent = rawContent.replace(SUMMON_TAG_RE, '').trim();
+    summon = {
+      persona_name: lastMatch[1].trim(),
+      issue: issueText.slice(0, 500),
+    };
+  }
+
   return {
     content: refuseReason ? `${refuseReason}. ${rawContent}`.trim() : rawContent,
     type,
     request_next,
     query,
+    evidence,
+    summon,
   };
 }

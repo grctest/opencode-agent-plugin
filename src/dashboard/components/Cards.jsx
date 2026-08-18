@@ -312,53 +312,96 @@ export const QueryResponseRow = memo(({ queryResponse, contributions, participan
   );
 });
 
-export const FabricViewer = memo(({ fabric }) => {
-  const sections = useMemo(() => (fabric ? fabric.split(/(?=## )/g).filter(Boolean) : []), [fabric]);
+export const EvidenceResponseRow = memo(({ evidenceResponse, contributions, participantName, onDialogOpen }) => {
+  const source = useMemo(() => {
+    if (!evidenceResponse.targets_which) return null;
+    return contributions.find((c) => c.id === evidenceResponse.targets_which);
+  }, [evidenceResponse.targets_which, contributions]);
 
-  if (!fabric) {
-    return (
-      <div className="loom-card">
-        <h3 className="loom-title-sm loom-mb-sm">Fabric (Shared Context)</h3>
-        <span className="loom-italic loom-text-muted">No fabric context yet</span>
-      </div>
-    );
-  }
+  const sourceAgentName = source ? participantName(source.participant_id) : "another agent";
+  const sourceType = source?.type?.toUpperCase() ?? "CONTRIBUTION";
+  const responderName = participantName(evidenceResponse.participant_id);
+
+  const content = evidenceResponse.content ?? "";
+  const stripped = useMemo(() => {
+    return content.replace(/^\[Evidence from .+? on .+?\]\s*/m, "");
+  }, [content]);
+  const isLong = stripped.length > 300;
+  const html = useMemo(() => renderMarkdown(stripped), [stripped]);
+
+  const openDialog = () => onDialogOpen?.({ contribution: evidenceResponse, participantName: responderName, isEvidenceResponse: true, sourceAgentName, sourceType });
 
   return (
-    <div className="loom-card">
-      <h3 className="loom-title-sm loom-mb-sm">Fabric (Shared Context)</h3>
-      <div className="loom-fabric-content">
-        {sections.map((section, i) => {
-          const lines = section.trim().split("\n");
-          const heading = lines[0].replace(/^#+\s*/, "");
-          const body = lines.slice(1).join("\n").trim();
-
-          return (
-            <div key={i} className="loom-fabric-section">
-              <h4 className="loom-fabric-heading">{heading}</h4>
-              {body && body !== "(none yet)" && (
-                <div className="loom-fabric-body">
-                  {body.split("\n").map((line, j) => (
-                    <p key={j} className={cn("loom-text", line.startsWith("-") ? "loom-fabric-bullet" : "loom-text-muted")}>
-                      {line.replace(/^-\s*/, "")}
-                    </p>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })}
+    <div
+      className={cn("loom-card", "loom-contribution-card", "loom-contrib-type-evidence_response", "loom-evidence-response-row", isLong && "loom-contrib-clickable")}
+      onClick={openDialog}
+      role={isLong ? "button" : undefined}
+      tabIndex={isLong ? 0 : undefined}
+      onKeyDown={isLong ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDialog(); } } : undefined}
+    >
+      <div>
+        <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">
+          <span className="loom-badge loom-badge-evidence_response">evidence</span>
+          <span className="loom-text-xs loom-text-muted">{responderName} providing evidence on {sourceAgentName}'s {sourceType} (Round {evidenceResponse.round})</span>
+          <span className="loom-text-xs loom-text-muted">{relativeTime(evidenceResponse.created_at)}</span>
+        </div>
       </div>
+      {isLong ? (
+        <p className="loom-text loom-text-muted">{stripped.slice(0, 300)}...</p>
+      ) : (
+        <div className="loom-prose" dangerouslySetInnerHTML={{ __html: html }} />
+      )}
     </div>
   );
 });
 
-export const AgentPerspective = memo(({ participant, meeting }) => {
-  const fabricPreview = useMemo(
-    () => (meeting?.fabric ? meeting.fabric.slice(0, 500) : ""),
-    [meeting?.fabric]
-  );
+export const SummonedResponseRow = memo(({ summonedResponse, participantName, onDialogOpen }) => {
+  const requesterName = useMemo(() => {
+    const content = summonedResponse.content ?? "";
+    const match = content.match(/^\[Summoned: .+?\]\s*/m);
+    return match ? "a participant" : "a participant";
+  }, [summonedResponse]);
 
+  const content = summonedResponse.content ?? "";
+  const stripped = useMemo(() => {
+    return content.replace(/^\[Summoned: .+?\]\s*/m, "");
+  }, [content]);
+  const isLong = stripped.length > 300;
+  const html = useMemo(() => renderMarkdown(stripped), [stripped]);
+
+  // Extract persona name and tier from the content prefix
+  const personaInfo = useMemo(() => {
+    const match = content.match(/^\[Summoned: (.+?) \((.+?)\)\]/m);
+    return match ? { name: match[1], tier: match[2] } : { name: "Guest Expert", tier: "unknown" };
+  }, [content]);
+
+  const openDialog = () => onDialogOpen?.({ contribution: summonedResponse, participantName: personaInfo.name, isSummonedResponse: true, personaName: personaInfo.name, personaTier: personaInfo.tier });
+
+  return (
+    <div
+      className={cn("loom-card", "loom-contribution-card", "loom-contrib-type-summoned_response", "loom-summoned-response-row", isLong && "loom-contrib-clickable")}
+      onClick={openDialog}
+      role={isLong ? "button" : undefined}
+      tabIndex={isLong ? 0 : undefined}
+      onKeyDown={isLong ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDialog(); } } : undefined}
+    >
+      <div>
+        <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">
+          <span className="loom-badge loom-badge-summoned_response">summoned</span>
+          <span className="loom-text-xs loom-text-muted">Guest expert {personaInfo.name} ({personaInfo.tier}) — Round {summonedResponse.round}</span>
+          <span className="loom-text-xs loom-text-muted">{relativeTime(summonedResponse.created_at)}</span>
+        </div>
+      </div>
+      {isLong ? (
+        <p className="loom-text loom-text-muted">{stripped.slice(0, 300)}...</p>
+      ) : (
+        <div className="loom-prose" dangerouslySetInnerHTML={{ __html: html }} />
+      )}
+    </div>
+  );
+});
+
+export const AgentPerspective = memo(({ participant, stateOfPlay, recentContributions, reflection }) => {
   return (
     <div className="loom-card loom-agent-perspective">
       <div className="loom-agent-perspective-header">
@@ -366,11 +409,51 @@ export const AgentPerspective = memo(({ participant, meeting }) => {
         <TierBadge tier={participant.tier} />
       </div>
       <div className="loom-agent-perspective-body">
-        {fabricPreview && (
+        {participant.persona && (
           <div className="loom-agent-perspective-section">
-            <span className="loom-agent-perspective-label">Shared Context (Fabric)</span>
-            <div className="loom-agent-perspective-fabric">
-              {fabricPreview}{fabricPreview.length > 500 ? "..." : ""}
+            <span className="loom-agent-perspective-label">Persona</span>
+            <div className="loom-agent-perspective-text">
+              {participant.persona.length > 300 ? participant.persona.slice(0, 300) + "..." : participant.persona}
+            </div>
+          </div>
+        )}
+        {participant.agenda && (
+          <div className="loom-agent-perspective-section">
+            <span className="loom-agent-perspective-label">Agenda</span>
+            <div className="loom-agent-perspective-text">
+              {participant.agenda.length > 300 ? participant.agenda.slice(0, 300) + "..." : participant.agenda}
+            </div>
+          </div>
+        )}
+        {stateOfPlay && (
+          <div className="loom-agent-perspective-section">
+            <span className="loom-agent-perspective-label">State of Play</span>
+            <div className="loom-agent-perspective-text loom-agent-perspective-scroll">
+              {stateOfPlay}
+            </div>
+          </div>
+        )}
+        {recentContributions && recentContributions.length > 0 && (
+          <div className="loom-agent-perspective-section">
+            <span className="loom-agent-perspective-label">Recent Contributions</span>
+            <div className="loom-agent-perspective-text loom-agent-perspective-scroll">
+              {recentContributions.map((c) => (
+                <div key={c.id} className="loom-agent-perspective-contrib">
+                  <span className="loom-agent-perspective-contrib-id">#{c.id}</span>
+                  <span className="loom-agent-perspective-contrib-type">{c.type}</span>
+                  <span className="loom-agent-perspective-contrib-content">
+                    {c.content.length > 200 ? c.content.slice(0, 200) + "..." : c.content}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {reflection && (
+          <div className="loom-agent-perspective-section">
+            <span className="loom-agent-perspective-label">Reflection</span>
+            <div className="loom-agent-perspective-text loom-agent-perspective-scroll">
+              {reflection}
             </div>
           </div>
         )}

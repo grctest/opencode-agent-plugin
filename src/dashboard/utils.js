@@ -33,7 +33,9 @@ const TYPE_COLORS = {
   question: "loom-badge-question",
   turn_request: "loom-badge-turn-request",
   reflection: "loom-badge-reflection",
-  query_response: "loom-badge-reflection",
+  query_response: "loom-badge-query_response",
+  evidence_response: "loom-badge-evidence_response",
+  summoned_response: "loom-badge-summoned_response",
 };
 
 const STATUS_COLORS = {

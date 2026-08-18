@@ -113,7 +113,7 @@ export class DashboardApi {
   getState() {
     const row = this.#db
       .prepare(
-        `SELECT id as meeting_id, question, context, status, round, max_rounds, convergence, fabric, domain, stats, reflecting_participants, querying_participants, created_at
+        `SELECT id as meeting_id, question, context, status, round, max_rounds, convergence, fabric, domain, stats, reflecting_participants, querying_participants, evidence_participants, summoning_participants, state_of_play, created_at
          FROM meetings LIMIT 1`,
       )
       .get();
@@ -142,6 +142,24 @@ export class DashboardApi {
       }
     } else {
       row.querying_participants = [];
+    }
+    if (row.evidence_participants) {
+      try {
+        row.evidence_participants = JSON.parse(row.evidence_participants);
+      } catch {
+        row.evidence_participants = [];
+      }
+    } else {
+      row.evidence_participants = [];
+    }
+    if (row.summoning_participants) {
+      try {
+        row.summoning_participants = JSON.parse(row.summoning_participants);
+      } catch {
+        row.summoning_participants = [];
+      }
+    } else {
+      row.summoning_participants = [];
     }
     return row;
   }
@@ -209,7 +227,7 @@ export class DashboardApi {
   getContributions(limit = 100, offset = 0) {
     return this.#db
       .prepare(
-        `SELECT id, participant_id, round, type, content, target_which, tool_calls, created_at
+        `SELECT id, participant_id, round, type, content, target_which, tool_calls, prompt_context, created_at
          FROM contributions ORDER BY round ASC, id ASC LIMIT ? OFFSET ?`,
       )
       .all(limit, offset)
@@ -221,6 +239,7 @@ export class DashboardApi {
         content: r.content,
         targets_which: r.target_which != null ? Number(r.target_which) : null,
         tool_calls: r.tool_calls ? JSON.parse(r.tool_calls) : null,
+        prompt_context: r.prompt_context ? JSON.parse(r.prompt_context) : null,
         created_at: r.created_at,
       }));
   }
@@ -233,7 +252,7 @@ export class DashboardApi {
   getContributionsSince(sinceId) {
     return this.#db
       .prepare(
-        `SELECT id, participant_id, round, type, content, target_which, tool_calls, created_at
+        `SELECT id, participant_id, round, type, content, target_which, tool_calls, prompt_context, created_at
          FROM contributions WHERE id > ? ORDER BY id ASC`,
       )
       .all(sinceId)
@@ -245,6 +264,7 @@ export class DashboardApi {
         content: r.content,
         targets_which: r.target_which != null ? Number(r.target_which) : null,
         tool_calls: r.tool_calls ? JSON.parse(r.tool_calls) : null,
+        prompt_context: r.prompt_context ? JSON.parse(r.prompt_context) : null,
         created_at: r.created_at,
       }));
   }
@@ -331,6 +351,36 @@ export class DashboardApi {
       .prepare(`SELECT MAX(id) as maxId FROM agent_errors`)
       .get();
     return row.maxId ?? 0;
+  }
+
+  getContributionContext(contributionId) {
+    const contribution = this.#db
+      .prepare(
+        `SELECT id, participant_id, round, type, prompt_context, created_at
+         FROM contributions WHERE id = ?`,
+      )
+      .get(contributionId);
+    if (!contribution) return null;
+
+    const participant = this.#db
+      .prepare(`SELECT name, persona, agenda, tier, provider_id, model_id, reflection FROM participants WHERE id = ?`)
+      .get(contribution.participant_id);
+
+    return {
+      contribution_id: contribution.id,
+      participant_id: contribution.participant_id,
+      participant_name: participant?.name ?? contribution.participant_id,
+      participant_tier: participant?.tier ?? "mid",
+      participant_persona: participant?.persona ?? "",
+      participant_agenda: participant?.agenda ?? "",
+      participant_model: participant?.provider_id && participant?.model_id
+        ? `${participant.provider_id}/${participant.model_id}` : null,
+      participant_reflection: participant?.reflection ?? "",
+      round: contribution.round,
+      type: contribution.type,
+      prompt_context: contribution.prompt_context ? JSON.parse(contribution.prompt_context) : null,
+      created_at: contribution.created_at,
+    };
   }
 
   getAgentContext(meetingId, participantId) {

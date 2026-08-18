@@ -460,11 +460,25 @@ export class MeetingDatabase {
       .run(value, isoNow(), this.#meetingId);
   }
 
+  setEvidenceParticipants(participantIds) {
+    const value = participantIds && participantIds.length > 0 ? JSON.stringify(participantIds) : null;
+    this.#db
+      .prepare("UPDATE meetings SET evidence_participants = ?, updated_at = ? WHERE id = ?")
+      .run(value, isoNow(), this.#meetingId);
+  }
+
+  setSummoningParticipants(participantIds) {
+    const value = participantIds && participantIds.length > 0 ? JSON.stringify(participantIds) : null;
+    this.#db
+      .prepare("UPDATE meetings SET summoning_participants = ?, updated_at = ? WHERE id = ?")
+      .run(value, isoNow(), this.#meetingId);
+  }
+
   addContribution(meetingId, contribution) {
     this.#db
       .prepare(
-        `INSERT INTO contributions (meeting_id, participant_id, round, type, content, target_which, tool_calls, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO contributions (meeting_id, participant_id, round, type, content, target_which, tool_calls, prompt_context, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         meetingId,
@@ -474,6 +488,7 @@ export class MeetingDatabase {
         contribution.content,
         contribution.targets_which ?? null,
         contribution.tool_calls ? JSON.stringify(contribution.tool_calls) : null,
+        contribution.prompt_context ? JSON.stringify(contribution.prompt_context) : null,
         contribution.created_at ?? isoNow(),
       );
   }
@@ -481,7 +496,7 @@ export class MeetingDatabase {
   getContributions(meetingId) {
     const rows = this.#db
       .prepare(
-        `SELECT id, participant_id, round, type, content, target_which, tool_calls, created_at
+        `SELECT id, participant_id, round, type, content, target_which, tool_calls, prompt_context, created_at
          FROM contributions WHERE meeting_id = ? ORDER BY id ASC`,
       )
       .all(meetingId);
@@ -493,6 +508,7 @@ export class MeetingDatabase {
       type: r.type,
       targets_which: r.target_which != null ? Number(r.target_which) : null,
       tool_calls: r.tool_calls ? JSON.parse(r.tool_calls) : null,
+      prompt_context: r.prompt_context ? JSON.parse(r.prompt_context) : null,
       created_at: r.created_at,
     }));
   }
@@ -500,7 +516,7 @@ export class MeetingDatabase {
   getRecentContributions(meetingId, count) {
     const rows = this.#db
       .prepare(
-        `SELECT id, participant_id, round, type, content, target_which, tool_calls, created_at
+        `SELECT id, participant_id, round, type, content, target_which, tool_calls, prompt_context, created_at
          FROM contributions WHERE meeting_id = ? ORDER BY id DESC LIMIT ?`,
       )
       .all(meetingId, count);
@@ -512,8 +528,16 @@ export class MeetingDatabase {
       type: r.type,
       targets_which: r.target_which != null ? Number(r.target_which) : null,
       tool_calls: r.tool_calls ? JSON.parse(r.tool_calls) : null,
+      prompt_context: r.prompt_context ? JSON.parse(r.prompt_context) : null,
       created_at: r.created_at,
     }));
+  }
+
+  getContributionContext(contributionId) {
+    const row = this.#db
+      .prepare(`SELECT prompt_context FROM contributions WHERE id = ?`)
+      .get(contributionId);
+    return row?.prompt_context ? JSON.parse(row.prompt_context) : null;
   }
 
   addTurnRequest(meetingId, turnRequest) {
@@ -545,8 +569,8 @@ export class MeetingDatabase {
     try {
       this.#db
         .prepare(
-          `INSERT INTO contributions (meeting_id, participant_id, round, type, content, target_which, tool_calls, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO contributions (meeting_id, participant_id, round, type, content, target_which, tool_calls, prompt_context, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           meetingId,
@@ -556,6 +580,7 @@ export class MeetingDatabase {
           contribution.content,
           contribution.targets_which ?? null,
           contribution.tool_calls ? JSON.stringify(contribution.tool_calls) : null,
+          contribution.prompt_context ? JSON.stringify(contribution.prompt_context) : null,
           contribution.created_at ?? isoNow(),
         );
 

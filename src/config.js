@@ -10,6 +10,8 @@ const DEFAULT_CONFIG = {
   fastPathModel: "",
   turnRequestThresholds: { autoGrant: 9 },
   maxTurnRequestsPerRound: 3,
+  maxSummonsPerRound: 2,
+  maxSummonsPerAgent: 1,
   moderatorTrigger: { minContributions: 3, recentChallenges: 2, lookbackWindow: 4 },
   maxRetryAttempts: 2,
   retryBaseDelayMs: 1000,
@@ -62,6 +64,8 @@ const CONFIG_SCHEMA = {
   defaultMeetingTimeoutMs: { type: 'number', min: 60000, max: 3600000 },
   stallTimeoutMs: { type: 'number', min: 30000, max: 1800000 },
   maxTurnRequestsPerRound: { type: 'number', min: 1, max: 5 },
+  maxSummonsPerRound: { type: 'number', min: 0, max: 5 },
+  maxSummonsPerAgent: { type: 'number', min: 0, max: 3 },
   modelDiversity: { type: 'boolean' },
   synthesisMaxRetries: { type: 'number', min: 0, max: 5 },
 };

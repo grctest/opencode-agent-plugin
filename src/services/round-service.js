@@ -1,6 +1,5 @@
 import { RoundExecutor } from "../round-executor.js";
 import { summarizeRound } from "../round-summarizer.js";
-import { formatTurnOrderNotes } from "../turn-request-resolver.js";
 import { Logger } from "../logger.js";
 
 /**
@@ -43,9 +42,6 @@ export class RoundService {
     // Summarize the round
     round.summary = await summarizeRound(round, params.state, promptOrchestrator, getHighestTierModel);
 
-    // Add turn order notes to fabric (empty for now, filled after turn order planning)
-    const turnNotes = formatTurnOrderNotes(round, []);
-
-    return { round, turnNotes };
+    return { round };
   }
 }

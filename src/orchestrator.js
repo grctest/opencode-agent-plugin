@@ -435,7 +435,7 @@ export class MeetingOrchestrator {
       throw new LoomError("RoundExecutor not initialized — call initialize() first", { phase: "round_execution", recoverable: false });
     }
 
-    const { round: updatedRound, turnNotes } = await this.#roundService.runRound({
+    const { round: updatedRound } = await this.#roundService.runRound({
       round,
       activeParticipants,
       promptOrchestrator: async (system, model, message, type) => this.#promptOrchestrator(system, model, message, type),
@@ -443,16 +443,12 @@ export class MeetingOrchestrator {
       state: this.#stateManager.getState(),
     });
 
-    return this.#finalizeRound(updatedRound, turnNotes);
+    return this.#finalizeRound(updatedRound);
   }
 
-  async #finalizeRound(updatedRound, turnNotes) {
+  async #finalizeRound(updatedRound) {
     try {
       this.#database.setRoundSummary(updatedRound.number, updatedRound.summary);
-
-      if (turnNotes) {
-        this.#stateManager.setFabric(this.#stateManager.getFabric() + turnNotes);
-      }
 
       const newStateOfPlay = updateStateOfPlay(
         this.#stateManager.getWeave(),
