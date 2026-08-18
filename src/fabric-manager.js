@@ -2,11 +2,13 @@ import { Logger, extractErrorInfo } from "./logger.js";
 
 const TAG_STRIP_RE = /^\[(?:PROPOSE|CHALLENGE|REFINE|SUPPORT|DISSENT|SYNTHESIZE|QUESTION|REFUSE)\]\s*/i;
 const REQUEST_NEXT_RE = /\[REQUEST_NEXT:[^\]]*\]/gi;
+const QUERY_TAG_RE = /\[QUERY:\s*[^\]]*\]\s*/gi;
 
 function cleanContent(content) {
   return content
     .replace(TAG_STRIP_RE, "")
     .replace(REQUEST_NEXT_RE, "")
+    .replace(QUERY_TAG_RE, "")
     .trim();
 }
 
@@ -63,6 +65,8 @@ function classifyContribution(type, content) {
       return "disagreements";
     case "question":
       return "openQuestions";
+    case "query_response":
+      return "keyFacts";
     case "synthesize":
     case "refuse":
     case "reflection":

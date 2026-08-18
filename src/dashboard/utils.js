@@ -33,6 +33,7 @@ const TYPE_COLORS = {
   question: "loom-badge-question",
   turn_request: "loom-badge-turn-request",
   reflection: "loom-badge-reflection",
+  query_response: "loom-badge-reflection",
 };
 
 const STATUS_COLORS = {

@@ -68,6 +68,7 @@ export async function runMidRoundReflections(round, triggerParticipant, listener
               temperature: listener.tier_config.temperature,
               parts: [{ type: "text", text: prompt }],
               tools: reflectionTools,
+              tool_choice: Object.keys(reflectionTools).length > 0 ? "auto" : undefined,
             },
             query: { directory },
           }),

@@ -270,6 +270,48 @@ export const ReflectionRow = memo(({ reflection, contributions, participantName,
   );
 });
 
+export const QueryResponseRow = memo(({ queryResponse, contributions, participantName, onDialogOpen }) => {
+  const source = useMemo(() => {
+    if (!queryResponse.targets_which) return null;
+    return contributions.find((c) => c.id === queryResponse.targets_which);
+  }, [queryResponse.targets_which, contributions]);
+
+  const sourceAgentName = source ? participantName(source.participant_id) : "another agent";
+  const responderName = participantName(queryResponse.participant_id);
+
+  const content = queryResponse.content ?? "";
+  const stripped = useMemo(() => {
+    return content.replace(/^\[Response to query from .+?\]\s*/m, "");
+  }, [content]);
+  const isLong = stripped.length > 300;
+  const html = useMemo(() => renderMarkdown(stripped), [stripped]);
+
+  const openDialog = () => onDialogOpen?.({ contribution: queryResponse, participantName: responderName, isQueryResponse: true, sourceAgentName });
+
+  return (
+    <div
+      className={cn("loom-card", "loom-contribution-card", "loom-contrib-type-query_response", "loom-query-response-row", isLong && "loom-contrib-clickable")}
+      onClick={openDialog}
+      role={isLong ? "button" : undefined}
+      tabIndex={isLong ? 0 : undefined}
+      onKeyDown={isLong ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDialog(); } } : undefined}
+    >
+      <div>
+        <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">
+          <span className="loom-badge loom-badge-query_response">query response</span>
+          <span className="loom-text-xs loom-text-muted">{responderName} responding to query from {sourceAgentName} (Round {queryResponse.round})</span>
+          <span className="loom-text-xs loom-text-muted">{relativeTime(queryResponse.created_at)}</span>
+        </div>
+      </div>
+      {isLong ? (
+        <p className="loom-text loom-text-muted">{stripped.slice(0, 300)}...</p>
+      ) : (
+        <div className="loom-prose" dangerouslySetInnerHTML={{ __html: html }} />
+      )}
+    </div>
+  );
+});
+
 export const FabricViewer = memo(({ fabric }) => {
   const sections = useMemo(() => (fabric ? fabric.split(/(?=## )/g).filter(Boolean) : []), [fabric]);
 

@@ -485,6 +485,7 @@ input {
 .loom-badge-synthesize { background: #7e22ce; color: white; }
 .loom-badge-question { background: #0e7490; color: white; }
 .loom-badge-reflection { background: #6366f1; color: white; }
+.loom-badge-query_response { background: #0d9488; color: white; }
 
 /* Agent status */
 .loom-agent-status {
@@ -676,6 +677,11 @@ input {
   background: color-mix(in oklch, #6366f1 4%, var(--color-card));
 }
 
+.loom-thinking-placeholder-row.loom-contrib-type-query_response {
+  border-left: 2px solid #0d9488;
+  background: color-mix(in oklch, #0d9488 4%, var(--color-card));
+}
+
 /* Contribution card */
 .loom-contribution-card {
   border-left: 3px solid transparent;
@@ -694,6 +700,7 @@ input {
 .loom-contrib-type-question { border-left-color: #0e7490; }
 .loom-contrib-type-turn_request { border-left-color: #be185d; }
 .loom-contrib-type-reflection { border-left-color: #6366f1; background: rgba(99, 102, 241, 0.04); }
+.loom-contrib-type-query_response { border-left-color: #0d9488; background: rgba(13, 148, 136, 0.04); }
 
 .loom-contrib-participant {
   font-size: 0.875rem;
@@ -1316,6 +1323,17 @@ input {
 .loom-reflection-row {
   border-left: 2px solid #6366f1;
   background: color-mix(in oklch, #6366f1 4%, var(--color-card));
+}
+
+/* Query response row in timeline (indented under source agent) */
+.loom-vrow.loom-vrow-query-response {
+  padding-left: 2rem;
+  padding-bottom: 0.375rem;
+}
+
+.loom-query-response-row {
+  border-left: 2px solid #0d9488;
+  background: color-mix(in oklch, #0d9488 4%, var(--color-card));
 }
 
 /* Round groups */

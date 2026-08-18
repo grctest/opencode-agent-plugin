@@ -60,15 +60,24 @@ export function buildReflectionPrompt(listener, triggerParticipant, contribution
   const agentToolsConfig = getConfig().agentTools;
   const reflectionToolUsageSection = agentToolsConfig?.enabled
     ? `
-## Tool Usage (Reflection)
+## Research Tools (Reflection)
 
-During reflection, you may use tools to research and recall. Use them to inform your reflection on the deliberation, not to explore broadly.
+During reflection, you have access to research tools to ground your analysis in evidence. Use them to verify claims and check current facts before updating your position.
 
-**Use tools when:**
-- You need to verify what a participant actually said (loom_vector_search)
-- You need to check current facts before updating your position (web_search)
+### When to Research
+- You need to verify what a participant actually said versus what you remember
+- You need to check current facts before revising your position on a claim
+- You need to recall specific earlier contributions that aren't in your recent context
 
-**Note:** Your reflection will be visible to other participants. Use tools to ground your reflection in evidence, not to gain an unfair advantage.`
+### Tool Selection
+- **loom_vector_search**: Verify what was actually said in the deliberation
+- **web_search**: Check current facts, data, or claims before updating your stance
+- **web_fetch**: Deep-dive into a specific source for detailed verification
+- **read**: Examine project files or documents referenced in the discussion
+
+### Quality Standards
+- Synthesize findings into your reflection rather than listing raw results
+- Your reflection will be visible to other participants — ground it in verifiable evidence`
     : "";
 
   return `## Reflection
@@ -99,6 +108,82 @@ ${reflectionToolUsageSection}
 
 Write your reflection on this contribution.
 This reflection will be visible to other participants in the deliberation.`;
+}
+
+/** Builds a prompt for a queried agent to respond to a direct question from another agent. */
+export function buildQueryPrompt(sourceAgent, targetAgent, sourceContribution, question, roundContributions, currentRound, maxRounds) {
+  const safeSourceName = sanitizeForDisplay(sourceAgent.config.name);
+  const safeContribution = sanitizeForDisplay(sourceContribution);
+  const safeQuestion = sanitizeForDisplay(question);
+
+  const previousReflection = targetAgent.reflection || "";
+  const reflectionBlock = previousReflection
+    ? `Your previous reflection on this deliberation:\n"${sanitizeForDisplay(previousReflection)}"`
+    : "";
+
+  const myContributions = (roundContributions || [])
+    .filter((c) => c.participant_id === targetAgent.config.id && c.type !== "pass")
+    .slice(-2)
+    .map((c) => sanitizeForDisplay(c.content));
+  const recentBlock = myContributions.length > 0
+    ? `Your recent contributions:\n${myContributions.map((c) => `- "${c}"`).join("\n")}`
+    : "";
+
+  const TIER_ORDER = { junior: 0, mid: 1, senior: 2, principal: 3 };
+  const sourceTierLevel = TIER_ORDER[sourceAgent.config.tier] ?? 1;
+  const targetTierLevel = TIER_ORDER[targetAgent.config.tier] ?? 1;
+  const seniorityContext = buildSeniorityContext(
+    targetAgent.config.name,
+    targetAgent.config.tier,
+    sourceAgent.config.name,
+    sourceAgent.config.tier,
+    targetTierLevel,
+    sourceTierLevel,
+  );
+
+  const roundContext = buildRoundContext(currentRound, maxRounds);
+
+  const agentToolsConfig = getConfig().agentTools;
+  const queryToolUsageSection = agentToolsConfig?.enabled
+    ? `
+## Research Tools
+
+You may use research tools to ground your answer in evidence. Use them to verify claims before responding.
+
+### Tool Selection
+- **loom_vector_search**: Verify what was actually said in the deliberation
+- **web_search**: Check current facts, data, or claims
+- **web_fetch**: Deep-dive into a specific source for detailed verification
+- **read**: Examine project files or documents referenced in the discussion`
+    : "";
+
+  return `## Direct Query
+
+**${safeSourceName}** (${sourceAgent.config.tier}) asks you:
+
+"${safeContribution}"
+
+---
+**Their question:** "${safeQuestion}"
+
+${recentBlock}
+
+${reflectionBlock}
+
+## Context
+
+**Seniority relationship:**
+${seniorityContext}
+
+**Round context:**
+${roundContext}
+
+## Your Task
+
+Answer the question directly. Address ${safeSourceName}'s specific concern.
+You may use research tools if needed. Stay in character.
+Do NOT use contribution type tags ([PROPOSE], [CHALLENGE], etc.) — just answer.
+${queryToolUsageSection}`;
 }
 
 /**
@@ -315,21 +400,30 @@ export function buildAgentSystemPrompt(participant) {
   const agentToolsConfig = getConfig().agentTools;
   const toolUsageSection = agentToolsConfig?.enabled
     ? `
-## Tool Usage
+## Research Tools
 
-You have access to tools that let you research and explore. Use them to ground your contributions in evidence, not to replace direct engagement with the deliberation context.
+You have access to research tools that let you ground your contributions in real-world evidence. Strong deliberations are built on current, verified information — use your tools to bring that to the table.
 
-**Use tools when:**
-- You need to verify a factual claim (web_search, web_fetch)
-- You need to examine code or files that aren't in your context (read, glob, grep)
-- You need to recall specific prior contributions not in the State of Play (loom_vector_search)
+### When to Research
+- The question involves current data, trends, statistics, or market conditions
+- A claim has been made that you're uncertain about or that may be outdated
+- You need specific examples, case studies, or precedents to strengthen your argument
+- You want to compare options, alternatives, or competing approaches with real data
+- The discussion references files, code, or documents you haven't seen
+- You need to recall earlier contributions not captured in the recent context
 
-**Do NOT use tools when:**
-- The State of Play and Recent Contributions already contain the information you need
-- You're using tools to delay or avoid making a substantive contribution
-- You're searching for information that doesn't exist in the project
+### Tool Selection
+- **web_search**: Find current information, compare options, discover trends, validate claims with sources
+- **web_fetch**: Deep-dive into a specific URL for detailed content from articles or documentation
+- **read / glob / grep**: Examine project files, code, or local documents
+- **loom_vector_search**: Recall specific contributions from earlier in the deliberation
 
-**Be efficient:** Each tool call adds latency and token cost. Make your queries specific and targeted.`
+### Research Quality
+- Make one focused search query rather than multiple vague ones
+- Synthesize what you find — don't just dump search results into your response
+- When you find useful information, weave it naturally into your argument with attribution
+- If a search doesn't yield useful results, proceed with your existing knowledge rather than retrying
+- Cite sources when they strengthen your credibility`
     : "";
 
   const biases = Array.isArray(cfg.known_biases) && cfg.known_biases.length > 0
@@ -379,6 +473,7 @@ ${tierGuidance}
 ${requestNextRule}
 6. Stay in character — your persona and agenda shape your contributions
 7. Reference prior contributions using their stable ID from the Recent Contributions list, e.g. [#12]
+8. To query a specific participant directly: [QUERY: @participant_id] your question — their response appears as a contribution. Max 2 targets.
 ${toolUsageSection}
 
 ## Example Response
@@ -390,7 +485,12 @@ ${toolUsageSection}
 [REQUEST_NEXT: Priority: 8, Reason: "Need to directly counter the Architect's claim about stateful overhead before we move to action items"]
 
 ## Example With Refusal
-[REFUSE: I cannot engage with this premise because it assumes we have budget approval, which we do not] This discussion presupposes resources that haven't been allocated.`;
+[REFUSE: I cannot engage with this premise because it assumes we have budget approval, which we do not] This discussion presupposes resources that haven't been allocated.
+
+## Example With Query
+[CHALLENGE] The migration timeline assumes no integration conflicts, but we've seen collision issues in past rollouts.
+
+[QUERY: @staff-architect] Based on the service dependency graph, which migrations are most likely to collide?`;
 }
 
 /**

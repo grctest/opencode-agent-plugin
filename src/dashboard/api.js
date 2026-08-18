@@ -113,7 +113,7 @@ export class DashboardApi {
   getState() {
     const row = this.#db
       .prepare(
-        `SELECT id as meeting_id, question, context, status, round, max_rounds, convergence, fabric, domain, stats, reflecting_participants, created_at
+        `SELECT id as meeting_id, question, context, status, round, max_rounds, convergence, fabric, domain, stats, reflecting_participants, querying_participants, created_at
          FROM meetings LIMIT 1`,
       )
       .get();
@@ -133,6 +133,15 @@ export class DashboardApi {
       }
     } else {
       row.reflecting_participants = [];
+    }
+    if (row.querying_participants) {
+      try {
+        row.querying_participants = JSON.parse(row.querying_participants);
+      } catch {
+        row.querying_participants = [];
+      }
+    } else {
+      row.querying_participants = [];
     }
     return row;
   }

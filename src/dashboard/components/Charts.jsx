@@ -27,7 +27,7 @@ export const ParticipationMatrix = memo(function ParticipationMatrix({ participa
     const orderMap = new Map();
     for (let r = 1; r <= rounds; r++) {
       const roundContribs = contributions
-        .filter((c) => c.round === r && c.type !== "reflection")
+        .filter((c) => c.round === r && c.type !== "reflection" && c.type !== "query_response")
         .slice()
         .sort((a, b) =>
           (a.created_at || "").localeCompare(b.created_at || "") ||

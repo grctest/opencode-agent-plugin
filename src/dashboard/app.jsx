@@ -366,6 +366,11 @@ export function App() {
     return participants.filter((p) => ids.includes(p.id));
   }, [participants, state?.reflecting_participants]);
 
+  const queryingParticipants = useMemo(() => {
+    const ids = state?.querying_participants ?? [];
+    return participants.filter((p) => ids.includes(p.id));
+  }, [participants, state?.querying_participants]);
+
   const contributionsByParticipant = useMemo(() => {
     const map = {};
     for (const c of contributions) {
@@ -504,6 +509,7 @@ export function App() {
                   isWeaving={isWeaving}
                   thinkingParticipants={thinkingParticipants}
                   reflectingParticipants={reflectingParticipants}
+                  queryingParticipants={queryingParticipants}
                   collapsedRounds={collapsedRounds}
                   onToggleCollapse={toggleRoundCollapse}
                   agentErrors={agentErrors}

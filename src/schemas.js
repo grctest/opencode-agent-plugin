@@ -16,6 +16,7 @@ export const ContributionTypeSchema = z.enum([
   'synthesize',
   'question',
   'refuse',
+  'query_response',
 ]);
 
 // Turn order request directive from agent response (replaces interjection)
@@ -24,12 +25,19 @@ export const RequestNextSchema = z.object({
   reason: z.string().min(1).max(500),
 }).nullable();
 
+// Directed query directive from agent response
+export const QuerySchema = z.object({
+  targets: z.array(z.string()).min(1).max(2),
+  question: z.string().min(1).max(500),
+}).nullable();
+
 // Agent response parsed from LLM output
 export const AgentResponseSchema = z.object({
   participant_id: z.string(),
   content: z.string().max(5000),
   type: ContributionTypeSchema,
   request_next: RequestNextSchema,
+  query: QuerySchema,
 });
 
 // Raw parsing (extracted from validation.js) - EXPORTED for reuse
@@ -41,7 +49,7 @@ export function parseAgentResponseRaw(response, tier) {
   }
 
   if (text === '[PASS]') {
-    return { content: '[PASS]', type: 'propose', request_next: null };
+    return { content: '[PASS]', type: 'propose', request_next: null, query: null };
   }
 
   const TYPE_PREFIXES = {
@@ -82,7 +90,7 @@ export function parseAgentResponseRaw(response, tier) {
     }
   }
 
-  const rawContent = text.slice(contentStart).trim();
+  let rawContent = text.slice(contentStart).trim();
 
   // Parse [REQUEST_NEXT] directive (replaces [INTERJECT])
   const rnMatch = rawContent.match(
@@ -90,21 +98,46 @@ export function parseAgentResponseRaw(response, tier) {
   );
 
   let request_next = null;
-  let cleanContent = rawContent;
 
   if (rnMatch) {
     const rawPriority = Math.min(10, Math.max(1, parseInt(rnMatch[1])));
     const priorityCap = getPriorityCap(tier);
     const priority = Math.min(rawPriority, priorityCap);
     const reason = rnMatch[2].trim();
-    const beforeRN = rawContent.slice(0, rnMatch.index).trim();
     request_next = { priority, reason };
-    cleanContent = beforeRN;
+    rawContent = rawContent.slice(0, rnMatch.index).trim();
+  }
+
+  // Parse [QUERY: @target1, @target2] directive
+  const QUERY_TAG_RE = /\[QUERY:\s*@([^\]]+)\]\s*/gi;
+  let query = null;
+  const queryTargets = [];
+  const queryMatches = [];
+  let queryMatch;
+
+  while ((queryMatch = QUERY_TAG_RE.exec(rawContent)) !== null) {
+    const ids = queryMatch[1].split(',').map((s) => s.trim()).filter(Boolean);
+    queryTargets.push(...ids);
+    queryMatches.push(queryMatch);
+  }
+
+  if (queryTargets.length > 0 && queryMatches.length > 0) {
+    const lastMatch = queryMatches[queryMatches.length - 1];
+    const afterLastTag = lastMatch.index + lastMatch[0].length;
+    const questionText = rawContent.slice(afterLastTag).trim();
+    // Strip all QUERY tags from content
+    rawContent = rawContent.replace(QUERY_TAG_RE, '').trim();
+    // Cap at 2 targets
+    query = {
+      targets: queryTargets.slice(0, 2),
+      question: questionText.slice(0, 500),
+    };
   }
 
   return {
-    content: refuseReason ? `${refuseReason}. ${cleanContent}`.trim() : cleanContent,
+    content: refuseReason ? `${refuseReason}. ${rawContent}`.trim() : rawContent,
     type,
     request_next,
+    query,
   };
 }

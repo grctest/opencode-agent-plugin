@@ -1,4 +1,4 @@
-import { buildAgentSystemPrompt, buildAgentUserPrompt } from "./prompts.js";
+import { buildAgentSystemPrompt, buildAgentUserPrompt, buildQueryPrompt } from "./prompts.js";
 import { parseAgentResponse } from "./validation.js";
 import { getConfig } from "./config.js";
 import { extractText, extractAgentResponse, truncate, withTimeout } from "./shared.js";
@@ -108,6 +108,23 @@ export class RoundExecutor {
       const result = await this.#promptChildSession(p);
       await this.#handlePromptResult(p, result, round);
 
+      // Directed queries: if this agent queried specific participants, execute now
+      if (result?.query && result.query.targets.length > 0 && result.content !== "[PASS]") {
+        const sourceContribution = round.contributions[round.contributions.length - 1];
+        if (sourceContribution) {
+          p.currentContribution = result.content;
+          await this.executeQueries(round, p, result.query, sourceContribution.id, {
+            client: this.#client,
+            directory: this.#directory,
+            sessionManager: this.#sessionManager,
+            getParticipantModel: this.#getParticipantModel,
+            stateManager: this.#stateManager,
+            db: this.#db,
+            callStats: this.#callStats,
+          });
+        }
+      }
+
       // Mid-round reflections: if this agent challenged/dissented,
       // trigger reflections for agents that spoke BEFORE them
       if (result && (result.type === "challenge" || result.type === "dissent")) {
@@ -169,6 +186,143 @@ export class RoundExecutor {
   // Reflections now happen mid-round in runPromptPhase — no separate phase needed
   async runReflectionPhase(round, activeParticipants) {
     // No-op
+  }
+
+  /**
+   * Executes directed queries. When an agent embeds [QUERY: @target] in their
+   * response, the target agent is prompted to respond directly to the question.
+   * Each response becomes a query_response contribution in the weave.
+   */
+  async executeQueries(round, sourceParticipant, query, sourceContributionId, {
+    client,
+    directory,
+    sessionManager,
+    getParticipantModel,
+    stateManager,
+    db,
+    callStats,
+  }) {
+    const config = getConfig();
+    const timeoutMs = config.agentTimeoutMs;
+    const allParticipants = stateManager.getParticipants();
+
+    // Resolve and filter targets
+    const targets = query.targets
+      .map((id) => allParticipants.find((p) => p.config.id === id))
+      .filter((p) => p && p.config.id !== sourceParticipant.config.id && p.status !== "failed" && p.status !== "passed");
+
+    if (targets.length === 0) return;
+
+    const sourceName = sourceParticipant.config.name;
+
+    db.setQueryingParticipants(targets.map((t) => t.config.id));
+
+    await Promise.allSettled(
+      targets.map(async (target) => {
+        const model = getParticipantModel(target);
+        const sessionId = await sessionManager.createEphemeralSession(target);
+        try {
+          // Set target status to speaking while processing query
+          const previousStatus = target.status;
+          target.status = "speaking";
+          db.setParticipantStatus(target.config.id, "speaking");
+
+          const prompt = buildQueryPrompt(
+            sourceParticipant,
+            target,
+            sourceParticipant.currentContribution || sourceParticipant.config.name,
+            query.question,
+            round.contributions,
+            stateManager.getCurrentRound(),
+            stateManager.getMaxRounds(),
+          );
+
+          // Build tools map for query (same reduced set as reflections)
+          const agentToolsConfig = getConfig().agentTools;
+          const queryTools = {};
+          if (agentToolsConfig?.enabled) {
+            if (agentToolsConfig?.builtIn?.web_fetch) queryTools.web_fetch = true;
+            if (agentToolsConfig?.builtIn?.web_search) queryTools.web_search = true;
+            if (agentToolsConfig?.builtIn?.read) queryTools.read = true;
+            if (agentToolsConfig?.loom?.loom_vector_search) queryTools.loom_vector_search = true;
+          }
+
+          const result = await withTimeout(
+            client.session.prompt({
+              path: { id: sessionId },
+              body: {
+                system: `You are ${target.config.name} (${target.config.tier}). A fellow participant has directed a question to you. Respond directly and stay in character.`,
+                model,
+                temperature: target.tier_config.temperature,
+                parts: [{ type: "text", text: prompt }],
+                tools: queryTools,
+                tool_choice: Object.keys(queryTools).length > 0 ? "auto" : undefined,
+              },
+              query: { directory },
+            }),
+            timeoutMs,
+          );
+
+          if (callStats) {
+            callStats.reflection_calls++;
+            const tokens = result?.data?.tokens;
+            if (tokens) {
+              callStats.input_tokens += tokens.input ?? 0;
+              callStats.output_tokens += tokens.output ?? 0;
+            }
+          }
+
+          if (result.error) throw new Error(result.error.message || JSON.stringify(result.error));
+
+          const { text, toolResults } = extractAgentResponse(result.data);
+
+          if (!text || text.trim().length < 10) return;
+
+          // Create query response contribution
+          const contribution = {
+            id: stateManager.nextContributionId(),
+            round: stateManager.getCurrentRound(),
+            participant_id: target.config.id,
+            content: `[Response to query from ${sourceName}]\n\n${text.trim()}`,
+            type: "query_response",
+            targets_which: sourceContributionId,
+            tool_calls: toolResults.length > 0 ? toolResults.map(t => ({
+              tool: t.tool,
+              callID: t.callID,
+              title: t.title ?? null,
+              output: t.output ? String(t.output).slice(0, 2000) : null,
+              error: t.error ? String(t.error).slice(0, 500) : null,
+              metadata: t.metadata ?? null,
+            })) : null,
+            created_at: new Date().toISOString(),
+          };
+
+          stateManager.addContribution(contribution);
+          round.contributions.push(contribution);
+
+          db.addContributionWithTurnRequest(stateManager.getMeetingId(), contribution, null);
+
+          // Restore target status
+          target.status = previousStatus;
+          db.setParticipantStatus(target.config.id, previousStatus);
+
+          this.#options.onProgress?.(`${target.config.name} (${target.config.tier}) — query_response to ${sourceName}`);
+          this.#options.onContribution?.(target.config.name, stateManager.getCurrentRound(), "query_response");
+
+        } catch (err) {
+          const info = extractErrorInfo(err);
+          this.#logError(`query response for ${target.config.name}`, err);
+          this.#logger.warn("query_failed", `Query response for ${target.config.name} failed`, info);
+          // Restore status on failure too
+          target.status = "listening";
+          db.setParticipantStatus(target.config.id, "listening");
+        } finally {
+          await sessionManager.deleteEphemeralSession(sessionId).catch(() => {});
+        }
+      }),
+    );
+
+    db.setQueryingParticipants(null);
   }
 
   #storeContribution(participant, result, round) {
@@ -296,6 +450,7 @@ export class RoundExecutor {
               this.#stateManager.getTags(),
             ) }],
             tools: toolsMap,
+            tool_choice: Object.keys(toolsMap).length > 0 ? "auto" : undefined,
           },
           query: { directory: this.#directory },
         }),

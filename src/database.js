@@ -453,6 +453,13 @@ export class MeetingDatabase {
       .run(value, isoNow(), this.#meetingId);
   }
 
+  setQueryingParticipants(participantIds) {
+    const value = participantIds && participantIds.length > 0 ? JSON.stringify(participantIds) : null;
+    this.#db
+      .prepare("UPDATE meetings SET querying_participants = ?, updated_at = ? WHERE id = ?")
+      .run(value, isoNow(), this.#meetingId);
+  }
+
   addContribution(meetingId, contribution) {
     this.#db
       .prepare(

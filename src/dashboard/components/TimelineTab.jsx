@@ -1,17 +1,19 @@
 import { useRef, useMemo, useCallback, useState, memo } from "react";
 import { cn, relativeTime } from "../utils.js";
-import { ContributionItem, TurnRequestItem, ThinkingCard, ReflectionRow, ContentDialog, renderMarkdown } from "./Cards.jsx";
+import { ContributionItem, TurnRequestItem, ThinkingCard, ReflectionRow, QueryResponseRow, ContentDialog, renderMarkdown } from "./Cards.jsx";
 import { LoadingSkeleton } from "./Skeleton.jsx";
 import { List } from "react-window";
 
 const THINKING_TURN_HEIGHT = 56;
 const THINKING_REFLECTION_HEIGHT = 56;
+const THINKING_QUERY_HEIGHT = 56;
 
 const HEADER_HEIGHT = 48;
 const CONTRIBUTION_HEIGHT = 56;
 const INTERJECTION_HEIGHT = 72;
 const EXTENSION_MARKER_HEIGHT = 32;
 const REFLECTION_HEIGHT = 80;
+const QUERY_RESPONSE_HEIGHT = 80;
 
 function getRowHeight(item) {
   if (item.type === "header") {
@@ -19,8 +21,10 @@ function getRowHeight(item) {
   }
   if (item.type === "turn_request") return INTERJECTION_HEIGHT;
   if (item.type === "reflection") return REFLECTION_HEIGHT;
+  if (item.type === "query_response") return QUERY_RESPONSE_HEIGHT;
   if (item.type === "thinking_turn") return THINKING_TURN_HEIGHT;
   if (item.type === "thinking_reflection") return THINKING_REFLECTION_HEIGHT;
+  if (item.type === "thinking_query") return THINKING_QUERY_HEIGHT;
   if (item.type === "agent_turn") {
     return 115;
   }
@@ -76,6 +80,18 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
       </div>
     );
   }
+  if (item.type === "query_response") {
+    return (
+      <div style={style} className="loom-vrow loom-vrow-query-response">
+        <QueryResponseRow
+          queryResponse={item.queryResponse}
+          contributions={contributions}
+          participantName={participantName}
+          onDialogOpen={onDialogOpen}
+        />
+      </div>
+    );
+  }
   if (item.type === "thinking_turn") {
     return (
       <div style={style} className="loom-vrow">
@@ -108,6 +124,22 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
       </div>
     );
   }
+  if (item.type === "thinking_query") {
+    return (
+      <div style={style} className="loom-vrow loom-vrow-query-response">
+        <div className="loom-card loom-thinking-card loom-thinking-placeholder-row loom-contrib-type-query_response">
+          <div className="loom-thinking-content">
+            <span className="loom-thinking-dots">
+              <span /><span /><span />
+            </span>
+            <span className="loom-text loom-text-muted">
+              {item.queriedAgentName} is answering a query...
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
   if (item.type === "contribution") {
     return (
       <div style={style} className="loom-vrow">
@@ -128,6 +160,7 @@ const TimelineTabBase = ({
   isWeaving,
   thinkingParticipants,
   reflectingParticipants,
+  queryingParticipants,
   collapsedRounds,
   onToggleCollapse,
   agentErrors,
@@ -174,6 +207,8 @@ const TimelineTabBase = ({
         const regularByAgent = new Map();
         const reflectionsByTarget = new Map();
         const consumedReflectionIds = new Set();
+        const queryResponsesByTarget = new Map();
+        const consumedQueryIds = new Set();
 
         for (const c of contribs) {
           if (c.type === "reflection") {
@@ -181,6 +216,12 @@ const TimelineTabBase = ({
             if (targetId != null) {
               if (!reflectionsByTarget.has(targetId)) reflectionsByTarget.set(targetId, []);
               reflectionsByTarget.get(targetId).push(c);
+            }
+          } else if (c.type === "query_response") {
+            const targetId = c.targets_which;
+            if (targetId != null) {
+              if (!queryResponsesByTarget.has(targetId)) queryResponsesByTarget.set(targetId, []);
+              queryResponsesByTarget.get(targetId).push(c);
             }
           } else {
             const key = c.participant_id;
@@ -208,6 +249,16 @@ const TimelineTabBase = ({
                 });
               }
             }
+            if (queryResponsesByTarget.has(c.id)) {
+              for (const qr of queryResponsesByTarget.get(c.id)) {
+                consumedQueryIds.add(qr.id);
+                items.push({
+                  type: "query_response",
+                  queryResponse: qr,
+                  round,
+                });
+              }
+            }
           }
         }
 
@@ -217,6 +268,18 @@ const TimelineTabBase = ({
               items.push({
                 type: "reflection",
                 reflection: r,
+                round,
+              });
+            }
+          }
+        }
+
+        for (const [, queryResponses] of queryResponsesByTarget) {
+          for (const qr of queryResponses) {
+            if (!consumedQueryIds.has(qr.id)) {
+              items.push({
+                type: "query_response",
+                queryResponse: qr,
                 round,
               });
             }
@@ -258,11 +321,25 @@ const TimelineTabBase = ({
               }
             }
           }
+
+          // Thinking placeholders for active queries
+          for (const qp of queryingParticipants) {
+            const hasResponded = contribs.some(
+              (c) => c.type === "query_response" && c.participant_id === qp.id
+            );
+            if (!hasResponded) {
+              items.push({
+                type: "thinking_query",
+                queriedAgentName: qp.name,
+                round,
+              });
+            }
+          }
         }
       }
     }
     return items;
-  }, [groupedContributions, collapsedRounds, activeRound, agentErrors, turnRequests, extensions, maxRounds, isWeaving, thinkingParticipants, reflectingParticipants, participantName]);
+  }, [groupedContributions, collapsedRounds, activeRound, agentErrors, turnRequests, extensions, maxRounds, isWeaving, thinkingParticipants, reflectingParticipants, queryingParticipants, participantName]);
 
   const rowHeightFn = useCallback((index, cellProps) => {
     const item = cellProps.items[index];
@@ -311,9 +388,13 @@ const TimelineTabBase = ({
         onClose={() => setDialogContribution(null)}
         title={dialogContribution ? (dialogContribution.isReflection
           ? `Reflection by ${dialogContribution.participantName}`
+          : dialogContribution.isQueryResponse
+          ? `Query response by ${dialogContribution.participantName}`
           : `${dialogContribution.participantName} — ${dialogContribution.contribution.type}`) : ""}
         className={dialogContribution ? (dialogContribution.isReflection
           ? "loom-dialog-type-reflection"
+          : dialogContribution.isQueryResponse
+          ? "loom-dialog-type-query_response"
           : `loom-dialog-type-${dialogContribution.contribution.type}`) : ""}
       >
         {dialogContribution && (
@@ -429,6 +510,18 @@ const TimelineTabBase = ({
                           </tr>
                           <tr>
                             <td className="loom-details-label">Target ID</td>
+                            <td className="loom-details-value loom-details-mono">#{dialogContribution.contribution.targets_which}</td>
+                          </tr>
+                        </>
+                      )}
+                      {dialogContribution.isQueryResponse && dialogContribution.sourceAgentName && (
+                        <>
+                          <tr>
+                            <td className="loom-details-label">Query from</td>
+                            <td className="loom-details-value">{dialogContribution.sourceAgentName}</td>
+                          </tr>
+                          <tr>
+                            <td className="loom-details-label">Source ID</td>
                             <td className="loom-details-value loom-details-mono">#{dialogContribution.contribution.targets_which}</td>
                           </tr>
                         </>

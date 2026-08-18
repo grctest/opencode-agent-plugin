@@ -226,23 +226,30 @@ decisions.
 7. Reference prior contributions using their stable ID from the Recent
    Contributions list, e.g. [#12]
 
-## Tool Usage (when agent tools are enabled)
+## Research Tools (when agent tools are enabled)
 
-You have access to tools that let you research and explore. Use them to
-ground your contributions in evidence, not to replace direct engagement with
-the deliberation context.
+You have access to research tools that let you ground your contributions in real-world evidence. Strong deliberations are built on current, verified information — use your tools to bring that to the table.
 
-**Use tools when:**
-- You need to verify a factual claim (web_search, web_fetch)
-- You need to examine code or files that aren't in your context (read, glob, grep)
-- You need to recall specific prior contributions not in the State of Play (loom_vector_search)
+### When to Research
+- The question involves current data, trends, statistics, or market conditions
+- A claim has been made that you're uncertain about or that may be outdated
+- You need specific examples, case studies, or precedents to strengthen your argument
+- You want to compare options, alternatives, or competing approaches with real data
+- The discussion references files, code, or documents you haven't seen
+- You need to recall earlier contributions not captured in the recent context
 
-**Do NOT use tools when:**
-- The State of Play and Recent Contributions already contain the information you need
-- You're using tools to delay or avoid making a substantive contribution
-- You're searching for information that doesn't exist in the project
+### Tool Selection
+- **web_search**: Find current information, compare options, discover trends, validate claims with sources
+- **web_fetch**: Deep-dive into a specific URL for detailed content from articles or documentation
+- **read / glob / grep**: Examine project files, code, or local documents
+- **loom_vector_search**: Recall specific contributions from earlier in the deliberation
 
-**Be efficient:** Each tool call adds latency and token cost. Make your queries specific and targeted.
+### Research Quality
+- Make one focused search query rather than multiple vague ones
+- Synthesize what you find — don't just dump search results into your response
+- When you find useful information, weave it naturally into your argument with attribution
+- If a search doesn't yield useful results, proceed with your existing knowledge rather than retrying
+- Cite sources when they strengthen your credibility
 
 ## Example Response
 [CHALLENGE] The proposed approach doesn't account for backward compatibility.
@@ -1637,38 +1644,56 @@ Tool descriptions and JSON schemas are automatically provided by the opencode se
 
 ### Agent Guidance
 
-When tools are enabled, the system prompt includes usage guidance:
+When tools are enabled, the system prompt includes research-first guidance that encourages agents to ground their contributions in current, verified information:
 
 **Primary Turn Guidance:**
 ```
-## Tool Usage
+## Research Tools
 
-You have access to tools that let you research and explore. Use them to ground your contributions in evidence, not to replace direct engagement with the deliberation context.
+You have access to research tools that let you ground your contributions in real-world evidence. Strong deliberations are built on current, verified information — use your tools to bring that to the table.
 
-**Use tools when:**
-- You need to verify a factual claim (web_search, web_fetch)
-- You need to examine code or files that aren't in your context (read, glob, grep)
-- You need to recall specific prior contributions not in the State of Play (loom_vector_search)
+### When to Research
+- The question involves current data, trends, statistics, or market conditions
+- A claim has been made that you're uncertain about or that may be outdated
+- You need specific examples, case studies, or precedents to strengthen your argument
+- You want to compare options, alternatives, or competing approaches with real data
+- The discussion references files, code, or documents you haven't seen
+- You need to recall earlier contributions not captured in the recent context
 
-**Do NOT use tools when:**
-- The State of Play and Recent Contributions already contain the information you need
-- You're using tools to delay or avoid making a substantive contribution
-- You're searching for information that doesn't exist in the project
+### Tool Selection
+- **web_search**: Find current information, compare options, discover trends, validate claims with sources
+- **web_fetch**: Deep-dive into a specific URL for detailed content from articles or documentation
+- **read / glob / grep**: Examine project files, code, or local documents
+- **loom_vector_search**: Recall specific contributions from earlier in the deliberation
 
-**Be efficient:** Each tool call adds latency and token cost. Make your queries specific and targeted.
+### Research Quality
+- Make one focused search query rather than multiple vague ones
+- Synthesize what you find — don't just dump search results into your response
+- When you find useful information, weave it naturally into your argument with attribution
+- If a search doesn't yield useful results, proceed with your existing knowledge rather than retrying
+- Cite sources when they strengthen your credibility
 ```
 
 **Reflection Turn Guidance:**
 ```
-## Tool Usage (Reflection)
+## Research Tools (Reflection)
 
-During reflection, you may use tools to research and recall. Use them to inform your reflection on the deliberation, not to explore broadly.
+During reflection, you have access to research tools to ground your analysis in evidence. Use them to verify claims and check current facts before updating your position.
 
-**Use tools when:**
-- You need to verify what a participant actually said (loom_vector_search)
-- You need to check current facts before updating your position (web_search)
+### When to Research
+- You need to verify what a participant actually said versus what you remember
+- You need to check current facts before revising your position on a claim
+- You need to recall specific earlier contributions that aren't in your recent context
 
-**Note:** Your reflection will be visible to other participants. Use tools to ground your reflection in evidence, not to gain an unfair advantage.
+### Tool Selection
+- **loom_vector_search**: Verify what was actually said in the deliberation
+- **web_search**: Check current facts, data, or claims before updating your stance
+- **web_fetch**: Deep-dive into a specific source for detailed verification
+- **read**: Examine project files or documents referenced in the discussion
+
+### Quality Standards
+- Synthesize findings into your reflection rather than listing raw results
+- Your reflection will be visible to other participants — ground it in verifiable evidence
 ```
 
 ### Configuration

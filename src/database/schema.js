@@ -396,6 +396,10 @@ export function migrateSchema(db) {
     try { db.exec(`ALTER TABLE meetings ADD COLUMN reflecting_participants TEXT`); } catch { /* exists */ }
     db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '19')`);
   }
+  if (currentVersion < 20) {
+    try { db.exec(`ALTER TABLE meetings ADD COLUMN querying_participants TEXT`); } catch { /* exists */ }
+    db.exec(`INSERT OR REPLACE INTO _loom_meta (key, value) VALUES ('schema_version', '20')`);
+  }
   db.exec("COMMIT");
   } catch (err) {
     db.exec("ROLLBACK");
