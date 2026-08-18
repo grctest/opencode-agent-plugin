@@ -1,6 +1,6 @@
-import { memo, useMemo, useState } from "react";
+import { memo, useMemo, useState, useCallback } from "react";
 import { cn } from "../utils.js";
-import { ParticipantCard, ContentDialog, renderMarkdown } from "./Cards.jsx";
+import { ParticipantCard, ContentDialog, OrchestratorDetailDialog, renderMarkdown } from "./Cards.jsx";
 import { TierBadge, StatusBadge } from "./Badges.jsx";
 import { List } from "react-window";
 
@@ -75,11 +75,27 @@ const Sidebar = memo(function Sidebar({
   connected,
   reconnectAttempt,
   reflectingParticipants,
+  orchestratorMessages,
 }) {
   const [selectedParticipant, setSelectedParticipant] = useState(null);
+  const [orchestratorDialogOpen, setOrchestratorDialogOpen] = useState(false);
   const [modelDialogOpen, setModelDialogOpen] = useState(false);
   const [availableModels, setAvailableModels] = useState([]);
   const [switching, setSwitching] = useState(false);
+
+  const orchestratorActionCount = useMemo(() => {
+    return (orchestratorMessages ?? []).length;
+  }, [orchestratorMessages]);
+
+  const highestTierModel = useMemo(() => {
+    if (!participants || participants.length === 0) return null;
+    const tierOrder = ["principal", "senior", "mid", "junior"];
+    for (const tier of tierOrder) {
+      const p = participants.find((pp) => pp.tier === tier && pp.model_id);
+      if (p) return `${p.provider_id}/${p.model_id}`;
+    }
+    return null;
+  }, [participants]);
 
   const errorByParticipant = useMemo(() => {
     const map = new Map();
@@ -188,6 +204,35 @@ const Sidebar = memo(function Sidebar({
           <RoundIndicator current={state.round} max={state.max_rounds} status={state.status} />
         </div>
       )}
+
+      {state && (
+        <div className="loom-sidebar-section">
+          <div
+            className={cn("loom-card", "loom-sidebar-orchestrator-card", "loom-sidebar-orchestrator-card-clickable")}
+            onClick={() => setOrchestratorDialogOpen(true)}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOrchestratorDialogOpen(true); } }}
+          >
+            <div className="loom-sidebar-orchestrator-row">
+              <span className="loom-sidebar-orchestrator-icon" aria-hidden="true">🎛️</span>
+              <span className="loom-sidebar-orchestrator-name">Orchestrator</span>
+              {orchestratorActionCount > 0 && (
+                <span className="loom-badge loom-badge-orchestrator loom-sidebar-orchestrator-badge">
+                  {orchestratorActionCount}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <OrchestratorDetailDialog
+        open={orchestratorDialogOpen}
+        onClose={() => setOrchestratorDialogOpen(false)}
+        orchestratorMessages={orchestratorMessages}
+        highestTierModel={highestTierModel}
+      />
 
       {state && (
         <div className="loom-sidebar-section">

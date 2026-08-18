@@ -148,4 +148,13 @@ export class CircuitBreaker {
     const key = CircuitBreaker.#getModelKey(model);
     return this.#states.get(key) ?? { failures: 0, status: 'closed', nextAttempt: 0 };
   }
+
+  /**
+   * Returns models from the available list whose circuit breaker is not open.
+   * @param {Array<{providerID: string, modelID: string}>} availableModels
+   * @returns {Array<{providerID: string, modelID: string}>}
+   */
+  getHealthyModels(availableModels) {
+    return availableModels.filter((m) => this.isHealthy(m));
+  }
 }

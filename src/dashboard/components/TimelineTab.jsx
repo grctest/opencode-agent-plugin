@@ -20,11 +20,38 @@ const EVIDENCE_RESPONSE_HEIGHT = 80;
 const SUMMONED_RESPONSE_HEIGHT = 80;
 const ORCHESTRATOR_ITEM_HEIGHT = 80;
 
+const ModelFallbackItem = memo(({ error, participantName }) => {
+  const [expanded, setExpanded] = useState(false);
+  const name = participantName(error.participant_id);
+  const msg = error.error_message || "";
+  const parts = msg.split(" — ");
+  const modelInfo = parts[0] || msg;
+  const errorMsg = parts.slice(1).join(" — ") || "unknown error";
+
+  return (
+    <div className="loom-card loom-fallback-card">
+      <div className="loom-fallback-header" onClick={() => setExpanded(!expanded)}>
+        <span className="loom-fallback-icon" aria-hidden="true">🔄</span>
+        <span className="loom-text loom-text-sm">
+          <strong>{name}</strong> switched models — {modelInfo}
+        </span>
+        <span className="loom-fallback-toggle">{expanded ? "▼" : "▶"}</span>
+      </div>
+      {expanded && (
+        <div className="loom-fallback-details">
+          <span className="loom-text-xs loom-text-muted">{errorMsg}</span>
+        </div>
+      )}
+    </div>
+  );
+});
+
 function getRowHeight(item) {
   if (item.type === "header") {
     return HEADER_HEIGHT + (item.showExtensionMarker ? EXTENSION_MARKER_HEIGHT : 0);
   }
   if (item.type === "turn_request") return INTERJECTION_HEIGHT;
+  if (item.type === "model_fallback") return INTERJECTION_HEIGHT;
   if (item.type === "reflection") return REFLECTION_HEIGHT;
   if (item.type === "query_response") return QUERY_RESPONSE_HEIGHT;
   if (item.type === "evidence_response") return EVIDENCE_RESPONSE_HEIGHT;
@@ -216,6 +243,13 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
     return (
       <div style={style} className="loom-vrow">
         <OrchestratorItem group={item.group} onDialogOpen={onOrchestratorDialogOpen} />
+      </div>
+    );
+  }
+  if (item.type === "model_fallback") {
+    return (
+      <div style={style} className="loom-vrow">
+        <ModelFallbackItem error={item.error} participantName={participantName} />
       </div>
     );
   }
@@ -412,6 +446,13 @@ const TimelineTabBase = ({
 
         for (const tr of roundTurnRequests) {
           items.push({ type: "turn_request", turnRequest: tr });
+        }
+
+        // Add model fallback events as timeline items
+        for (const err of roundErrors) {
+          if (err.error_type === "model_fallback") {
+            items.push({ type: "model_fallback", error: err, round });
+          }
         }
 
         const roundOrchestratorMessages = orchestratorMessages

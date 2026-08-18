@@ -327,7 +327,7 @@ export class DashboardApi {
   getOrchestratorMessages(meetingId) {
     return this.#db
       .prepare(
-        `SELECT id, msg_type, role, content, created_at
+        `SELECT id, msg_type, role, content, round, created_at
          FROM orchestrator_messages WHERE meeting_id = ? ORDER BY id ASC`,
       )
       .all(meetingId)
@@ -336,6 +336,7 @@ export class DashboardApi {
         type: r.msg_type,
         role: r.role,
         content: r.content,
+        round: r.round,
         created_at: r.created_at,
       }));
   }

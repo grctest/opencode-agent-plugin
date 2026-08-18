@@ -6,6 +6,7 @@ import { Logger, extractErrorInfo } from "./logger.js";
 import { runMidRoundReflections } from "./reflection-manager.js";
 import { sanitizeForPrompt, sanitizeForDisplay } from "./utils/sanitize.js";
 import { withRetry, isRetryableError, CircuitBreaker } from "./utils/retry.js";
+import { selectFallbackModel } from "./services/model-service.js";
 import { incrementKeyedCounter, recordLatency } from "./metrics.js";
 
 export class RoundExecutor {
@@ -26,8 +27,9 @@ export class RoundExecutor {
   #callStats;
   #circuitBreaker;
   #tools;
+  #availableModels;
 
-  constructor({ client, directory, db, stateManager, vectorIndex, options, sessionManager, promptParent, getParticipantModel, logError, tools = null }) {
+  constructor({ client, directory, db, stateManager, vectorIndex, options, sessionManager, promptParent, getParticipantModel, logError, tools = null, availableModels = [] }) {
     this.#client = client;
     this.#directory = directory;
     this.#db = db;
@@ -39,6 +41,7 @@ export class RoundExecutor {
     this.#getParticipantModel = getParticipantModel;
     this.#logError = logError;
     this.#tools = tools;
+    this.#availableModels = availableModels;
     this.#failureCounts = new Map();
     this.#modelFailureTimes = new Map();
     this.#logger = new Logger();
@@ -728,14 +731,9 @@ export class RoundExecutor {
     participant.status = "speaking";
 
     const model = this.#getParticipantModel(participant);
-
-    if (!this.#circuitBreaker.isHealthy(model)) {
-      this.#logError(`model ${this.#modelKey(model)} is unhealthy, skipping`, new Error("circuit breaker open"));
-      this.#logger.warn("model_unhealthy", `Skipping ${participant.config.name} — model ${this.#modelKey(model)} unhealthy`);
-      return null;
-    }
-
     const config = getConfig();
+    const fallbackConfig = config.modelFallback;
+
     const baseTimeoutMs = config.agentTimeoutMs;
     const totalParticipants = this.#stateManager.getParticipants().length;
     const timeoutReductionFactor = totalParticipants > 0
@@ -745,7 +743,7 @@ export class RoundExecutor {
 
     const currentRound = this.#stateManager.getCurrentRound();
 
-    // Build RAG context from vector index using persona-aware query
+    // Pre-compute RAG context and prompts (model-independent)
     const recentContribs = this.#stateManager.getWeave().filter((c) => c.round != null && c.round >= currentRound - 1);
     const queryText = recentContribs.length > 0
       ? recentContribs.map((c) => c.content).join("\n")
@@ -757,74 +755,153 @@ export class RoundExecutor {
       ? ragChunks.map((c) => `[Round ${c.round}] ${c.content}`).join("\n\n")
       : "";
 
-    // Golden Sandwich: recent 3-4 contributions from current + previous round
     const recentForPrompt = this.#stateManager.getWeave().filter(
       (c) => c.round != null && c.round >= currentRound - 1,
     ).slice(-4);
 
+    const systemPrompt = buildAgentSystemPrompt(participant);
+    const userPrompt = buildAgentUserPrompt(
+      participant,
+      this.#stateManager.getStateOfPlay(),
+      ragContext,
+      recentForPrompt,
+      currentRound,
+      this.#stateManager.getQuestion(),
+      this.#stateManager.getTags(),
+    );
+
+    const promptContext = {
+      type: "agent_turn",
+      system_prompt: systemPrompt,
+      user_prompt: userPrompt,
+      state_of_play: this.#stateManager.getStateOfPlay(),
+      rag_query_text: queryText,
+      rag_chunks_used: ragChunks.map((c) => `[Round ${c.round}] ${c.content}`),
+      recent_contributions: recentForPrompt.map((c) => ({
+        id: c.id, participant_id: c.participant_id, type: c.type,
+        content: c.content, targets_which: c.targets_which,
+      })),
+      reflection: participant.reflection || null,
+      question: this.#stateManager.getQuestion(),
+      tags: this.#stateManager.getTags(),
+      round: currentRound,
+    };
+
+    // If circuit breaker already marks model unhealthy, skip straight to fallback
+    let activeModel = model;
+    if (!this.#circuitBreaker.isHealthy(model)) {
+      this.#logger.warn("model_unhealthy", `${participant.config.name} — model ${this.#modelKey(model)} unhealthy, attempting fallback`);
+      const fallback = selectFallbackModel(model, this.#availableModels, this.#circuitBreaker);
+      if (!fallback) {
+        this.#logError(`model ${this.#modelKey(model)} unhealthy and no fallback available`, new Error("circuit breaker open, no fallback"));
+        return null;
+      }
+      activeModel = fallback;
+    }
+
+    const maxRetries = fallbackConfig.enabled ? fallbackConfig.maxRetriesPerModel : 0;
+    const lastError = { value: null };
+
+    // Retry loop on the original model
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await this.#executeAgentTurn(participant, activeModel, timeoutMs, promptContext);
+        return response;
+      } catch (err) {
+        lastError.value = err;
+        const info = extractErrorInfo(err);
+        this.#recordModelFailure(activeModel);
+
+        if (attempt < maxRetries) {
+          const delay = Math.min(1000 * Math.pow(2, attempt) + Math.random() * 500, 8000);
+          this.#logger.warn("prompt_retry", `${participant.config.name} — attempt ${attempt + 1}/${maxRetries + 1} failed on ${this.#modelKey(activeModel)}, retrying in ${Math.round(delay)}ms`, info);
+          await new Promise((r) => setTimeout(r, delay));
+        }
+      }
+    }
+
+    // All retries on original model exhausted — attempt fallback
+    if (!fallbackConfig.enabled) {
+      this.#recordFallbackFailure(participant, activeModel, null, lastError.value);
+      return null;
+    }
+
+    const fallbackModel = selectFallbackModel(activeModel, this.#availableModels, this.#circuitBreaker);
+    if (!fallbackModel) {
+      this.#recordFallbackFailure(participant, activeModel, null, lastError.value);
+      return null;
+    }
+
+    this.#logger.info("model_fallback", `${participant.config.name} — falling back from ${this.#modelKey(activeModel)} to ${this.#modelKey(fallbackModel)}`);
+    this.#options.onProgress?.(`⚠️ ${participant.config.name}'s model (${this.#modelKey(activeModel)}) failed — retrying with ${this.#modelKey(fallbackModel)}`);
+
+    const fallbackAttempts = fallbackConfig.maxFallbackAttempts;
+    for (let attempt = 0; attempt <= fallbackAttempts; attempt++) {
+      try {
+        const response = await this.#executeAgentTurn(participant, fallbackModel, timeoutMs, promptContext);
+        // Attach fallback metadata to the response
+        response._fallback = {
+          from: this.#modelKey(activeModel),
+          to: this.#modelKey(fallbackModel),
+          error: lastError.value ? extractErrorInfo(lastError.value).message : "unknown",
+        };
+        return response;
+      } catch (err) {
+        lastError.value = err;
+        const info = extractErrorInfo(err);
+        this.#recordModelFailure(fallbackModel);
+
+        if (attempt < fallbackAttempts) {
+          const delay = Math.min(1000 * Math.pow(2, attempt) + Math.random() * 500, 8000);
+          this.#logger.warn("fallback_retry", `${participant.config.name} — fallback attempt ${attempt + 1}/${fallbackAttempts + 1} failed on ${this.#modelKey(fallbackModel)}, retrying in ${Math.round(delay)}ms`, info);
+          await new Promise((r) => setTimeout(r, delay));
+        }
+      }
+    }
+
+    // Both original and fallback failed
+    this.#recordFallbackFailure(participant, activeModel, fallbackModel, lastError.value);
+    return null;
+  }
+
+  #recordFallbackFailure(participant, originalModel, fallbackModel, error) {
+    const info = error ? extractErrorInfo(error) : { message: "unknown error" };
+    const fallbackMsg = fallbackModel
+      ? `Original: ${this.#modelKey(originalModel)}, Fallback: ${this.#modelKey(fallbackModel)}`
+      : `Model: ${this.#modelKey(originalModel)}, No fallback available`;
+    this.#db.recordAgentError(
+      this.#stateManager.getMeetingId(), participant.config.id, this.#stateManager.getCurrentRound(),
+      "model_fallback", `${fallbackMsg} — ${info.message}`, 1,
+    );
+    this.#logger.error("model_fallback_failed", `${participant.config.name} failed on all models`, {
+      original: this.#modelKey(originalModel),
+      fallback: fallbackModel ? this.#modelKey(fallbackModel) : null,
+      ...info,
+    });
+  }
+
+  async #executeAgentTurn(participant, model, timeoutMs, promptContext) {
+    const config = getConfig();
+    const currentRound = this.#stateManager.getCurrentRound();
     const ephemeralSessionId = await this.#options.createEphemeralSession(participant);
-
-    // Register ephemeral session → meeting mapping for tool resolution
     this.#sessionManager.registerSessionMeeting(ephemeralSessionId, this.#stateManager.getMeetingId());
-
     let ephemeralSessionIdToDelete = ephemeralSessionId;
 
     try {
       this.#callStats.agent_prompts++;
       const llmStart = Date.now();
 
-      // Build boolean filter map for the prompt call (only when agent tools are enabled)
-      // SDK expects { [toolName]: boolean }, NOT the raw tool definition objects
+      const toolsMap = this.#buildToolsMap(config);
       const agentToolsConfig = config.agentTools;
-      const toolsMap = {};
-      if (agentToolsConfig?.enabled) {
-        const builtIn = agentToolsConfig.builtIn;
-        if (builtIn?.web_fetch) toolsMap.web_fetch = true;
-        if (builtIn?.web_search) toolsMap.web_search = true;
-        if (builtIn?.read) toolsMap.read = true;
-        if (builtIn?.bash?.enabled || builtIn?.bash === true) toolsMap.bash = true;
-        if (builtIn?.glob) toolsMap.glob = true;
-        if (builtIn?.grep) toolsMap.grep = true;
-        if (builtIn?.lsp) toolsMap.lsp = true;
-        if (agentToolsConfig.loom?.loom_vector_search) toolsMap.loom_vector_search = true;
-      }
-
-      const systemPrompt = buildAgentSystemPrompt(participant);
-      const userPrompt = buildAgentUserPrompt(
-        participant,
-        this.#stateManager.getStateOfPlay(),
-        ragContext,
-        recentForPrompt,
-        currentRound,
-        this.#stateManager.getQuestion(),
-        this.#stateManager.getTags(),
-      );
-
-      const promptContext = {
-        type: "agent_turn",
-        system_prompt: systemPrompt,
-        user_prompt: userPrompt,
-        state_of_play: this.#stateManager.getStateOfPlay(),
-        rag_query_text: queryText,
-        rag_chunks_used: ragChunks.map((c) => `[Round ${c.round}] ${c.content}`),
-        recent_contributions: recentForPrompt.map((c) => ({
-          id: c.id, participant_id: c.participant_id, type: c.type,
-          content: c.content, targets_which: c.targets_which,
-        })),
-        reflection: participant.reflection || null,
-        question: this.#stateManager.getQuestion(),
-        tags: this.#stateManager.getTags(),
-        round: currentRound,
-      };
 
       const result = await withTimeout(
         this.#client.session.prompt({
           path: { id: ephemeralSessionId },
           body: {
-            system: systemPrompt,
+            system: promptContext.system_prompt,
             model,
             temperature: participant.tier_config.temperature,
-            parts: [{ type: "text", text: userPrompt }],
+            parts: [{ type: "text", text: promptContext.user_prompt }],
             tools: toolsMap,
             tool_choice: Object.keys(toolsMap).length > 0 ? "auto" : undefined,
           },
@@ -842,13 +919,11 @@ export class RoundExecutor {
         throw new Error(result.error.message || JSON.stringify(result.error));
       }
 
-      // Use extractAgentResponse to handle tool call parts
-      const { text: agentText, toolResults, reasoning } = extractAgentResponse(result.data);
+      const { text: agentText, toolResults } = extractAgentResponse(result.data);
 
-      // Log tool results for observability
       if (toolResults.length > 0) {
         this.#logger.info("tool_results", `${participant.config.name} used ${toolResults.length} tool(s)`, {
-          tools: toolResults.map(t => ({
+          tools: toolResults.map((t) => ({
             tool: t.tool,
             callID: t.callID,
             hasOutput: !!t.output,
@@ -857,20 +932,18 @@ export class RoundExecutor {
         });
       }
 
-      // Enforce maxToolCallsPerTurn limit
       const maxToolCalls = agentToolsConfig?.maxToolCallsPerTurn ?? 5;
       if (toolResults.length > maxToolCalls) {
         this.#logger.warn("tool_call_limit", `${participant.config.name} exceeded max tool calls (${toolResults.length}/${maxToolCalls})`);
       }
 
-      // Use the last text segment from the agent (post-tool-execution)
-      if (!agentText) return null;
+      if (!agentText) throw new Error("Empty agent response");
 
       const safeContent = sanitizeForPrompt(agentText);
       const response = parseAgentResponse(participant.config.id, safeContent);
-      if (!response) return null;
+      if (!response) throw new Error("Failed to parse agent response");
 
-      response.tool_calls = toolResults.length > 0 ? toolResults.map(t => ({
+      response.tool_calls = toolResults.length > 0 ? toolResults.map((t) => ({
         tool: t.tool,
         callID: t.callID,
         title: t.title ?? null,
@@ -884,17 +957,7 @@ export class RoundExecutor {
       this.#options.onAgentComplete?.(participant.config.id, response.content);
       ephemeralSessionIdToDelete = null;
       return response;
-    } catch (err) {
-      this.#recordModelFailure(model);
-      const info = extractErrorInfo(err);
-      this.#db.recordAgentError(
-        this.#stateManager.getMeetingId(), participant.config.id, this.#stateManager.getCurrentRound(),
-        "prompt_failed", info.message, config.maxRetryAttempts + 1,
-      );
-      this.#logger.error("participant_failed", `${participant.config.name} failed after ${config.maxRetryAttempts + 1} attempts`, info);
-      return null;
     } finally {
-      // Unregister session mapping
       this.#sessionManager.unregisterSession(ephemeralSessionId);
       if (ephemeralSessionIdToDelete) {
         this.#options.deleteEphemeralSession(ephemeralSessionIdToDelete).catch((err) => {
@@ -902,5 +965,22 @@ export class RoundExecutor {
         });
       }
     }
+  }
+
+  #buildToolsMap(config) {
+    const agentToolsConfig = config.agentTools;
+    const toolsMap = {};
+    if (agentToolsConfig?.enabled) {
+      const builtIn = agentToolsConfig.builtIn;
+      if (builtIn?.web_fetch) toolsMap.web_fetch = true;
+      if (builtIn?.web_search) toolsMap.web_search = true;
+      if (builtIn?.read) toolsMap.read = true;
+      if (builtIn?.bash?.enabled || builtIn?.bash === true) toolsMap.bash = true;
+      if (builtIn?.glob) toolsMap.glob = true;
+      if (builtIn?.grep) toolsMap.grep = true;
+      if (builtIn?.lsp) toolsMap.lsp = true;
+      if (agentToolsConfig.loom?.loom_vector_search) toolsMap.loom_vector_search = true;
+    }
+    return toolsMap;
   }
 }

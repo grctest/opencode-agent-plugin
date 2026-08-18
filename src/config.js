@@ -24,6 +24,11 @@ const DEFAULT_CONFIG = {
     failureThreshold: 3,
     resetTimeoutMs: 300000,
   },
+  modelFallback: {
+    enabled: true,
+    maxRetriesPerModel: 2,
+    maxFallbackAttempts: 1,
+  },
   agentTools: {
     enabled: true,
     builtIn: {
@@ -92,6 +97,9 @@ const NESTED_SCHEMA = {
   'agentTools.reflection.grep': { type: 'boolean' },
   'agentTools.maxToolCallsPerTurn': { type: 'number', min: 1, max: 20 },
   'agentTools.maxToolOutputTokens': { type: 'number', min: 1000, max: 20000 },
+  'modelFallback.enabled': { type: 'boolean' },
+  'modelFallback.maxRetriesPerModel': { type: 'number', min: 0, max: 5 },
+  'modelFallback.maxFallbackAttempts': { type: 'number', min: 0, max: 3 },
 };
 
 function deepMerge(target, source) {

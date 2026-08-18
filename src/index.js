@@ -1,4 +1,6 @@
 import { tool } from "@opencode-ai/plugin";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { isAgentSessionClient } from "./client-types.js";
 import { deleteMeetingFiles, deleteMeetingsBySessionId, findMeetingBySessionId, getDbPathForMeeting, getDatabasesBySessionId, loadSessionIndex, MeetingDatabase } from "./database.js";
 import { startDashboard } from "./dashboard/server.js";
@@ -6,6 +8,10 @@ import { createKnitHandler } from "./handlers/knit-handler.js";
 import { createConfig, getConfigSource, setDefaultConfigDirectory } from "./config.js";
 import { Logger } from "./logger.js";
 import { VectorIndex } from "./services/vector-index.js";
+import { resolveLoomBaseDir } from "./paths.js";
+
+const PROGRESS_PATTERN =
+  /^🎬|^⚠️|^ℹ️|is thinking\.\.\.|— synthesize:|— critique:|Round \d+ (complete|starting)|Synthesizing final output|✅ Completed|❌ Error:/;
 
 export const Loom = async (input) => {
   const { client, directory } = input;
@@ -436,6 +442,48 @@ export const Loom = async (input) => {
           await deleteMeetingsBySessionId(directory, deletedId);
         }
       }
+    },
+
+    "tool.execute.after": async (input, output) => {
+      if (input.tool !== "knit") return;
+
+      const meetingId = output.metadata?.meeting_id;
+      if (!meetingId) return;
+
+      if (output.metadata?.loom_status === "error") return;
+
+      try {
+        const baseDir = resolveLoomBaseDir(directory);
+        const filePath = join(baseDir, "meetings", `${meetingId}.md`);
+        const fullReport = readFileSync(filePath, "utf-8");
+
+        output.output =
+          "Relay the following deliberation output to the user exactly as written. " +
+          "Do not summarize, abbreviate, or reformat it. " +
+          "Output the full content below as your response.\n\n" +
+          fullReport;
+      } catch (err) {
+        // If file read fails, leave the original output unchanged
+      }
+    },
+
+    "experimental.chat.system.transform": async (input, output) => {
+      output.system.push(
+        "When a loom/knit tool completes, its output contains the full deliberation report. " +
+        "Relay the complete output to the user as your response. " +
+        "Do not summarize, reformat, or abbreviate the tool output — present it as-is.",
+      );
+    },
+
+    "experimental.chat.messages.transform": async (_input, output) => {
+      output.messages = output.messages.filter((msg) => {
+        if (msg.info.role !== "user") return true;
+        const text = msg.parts
+          .filter((p) => p.type === "text")
+          .map((p) => p.text)
+          .join("");
+        return !PROGRESS_PATTERN.test(text);
+      });
     },
   };
 };

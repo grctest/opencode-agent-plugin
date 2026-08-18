@@ -489,3 +489,97 @@ export const OrchestratorItem = memo(({ group, onDialogOpen }) => {
     </div>
   );
 });
+
+export const OrchestratorDetailDialog = memo(({ open, onClose, orchestratorMessages, highestTierModel }) => {
+  const messages = orchestratorMessages ?? [];
+
+  const stats = useMemo(() => {
+    const counts = {};
+    for (const m of messages) {
+      const t = m.type ?? "orchestrator";
+      counts[t] = (counts[t] ?? 0) + 1;
+    }
+    return counts;
+  }, [messages]);
+
+  const messagesByRound = useMemo(() => {
+    const map = new Map();
+    for (const m of messages) {
+      const r = m.round ?? 0;
+      if (!map.has(r)) map.set(r, []);
+      map.get(r).push(m);
+    }
+    return Array.from(map.entries()).sort((a, b) => b[0] - a[0]);
+  }, [messages]);
+
+  return (
+    <ContentDialog
+      open={open}
+      onClose={onClose}
+      title="Orchestrator"
+      className="loom-dialog-type-orchestrator"
+    >
+      <div className="loom-orchestrator-detail">
+        <div className="loom-participant-detail-section">
+          <span className="loom-participant-detail-label">Role</span>
+          <p className="loom-text loom-text-muted">
+            Coordinates the deliberation flow — plans turn order, summarizes rounds, checks for convergence, and moderates conflicts.
+          </p>
+        </div>
+
+        {highestTierModel && (
+          <div className="loom-participant-detail-section">
+            <span className="loom-participant-detail-label">Model</span>
+            <p className="loom-text loom-text-muted">{highestTierModel}</p>
+          </div>
+        )}
+
+        {Object.keys(stats).length > 0 && (
+          <div className="loom-participant-detail-section">
+            <span className="loom-participant-detail-label">Activity</span>
+            <div className="loom-flex loom-flex-wrap loom-gap-sm">
+              {Object.entries(stats).map(([type, count]) => {
+                const meta = ORCHESTRATOR_TYPE_META[type] || { emoji: "❓", label: type };
+                return (
+                  <span key={type} className="loom-badge loom-badge-orchestrator">
+                    {meta.emoji} {meta.label}: {count}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {messagesByRound.length > 0 && (
+          <div className="loom-participant-detail-section">
+            <span className="loom-participant-detail-label">Messages by Round</span>
+            <div className="loom-orchestrator-rounds-list">
+              {messagesByRound.map(([round, roundMsgs]) => (
+                <div key={round} className="loom-orchestrator-round-group">
+                  <span className="loom-text-xs loom-text-muted loom-orchestrator-round-label">
+                    Round {round || "?"}
+                  </span>
+                  {roundMsgs.map((m) => {
+                    const meta = ORCHESTRATOR_TYPE_META[m.type] || { emoji: "❓", label: m.type };
+                    const preview = (m.content ?? "").slice(0, 120);
+                    return (
+                      <div key={m.id} className="loom-orchestrator-msg-row">
+                        <span className="loom-badge loom-badge-orchestrator loom-badge-sm">{meta.emoji} {meta.label}</span>
+                        <span className="loom-text-xs loom-text-muted">{m.role}</span>
+                        <span className="loom-text-xs loom-orchestrator-msg-preview">{preview}{preview.length < (m.content ?? "").length ? "..." : ""}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {messages.length === 0 && (
+          <p className="loom-text loom-text-muted">No orchestrator messages recorded yet.</p>
+        )}
+      </div>
+    </ContentDialog>
+  );
+});

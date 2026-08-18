@@ -427,6 +427,7 @@ export function App() {
             connected={connected}
             reconnectAttempt={reconnectAttempt}
             reflectingParticipants={reflectingParticipants}
+            orchestratorMessages={orchestratorMessages}
           />
          </ErrorBoundary>
 

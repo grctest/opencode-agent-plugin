@@ -54,6 +54,7 @@ export class MeetingOrchestrator {
   #resume = false;
   #callStats = { orchestrator: 0, compaction: 0, moderation: 0, summary: 0, synthesis: 0, input_tokens: 0, output_tokens: 0 };
   #personaIndex = null;
+  #availableModels = [];
 
   constructor(options) {
     this.#meetingId = options.meetingId ?? crypto.randomUUID();
@@ -63,6 +64,7 @@ export class MeetingOrchestrator {
     this.#directory = options.directory;
     this.#parentSessionId = options.parentSessionId;
     this.#meetingTimeoutMs = options.meetingTimeoutMs ?? getConfig().defaultMeetingTimeoutMs;
+    this.#availableModels = options.availableModels ?? [];
 
     this.#logger = new Logger().forMeeting(this.#meetingId);
 
@@ -316,6 +318,7 @@ export class MeetingOrchestrator {
         getParticipantModel: (participant) => this.#getParticipantModel(participant, true),
         logError: (context, error) => this.#logError(context, error),
         tools: this.#options.agentTools ?? null,
+        availableModels: this.#availableModels,
       });
 
       this.#roundService = new RoundService({ roundExecutor: this.#roundExecutor });
@@ -438,7 +441,7 @@ export class MeetingOrchestrator {
     const { round: updatedRound } = await this.#roundService.runRound({
       round,
       activeParticipants,
-      promptOrchestrator: async (system, model, message, type) => this.#promptOrchestrator(system, model, message, type, round),
+      promptOrchestrator: async (system, model, message, type) => this.#promptOrchestrator(system, model, message, type, round.number),
       getHighestTierModel: () => this.#getHighestTierModel(),
       state: this.#stateManager.getState(),
     });

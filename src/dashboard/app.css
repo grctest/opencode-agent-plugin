@@ -248,6 +248,89 @@ input {
 .loom-sidebar-model-dot-error { background: #dc2626; }
 .loom-sidebar-model-dot-loading { background: #ca8a04; }
 
+/* Sidebar orchestrator card */
+.loom-sidebar-orchestrator-card {
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+
+.loom-sidebar-orchestrator-card-clickable:hover {
+  border-color: var(--color-ring);
+  background: var(--color-secondary);
+}
+
+.loom-sidebar-orchestrator-card-clickable:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+}
+
+.loom-sidebar-orchestrator-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.loom-sidebar-orchestrator-icon {
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+
+.loom-sidebar-orchestrator-name {
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.loom-sidebar-orchestrator-badge {
+  margin-left: auto;
+  font-size: 0.65rem;
+  padding: 0.1rem 0.4rem;
+}
+
+/* Orchestrator detail dialog */
+.loom-orchestrator-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.loom-orchestrator-rounds-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.loom-orchestrator-round-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.loom-orchestrator-round-label {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.loom-orchestrator-msg-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+}
+
+.loom-orchestrator-msg-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.loom-badge-sm {
+  font-size: 0.65rem;
+  padding: 0.1rem 0.35rem;
+}
+
 /* Model selector dialog options */
 .loom-sidebar-model-option {
   padding: 0.625rem 0.75rem;
@@ -507,6 +590,37 @@ input {
 
 .loom-agent-error { background: #ef4444; }
 .loom-agent-passed { background: var(--color-muted-foreground); opacity: 0.5; }
+.loom-agent-fallback { background: #f59e0b; }
+
+.loom-fallback-card {
+  background: var(--color-card);
+  border: 1px solid #f59e0b;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  margin: 0.25rem 0;
+}
+.loom-fallback-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  user-select: none;
+}
+.loom-fallback-icon {
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+.loom-fallback-toggle {
+  margin-left: auto;
+  font-size: 0.7rem;
+  color: var(--color-muted-foreground);
+}
+.loom-fallback-details {
+  margin-top: 0.375rem;
+  padding-top: 0.375rem;
+  border-top: 1px solid var(--color-border);
+}
+[data-theme="light"] .loom-fallback-card { border-color: #d97706; }
 
 @keyframes loom-pulse {
   0%, 100% { opacity: 1; transform: scale(1); }

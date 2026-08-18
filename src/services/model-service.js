@@ -241,3 +241,19 @@ export function getHighestTierModel(participants) {
   if (firstWithModel) return { providerID: firstWithModel.model.providerID, modelID: firstWithModel.model.modelID };
   return null;
 }
+
+/**
+ * Selects a random healthy model from the available pool, excluding the failing model.
+ * Uses the circuit breaker to determine which models are healthy.
+ * @param {{providerID: string, modelID: string}} currentModel - The model that failed
+ * @param {Array<AvailableModel>} availableModels - All discovered models
+ * @param {import("../utils/retry.js").CircuitBreaker} circuitBreaker - Circuit breaker instance
+ * @returns {{providerID: string, modelID: string}|null} A healthy fallback model, or null if none available
+ */
+export function selectFallbackModel(currentModel, availableModels, circuitBreaker) {
+  const healthy = circuitBreaker.getHealthyModels(availableModels)
+    .filter((m) => !(m.providerID === currentModel.providerID && m.modelID === currentModel.modelID));
+  if (healthy.length === 0) return null;
+  const picked = healthy[Math.floor(Math.random() * healthy.length)];
+  return { providerID: picked.providerID, modelID: picked.modelID };
+}

@@ -150,7 +150,7 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
     const existingMeeting = await findMeetingBySessionId(directory, sessionID);
 
     if (existingMeeting && args.fresh !== true && !args.dry_run) {
-      return handleExtend(existingMeeting, args, context, loomId, sessionID);
+      return handleExtend(existingMeeting, args, context, loomId, sessionID, available);
     }
 
     let participants;
@@ -284,6 +284,7 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
       meetingTimeoutMs: args.meeting_timeout,
       tags: derivedTags,
       agentTools,
+      availableModels: available,
       ...meetingCallbacks,
     });
 
@@ -328,7 +329,7 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
     }
   }
 
-  async function handleExtend(existingMeeting, args, context, loomId, sessionID) {
+  async function handleExtend(existingMeeting, args, context, loomId, sessionID, available = []) {
     const extDbPath = getDbPathForMeeting(directory, existingMeeting.meetingId);
     if (!extDbPath) {
       return {
@@ -367,6 +368,7 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
         convergence: args.convergence ?? "moderator_forces",
         meetingTimeoutMs: args.meeting_timeout,
         agentTools,
+        availableModels: available,
         ...meetingCallbacks,
       });
 
