@@ -3,6 +3,8 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Logger, extractErrorInfo } from "./logger.js";
 import { PersonaIndex } from "./services/persona-index.js";
+import { getConfig } from "./config.js";
+import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_QUANT } from "./services/model-manager.js";
 
 const __dirname = dirname(fileURLToPath(new URL(".", import.meta.url)));
 const composerLogger = new Logger();
@@ -283,12 +285,32 @@ export async function composeRoomWithSimilarity(question, seed, database) {
   const participants = [];
 
   const personas = getPersonas();
-  const personaIndex = new PersonaIndex(database);
-  await personaIndex.indexAll(personas);
-
   const complexity = analyzeQuestionComplexity(question);
   const count = Math.max(2, Math.min(7, getDefaultCount(complexity)));
   const roles = generateRolesFromComplexity(count, complexity);
+
+  const { isEmbedderInitialized, ensureEmbedderInitialized } = await import("./services/embedding-service.js");
+  let embedderReady = isEmbedderInitialized();
+  if (!embedderReady) {
+    try {
+      const modelName = getConfig().embeddingModel ?? DEFAULT_EMBEDDING_MODEL;
+      const quant = getConfig().embeddingQuant ?? DEFAULT_EMBEDDING_QUANT;
+      await ensureEmbedderInitialized(modelName, quant);
+      embedderReady = isEmbedderInitialized();
+    } catch {
+      embedderReady = false;
+    }
+  }
+  if (!embedderReady) {
+    composerLogger.warn(
+      "embedder_unavailable",
+      "Embedding model not initialized — using keyword-based persona selection for room composition",
+    );
+    return composeRoomByKeyword(question, personas, roles, complexity, count, used, participants);
+  }
+
+  const personaIndex = new PersonaIndex(database);
+  await personaIndex.indexAll(personas);
 
   for (const tier of roles) {
     const results = await personaIndex.search(question, tier, 5);
@@ -312,6 +334,57 @@ export async function composeRoomWithSimilarity(question, seed, database) {
     tags: derivedTags,
     complexity,
   };
+}
+
+/**
+ * Deterministic composition fallback used when no embedding model is
+ * initialized. Selects personas by keyword overlap with the question, so room
+ * composition still works without the embedder (degraded but functional).
+ */
+function composeRoomByKeyword(question, personas, roles, complexity, count, used, participants) {
+  const tokens = question.toLowerCase().split(/\W+/).filter((t) => t.length > 3);
+
+  for (const tier of roles) {
+    const tierPool = personas[tier] ?? [];
+    const scored = tierPool
+      .map((persona) => ({
+        persona,
+        score: scorePersonaForQuestion(persona, tokens),
+      }))
+      .sort((a, b) => b.score - a.score || a.persona.name.localeCompare(b.persona.name));
+
+    const candidate = scored.find(({ persona }) => !used.has(persona.name));
+    if (candidate) {
+      used.add(candidate.persona.name);
+      participants.push(buildParticipant(candidate.persona, tier));
+    }
+  }
+
+  const estimatedRounds = complexity === "high" ? 4 : complexity === "medium" ? 3 : 2;
+  const derivedTags = deriveTags(participants);
+  const reason = "keyword-based (embedding model unavailable)";
+
+  return {
+    participants,
+    estimated_rounds: estimatedRounds,
+    reasoning: `${count}-person deliberation via ${reason} for [${derivedTags.join(", ")}] topic (${complexity} complexity): ${roles.join(", ")}.`,
+    tags: derivedTags,
+    complexity,
+  };
+}
+
+function scorePersonaForQuestion(persona, tokens) {
+  const tags = getPersonaTags(persona);
+  const expertise = Array.isArray(persona.expertise) ? persona.expertise : [];
+  const haystack = [...tags, ...expertise].join(" ").toLowerCase();
+  let score = 0;
+  for (const token of tokens) {
+    if (haystack.includes(token)) score++;
+    // title/agenda matches count double
+    const personaText = `${persona.persona ?? ""} ${persona.agenda ?? ""}`.toLowerCase();
+    if (personaText.includes(token)) score += 2;
+  }
+  return score;
 }
 
 export function formatRoomPreview(room) {

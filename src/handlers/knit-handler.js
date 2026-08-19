@@ -367,6 +367,8 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
         };
       }
 
+      const allowedModelKeys = new Set(available.map((m) => `${m.providerID}/${m.modelID}`));
+
       const meetingCallbacks = createMeetingCallbacks(context, logger);
 
       const extEngine = new MeetingOrchestrator({
@@ -378,10 +380,14 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
         context: args.context ? sanitizeForPrompt(args.context, 8000) : "No additional context provided.",
         parentSessionId: sessionID,
         opencodeSessionId: sessionID,
-        participants: existingParts.map((p) => ({
-          id: p.id, name: p.name, persona: p.persona, agenda: p.agenda, tier: p.tier,
-          model: p.provider_id && p.model_id ? { providerID: p.provider_id, modelID: p.model_id } : undefined,
-        })),
+        participants: existingParts.map((p) => {
+          const modelKey = p.provider_id && p.model_id ? `${p.provider_id}/${p.model_id}` : null;
+          const modelAllowed = modelKey && allowedModelKeys.has(modelKey);
+          return {
+            id: p.id, name: p.name, persona: p.persona, agenda: p.agenda, tier: p.tier,
+            model: modelAllowed ? { providerID: p.provider_id, modelID: p.model_id } : undefined,
+          };
+        }),
         maxRounds: existingMeeting.max_rounds,
         convergence: args.convergence ?? "moderator_forces",
         meetingTimeoutMs: args.meeting_timeout,

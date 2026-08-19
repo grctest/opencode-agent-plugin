@@ -215,7 +215,6 @@ const Sidebar = memo(function Sidebar({
             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOrchestratorDialogOpen(true); } }}
           >
             <div className="loom-sidebar-orchestrator-row">
-              <span className="loom-sidebar-orchestrator-icon" aria-hidden="true">🎛️</span>
               <span className="loom-sidebar-orchestrator-name">Orchestrator</span>
               {orchestratorActionCount > 0 && (
                 <span className="loom-badge loom-badge-orchestrator loom-sidebar-orchestrator-badge">

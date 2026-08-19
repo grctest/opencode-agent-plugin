@@ -150,6 +150,22 @@ export class MeetingOrchestrator {
     return getHighestTierModel(this.#modelList());
   }
 
+  #getAllowedFallbackModel() {
+    if (!this.#availableModels || this.#availableModels.length === 0) return null;
+    const sorted = [...this.#availableModels].sort((a, b) => {
+      const score = (m) => {
+        let s = 0;
+        if (m.status === "active") s += 20;
+        s += (m.limit?.context ?? 128000) / 10000;
+        if (m.reasoning) s += 15;
+        return s;
+      };
+      return score(b) - score(a);
+    });
+    const best = sorted[0];
+    return { providerID: best.providerID, modelID: best.modelID };
+  }
+
   #getParticipantModel(participant, fallbackOnError = false) {
     if (participant.config.model) {
       const model = { providerID: participant.config.model.providerID, modelID: participant.config.model.modelID };
@@ -157,12 +173,12 @@ export class MeetingOrchestrator {
         if (this.#roundExecutor && this.#roundExecutor.isModelHealthy(model)) {
           return model;
         }
-        const fallback = this.#getHighestTierModel();
+        const fallback = this.#getAllowedFallbackModel();
         if (fallback) return fallback;
       }
       return model;
     }
-    const fallback = this.#getHighestTierModel();
+    const fallback = this.#getAllowedFallbackModel() ?? this.#getHighestTierModel();
     if (fallback) return fallback;
     throw new LoomError(
       `No model assigned for participant ${participant.config.name} (${participant.config.tier})`,
@@ -247,16 +263,18 @@ export class MeetingOrchestrator {
         this.#logger.info("meeting_upserted", "Meeting row ensured in database");
       }
 
-      // Load the embedding model if specified on the meeting row
-      const meeting = db.getMeeting();
-      if (meeting?.embedding_model) {
-        try {
-          const { initializeEmbedder, getEmbeddingDim } = await import("./services/embedding-service.js");
-          await initializeEmbedder(meeting.embedding_model, this.#directory);
-          this.#logger.info("embedder_initialized", `Embedding model loaded: ${meeting.embedding_model} (${getEmbeddingDim()}d)`);
-        } catch (err) {
-          this.#logger.warn("embedder_init_failed", `Failed to initialize embedding model: ${err.message}`, extractErrorInfo(err));
+      // Ensure a real embedder is loaded in this process. Init normally happens
+      // once at plugin startup; this is a backstop for resumed/standalone meetings
+      // and surfaces degraded semantic features loudly rather than silently.
+      try {
+        const { ensureEmbedderInitialized, getEmbeddingDim } = await import("./services/embedding-service.js");
+        const modelName = this.#options.embedding_model ?? getConfig().embeddingModel ?? null;
+        await ensureEmbedderInitialized(modelName, getConfig().embeddingQuant);
+        if (modelName) {
+          this.#logger.info("embedder_initialized", `Embedding model loaded: ${modelName} (${getEmbeddingDim()}d)`);
         }
+      } catch (err) {
+        this.#logger.warn("embedder_init_failed", `Failed to initialize embedding model: ${err.message}`, extractErrorInfo(err));
       }
 
       // Index personas into the meeting database for vector similarity search.

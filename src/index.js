@@ -9,6 +9,7 @@ import { createConfig, getConfigSource, setDefaultConfigDirectory } from "./conf
 import { Logger } from "./logger.js";
 import { VectorIndex } from "./services/vector-index.js";
 import { resolveLoomBaseDir } from "./paths.js";
+import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_QUANT } from "./services/model-manager.js";
 
 const PROGRESS_PATTERN =
   /^🎬|^⚠️|^ℹ️|is thinking\.\.\.|— synthesize:|— critique:|Round \d+ (complete|starting)|Synthesizing final output|✅ Completed|❌ Error:/;
@@ -37,6 +38,23 @@ export const Loom = async (input) => {
   for (const warning of warnings) {
     logger.warn("config_validation", warning);
   }
+
+  // Initialize the real embedding model in the plugin process so every
+  // semantic feature (vector search, reflection targeting, room composition)
+  // uses real embeddings rather than placeholder noise. This mirrors the
+  // dashboard's initEmbeddingModel(), which previously was the only place the
+  // model got loaded. Failures are non-fatal: semantic features degrade visibly.
+  const { ensureEmbedderInitialized, getEmbeddingDim } = await import("./services/embedding-service.js");
+  ensureEmbedderInitialized(DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_QUANT)
+    .then(() => {
+      logger.info("embedder_initialized", `Embedding model loaded: ${DEFAULT_EMBEDDING_MODEL} (${getEmbeddingDim()}d)`);
+    })
+    .catch((err) => {
+      logger.warn(
+        "embedder_init_failed",
+        `Failed to initialize embedding model — semantic features (vector search, reflection targeting, room composition) will be unavailable: ${err.message}`,
+      );
+    });
 
   const activeLooms = new Map();
   let activeDashboard = null;

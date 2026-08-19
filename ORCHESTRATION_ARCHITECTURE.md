@@ -78,13 +78,18 @@ else:       [senior, mid, mid, junior, junior, junior, junior]
 
 Then a seniority boost is applied: `high` shifts every tier up one level, `low` shifts everyone down one level (e.g. high → `[principal, senior, mid, mid, junior, junior, junior]`).
 
+> **Note:** `composeRoomWithSimilarity(question, seed, db)` accepts a `seed` argument but
+> the composition is actually driven purely by the question's similarity search — the seed
+> is ignored. The `seed` argument and its `/knit` surface are candidates for removal
+> (see `docs/dead-code-review.md` §7).
+
 ### Step 2: Similarity-Based Persona Selection
 
 There is **no LLM domain detection** — the now-removed `domain` pipeline was replaced by embedding-based selection.
 
 1. All personas are loaded from JSON files (`personas/<tier>/*.json`, or legacy `<tier>.json` arrays) and embedded into the meeting database via `PersonaIndex.indexAll()` (tables `persona_embeddings` + `vec_persona_embeddings`, FK to `meetings(id)`).
 2. For each role tier in the role list, `PersonaIndex.search(question, tier, 5)` returns the 5 most similar personas for that tier; the first persona not already used is selected.
-3. A **seeded PRNG** (seed derived from the question text, overridable with the `seed` arg) makes composition reproducible.
+3. ~(Seeded PRNG note removed — the seed arg is not used, see note above. Selection is deterministic given the same question and persona index.)
 4. Meeting-level `tags` are derived from the selected participants' most common tags (top 3).
 5. Estimated rounds: high=4, medium=3, low=2.
 
@@ -715,7 +720,7 @@ The meeting terminates when any of these hold after a round:
 | All participants have passed or failed (`activeCount === 0`) | early termination |
 | `current_round >= max_rounds` | guaranteed termination |
 
-The `convergence` argument (`consensus` / `majority` / `moderator_forces`, default `moderator_forces`) is stored and used to gate the LLM round summary (Section 13); it no longer drives weighted convergence scoring. Hard timeouts (absolute meeting timeout, stall watchdog) and user cancellation also stop the weave loop and proceed to synthesis.
+The legacy `convergence` argument (`consensus` / `majority` / `moderator_forces`) is stored for backward-compatibility but is no longer part of the `/knit` contract; termination is deterministic (see table above). Hard timeouts (absolute meeting timeout, stall watchdog) and user cancellation also stop the weave loop and proceed to synthesis.
 
 Terminal statuses: `converged`, `cancelled`, `timeout`, `max_rounds_reached`, `aborted`, `deadlocked` (the last two surface via the state machine but are not produced by the current orchestration paths; `max_rounds_reached` and `deadlocked` are reserved).
 
@@ -1274,9 +1279,13 @@ const ragChunks = await vectorIndex.retrieveRelevant(queryText, 5, currentRound)
 
 When no RAG context is available (early rounds, empty index), this section is omitted.
 
-### Semantic Drift Detection (Unused)
+### Semantic Drift Detection (Removed)
 
-`computeSemanticDrift(roundA, roundB)` computes centroid cosine distance between two rounds, but it is **not wired into any convergence check** — it's a legacy utility.
+`computeSemanticDrift(roundA, roundB)` computed centroid cosine distance between two
+rounds, but it was never wired into any check — it was a legacy utility and is being
+removed (see `docs/dead-code-review.md`). If revived, it should feed the dashboard drift
+visualization (`docs/drift-visualization.md`), which requires the embedder fix in
+`docs/embedder-init-issue.md`.
 
 ---
 
@@ -1550,7 +1559,7 @@ On dashboard start, the embedding model is initialized eagerly (status tracked: 
 
 Exposed as a plugin tool (`knit`) — invoked when the user types `/knit <question>`.
 
-**Args:** `question`, `context`, `participants` (custom room), `max_rounds` (default from config: 3), `convergence` (`consensus|majority|moderator_forces`, default `moderator_forces`), `models` (explicit per-tier assignment, e.g. `[{ tier: "senior", provider_id: "anthropic", model_id: "claude-sonnet-4-..." }]`), `meeting_timeout` (ms, default 900000), `seed` (reproducible composition), `dry_run` (preview room without deliberating), `fresh` (replace an existing meeting for the session).
+**Args:** `question`, `context`, `participants` (custom room), `max_rounds` (default from config: 3), `models` (explicit per-tier assignment, e.g. `[{ tier: "senior", provider_id: "anthropic", model_id: "claude-sonnet-4-..." }]`), `meeting_timeout` (ms, default 900000), `dry_run` (preview room without deliberating), `fresh` (replace an existing meeting for the session).
 
 ### Handler Flow (`createKnitHandler`)
 
@@ -1605,7 +1614,12 @@ The handler wires metadata callbacks to the chat context for live UX:
 
 A simple process-wide collector with three buckets, exposed via `/api/metrics` and `getMetricsSnapshot()`:
 
-- **Counters** — `llm_calls_by_type` (agent/synthesis/…), `llm_errors_by_type`, `contributions_by_type`, `turn_requests_granted/denied`, `reflections_generated`, `syntheses_completed/failed`, `meetings_started/completed/failed`, `session_recreations`, `input_tokens`, `output_tokens`.
+> **Note:** Most counters and gauges are defined but never written. The two live telemetry
+> paths are `llm_calls_by_type` (agent/synthesis) and the `llm_prompt_ms` / `synthesis_ms`
+> latency buckets (see `docs/metrics-and-observability.md`). The counters below are listed
+> verbatim from `metrics.js` for accuracy, not because they are populated.
+
+- **Counters** — `llm_calls_by_type` (agent/synthesis), `llm_errors_by_type`, `contributions_by_type`, `turn_requests_granted/denied`, `reflections_generated`, `syntheses_completed/failed`, `meetings_started/completed/failed`, `session_recreations`, `input_tokens`, `output_tokens`.
 - **Latencies** — `llm_prompt_ms`, `reflection_ms`, `synthesis_ms` (last 100 samples; aggregated into count/avg/p50/p95/max).
 - **Gauges** — `active_meetings`, `active_sessions`.
 
@@ -1672,7 +1686,7 @@ Loaded from `.loomrc.json` (project or `~/.config/opencode/.loomrc.json`), or th
 | `synthesisTimeoutMs` | 180,000 | Synthesis draft/critique call timeout |
 | `maxTurnRequestWords` | 200 | (Reserved — not enforced by current planner) |
 | `defaultMaxRounds` | 3 | Default meeting rounds |
-| `minRounds` | 2 | Minimum rounds before moderator convergence is honored |
+| `minRounds` | 2 | Minimum rounds before the moderator can end the deliberation |
 | `fastPathModel` | `""` | Model for cheap orchestrator calls (empty = disabled) |
 | `maxRetryAttempts` | 2 | Retries for session creation / orchestrator prompts |
 | `retryBaseDelayMs` | 1,000 | Base retry delay |

@@ -580,16 +580,6 @@ export const OrchestratorDetailDialog = memo(({ open, onClose, orchestratorMessa
     return counts;
   }, [messages]);
 
-  const messagesByRound = useMemo(() => {
-    const map = new Map();
-    for (const m of messages) {
-      const r = m.round ?? 0;
-      if (!map.has(r)) map.set(r, []);
-      map.get(r).push(m);
-    }
-    return Array.from(map.entries()).sort((a, b) => b[0] - a[0]);
-  }, [messages]);
-
   return (
     <ContentDialog
       open={open}
@@ -624,32 +614,6 @@ export const OrchestratorDetailDialog = memo(({ open, onClose, orchestratorMessa
                   </span>
                 );
               })}
-            </div>
-          </div>
-        )}
-
-        {messagesByRound.length > 0 && (
-          <div className="loom-participant-detail-section">
-            <span className="loom-participant-detail-label">Messages by Round</span>
-            <div className="loom-orchestrator-rounds-list">
-              {messagesByRound.map(([round, roundMsgs]) => (
-                <div key={round} className="loom-orchestrator-round-group">
-                  <span className="loom-text-xs loom-text-muted loom-orchestrator-round-label">
-                    Round {round || "?"}
-                  </span>
-                  {roundMsgs.map((m) => {
-                    const meta = ORCHESTRATOR_TYPE_META[m.type] || { emoji: "❓", label: m.type };
-                    const preview = (m.content ?? "").slice(0, 120);
-                    return (
-                      <div key={m.id} className="loom-orchestrator-msg-row">
-                        <span className="loom-badge loom-badge-orchestrator loom-badge-sm">{meta.emoji} {meta.label}</span>
-                        <span className="loom-text-xs loom-text-muted">{m.role}</span>
-                        <span className="loom-text-xs loom-orchestrator-msg-preview">{preview}{preview.length < (m.content ?? "").length ? "..." : ""}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              ))}
             </div>
           </div>
         )}

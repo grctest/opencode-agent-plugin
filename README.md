@@ -2,13 +2,13 @@
 
 > A multi-agent deliberation protocol for opencode — a knitting machine for AI agents.
 
-The Loom lets you convene a circle of AI agents with different expertise, seniority levels, and agendas. Each agent runs in its own child session. They take structured turns, request turns with priority, challenge each other, and collaboratively weave complex artifacts through deliberation with governed convergence.
+The Loom lets you convene a circle of AI agents with different expertise, seniority levels, and agendas. Each agent runs in its own child session. They take structured turns, request turns with priority, challenge each other, and collaboratively weave complex artifacts through deliberation.
 
 ## How It Works
 
 You ask a question. The Loom uses an LLM to detect the domain — engineering, finance, business, creative, executive, or operations — and composes a team of AI agents with relevant expertise. Each agent runs in its own isolated session with its own model.
 
-Agents deliberate in structured rounds: proposing ideas, challenging weak arguments, refining positions, and pushing back on assumptions. They can request turns with priority when they have something urgent to say. When agents stall or go in circles, a **moderator** — a separate LLM call using the strongest available model — steps in to break the deadlock, redirect the conversation, or force convergence. Once deliberation ends, a **synthesizer** produces the final artifact: decisions, action items, unresolved dissent, and a confidence level.
+Agents deliberate in structured rounds: proposing ideas, challenging weak arguments, refining positions, and pushing back on assumptions. They can request turns with priority when they have something urgent to say. When agents stall or go in circles, a **moderator** — a separate LLM call using the strongest available model — steps in to break the deadlock, redirect the conversation, or wrap the deliberation up. Deliberation ends when participants all pass, the round limit is reached, or a hard timeout fires. Once it ends, a **synthesizer** produces the final artifact: decisions, action items, unresolved dissent, and a confidence level.
 
 A real-time web dashboard shows every agent contributing as it happens. If you run `/knit` again in the same session, it extends the existing deliberation rather than starting fresh.
 
@@ -16,16 +16,16 @@ A real-time web dashboard shows every agent contributing as it happens. If you r
 
 - **Structured turn-taking** with priority turn requests
 - **Tier-based roles** — junior to principal, each with escalating expectations and rights
-- **Moderator agent** — spawned on demand to break deadlocks and force convergence
-- **Deterministic convergence** — early termination when all agents pass, or at round limit
+- **Moderator agent** — spawned on demand to break deadlocks and drive the deliberation to a close
+- **Deterministic termination** — participants all pass, round limit reached, or hard timeout
 - **Minority report** — unresolved dissenting views are preserved in the output
 - **Meeting extension** — re-run `/knit` to continue a deliberation with new input
 - **Auto-composed rooms** — persona selection based on your question's domain
 - **Model discovery** — finds available models from your opencode providers, assigns per tier
-- **Custom rooms** — bring your own participants, models, convergence mode, and round limits
+- **Custom rooms** — bring your own participants, models, and round limits
 - **Real-time dashboard** — tabs for Overview, Timeline, and Output
 - **Markdown export** — download the full transcript from the dashboard
-- **Configurable** — tune timeouts, word limits, convergence, and more via config
+- **Configurable** — tune timeouts, retry behavior, and tool access via config
 
 ## Installation
 
@@ -85,9 +85,9 @@ Models are stored globally at:
 
 1. **RAG Context Retrieval** — Round summaries and contributions are chunked, embedded, and indexed. When prompting agents, the system retrieves relevant prior context using cosine similarity.
 
-2. **Semantic Drift Detection** — Embeddings are available for computing semantic drift between rounds, though this is not currently used in the convergence system.
+2. **Semantic Drift Detection** — Embeddings are available for computing semantic drift between rounds, but drift is not currently computed or visualized.
 
-3. **Token-Aware Chunking** — Text is split into chunks that respect the model's token limit. This ensures embeddings are accurate and not truncated.
+> ⚠️ **Status:** The embedding model is now initialized at plugin startup, so `/knit` meetings use real embeddings (see `docs/embedder-init-issue.md`). If the model is unavailable, semantic features (vector search, reflection targeting, room composition) degrade visibly via a keyword-based fallback and warnings rather than silent placeholder noise.
 
 ## Quick Start
 
@@ -134,12 +134,9 @@ loom_viz
 | `context` | Additional context, background files, or constraints | — |
 | `participants` | Custom participant list (name, persona, agenda, tier) | auto-composed from domain |
 | `max_rounds` | Maximum deliberation rounds (1–10) | `3` |
-| `convergence` | `consensus`, `majority`, or `moderator_forces` | `moderator_forces` |
 | `models` | Per-tier model assignments (use `/knit_models` to discover) | auto-assigned |
 | `meeting_timeout` | Maximum meeting duration in ms (60000–1800000) | `900000` (15 min) |
-| `seed` | Random seed for room composition | current time |
 | `fresh` | Force a fresh loom even if a previous meeting exists | `false` |
-| `turn_mode` | `sequential` (default), `staged` (2-at-a-time), or `parallel` (all concurrently) | `sequential` |
 
 ### `knit_models` arguments
 
@@ -192,7 +189,6 @@ The Loom can be configured via a `"loom"` key in your `opencode.json` or via a p
 ```json
 {
   "loom": {
-    "maxContributionWords": 250,
     "defaultMaxRounds": 3
   }
 }
@@ -207,19 +203,19 @@ Project-level equivalent in `.loomrc.json` (same keys, no `"loom"` wrapper):
 }
 ```
 
-Other available options include agent and synthesis timeouts, word limits, turn request thresholds, moderator triggers, retry policy, max concurrency, meeting timeout, and stall detection (`stallTimeoutMs`, default 5 min).
+Other available options include agent and synthesis timeouts, turn request thresholds, moderator triggers, retry policy, max tool calls, meeting timeout, and stall detection (`stallTimeoutMs`, default 5 min).
 
 ## Known Limitations
 
 - Desktop-only webapp — not optimized for mobile viewports
 - No authentication or authorization on the dashboard API
 - SQLite-based persistence — not suitable for horizontal scaling
-- In-memory metrics are lost on process restart (meeting metrics are persisted to DB)
+- Per-meeting metrics are persisted to DB; process-wide counters in `metrics.js` are lost on restart and are mostly unpopulated (see `docs/metrics-and-observability.md`)
 - SSE reconnection uses exponential backoff but falls back to polling after 10 attempts
 - Fabric compaction uses LLM for semantic compression; falls back to rule-based extraction on failure
-- Dashboard does not show historical meeting data by default (single-meeting view)
+- Dashboard shows the most recent meeting by default (single-meeting view; `/api/meetings` can switch)
 - No PDF export capability
-- Agent reflection data is stored per-participant but not surfaced in all views
+- Semantic retrieval and drift are degraded while the plugin-process embedder fix is pending (`docs/embedder-init-issue.md`)
 
 ## License
 

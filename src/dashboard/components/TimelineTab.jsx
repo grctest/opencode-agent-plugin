@@ -668,14 +668,19 @@ const TimelineTabBase = ({
         }
 
         const roundSummary = roundSummaries[round];
-        if (roundSummary) {
-          const summaryMsgs = roundOrchestratorMessages.filter((m) => m.type === "summary");
-          const summaryGroups = pairOrchestratorMessages(summaryMsgs);
-          const summaryGroup = summaryGroups[0] ?? {
-            query: null,
-            response: { type: "summary", role: "assistant", content: roundSummary, created_at: null },
-          };
-          items.push({ type: "round_summary", round, summary: roundSummary, group: summaryGroup });
+        const summaryMsgs = roundOrchestratorMessages.filter((m) => m.type === "summary");
+        // Only render the rounds-table summary when no LLM summary exchange
+        // was recorded — otherwise the grey OrchestratorItem already shows it.
+        if (roundSummary && summaryMsgs.length === 0) {
+          items.push({
+            type: "round_summary",
+            round,
+            summary: roundSummary,
+            group: {
+              query: null,
+              response: { type: "summary", role: "assistant", content: roundSummary, created_at: null },
+            },
+          });
         }
       }
     }
