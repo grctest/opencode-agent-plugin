@@ -19,7 +19,7 @@ export function parseAgentResponse(participantId, response, tier) {
   }
 
   if (text === "[PASS]") {
-    return { participant_id: participantId, content: "[PASS]", type: "propose", request_next: null, query: null, evidence: null, summon: null };
+    return { participant_id: participantId, content: "[PASS]", type: "propose", request_next: null, query: null, evidence: null, summon: null, vote: null };
   }
 
   // Parse raw response (extracts type prefix and request_next directive)
@@ -35,6 +35,7 @@ export function parseAgentResponse(participantId, response, tier) {
     query: parsed.query,
     evidence: parsed.evidence,
     summon: parsed.summon,
+    vote: parsed.vote,
   });
 
   if (result.success) {
@@ -56,5 +57,6 @@ export function parseAgentResponse(participantId, response, tier) {
     query: null,
     evidence: null,
     summon: null,
+    vote: null,
   };
 }

@@ -348,6 +348,17 @@ export class DashboardApi {
     return row.maxId ?? 0;
   }
 
+  getRoundSummaries(meetingId) {
+    const rows = this.#db
+      .prepare(
+        `SELECT round, summary FROM rounds WHERE meeting_id = ? ORDER BY round ASC`,
+      )
+      .all(meetingId);
+    const map = {};
+    for (const r of rows) map[r.round] = r.summary;
+    return map;
+  }
+
   getMaxErrorId() {
     const row = this.#db
       .prepare(`SELECT MAX(id) as maxId FROM agent_errors`)

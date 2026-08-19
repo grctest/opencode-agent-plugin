@@ -387,6 +387,84 @@ export const SummonedResponseRow = memo(({ summonedResponse, participantName, on
   );
 });
 
+export const VoteResponseRow = memo(({ voteResponse, contributions, participantName, onDialogOpen }) => {
+  const source = useMemo(() => {
+    if (!voteResponse.targets_which) return null;
+    return contributions.find((c) => c.id === voteResponse.targets_which);
+  }, [voteResponse.targets_which, contributions]);
+
+  const sourceAgentName = source ? participantName(source.participant_id) : "another agent";
+  const voterName = participantName(voteResponse.participant_id);
+
+  const content = voteResponse.content ?? "";
+  const stripped = useMemo(() => {
+    return content.replace(/^\[Vote from .+?\]\s*/m, "");
+  }, [content]);
+  const isLong = stripped.length > 300;
+  const html = useMemo(() => renderMarkdown(stripped), [stripped]);
+
+  const openDialog = () => onDialogOpen?.({ contribution: voteResponse, participantName: voterName, isVoteResponse: true, sourceAgentName });
+
+  return (
+    <div
+      className={cn("loom-card", "loom-contribution-card", "loom-contrib-type-vote_response", "loom-vote-response-row", isLong && "loom-contrib-clickable")}
+      onClick={openDialog}
+      role={isLong ? "button" : undefined}
+      tabIndex={isLong ? 0 : undefined}
+      onKeyDown={isLong ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDialog(); } } : undefined}
+    >
+      <div>
+        <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">
+          <span className="loom-badge loom-badge-vote_response">vote</span>
+          <span className="loom-text-xs loom-text-muted">{voterName} voted on poll from {sourceAgentName} (Round {voteResponse.round})</span>
+          <span className="loom-text-xs loom-text-muted">{relativeTime(voteResponse.created_at)}</span>
+        </div>
+      </div>
+      {isLong ? (
+        <p className="loom-text loom-text-muted">{stripped.slice(0, 300)}...</p>
+      ) : (
+        <div className="loom-prose" dangerouslySetInnerHTML={{ __html: html }} />
+      )}
+    </div>
+  );
+});
+
+export const VoteTallyRow = memo(({ tally, participantName, onDialogOpen }) => {
+  const orchestratorName = participantName(tally.participant_id);
+
+  const content = tally.content ?? "";
+  const stripped = useMemo(() => {
+    return content.replace(/^\[Vote Tally\]\s*/m, "");
+  }, [content]);
+  const isLong = stripped.length > 300;
+  const html = useMemo(() => renderMarkdown(stripped), [stripped]);
+
+  const openDialog = () => onDialogOpen?.({ contribution: tally, participantName: orchestratorName, isVoteTally: true });
+
+  return (
+    <div
+      className={cn("loom-card", "loom-contribution-card", "loom-contrib-type-vote_tally", "loom-vote-tally-row", isLong && "loom-contrib-clickable")}
+      onClick={openDialog}
+      role={isLong ? "button" : undefined}
+      tabIndex={isLong ? 0 : undefined}
+      onKeyDown={isLong ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDialog(); } } : undefined}
+    >
+      <div>
+        <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">
+          <span className="loom-badge loom-badge-vote_tally">tally</span>
+          <span className="loom-text-xs loom-text-muted">Vote tally by {orchestratorName} (Round {tally.round})</span>
+          <span className="loom-text-xs loom-text-muted">{relativeTime(tally.created_at)}</span>
+        </div>
+      </div>
+      {isLong ? (
+        <p className="loom-text loom-text-muted">{stripped.slice(0, 300)}...</p>
+      ) : (
+        <div className="loom-prose" dangerouslySetInnerHTML={{ __html: html }} />
+      )}
+    </div>
+  );
+});
+
 export const AgentPerspective = memo(({ participant, stateOfPlay, recentContributions, reflection }) => {
   return (
     <div className="loom-card loom-agent-perspective">
@@ -476,12 +554,12 @@ export const OrchestratorItem = memo(({ group, onDialogOpen }) => {
     <div
       role="button"
       tabIndex={0}
-      className="loom-card loom-card-dashed loom-orchestrator-item"
+      className="loom-card loom-card-dashed loom-orchestrator-item loom-orchestrator-item-row"
       onClick={openDialog}
       onKeyDown={onKeyDown}
     >
       <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center loom-mb-xs">
-        <span className="loom-orchestrator-item-emoji" aria-hidden="true">{meta.emoji}</span>
+        <span className="loom-orchestrator-item-name">Orchestrator</span>
         <span className="loom-badge loom-badge-orchestrator">{meta.label}</span>
         <span className="loom-text-xs loom-text-muted">{relativeTime(timestamp)}</span>
       </div>

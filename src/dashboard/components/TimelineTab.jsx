@@ -1,6 +1,6 @@
 import { useRef, useMemo, useCallback, useState, memo } from "react";
 import { cn, relativeTime } from "../utils.js";
-import { ContributionItem, TurnRequestItem, ThinkingCard, ReflectionRow, QueryResponseRow, EvidenceResponseRow, SummonedResponseRow, OrchestratorItem, ORCHESTRATOR_TYPE_META, ContentDialog, renderMarkdown } from "./Cards.jsx";
+import { ContributionItem, TurnRequestItem, ThinkingCard, ReflectionRow, QueryResponseRow, EvidenceResponseRow, SummonedResponseRow, VoteResponseRow, VoteTallyRow, OrchestratorItem, ORCHESTRATOR_TYPE_META, ContentDialog, renderMarkdown } from "./Cards.jsx";
 import { LoadingSkeleton } from "./Skeleton.jsx";
 import { List } from "react-window";
 
@@ -18,7 +18,11 @@ const REFLECTION_HEIGHT = 80;
 const QUERY_RESPONSE_HEIGHT = 80;
 const EVIDENCE_RESPONSE_HEIGHT = 80;
 const SUMMONED_RESPONSE_HEIGHT = 80;
+const VOTE_RESPONSE_HEIGHT = 80;
+const VOTE_TALLY_HEIGHT = 100;
 const ORCHESTRATOR_ITEM_HEIGHT = 80;
+
+const ROUND_SUMMARY_HEIGHT = 88;
 
 const ModelFallbackItem = memo(({ error, participantName }) => {
   const [expanded, setExpanded] = useState(false);
@@ -46,16 +50,62 @@ const ModelFallbackItem = memo(({ error, participantName }) => {
   );
 });
 
+const RoundSummaryItem = memo(({ summary, group, onDialogOpen }) => {
+  const openDialog = () => onDialogOpen?.({ orchestratorGroup: group, type: "summary" });
+  const onKeyDown = (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openDialog();
+    }
+  };
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      className="loom-card loom-card-dashed loom-round-summary"
+      onClick={openDialog}
+      onKeyDown={onKeyDown}
+    >
+      <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center loom-mb-xs">
+        <span className="loom-orchestrator-item-name">Orchestrator</span>
+        <span className="loom-badge loom-badge-orchestrator">{ORCHESTRATOR_TYPE_META.summary.label}</span>
+      </div>
+      <div className="loom-round-summary-content loom-text loom-text-muted">{summary}</div>
+    </div>
+  );
+});
+
+function pairOrchestratorMessages(messages) {
+  const groups = [];
+  let i = 0;
+  while (i < messages.length) {
+    const msg = messages[i];
+    if (msg.role === "user") {
+      const response = messages[i + 1]?.role === "assistant" ? messages[i + 1] : null;
+      groups.push({ query: msg, response });
+      i += response ? 2 : 1;
+    } else {
+      groups.push({ query: null, response: msg });
+      i += 1;
+    }
+  }
+  return groups;
+}
+
 function getRowHeight(item) {
   if (item.type === "header") {
     return HEADER_HEIGHT + (item.showExtensionMarker ? EXTENSION_MARKER_HEIGHT : 0);
   }
+  if (item.type === "round_summary") return ROUND_SUMMARY_HEIGHT;
   if (item.type === "turn_request") return INTERJECTION_HEIGHT;
   if (item.type === "model_fallback") return INTERJECTION_HEIGHT;
   if (item.type === "reflection") return REFLECTION_HEIGHT;
   if (item.type === "query_response") return QUERY_RESPONSE_HEIGHT;
   if (item.type === "evidence_response") return EVIDENCE_RESPONSE_HEIGHT;
   if (item.type === "summoned_response") return SUMMONED_RESPONSE_HEIGHT;
+  if (item.type === "vote_response") return VOTE_RESPONSE_HEIGHT;
+  if (item.type === "vote_tally") return VOTE_TALLY_HEIGHT;
   if (item.type === "orchestrator") return ORCHESTRATOR_ITEM_HEIGHT;
   if (item.type === "thinking_turn") return THINKING_TURN_HEIGHT;
   if (item.type === "thinking_reflection") return THINKING_REFLECTION_HEIGHT;
@@ -232,6 +282,36 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
       </div>
     );
   }
+  if (item.type === "vote_response") {
+    return (
+      <div style={style} className="loom-vrow loom-vrow-vote-response">
+        <VoteResponseRow
+          voteResponse={item.voteResponse}
+          contributions={contributions}
+          participantName={participantName}
+          onDialogOpen={onDialogOpen}
+        />
+      </div>
+    );
+  }
+  if (item.type === "vote_tally") {
+    return (
+      <div style={style} className="loom-vrow loom-vrow-vote-tally">
+        <VoteTallyRow
+          tally={item.tally}
+          participantName={participantName}
+          onDialogOpen={onDialogOpen}
+        />
+      </div>
+    );
+  }
+  if (item.type === "round_summary") {
+    return (
+      <div style={style} className="loom-vrow">
+        <RoundSummaryItem summary={item.summary} group={item.group} onDialogOpen={onOrchestratorDialogOpen} />
+      </div>
+    );
+  }
   if (item.type === "contribution") {
     return (
       <div style={style} className="loom-vrow">
@@ -278,6 +358,7 @@ const TimelineTabBase = ({
   activeRound,
   maxRounds,
   orchestratorMessages,
+  roundSummaries = {},
 }) => {
   const listRef = useRef(null);
   const [dialogContribution, setDialogContribution] = useState(null);
@@ -329,6 +410,10 @@ const TimelineTabBase = ({
         const consumedEvidenceIds = new Set();
         const summonedResponses = [];
         const consumedSummonIds = new Set();
+        const votesByTarget = new Map();
+        const consumedVoteIds = new Set();
+        const voteTallies = [];
+        const consumedTallyIds = new Set();
 
         for (const c of contribs) {
           if (c.type === "reflection") {
@@ -351,6 +436,14 @@ const TimelineTabBase = ({
             }
           } else if (c.type === "summoned_response") {
             summonedResponses.push(c);
+          } else if (c.type === "vote_response") {
+            const targetId = c.targets_which;
+            if (targetId != null) {
+              if (!votesByTarget.has(targetId)) votesByTarget.set(targetId, []);
+              votesByTarget.get(targetId).push(c);
+            }
+          } else if (c.type === "vote_tally") {
+            voteTallies.push(c);
           } else {
             const key = c.participant_id;
             if (!regularByAgent.has(key)) regularByAgent.set(key, []);
@@ -393,6 +486,16 @@ const TimelineTabBase = ({
                 items.push({
                   type: "evidence_response",
                   evidenceResponse: er,
+                  round,
+                });
+              }
+            }
+            if (votesByTarget.has(c.id)) {
+              for (const v of votesByTarget.get(c.id)) {
+                consumedVoteIds.add(v.id);
+                items.push({
+                  type: "vote_response",
+                  voteResponse: v,
                   round,
                 });
               }
@@ -444,6 +547,28 @@ const TimelineTabBase = ({
           });
         }
 
+        for (const [, votes] of votesByTarget) {
+          for (const v of votes) {
+            if (!consumedVoteIds.has(v.id)) {
+              items.push({
+                type: "vote_response",
+                voteResponse: v,
+                round,
+              });
+            }
+          }
+        }
+
+        for (const tally of voteTallies) {
+          if (!consumedTallyIds.has(tally.id)) {
+            items.push({
+              type: "vote_tally",
+              tally,
+              round,
+            });
+          }
+        }
+
         for (const tr of roundTurnRequests) {
           items.push({ type: "turn_request", turnRequest: tr });
         }
@@ -461,19 +586,7 @@ const TimelineTabBase = ({
               .sort((a, b) => (a.id ?? 0) - (b.id ?? 0))
           : [];
 
-        const orchestratorGroups = [];
-        let i = 0;
-        while (i < roundOrchestratorMessages.length) {
-          const msg = roundOrchestratorMessages[i];
-          if (msg.role === "user") {
-            const response = roundOrchestratorMessages[i + 1]?.role === "assistant" ? roundOrchestratorMessages[i + 1] : null;
-            orchestratorGroups.push({ query: msg, response });
-            i += response ? 2 : 1;
-          } else {
-            orchestratorGroups.push({ query: null, response: msg });
-            i += 1;
-          }
-        }
+        const orchestratorGroups = pairOrchestratorMessages(roundOrchestratorMessages);
 
         for (const og of orchestratorGroups) {
           items.push({ type: "orchestrator", group: og });
@@ -553,10 +666,21 @@ const TimelineTabBase = ({
             }
           }
         }
+
+        const roundSummary = roundSummaries[round];
+        if (roundSummary) {
+          const summaryMsgs = roundOrchestratorMessages.filter((m) => m.type === "summary");
+          const summaryGroups = pairOrchestratorMessages(summaryMsgs);
+          const summaryGroup = summaryGroups[0] ?? {
+            query: null,
+            response: { type: "summary", role: "assistant", content: roundSummary, created_at: null },
+          };
+          items.push({ type: "round_summary", round, summary: roundSummary, group: summaryGroup });
+        }
       }
     }
     return items;
-  }, [groupedContributions, collapsedRounds, activeRound, agentErrors, turnRequests, extensions, maxRounds, isWeaving, thinkingParticipants, reflectingParticipants, queryingParticipants, evidenceParticipants, summoningParticipants, participantName, orchestratorMessages]);
+  }, [groupedContributions, collapsedRounds, activeRound, agentErrors, turnRequests, extensions, maxRounds, isWeaving, thinkingParticipants, reflectingParticipants, queryingParticipants, evidenceParticipants, summoningParticipants, participantName, orchestratorMessages, roundSummaries]);
 
   const rowHeightFn = useCallback((index, cellProps) => {
     const item = cellProps.items[index];
@@ -612,6 +736,10 @@ const TimelineTabBase = ({
         ? `Evidence response by ${dialogContribution.participantName}`
         : dialogContribution.isSummonedResponse
         ? `Summoned expert: ${dialogContribution.personaName}`
+        : dialogContribution.isVoteResponse
+        ? `Vote by ${dialogContribution.participantName}`
+        : dialogContribution.isVoteTally
+        ? `Vote tally by ${dialogContribution.participantName}`
         : `${dialogContribution.participantName} — ${dialogContribution.contribution.type}`) : ""}
       className={dialogContribution ? (dialogContribution.isReflection
         ? "loom-dialog-type-reflection"
@@ -621,6 +749,10 @@ const TimelineTabBase = ({
         ? "loom-dialog-type-evidence_response"
         : dialogContribution.isSummonedResponse
         ? "loom-dialog-type-summoned_response"
+        : dialogContribution.isVoteResponse
+        ? "loom-dialog-type-vote_response"
+        : dialogContribution.isVoteTally
+        ? "loom-dialog-type-vote_tally"
         : `loom-dialog-type-${dialogContribution.contribution.type}`) : ""}
       >
         {dialogContribution && (
@@ -679,28 +811,41 @@ const TimelineTabBase = ({
                 <div className="loom-tool-calls-panel">
                   {dialogContribution.contribution.tool_calls && dialogContribution.contribution.tool_calls.length > 0 ? (
                     <div className="loom-tool-calls-list">
-                      {dialogContribution.contribution.tool_calls.map((tc, i) => (
-                        <div key={tc.callID ?? i} className="loom-tool-call-item">
-                          <div className="loom-tool-call-header">
-                            <span className="loom-tool-call-name">{tc.tool}</span>
-                            {tc.title && <span className="loom-tool-call-title">{tc.title}</span>}
-                            {tc.error ? (
-                              <span className="loom-tool-call-status loom-tool-call-error">error</span>
-                            ) : (
-                              <span className="loom-tool-call-status loom-tool-call-success">ok</span>
+                      {dialogContribution.contribution.tool_calls.map((tc, i) => {
+                        const attempted = !!tc.attempted_tool;
+                        const failed = !!tc.error || tc.status === "error";
+                        return (
+                          <div key={tc.callID ?? i} className="loom-tool-call-item">
+                            <div className="loom-tool-call-header">
+                              {attempted && tc.attempted_tool !== tc.tool ? (
+                                <span className="loom-tool-call-name">attempted {tc.attempted_tool}</span>
+                              ) : (
+                                <span className="loom-tool-call-name">{tc.tool}</span>
+                              )}
+                              {tc.title && <span className="loom-tool-call-title">{tc.title}</span>}
+                              {failed ? (
+                                <span className="loom-tool-call-status loom-tool-call-error">
+                                  {attempted ? "attempted/failed" : "error"}
+                                </span>
+                              ) : (
+                                <span className="loom-tool-call-status loom-tool-call-success">ok</span>
+                              )}
+                            </div>
+                            {tc.input && (
+                              <pre className="loom-tool-call-input">{tc.input}</pre>
+                            )}
+                            {tc.output && (
+                              <pre className="loom-tool-call-output">{tc.output}</pre>
+                            )}
+                            {tc.error && (
+                              <pre className="loom-tool-call-error-output">{typeof tc.error === "string" ? tc.error : JSON.stringify(tc.error)}</pre>
                             )}
                           </div>
-                          {tc.output && (
-                            <pre className="loom-tool-call-output">{tc.output}</pre>
-                          )}
-                          {tc.error && (
-                            <pre className="loom-tool-call-error-output">{tc.error}</pre>
-                          )}
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   ) : (
-                    <p className="loom-text loom-text-muted loom-tool-calls-empty">No tools were used for this contribution.</p>
+                    <p className="loom-text loom-text-muted loom-tool-calls-empty">No tool calls were recorded for this contribution.</p>
                   )}
                 </div>
               )}

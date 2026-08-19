@@ -19,6 +19,8 @@ export const ContributionTypeSchema = z.enum([
   'query_response',
   'evidence_response',
   'summoned_response',
+  'vote_response',
+  'vote_tally',
 ]);
 
 // Turn order request directive from agent response (replaces interjection)
@@ -45,6 +47,11 @@ export const SummonSchema = z.object({
   issue: z.string().min(1).max(500),
 }).nullable();
 
+// Vote directive from agent response
+export const VoteSchema = z.object({
+  question: z.string().min(1).max(500),
+}).nullable();
+
 // Agent response parsed from LLM output
 export const AgentResponseSchema = z.object({
   participant_id: z.string(),
@@ -54,6 +61,7 @@ export const AgentResponseSchema = z.object({
   query: QuerySchema,
   evidence: EvidenceSchema,
   summon: SummonSchema,
+  vote: VoteSchema,
 });
 
 // Raw parsing (extracted from validation.js) - EXPORTED for reuse
@@ -65,7 +73,7 @@ export function parseAgentResponseRaw(response, tier) {
   }
 
   if (text === '[PASS]') {
-    return { content: '[PASS]', type: 'propose', request_next: null, query: null, evidence: null, summon: null };
+    return { content: '[PASS]', type: 'propose', request_next: null, query: null, evidence: null, summon: null, vote: null };
   }
 
   const TYPE_PREFIXES = {
@@ -195,6 +203,26 @@ export function parseAgentResponseRaw(response, tier) {
     };
   }
 
+  // Parse [CALL_VOTE] directive
+  const VOTE_TAG_RE = /\[CALL_VOTE\]\s*/gi;
+  let vote = null;
+  const voteMatches = [];
+  let voteMatch;
+
+  while ((voteMatch = VOTE_TAG_RE.exec(rawContent)) !== null) {
+    voteMatches.push(voteMatch);
+  }
+
+  if (voteMatches.length > 0) {
+    const lastMatch = voteMatches[voteMatches.length - 1];
+    const afterLastTag = lastMatch.index + lastMatch[0].length;
+    const questionText = rawContent.slice(afterLastTag).trim();
+    rawContent = rawContent.replace(VOTE_TAG_RE, '').trim();
+    vote = {
+      question: questionText.slice(0, 500),
+    };
+  }
+
   return {
     content: refuseReason ? `${refuseReason}. ${rawContent}`.trim() : rawContent,
     type,
@@ -202,5 +230,6 @@ export function parseAgentResponseRaw(response, tier) {
     query,
     evidence,
     summon,
+    vote,
   };
 }

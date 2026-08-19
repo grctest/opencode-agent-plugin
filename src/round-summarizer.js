@@ -5,7 +5,7 @@ import { Logger, extractErrorInfo } from "./logger.js";
 const summarizerLogger = new Logger();
 
 // Only include contributions that represent actual positions in the deliberation
-const SUMMARY_TYPES = new Set(["propose", "challenge", "refine", "support", "dissent", "synthesize", "question"]);
+const SUMMARY_TYPES = new Set(["propose", "challenge", "refine", "support", "dissent", "synthesize", "question", "vote_tally"]);
 
 // Strip the reflection header: "[Reflection on #N [TYPE] by Name (Round M)]\n\n"
 const REFLECTION_HEADER_RE = /^\[Reflection on #\d+ \[[\w]+\] by .+?\]\s*/m;
@@ -53,8 +53,8 @@ function formatContribution(c, reflectionMap) {
 
 /**
  * Generates a summary for a completed round.
- * Uses heuristic counts first; escalates to an LLM-generated semantic summary
- * when there are conflict signals in moderator_forces mode.
+ * Uses heuristic counts as the baseline; always escalates to an LLM-generated
+ * semantic summary for rounds with substantive contributions.
  */
 export async function summarizeRound(round, state, promptOrchestrator, getHighestTierModel) {
   const contribCount = round.contributions.length;
@@ -70,33 +70,24 @@ export async function summarizeRound(round, state, promptOrchestrator, getHighes
     summary += ` ${round.turn_requests.length} turn request(s).`;
   }
 
-  const hasConflictSignals =
-    round.contributions.some((c) => c.type === "challenge" || c.type === "dissent") ||
-    round.turn_requests.length > 0;
+  try {
+    const model = getHighestTierModel();
+    if (!model) throw new Error("No model available for semantic summary");
 
-  if (
-    state.convergence_mode === "moderator_forces" &&
-    contribCount > 2 &&
-    hasConflictSignals
-  ) {
-    try {
-      const model = getHighestTierModel();
-      if (!model) throw new Error("No model available for semantic summary");
+    // Filter to only substantive contributions (no reflections, query responses, etc.)
+    const summaryContributions = round.contributions.filter((c) => SUMMARY_TYPES.has(c.type));
 
-      // Filter to only substantive contributions (no reflections, query responses, etc.)
-      const summaryContributions = round.contributions.filter((c) => SUMMARY_TYPES.has(c.type));
+    // Build reflection outcome map and format contributions
+    const reflectionMap = buildReflectionMap(round.contributions);
+    const formattedContributions = summaryContributions
+      .map((c) => formatContribution(c, reflectionMap))
+      .join("\n\n");
 
-      // Build reflection outcome map and format contributions
-      const reflectionMap = buildReflectionMap(round.contributions);
-      const formattedContributions = summaryContributions
-        .map((c) => formatContribution(c, reflectionMap))
-        .join("\n\n");
+    if (formattedContributions.trim().length === 0) {
+      return summary;
+    }
 
-      if (formattedContributions.trim().length === 0) {
-        return summary;
-      }
-
-      const prompt = `Summarize this deliberation round. What was established? What remains contested?
+    const prompt = `Summarize this deliberation round. What was established? What remains contested?
 
 ## Question
 ${state.question || "(no question provided)"}
@@ -115,14 +106,13 @@ Provide your summary in this format:
 - **Contested:** {what remains disputed and by whom}
 - **Open:** {unresolved questions or next decisions needed}`;
 
-      const semanticSummary = await promptOrchestrator("You are a neutral summarizer.", model, prompt, "summary");
-      if (semanticSummary && semanticSummary.trim().length > 10) {
-        summary = semanticSummary.trim();
-      }
-    } catch (err) {
-      const info = extractErrorInfo(err);
-      summarizerLogger.warn("summary_fallback", "Semantic summary failed — using heuristic", info);
+    const semanticSummary = await promptOrchestrator("You are a neutral summarizer.", model, prompt, "summary");
+    if (semanticSummary && semanticSummary.trim().length > 10) {
+      summary = semanticSummary.trim();
     }
+  } catch (err) {
+    const info = extractErrorInfo(err);
+    summarizerLogger.warn("summary_fallback", "Semantic summary failed — using heuristic", info);
   }
 
   return summary;

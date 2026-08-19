@@ -44,22 +44,34 @@ export function extractAgentResponse(data) {
 
       case "tool":
         // ToolPart — session.prompt() auto-executes tools server-side.
-        // All ToolParts are in "completed" or "error" state — never "pending" or "running".
-        const tool = part;
-        if (tool.state?.status === "completed") {
-          toolResults.push({
+        // ToolParts are terminal-state here ("completed" or "error"); attempts that
+        // hit an unknown/invalid tool are routed by opencode through the "invalid"
+        // tool, whose original tool name + error are embedded in the call input.
+        {
+          const tool = part;
+          const status = tool.state?.status ?? null;
+          if (!status) break;
+          const callInput = tool.state?.input ?? {};
+          const result = {
             tool: tool.tool,
             callID: tool.callID,
-            output: tool.state.output,
-            title: tool.state.title,
-            metadata: tool.state.metadata,
-          });
-        } else if (tool.state?.status === "error") {
-          toolResults.push({
-            tool: tool.tool,
-            callID: tool.callID,
-            error: tool.state.error,
-          });
+            status,
+            title: tool.state?.title,
+            input: callInput,
+            metadata: tool.state?.metadata ?? null,
+          };
+          if (tool.tool === "invalid") {
+            // Remember what the agent actually tried so the timeline can show it.
+            if (typeof callInput?.tool === "string") result.attempted_tool = callInput.tool;
+            result.tool = result.attempted_tool ?? result.tool;
+            result.status = "error";
+            result.error = String(tool.state?.output ?? callInput?.error ?? "Tool call rejected as invalid");
+          } else if (status === "error") {
+            result.error = tool.state?.error;
+          } else if (status === "completed") {
+            result.output = tool.state?.output;
+          }
+          toolResults.push(result);
         }
         break;
 
@@ -97,6 +109,30 @@ export function truncate(text, max) {
   const cleaned = text.replace(/\n/g, " ").trim();
   if (cleaned.length <= max) return cleaned;
   return cleaned.slice(0, max - 3) + "...";
+}
+
+/**
+ * Normalizes raw extractAgentResponse tool results into the stored tool_calls
+ * shape. Preserves attempt metadata (status, attempted_tool, input) so the
+ * timeline can surface calls that were attempted but failed/invalid.
+ */
+export function mapToolResults(toolResults) {
+  return (toolResults ?? []).map((t) => {
+    const error = t.error
+      ? (typeof t.error === "string" ? t.error : JSON.stringify(t.error))
+      : null;
+    return {
+      tool: t.tool,
+      callID: t.callID,
+      status: t.status ?? null,
+      attempted_tool: t.attempted_tool ?? null,
+      title: t.title ?? null,
+      output: t.output ? String(t.output).slice(0, 2000) : null,
+      error: error ? error.slice(0, 500) : null,
+      input: t.input && typeof t.input === "object" && Object.keys(t.input).length ? JSON.stringify(t.input).slice(0, 500) : null,
+      metadata: t.metadata ?? null,
+    };
+  });
 }
 
 /** Enforces a word limit on text, appending [truncated] if exceeded. */

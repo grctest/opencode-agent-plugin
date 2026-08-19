@@ -73,6 +73,10 @@ function classifyContribution(type, content) {
     case "evidence_response":
     case "summoned_response":
       return "keyFacts";
+    case "vote_tally":
+      return "decisions";
+    case "vote_response":
+      return null;
     case "synthesize":
     case "refuse":
     case "reflection":

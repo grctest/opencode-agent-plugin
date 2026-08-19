@@ -422,10 +422,19 @@ export const Loom = async (input) => {
       }),
 
       knit_models: tool({
-        description: "Discover available models in your opencode session and propose tier assignments.",
-        args: {},
-        execute: async () => {
-          return handleKnitModels();
+        description: "Discover available models in your opencode session and propose tier assignments. Supports listing, enabling, disabling, and resetting the model filter for Loom agents.",
+        args: {
+          action: tool.schema
+            .string()
+            .optional()
+            .describe("Action: 'list' (default), 'enable', 'disable', or 'reset'"),
+          models: tool.schema
+            .array(tool.schema.string())
+            .optional()
+            .describe("Exact 'provider/model' identifiers to enable or disable (e.g. 'openai/gpt-4.1')"),
+        },
+        execute: async (args) => {
+          return handleKnitModels(args);
         },
       }),
 

@@ -248,6 +248,7 @@ export function App() {
     contributions,
     turnRequests,
     orchestratorMessages,
+    roundSummaries,
     agentErrors,
     artifact,
     embeddingModel,
@@ -505,6 +506,7 @@ export function App() {
                    activeRound={activeRound}
                    maxRounds={state?.max_rounds}
                    orchestratorMessages={orchestratorMessages}
+                   roundSummaries={roundSummaries}
                  />
               </div>
             )}

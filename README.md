@@ -103,6 +103,14 @@ Preview available models before running:
 /knit_models
 ```
 
+`/knit_models` lists all discovered models with their exact `provider/model` identifiers. You can restrict which models Loom agents use:
+
+```
+/knit_models enable openai/gpt-4.1 anthropic/claude-3-5-sonnet
+/knit_models disable openai/o1
+/knit_models reset
+```
+
 Launch the dashboard:
 
 ```
@@ -114,7 +122,7 @@ loom_viz
 | Command | Description |
 |---------|-------------|
 | `/knit` | Start (or extend) a multi-agent deliberation |
-| `/knit_models` | Discover available models and propose tier assignments |
+| `/knit_models` | Discover available models and manage model assignments |
 | `/loom_viz` | Start the real-time dashboard (default port 3210) |
 | `/loom_stop` | Stop the running dashboard |
 
@@ -132,6 +140,19 @@ loom_viz
 | `seed` | Random seed for room composition | current time |
 | `fresh` | Force a fresh loom even if a previous meeting exists | `false` |
 | `turn_mode` | `sequential` (default), `staged` (2-at-a-time), or `parallel` (all concurrently) | `sequential` |
+
+### `knit_models` arguments
+
+| Argument | Description | Default |
+|----------|-------------|---------|
+| `action` | `list`, `enable`, `disable`, or `reset` | `list` |
+| `models` | Exact `provider/model` identifiers to enable or disable | — |
+
+### `loom_viz` arguments
+
+| Argument | Description | Default |
+|----------|-------------|---------|
+| `port` | Port number for the dashboard server | `3210` |
 
 ## Personas
 

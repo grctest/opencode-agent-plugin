@@ -72,8 +72,24 @@ function createMeetingCallbacks(context, logger) {
   };
 }
 
+/**
+ * Filters the full list of discovered models by the enabled-models set.
+ * When enabledModels is null, all models are allowed (no filter).
+ * @param {Array} allAvailable - Full list of discovered models
+ * @param {Set<string>|null} enabledModels - Set of "provider/model" identifiers, or null for all
+ * @returns {Array} Filtered list of models
+ */
+function applyModelFilter(allAvailable, enabledModels) {
+  if (!enabledModels || enabledModels.size === 0) return allAvailable;
+  return allAvailable.filter((m) => {
+    const key = `${m.providerID}/${m.modelID}`;
+    return enabledModels.has(key);
+  });
+}
+
 export function createKnitHandler(client, directory, activeLooms, agentTools = null) {
   let pendingModels = null;
+  let enabledModels = null;
   const logger = new Logger();
 
   /**
@@ -130,7 +146,9 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
     const sessionID = context.sessionID;
     const loomId = crypto.randomUUID();
 
-    const { available, sessionModel } = await discoverModels(client, directory, sessionID);
+    const { available: allAvailable, sessionModel } = await discoverModels(client, directory, sessionID);
+
+    const available = applyModelFilter(allAvailable, enabledModels);
 
     if (args.fresh === true) {
       const existingMeeting = await findMeetingBySessionId(directory, sessionID);
@@ -410,24 +428,111 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
     }
   }
 
-  async function handleKnitModels() {
+  async function handleKnitModels(args) {
+    const action = (args?.action ?? "list");
+
+    if (action === "reset") {
+      const prevCount = enabledModels?.size ?? 0;
+      enabledModels = null;
+      return {
+        title: "Model Filter Reset",
+        output: `Model filter cleared. All discovered models are now available for Loom agents (${prevCount} models were previously restricted).`,
+      };
+    }
+
+    let available;
     try {
-      const { available, sessionModel } = await discoverModels(client, directory, "");
-
-      if (available.length === 0) {
-        return "No active models found. Connect a provider (e.g. run `opencode auth login`).";
-      }
-
-      const plan = createModelPlan(available, undefined, sessionModel);
-      pendingModels = plan.participants;
-
-      let output = formatModelPlan(plan);
-      return output;
+      const result = await discoverModels(client, directory, "");
+      available = result.available;
     } catch (err) {
       const info = extractErrorInfo(err);
       logger.error("model_discovery_failed", "Model discovery failed", info);
       return `Model discovery failed: ${info.message}`;
     }
+
+    if (available.length === 0) {
+      return "No active models found. Connect a provider (e.g. run `opencode auth login`).";
+    }
+
+    const modelKey = (m) => `${m.providerID}/${m.modelID}`;
+    const allKeys = new Set(available.map(modelKey));
+
+    if (action === "enable" || action === "disable") {
+      const requested = args?.models ?? [];
+      if (requested.length === 0) {
+        return {
+          title: "Model Filter Error",
+          output: `Please specify model identifiers to ${action}.\n\nRun \`/knit_models\` to see available models with their exact identifiers.`,
+        };
+      }
+
+      const invalid = requested.filter((id) => !allKeys.has(id));
+      if (invalid.length > 0) {
+        const suggestions = [...allKeys].join("\n");
+        return {
+          title: "Model Filter Error",
+          output: `The following identifiers were not found:\n\n${invalid.map((i) => `- ${i}`).join("\n")}\n\nValid identifiers:\n${suggestions}\n\nRun \`/knit_models\` to see the full list.`,
+        };
+      }
+
+      if (action === "enable") {
+        if (!enabledModels) enabledModels = new Set(allKeys);
+        for (const id of requested) enabledModels.add(id);
+        return {
+          title: "Models Enabled",
+          output: `Enabled ${requested.length} model(s):\n${requested.map((m) => `- ${m}`).join("\n")}\n\n${enabledModels.size} model(s) are now available for Loom agents.`,
+        };
+      }
+
+      const removed = requested.filter((id) => enabledModels?.has(id));
+      for (const id of requested) enabledModels?.delete(id);
+      return {
+        title: "Models Disabled",
+        output: `Disabled ${removed.length} model(s):\n${removed.map((m) => `- ${m}`).join("\n")}\n\n${enabledModels?.size ?? 0} model(s) remain available for Loom agents.`,
+      };
+    }
+
+    // Default: list
+    const { sessionModel } = await discoverModels(client, directory, "");
+    const plan = createModelPlan(available, undefined, sessionModel);
+    pendingModels = plan.participants;
+
+    const lines = [
+      "## Available Models",
+      "",
+      "| Identifier | Provider | Cost | Context | Reasoning | Status |",
+      "|------------|----------|------|---------|-----------|--------|",
+    ];
+
+    for (const m of available) {
+      const key = modelKey(m);
+      const isEnabled = enabledModels ? enabledModels.has(key) : true;
+      const status = isEnabled ? "enabled" : "disabled";
+      const cost = m.cost.input === 0 && m.cost.output === 0
+        ? "free"
+        : `$${m.cost.input}/$${m.cost.output}`;
+      const ctx = `${Math.round((m.limit?.context ?? 128000) / 1000)}k`;
+      const reason = m.reasoning ? "yes" : "—";
+      lines.push(`| ${key} | ${m.providerID} | ${cost} | ${ctx} | ${reason} | ${status} |`);
+    }
+
+    lines.push("");
+    lines.push(`**Total:** ${available.length} model(s)`);
+    if (enabledModels) {
+      lines.push(`**Enabled:** ${enabledModels.size} model(s)`);
+      lines.push(`**Disabled:** ${available.length - enabledModels.size} model(s)`);
+    } else {
+      lines.push("**All models enabled** (no filter set)");
+    }
+    lines.push("");
+    lines.push("Copy the exact `provider/model` identifier to enable or disable a model:");
+    lines.push("- `/knit_models enable openai/gpt-4.1`");
+    lines.push("- `/knit_models disable openai/o1`");
+    lines.push("- `/knit_models reset`");
+    lines.push("");
+    lines.push(formatModelPlan(plan));
+
+    return lines.join("\n");
   }
 
   return { handleKnit, handleKnitModels };

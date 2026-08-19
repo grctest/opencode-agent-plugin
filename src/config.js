@@ -32,8 +32,8 @@ const DEFAULT_CONFIG = {
   agentTools: {
     enabled: true,
     builtIn: {
-      web_fetch: true,
-      web_search: true,
+      webfetch: true,
+      websearch: true,
       read: true,
       bash: {
         enabled: true,
@@ -84,6 +84,9 @@ const NESTED_SCHEMA = {
   'circuitBreaker.failureThreshold': { type: 'number', min: 1, max: 10 },
   'circuitBreaker.resetTimeoutMs': { type: 'number', min: 10000, max: 3600000 },
   'agentTools.enabled': { type: 'boolean' },
+  'agentTools.builtIn.webfetch': { type: 'boolean' },
+  'agentTools.builtIn.websearch': { type: 'boolean' },
+  // Backward-compat aliases for the pre-1.x snake_case tool names
   'agentTools.builtIn.web_fetch': { type: 'boolean' },
   'agentTools.builtIn.web_search': { type: 'boolean' },
   'agentTools.builtIn.read': { type: 'boolean' },
@@ -314,4 +317,27 @@ export function getConfig(directory) {
 export function getConfigInstance(directory) {
   const dir = directory ?? defaultDirectory;
   return createConfig(dir);
+}
+
+/**
+ * Resolves the agent tool configuration into canonical opencode tool IDs, mapping
+ * the legacy snake_case names (web_fetch/web_search) onto their modern equivalents
+ * (webfetch/websearch) so old configs keep working.
+ * @param {Object} agentToolsConfig
+ * @returns {{ webfetch: boolean, websearch: boolean, read: boolean, bash: boolean, glob: boolean, grep: boolean, lsp: boolean }}
+ */
+export function resolveBuiltInTools(agentToolsConfig) {
+  if (!agentToolsConfig?.enabled) return {
+    webfetch: false, websearch: false, read: false, bash: false, glob: false, grep: false, lsp: false,
+  };
+  const builtIn = agentToolsConfig.builtIn ?? {};
+  return {
+    webfetch: !!builtIn.webfetch || !!builtIn.web_fetch,
+    websearch: !!builtIn.websearch || !!builtIn.web_search,
+    read: !!builtIn.read,
+    bash: builtIn.bash === true || !!(builtIn.bash && builtIn.bash.enabled),
+    glob: !!builtIn.glob,
+    grep: !!builtIn.grep,
+    lsp: !!builtIn.lsp,
+  };
 }

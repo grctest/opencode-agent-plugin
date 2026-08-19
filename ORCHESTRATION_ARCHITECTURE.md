@@ -21,16 +21,17 @@ A complete technical reference for how the Loom multi-agent deliberation system 
 13. [Round Summarization](#13-round-summarization)
 14. [Synthesis](#14-synthesis)
 15. [State Management](#15-state-management)
-16. [Error Handling](#16-error-handling)
+16. [Error Handling & Model Fallback](#16-error-handling--model-fallback)
 17. [Stall Detection](#17-stall-detection)
 18. [Extension and Resume](#18-extension-and-resume)
 19. [Vector Index, RAG, and PersonaIndex](#19-vector-index-rag-and-personaindex)
 20. [Agent-Requested Tools](#20-agent-requested-tools)
 21. [Fast-Path Model Routing](#21-fast-path-model-routing)
-22. [Directed Interactions: Query, Evidence, Summon](#22-directed-interactions-query-evidence-summon)
+22. [Directed Interactions: Query, Evidence, Summon, Vote](#22-directed-interactions-query-evidence-summon-vote)
 23. [Dashboard System](#23-dashboard-system)
 24. [Meeting Lifecycle: From /knit to Report File](#24-meeting-lifecycle-from-knit-to-report-file)
 25. [Metrics and Observability](#25-metrics-and-observability)
+26. [Model Configuration](#26-model-configuration)
 
 ---
 
@@ -39,11 +40,11 @@ A complete technical reference for how the Loom multi-agent deliberation system 
 When a user types `/knit` with a question, this is what happens:
 
 1. **Room composition** — The question is analyzed for complexity, then a team of 2–7 agents is assembled without any LLM call: each per-tier role is filled by the persona (from `personas/<tier>/*.json`) whose embedded description is most semantically similar to the question (via `PersonaIndex`). Each agent gets a name, persona description, agenda, tier, and topic tags.
-2. **Model assignment** — Each agent is assigned an LLM model. Principal/senior tiers get the top available model (the session's model when present); remaining tiers get the next-best unused models. Explicit per-participant `model`/`model_override` fields win over automatic assignment.
+2. **Model assignment** — Each agent is assigned an LLM model. Principal/senior tiers get the top available model (the session's model when present); remaining tiers get the next-best unused models. Explicit per-participant `model`/`model_override` fields win over automatic assignment. The discovery pool can be narrowed with a per-session model filter (`/knit_models enable/disable`, Section 26).
 3. **Rounds execute** — A round is a single sequential prompt phase:
    - Each agent speaks in turn via a fresh **ephemeral** LLM session, seeing the state of play, vector-RAG context, recent contributions, and their own prior reflection.
    - After a challenge or dissent, the single **most persona-similar** active participant (excluding the challenger) is selected via embeddings to reflect on it immediately (mid-round reflection).
-   - Agents may also issue `[QUERY]`, `[EVIDENCE]`, and `[SUMMON]` directives, which are executed immediately after their turn (Section 22).
+   - Agents may also issue `[QUERY]`, `[EVIDENCE]`, `[SUMMON]`, and `[CALL_VOTE]` directives, which are executed immediately after their turn (Section 22).
 4. **Round summarization** — After all agents speak, the round is summarized (heuristically always; semantically when conflict exists in `moderator_forces` mode).
 5. **State of play update** — The state of play (decisions, agreements, disagreements, open questions, key facts) is regenerated from the full weave.
 6. **Moderator check + turn order planning** — The moderator may rule `converge`, `break`, or `continue`; the moderator then plans the next round's turn order based on `[REQUEST_NEXT]` tags.
@@ -99,7 +100,7 @@ Personas live under `<plugin>/personas/<tier>/*.json` (tier directories), with f
 
 ### Step 3: Model Assignment
 
-Models are discovered from the connected providers via `discoverModels()` (`provider.providers` API), with the user session's current model recorded as `sessionModel`. If a session model can't be discovered the discovery result is empty (agents just carry their session model).
+Models are discovered from the connected providers via `discoverModels()` (`provider.providers` API), with the user session's current model recorded as `sessionModel`. The discovery result may be narrowed by the `/knit_models` model filter (Section 26). If a session model can't be discovered the discovery result is empty (agents just carry their session model).
 
 `assignModelsToParticipants()` uses `assignModelsByTier()` (a single deterministic engine shared with the `/knit_models` preview so the two always agree):
 
@@ -365,6 +366,7 @@ An agent response is a text string. The system parses it for structured directiv
 - `[QUERY: @id1, @id2] question` — direct a question at 1–2 participants
 - `[EVIDENCE: @id1, @id2] question` — demand tool-backed evidence from 1–2 participants
 - `[SUMMON: Persona Name] issue` — bring in an external expert persona
+- `[CALL_VOTE] question` — call a poll; every other active participant casts a `[Vote: X]` vote and a tally is produced (Section 22)
 
 **Content** follows the tag. Example full response:
 
@@ -386,11 +388,14 @@ The system parses this into:
   request_next: null,
   query: null,
   evidence: { targets: ["data-scientist"], question: "Find current industry benchmarks..." },
-  summon: null
+  summon: null,
+  vote: null
 }
 ```
 
-If the parsed response fails schema validation, the system falls back to type `challenge` so the contribution is still visible. Directive tags (`[REQUEST_NEXT]`, `[QUERY]`, `[EVIDENCE]`, `[SUMMON]`) and type tags are stripped from the stored content. Note: there is **no hard word-limit enforcement** on contributions (the old `maxContributionWords` setting was removed).
+If the parsed response fails schema validation, the system falls back to type `challenge` so the contribution is still visible. Directive tags (`[REQUEST_NEXT]`, `[QUERY]`, `[EVIDENCE]`, `[SUMMON]`, `[CALL_VOTE]`) and type tags are stripped from the stored content. There is **no hard word-limit enforcement** on contributions (the old `maxContributionWords` setting was removed).
+
+Note: `[CALL_VOTE]` is recognized and executed by the parser/handler, but it is not advertised in the built-in agent system prompt's rules (Section 4, The System Prompt) — the vote flow is fully wired on the parsing and execution side.
 
 ---
 
@@ -403,7 +408,7 @@ Each round is a single, strictly sequential **prompt phase**. Each agent speaks 
 For each agent, the system:
 
 1. Sets status to "speaking" (visible in dashboard).
-2. Checks if the assigned model's circuit breaker is healthy (`isModelHealthy`).
+2. Checks if the assigned model's circuit breaker is healthy (`isModelHealthy`). If the model is unhealthy, a healthy fallback model is selected immediately and used for the turn (Section 16).
 3. Calculates an **adaptive timeout**: base `agentTimeoutMs` (120s), reduced by up to 50% as more agents fail in this round.
 4. Builds vector-RAG context: the query text is the last 2 rounds' contributions (or the question if none yet); `retrieveRelevant(query, 5, currentRound)` returns up to 5 chunks, excluding the current round.
 5. Creates a fresh ephemeral LLM session for this single turn.
@@ -417,10 +422,11 @@ For each agent, the system:
     - `[QUERY]` → `executeQueries()` — target replies (Section 22)
     - `[EVIDENCE]` → `executeEvidenceRequests()` — target researches (Section 22)
     - `[SUMMON]` → `executeSummons()` — expert persona joins briefly (Section 22)
+    - `[CALL_VOTE]` → `executeVote()` — all other active participants cast a vote and a tally is produced (Section 22)
 13. **Mid-round reflection:** if the contribution is a `challenge` or `dissent`, the system selects the single **most persona-similar active participant** (embedding cosine similarity of the challenge text against participant embeddings, excluding the challenger) and triggers an immediate reflection (Section 12).
 14. Restores status, cleans up the session→meeting mapping, and deletes the ephemeral session.
 
-Note: on a failed prompt (`#promptChildSession` returns `null`), the agent's status is set to `failed`, an error record is written, and the agent is skipped for the rest of the round. Agents that respond `[PASS]` are set to `passed`.
+Note: on a failed prompt (`#promptChildSession` returns `null` after retries and model fallback are exhausted), the agent's status is set to `failed`, an error record is written, and the agent is skipped for the rest of the round. Agents that respond `[PASS]` are set to `passed`.
 
 **Example mid-round flow:**
 
@@ -547,7 +553,7 @@ Context that should be *visible* to the user is posted to the parent session via
 
 ### Circuit Breaker
 
-Each model used by agents tracks consecutive failures (Section 16). After 3 failures the model is skipped for 5 minutes; after the reset timeout, one test attempt is allowed.
+Each model used by agents tracks consecutive failures via the circuit breaker (Section 16). An unhealthy model is not used for turns — a healthy fallback model takes its place — and after the reset timeout one test attempt is allowed.
 
 ---
 
@@ -758,10 +764,12 @@ The orchestrator calls `updateStateOfPlay(weave, question, tags)` which categori
 | `c.type` | Category |
 |-----------|----------|
 | `propose`, `refine` | Decisions & Proposals |
+| `vote_tally` | Decisions & Proposals (a resolved poll is a decided point) |
 | `support` | Agreements |
 | `challenge`, `dissent` | Disagreements & Concerns |
 | `question` | Open Questions |
 | `query_response`, `evidence_response`, `summoned_response` | Key Facts |
+| `vote_response` | (excluded — individual ballots are noise; the tally carries the result) |
 | `synthesize`, `refuse`, `reflection`, `pass` | (excluded) |
 | unknown/missing | Fallback keyword matching |
 
@@ -878,7 +886,7 @@ Only generated when all of these hold:
 - There are more than 2 contributions
 - There are conflict signals (challenges/dissents or turn requests)
 
-Only substantive types (`propose`, `challenge`, `refine`, `support`, `dissent`, `synthesize`, `question`) are included; reflections are folded in as outcomes (`↳ Reflected: <outcome>`). The prompt:
+Only substantive types (`propose`, `challenge`, `refine`, `support`, `dissent`, `synthesize`, `question`, `vote_tally`) are included; reflections are folded in as outcomes (`↳ Reflected: <outcome>`). The prompt:
 
 ```
 Summarize this deliberation round. What was established? What remains contested?
@@ -1105,7 +1113,7 @@ State is persisted via the `PersistenceService` after each round finalization an
 
 ---
 
-## 16. Error Handling
+## 16. Error Handling & Model Fallback
 
 ### Retry-able Call Sites
 
@@ -1115,18 +1123,45 @@ Retries (`withRetry`, exponential backoff with jitter) wrap:
 
 Retryable errors (`isRetryableError`): `ECONNREFUSED`, `ETIMEDOUT`, `ENOTFOUND`, any message containing "timed out", HTTP 5xx, HTTP 429.
 
-### Agent Prompt Failures
+### Agent Prompt Failures (retry + model fallback)
 
-Agent turns are **not** individually retried (they run once with an adaptive timeout and are recorded):
-- **Adaptive timeout:** base `agentTimeoutMs` (120s), reduced by up to 50% as more agents fail in the current round.
-- On failure: agent status → `failed`, an `agent_errors` row is written (participant, round, `prompt_failed`, message, attempts), the model's circuit-breaker failure counter is incremented, and the agent is skipped for the rest of the round.
+Agent turns are now **retried** — the old "run once and fail" behavior is gone. `#promptChildSession` runs a staged recovery ladder before an agent is marked `failed`:
+
+1. **Adaptive timeout:** base `agentTimeoutMs` (120s), reduced by up to 50% as more agents fail in the current round.
+2. **Retry on the assigned model** — up to `modelFallback.maxRetriesPerModel` (default 2) retries *after* the first attempt, with exponential backoff (1000ms · 2^attempt + jitter, capped at 8s). Each failure increments the model's circuit-breaker counter.
+3. **Fallback model** — when the primary model's retries are exhausted (and `modelFallback.enabled`, default true), `selectFallbackModel()` picks a healthy model from the discovered pool that is *not* the failing model (random among the healthy candidates) and the turn is attempted on it (up to `modelFallback.maxFallbackAttempts` retries after the first fallback attempt), with the same backoff. A progress message announces the switch ("⚠️ Model X failed — retrying with Y").
+4. **Failure** — only when the primary and fallback attempts are all exhausted does the agent's status become `failed`, an `agent_errors` row is written with type `model_fallback` (`Model: X, No fallback available` or `Original: X, Fallback: Y — <error>`), and the agent is skipped for the rest of the round.
+
+Every failed/finished turn path is precomputed once: **RAG context, system prompt, and user prompt are built model-independent and reused across retries/fallbacks** (no duplicate RAG calls). When the circuit breaker already marks the assigned model `open`, the turn starts directly on a fallback model without retrying the unhealthy one.
+
+Successful fallback turns carry a `_fallback` metadata object on the parsed response (`{ from, to, error }`); having succeeded on the fallback model, the agent's status returns to `listening` as normal. Additionally, `#getParticipantModel` can itself substitute the highest-tier healthy model when a participant's own model is unhealthy (orchestrator-level fallback used by directives and synthesis).
 
 ### Circuit Breaker
 
-Per-model failure tracking (`failureThreshold: 3`, `resetTimeoutMs: 300000`):
-- After 3 consecutive failures the model state is `open` and the agent's turn is skipped with a progress warning ("⚠️ Model x marked unhealthy… retry in 5 minutes").
+Per-model failure tracking (`circuitBreaker.failureThreshold: 3`, `circuitBreaker.resetTimeoutMs: 300000`):
+- After `failureThreshold` consecutive failures the model state is `open`. The *next* turn for an agent assigned that model does **not skip** — a healthy fallback model is selected and used instead (see above).
 - After the reset timeout the breaker goes `half-open` (one test attempt allowed).
-- On success, the breaker resets to `closed`.
+- On success, the breaker resets to `closed` (the failure record is cleared).
+- `circuitBreaker.getHealthyModels(available)` excludes open models from the fallback pool, so an unhealthy model can never be chosen as a fallback while it is open.
+- An open circuit breaker with **no healthy fallback available** still fails the turn: `#recordFallbackFailure` writes "circuit breaker open, no fallback" into `agent_errors`.
+
+### Model Fallback Configuration
+
+```json
+{
+  "modelFallback": {
+    "enabled": true,
+    "maxRetriesPerModel": 2,
+    "maxFallbackAttempts": 1
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `true` | Master switch for the retry + fallback ladder. When `false`, a single prompt failure immediately fails the agent (legacy behavior). |
+| `maxRetriesPerModel` | `2` | Extra attempts on the same model before falling back (0 = no retries on the primary). |
+| `maxFallbackAttempts` | `1` | Extra attempts on the selected fallback model. |
 
 ### Database Errors
 
@@ -1275,6 +1310,7 @@ The server-side RAG uses a fixed query (last 2 rounds' contributions) with top-5
 | Reflection | `web_fetch`, `web_search`, `read`, `loom_vector_search` | `auto` |
 | Query response | `web_fetch`, `web_search`, `read`, `loom_vector_search` | `auto` |
 | Evidence response | `web_fetch`, `web_search`, `read`, `loom_vector_search` | `required` (MUST research) |
+| Vote response | *(none)* | `none` — a bare `[Vote: X]` ballot, no tools |
 | Summoned expert | `web_fetch`, `web_search`, `read`, `glob`, `grep`, `bash` (allowlisted), `loom_vector_search` | `auto` |
 
 **Not granted to agents**: `write`, `edit`, `tui`, `todo`, `lsp`, `comment`, `snapshot`, `permissions`.
@@ -1418,9 +1454,9 @@ When `fastPathModel` is empty (default), all orchestrator calls use the highest-
 
 ---
 
-## 22. Directed Interactions: Query, Evidence, Summon
+## 22. Directed Interactions: Query, Evidence, Summon, Vote
 
-Agents can direct the conversation at specific participants without waiting for the round-robin order. All three run immediately after the source agent's contribution is stored, using fresh ephemeral sessions for each target. Targets are resolved from the current participant list, excluding the source and any passed/failed participants.
+Agents can direct the conversation at specific participants without waiting for the round-robin order. All four run immediately after the source agent's contribution is stored, using fresh ephemeral sessions for each target. Targets are resolved from the current participant list, excluding the source and any passed/failed participants.
 
 ### Query (`[QUERY: @target1, @target2] question`)
 
@@ -1447,7 +1483,22 @@ Agents can direct the conversation at specific participants without waiting for 
 - **Contribution:** type `summoned_response`, participant id `summoned_<name slug>`, content prefixed `[Summoned: <Name> (<tier>)]`.
 - Dashboard flag: `meetings.summoning_participants`.
 
-All three response types flow into the weave, appear in later agents' recent contributions, and are classified into the State of Play's **Key Facts** section (Section 11).
+### Vote (`[CALL_VOTE] question`)
+
+A polling mechanism residents can invoke to resolve a contested point quickly. Unlike Query/Evidence/Summon it is **fan-out to everyone**: the source agent plus every other active participant cast a ballot, then a deterministic tally is produced.
+
+- **Trigger:** the parser recognizes `[CALL_VOTE]` followed by the poll question (Section 4). The rights field `call_vote` is granted to mid, senior, and principal in the tier model (Section 3), though the execution path does not programmatically gate on it.
+- **Voters:** the source agent (its ballot is parsed from its own contribution content) plus every participant that is not passed or failed.
+- **Prompt** (`buildVotePrompt`): the poll question, the source's contribution, the voter's last 2 contributions and prior reflection, and round context. System prompt: *"A fellow participant has called a vote. Cast your vote and provide brief reasoning."* No type tags allowed.
+- **Ballot format:** the response must be `[Vote: <letter>]` followed by 1–2 sentences of reasoning. `extractVoteLetter()` accepts the `[Vote: X]` tag or a lone standalone capital letter on its own line.
+- **Tools:** none — `tool_choice: "none"` (voting is a fast, tool-free poll).
+- **Contributions:** each ballot is stored as type `vote_response` with content prefixed `[Vote from <Name>]` and `targets_which` pointing at the source contribution. After all ballots are collected (or fail, individually logged as `vote_failed`), a single type `vote_tally` contribution is produced by the source participant: it lists the counts per letter, the percentage of the winner, and `Total voters`.
+- **Dashboard integration:** voters marked "speaking" while balloting; the dashboard renders `vote_response` and `vote_tally` rows inline in the Timeline, with a per-poll grouping.
+- **Edge case:** if the source is the only active participant, a source-only tally is recorded immediately.
+
+### Directed-Interaction Outcomes
+
+Query, evidence, and summoned responses are classified into the State of Play's **Key Facts** section; a vote tally is classified as a **Decision** while individual ballots are excluded (Section 11). All four response types flow into the weave and appear in later agents' recent contributions.
 
 ---
 
@@ -1465,7 +1516,7 @@ All three response types flow into the weave, appear in later agents' recent con
 ### UI Tabs
 
 - **Overview** — participants (cards with status/tier/model/reflection, contribution counts), recent contributions, turn requests, errors, an agent-perspective panel, and the final artifact when present.
-- **Timeline** — per-round contribution timeline, orchestrator decision log (moderator rulings, turn-order plans, summaries) interleaved per round, participation matrix, contribution-type chart, and inline reflection/query/evidence/summon rows.
+- **Timeline** — per-round contribution timeline, orchestrator decision log (moderator rulings, turn-order plans, summaries) interleaved per round, participation matrix, contribution-type chart, and inline reflection/query/evidence/summon/vote rows.
 - **Output** — the final artifact with structured fields; export actions.
 
 ### Key API Endpoints
@@ -1499,16 +1550,16 @@ On dashboard start, the embedding model is initialized eagerly (status tracked: 
 
 Exposed as a plugin tool (`knit`) — invoked when the user types `/knit <question>`.
 
-**Args:** `question`, `context`, `participants` (custom room), `max_rounds` (default from config: 3), `convergence` (`consensus|majority|moderator_forces`, default `moderator_forces`), `models` (explicit per-tier assignment), `meeting_timeout` (ms, default 900000), `seed` (reproducible composition), `dry_run` (preview room without deliberating), `fresh` (replace an existing meeting for the session).
+**Args:** `question`, `context`, `participants` (custom room), `max_rounds` (default from config: 3), `convergence` (`consensus|majority|moderator_forces`, default `moderator_forces`), `models` (explicit per-tier assignment, e.g. `[{ tier: "senior", provider_id: "anthropic", model_id: "claude-sonnet-4-..." }]`), `meeting_timeout` (ms, default 900000), `seed` (reproducible composition), `dry_run` (preview room without deliberating), `fresh` (replace an existing meeting for the session).
 
 ### Handler Flow (`createKnitHandler`)
 
-1. Discover models + session model.
+1. Discover models + session model; apply the optional `/knit_models` model filter to the pool (Section 26).
 2. If `fresh: true`, delete any existing meeting DB for the session.
 3. If an existing meeting exists (and not `fresh`/`dry_run`) → **extend** (Section 18).
-4. Otherwise compose a room (or use custom participants), assign models, and (optionally) preview with `dry_run`.
+4. Otherwise compose a room (or use custom participants), assign models (honoring `models` per-tier overrides and per-participant `model`/`model_override`), and (optionally) preview with `dry_run`.
 5. Insert the meeting row (before composition, satisfying the FK for persona embeddings), run composition, insert participants.
-6. Construct `MeetingOrchestrator`, run `initialize()` + `runMeeting()`.
+6. Construct `MeetingOrchestrator` (passing the filtered `availableModels` for fallback selection), run `initialize()` + `runMeeting()`.
 7. Write the full report to `.opencode/loom/meetings/<meetingId>.md` and return a concise chat summary (decision line extracted from the artifact's `## Decision` section; suggestions to run `/loom_viz`).
 
 ### Progress Callbacks
@@ -1525,7 +1576,7 @@ The handler wires metadata callbacks to the chat context for live UX:
 - `loom_cancel` — request cancellation (current round completes, then synthesis runs)
 - `loom_debug` — dump internal state of a running Loom (optional `include` filter)
 - `loom_viz` / `loom_stop` — start/stop the dashboard
-- `knit_models` — preview model assignments (`createModelPlan` + `formatModelPlan`); the preview also stages the plan for the next `/knit`
+- `knit_models` — discover available models, preview tier assignments (`createModelPlan` + `formatModelPlan`), and manage a **session-scoped model filter**. Actions: `list` (default), `enable <provider/model>…`, `disable <provider/model>…`, `reset`. The filter restricts which discovered models Loom agents may use; the preview also stages the plan for the next `/knit`. (See Section 26.)
 
 ### Session Index & Cleanup
 
@@ -1566,7 +1617,48 @@ On meeting end the orchestrator persists `meeting_metrics` via `saveMeetingMetri
 
 ### Logging
 
-Structured JSON logs via `Logger` with contexts: `meeting_id` (short form), event name, and fields. Error paths are captured per participant in `agent_errors` and globally in `error_log`.
+Structured JSON logs via `Logger` with contexts: `meeting_id` (short form), event name, and fields. Error paths are captured per participant in `agent_errors` and globally in `error_log`. Model-fallback events are observable as `model_fallback`/`model_fallback_failed` log events, an `agent_errors` row with type `model_fallback`, and a `⚠️ … falling back …` progress message.
+
+---
+
+## 26. Model Configuration
+
+A recap of every knob that controls which LLM runs an agent or the orchestrator. Model configuration spans four layers:
+
+### 1. Model Discovery & the Model Filter
+
+`discoverModels()` (`src/services/model-service.js`) reads the connected providers via `client.provider.providers` and records the user session's current model as `sessionModel`. Deprecated models are excluded.
+
+A **session-scoped model filter** (`enabledModels` in the knit handler) is maintained with `/knit_models`:
+- `/knit_models` — lists all discovered models with `provider/model` identifiers, cost, context window, and reasoning capability, plus the proposed tier assignment plan.
+- `/knit_models enable <id>…` / `/knit_models disable <id>…` — restrict which discovered models Loom agents may use (`applyModelFilter`). Default (no filter) = all models.
+- `/knit_models reset` — clears the filter back to "all models".
+
+The filter is mutable state on the knit handler (per opencode session, not persisted) and is applied to the discovery result before composition, assignment, and the `availableModels` list passed to the orchestrator for fallback selection.
+
+### 2. Tier-Based Assignment
+
+`assignModelsToParticipants()` → `assignModelsByTier()` is the single deterministic assignment engine (shared with the `/knit_models` preview so both always agree):
+
+- Models are sorted by a capability score (`scoreModel`: active status + context window + reasoning capability; cost is display-only).
+- Principal/senior roles receive the session model (or the best available); mid/junior get the next-best unused models.
+- **Model diversity** (`modelDiversity`, default true): when more distinct models are available than tiers, every individual agent gets a unique model (best models to the highest tiers) instead of sharing per tier.
+- The pool itself can be pre-narrowed by the model filter (layer 1).
+
+### 3. Per-Participant Overrides
+
+Explicit configuration always wins over automatic assignment:
+
+- **`/knit models=[{ tier, provider_id, model_id }]`** — per-tier override applied at composition (mapped into each participant's `model`).
+- **Custom rooms** — participants may carry a `model` object `{ providerID, modelID }` or a `model_override` string `"provider/model"` (`buildOverrideMap`). Overridden models are also excluded from the diversity pool so they aren't double-assigned.
+
+### 4. Orchestrator & Fallback Model Safeguards
+
+- **Fast-path routing** (`fastPathModel`): cheap models for moderation/summary/compaction/domain orchestrator calls; turn-order planning selects it itself (Section 21).
+- **Model fallback** (`modelFallback.*`): a failed agent turn is retried on its model, then on a healthy fallback selected by `selectFallbackModel()` (Section 16).
+- `getHighestTierModel()` acts as a safety net: `#getParticipantModel(participant, fallbackOnError)` substitutes the highest-tier healthy model whenever a participant's own model is missing or unhealthy (used by directives, votes, and synthesis).
+
+The appendix table lists every model-related configuration key (`modelDiversity`, `fastPathModel`, `circuitBreaker.*`, `modelFallback.*`).
 
 ---
 
@@ -1598,6 +1690,9 @@ Loaded from `.loomrc.json` (project or `~/.config/opencode/.loomrc.json`), or th
 | `moderatorTrigger.lookbackWindow` | `4` | Lookback window for the gate |
 | `circuitBreaker.failureThreshold` | `3` | Consecutive failures before a model is marked unhealthy |
 | `circuitBreaker.resetTimeoutMs` | 300,000 | Half-open test window for an unhealthy model |
+| `modelFallback.enabled` | `true` | Master switch for agent-turn retries + fallback model selection (Section 16) |
+| `modelFallback.maxRetriesPerModel` | `2` | Retries on the same model before falling back |
+| `modelFallback.maxFallbackAttempts` | `1` | Retries on the selected fallback model |
 | `agentTools.*` | (see Section 20) | Tool enablement and phase overrides |
 | `DEFAULT_EMBEDDING_MODEL` | `"Snowflake/snowflake-arctic-embed-xs"` | Default embedder for PersonaIndex and vector search (warmed up on dashboard start) |
 | `DEFAULT_EMBEDDING_QUANT` | `"onnx/model_int8.onnx"` | ONNX quantization variant used by the embedder |

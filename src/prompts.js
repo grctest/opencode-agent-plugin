@@ -71,8 +71,8 @@ During reflection, you have access to research tools to ground your analysis in 
 
 ### Tool Selection
 - **loom_vector_search**: Verify what was actually said in the deliberation
-- **web_search**: Check current facts, data, or claims before updating your stance
-- **web_fetch**: Deep-dive into a specific source for detailed verification
+- **websearch**: Check current facts, data, or claims before updating your stance
+- **webfetch**: Deep-dive into a specific source for detailed verification
 - **read**: Examine project files or documents referenced in the discussion
 
 ### Quality Standards
@@ -152,8 +152,8 @@ You may use research tools to ground your answer in evidence. Use them to verify
 
 ### Tool Selection
 - **loom_vector_search**: Verify what was actually said in the deliberation
-- **web_search**: Check current facts, data, or claims
-- **web_fetch**: Deep-dive into a specific source for detailed verification
+- **websearch**: Check current facts, data, or claims
+- **webfetch**: Deep-dive into a specific source for detailed verification
 - **read**: Examine project files or documents referenced in the discussion`
     : "";
 
@@ -229,8 +229,8 @@ export function buildEvidencePrompt(sourceAgent, targetAgent, sourceContribution
 You MUST use at least one research tool to find concrete evidence. Do NOT speculate or reason from memory alone.
 
 ### Tool Selection
-- **web_search**: Search for current facts, data, benchmarks, or claims related to the evidence request
-- **web_fetch**: Deep-dive into a specific source URL for detailed evidence
+- **websearch**: Search for current facts, data, benchmarks, or claims related to the evidence request
+- **webfetch**: Deep-dive into a specific source URL for detailed evidence
 - **read**: Examine project files or documents referenced in the discussion
 - **loom_vector_search**: Verify what was actually said in the deliberation
 
@@ -268,6 +268,59 @@ Report what you found, cite sources, and note if evidence is inconclusive or una
 Stay in character.
 Do NOT use contribution type tags ([PROPOSE], [CHALLENGE], etc.) — just present your findings.
 ${evidenceToolUsageSection}`;
+}
+
+/**
+ * Builds a prompt for a voting agent to cast their vote on a poll.
+ */
+export function buildVotePrompt(sourceAgent, targetAgent, sourceContribution, question, roundContributions, currentRound, maxRounds) {
+  const safeSourceName = sanitizeForDisplay(sourceAgent.config.name);
+  const safeContribution = sanitizeForDisplay(sourceContribution);
+  const safeQuestion = sanitizeForDisplay(question);
+
+  const previousReflection = targetAgent.reflection || "";
+  const reflectionBlock = previousReflection
+    ? `Your previous reflection on this deliberation:\n"${sanitizeForDisplay(previousReflection)}"`
+    : "";
+
+  const myContributions = (roundContributions || [])
+    .filter((c) => c.participant_id === targetAgent.config.id && c.type !== "pass")
+    .slice(-2)
+    .map((c) => sanitizeForDisplay(c.content));
+  const recentBlock = myContributions.length > 0
+    ? `Your recent contributions:\n${myContributions.map((c) => `- "${c}"`).join("\n")}`
+    : "";
+
+  const roundContext = buildRoundContext(currentRound, maxRounds);
+
+  return `## Vote Requested
+
+**${safeSourceName}** (${sourceAgent.config.tier}) asks:
+
+"${safeContribution}"
+
+---
+**Vote on:** "${safeQuestion}"
+
+${recentBlock}
+
+${reflectionBlock}
+
+## Context
+
+**Round context:**
+${roundContext}
+
+## Your Task
+
+Vote by choosing one option (A, B, etc.) and provide 1-2 sentences explaining your reasoning.
+
+Format your response exactly as:
+[Vote: <letter>]
+<1-2 sentence justification>
+
+Do NOT use contribution type tags ([PROPOSE], [CHALLENGE], etc.).
+Stay in character.`;
 }
 
 /**
@@ -553,8 +606,8 @@ You have access to research tools that let you ground your contributions in real
 - You need to recall earlier contributions not captured in the recent context
 
 ### Tool Selection
-- **web_search**: Find current information, compare options, discover trends, validate claims with sources
-- **web_fetch**: Deep-dive into a specific URL for detailed content from articles or documentation
+- **websearch**: Find current information, compare options, discover trends, validate claims with sources
+- **webfetch**: Deep-dive into a specific URL for detailed content from articles or documentation
 - **read / glob / grep**: Examine project files, code, or local documents
 - **loom_vector_search**: Recall specific contributions from earlier in the deliberation
 
@@ -562,7 +615,8 @@ You have access to research tools that let you ground your contributions in real
 - Make one focused search query rather than multiple vague ones
 - Synthesize what you find — don't just dump search results into your response
 - When you find useful information, weave it naturally into your argument with attribution
-- If a search doesn't yield useful results, proceed with your existing knowledge rather than retrying
+- If a tool call is rejected as invalid, retry it using the exact tool names above (websearch, webfetch, read, glob, grep, loom_vector_search) — do not silently fall back to memory
+- If a search returns nothing useful, try once more with a single adjusted query before proceeding with your knowledge
 - Cite sources when they strengthen your credibility`
     : "";
 

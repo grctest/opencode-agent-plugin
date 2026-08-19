@@ -571,6 +571,8 @@ input {
 .loom-badge-query_response { background: #0d9488; color: white; }
 .loom-badge-evidence_response { background: #0369a1; color: white; }
 .loom-badge-summoned_response { background: #a855f7; color: white; }
+.loom-badge-vote_response { background: #10b981; color: white; }
+.loom-badge-vote_tally { background: #f59e0b; color: white; }
 
 .loom-badge-orchestrator { background: #6b7280; color: white; }
 
@@ -805,6 +807,16 @@ input {
   background: color-mix(in oklch, #0369a1 4%, var(--color-card));
 }
 
+.loom-thinking-placeholder-row.loom-contrib-type-vote_response {
+  border-left: 2px solid #10b981;
+  background: color-mix(in oklch, #10b981 4%, var(--color-card));
+}
+
+.loom-thinking-placeholder-row.loom-contrib-type-vote_tally {
+  border-left: 2px solid #f59e0b;
+  background: color-mix(in oklch, #f59e0b 4%, var(--color-card));
+}
+
 .loom-thinking-placeholder-row.loom-contrib-type-summoned_response {
   border-left: 2px solid #a855f7;
   background: color-mix(in oklch, #a855f7 4%, var(--color-card));
@@ -831,6 +843,52 @@ input {
 .loom-contrib-type-query_response { border-left-color: #0d9488; background: rgba(13, 148, 136, 0.04); }
 .loom-contrib-type-evidence_response { border-left-color: #0369a1; background: rgba(3, 105, 161, 0.04); }
 .loom-contrib-type-summoned_response { border-left-color: #a855f7; background: rgba(168, 85, 247, 0.04); }
+.loom-contrib-type-vote_response { border-left-color: #10b981; background: rgba(16, 185, 129, 0.04); }
+.loom-contrib-type-vote_tally { border-left-color: #f59e0b; background: rgba(245, 158, 11, 0.04); }
+
+/* Timeline orchestrator item */
+.loom-orchestrator-item-row {
+  border-left: 3px solid #9ca3af;
+  transition: border-color 150ms ease, background-color 150ms ease;
+  cursor: pointer;
+}
+
+.loom-orchestrator-item-row:hover {
+  background: var(--color-secondary);
+  border-left-color: #6b7280;
+}
+
+.loom-orchestrator-item-name {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--color-foreground);
+}
+
+.loom-orchestrator-item-emoji {
+  display: none;
+}
+
+/* Timeline round summary item */
+.loom-round-summary {
+  border-left: 3px solid #f59e0b;
+  transition: border-color 150ms ease, background-color 150ms ease;
+  cursor: pointer;
+}
+
+.loom-round-summary:hover {
+  background: var(--color-secondary);
+  border-left-color: #b45309;
+}
+
+.loom-round-summary:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+}
+
+.loom-round-summary-content {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 
 .loom-contrib-participant {
   font-size: 0.875rem;
@@ -1741,6 +1799,12 @@ input {
 .loom-dialog-type-reflection { border-left: 3px solid #6366f1; }
 .loom-dialog-type-reflection .loom-dialog-header { background: color-mix(in oklch, #6366f1 25%, var(--color-card)); }
 
+.loom-dialog-type-vote_response { border-left: 3px solid #10b981; }
+.loom-dialog-type-vote_response .loom-dialog-header { background: color-mix(in oklch, #10b981 25%, var(--color-card)); }
+
+.loom-dialog-type-vote_tally { border-left: 3px solid #f59e0b; }
+.loom-dialog-type-vote_tally .loom-dialog-header { background: color-mix(in oklch, #f59e0b 25%, var(--color-card)); }
+
 .loom-dialog-type-orchestrator { border-left: 3px solid #6b7280; }
 .loom-dialog-type-orchestrator .loom-dialog-header { background: color-mix(in oklch, #6b7280 25%, var(--color-card)); }
 
@@ -1852,7 +1916,8 @@ input {
 }
 
 .loom-tool-call-output,
-.loom-tool-call-error-output {
+.loom-tool-call-error-output,
+.loom-tool-call-input {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 0.75rem;
   line-height: 1.4;
@@ -1865,6 +1930,11 @@ input {
   white-space: pre-wrap;
   word-break: break-word;
   margin: 0;
+}
+
+.loom-tool-call-input {
+  margin-bottom: 0.375rem;
+  color: var(--color-muted-foreground);
 }
 
 .loom-tool-call-error-output {

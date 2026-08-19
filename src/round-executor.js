@@ -1,13 +1,31 @@
-import { buildAgentSystemPrompt, buildAgentUserPrompt, buildQueryPrompt, buildEvidencePrompt, buildSummonPrompt } from "./prompts.js";
+import { buildAgentSystemPrompt, buildAgentUserPrompt, buildQueryPrompt, buildEvidencePrompt, buildSummonPrompt, buildVotePrompt } from "./prompts.js";
 import { parseAgentResponse } from "./validation.js";
-import { getConfig } from "./config.js";
-import { extractText, extractAgentResponse, truncate, withTimeout } from "./shared.js";
+import { getConfig, resolveBuiltInTools } from "./config.js";
+import { extractText, extractAgentResponse, mapToolResults, truncate, withTimeout } from "./shared.js";
 import { Logger, extractErrorInfo } from "./logger.js";
 import { runMidRoundReflections } from "./reflection-manager.js";
 import { sanitizeForPrompt, sanitizeForDisplay } from "./utils/sanitize.js";
 import { withRetry, isRetryableError, CircuitBreaker } from "./utils/retry.js";
 import { selectFallbackModel } from "./services/model-service.js";
 import { incrementKeyedCounter, recordLatency } from "./metrics.js";
+
+/**
+ * Extracts a vote letter (A, B, C, etc.) from a vote response string.
+ * Looks for "[Vote: X]" pattern or falls back to first standalone capital letter.
+ */
+function extractVoteLetter(text) {
+  if (!text) return null;
+  // Look for [Vote: X] pattern
+  const tagMatch = text.match(/\[Vote:\s*([A-Za-z])\]/i);
+  if (tagMatch) return tagMatch[1].toUpperCase();
+  // Fallback: first standalone capital letter on its own line
+  const lines = text.split("\n");
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (/^[A-Za-z]$/.test(trimmed)) return trimmed.toUpperCase();
+  }
+  return null;
+}
 
 export class RoundExecutor {
   #client;
@@ -157,6 +175,22 @@ export class RoundExecutor {
         });
       }
 
+      // Vote: if this agent called a vote
+      if (result?.vote && result.content !== "[PASS]") {
+        const sourceContribution = round.contributions[round.contributions.length - 1];
+        if (sourceContribution) {
+          await this.executeVote(round, p, result.vote, sourceContribution.id, {
+            client: this.#client,
+            directory: this.#directory,
+            sessionManager: this.#sessionManager,
+            getParticipantModel: this.#getParticipantModel,
+            stateManager: this.#stateManager,
+            db: this.#db,
+            callStats: this.#callStats,
+          });
+        }
+      }
+
       // Mid-round reflections: if this agent challenged/dissented,
       // trigger reflection for the most persona-similar active participant
       if (result && (result.type === "challenge" || result.type === "dissent")) {
@@ -267,15 +301,23 @@ export class RoundExecutor {
             stateManager.getMaxRounds(),
           );
 
-          // Build tools map for query (same reduced set as reflections)
+          // Build tools map for query (reduced set: webfetch, websearch, read, loom_vector_search)
           const agentToolsConfig = getConfig().agentTools;
           const queryTools = {};
           if (agentToolsConfig?.enabled) {
-            if (agentToolsConfig?.builtIn?.web_fetch) queryTools.web_fetch = true;
-            if (agentToolsConfig?.builtIn?.web_search) queryTools.web_search = true;
-            if (agentToolsConfig?.builtIn?.read) queryTools.read = true;
-            if (agentToolsConfig?.loom?.loom_vector_search) queryTools.loom_vector_search = true;
+            const t = resolveBuiltInTools(agentToolsConfig);
+            if (t.webfetch) queryTools.webfetch = true;
+            if (t.websearch) queryTools.websearch = true;
+            if (t.read) queryTools.read = true;
+            if (agentToolsConfig.loom?.loom_vector_search) queryTools.loom_vector_search = true;
           }
+          const queryToolKeys = Object.keys(queryTools);
+          this.#logger.info("agent_tools_offered", `${target.config.name} offered ${queryToolKeys.length} tool(s)`, {
+            participant: target.config.id,
+            round: stateManager.getCurrentRound(),
+            tools: queryToolKeys,
+            tool_choice: queryToolKeys.length > 0 ? "auto" : "none",
+          });
 
           const systemPrompt = `You are ${target.config.name} (${target.config.tier}). A fellow participant has directed a question to you. Respond directly and stay in character.`;
           const promptContext = {
@@ -322,6 +364,8 @@ export class RoundExecutor {
 
           if (!text || text.trim().length < 10) return;
 
+          const contributionTools = mapToolResults(toolResults);
+
           // Create query response contribution
           const contribution = {
             id: stateManager.nextContributionId(),
@@ -330,14 +374,7 @@ export class RoundExecutor {
             content: `[Response to query from ${sourceName}]\n\n${text.trim()}`,
             type: "query_response",
             targets_which: sourceContributionId,
-            tool_calls: toolResults.length > 0 ? toolResults.map(t => ({
-              tool: t.tool,
-              callID: t.callID,
-              title: t.title ?? null,
-              output: t.output ? String(t.output).slice(0, 2000) : null,
-              error: t.error ? String(t.error).slice(0, 500) : null,
-              metadata: t.metadata ?? null,
-            })) : null,
+            tool_calls: contributionTools && contributionTools.length ? contributionTools : null,
             prompt_context: promptContext,
             created_at: new Date().toISOString(),
           };
@@ -416,11 +453,19 @@ export class RoundExecutor {
           const agentToolsConfig = getConfig().agentTools;
           const evidenceTools = {};
           if (agentToolsConfig?.enabled) {
-            if (agentToolsConfig?.builtIn?.web_fetch) evidenceTools.web_fetch = true;
-            if (agentToolsConfig?.builtIn?.web_search) evidenceTools.web_search = true;
-            if (agentToolsConfig?.builtIn?.read) evidenceTools.read = true;
-            if (agentToolsConfig?.loom?.loom_vector_search) evidenceTools.loom_vector_search = true;
+            const t = resolveBuiltInTools(agentToolsConfig);
+            if (t.webfetch) evidenceTools.webfetch = true;
+            if (t.websearch) evidenceTools.websearch = true;
+            if (t.read) evidenceTools.read = true;
+            if (agentToolsConfig.loom?.loom_vector_search) evidenceTools.loom_vector_search = true;
           }
+          const evidenceToolKeys = Object.keys(evidenceTools);
+          this.#logger.info("agent_tools_offered", `${target.config.name} offered ${evidenceToolKeys.length} tool(s) (required)`, {
+            participant: target.config.id,
+            round: stateManager.getCurrentRound(),
+            tools: evidenceToolKeys,
+            tool_choice: evidenceToolKeys.length > 0 ? "required" : "none",
+          });
 
           const systemPrompt = `You are ${target.config.name} (${target.config.tier}). A fellow participant has requested evidence from you. You MUST use research tools to find concrete evidence. Respond with your findings and stay in character.`;
           const promptContext = {
@@ -467,6 +512,8 @@ export class RoundExecutor {
 
           if (!text || text.trim().length < 10) return;
 
+          const contributionTools = mapToolResults(toolResults);
+
           const contribution = {
             id: stateManager.nextContributionId(),
             round: stateManager.getCurrentRound(),
@@ -474,14 +521,7 @@ export class RoundExecutor {
             content: `[Evidence from ${target.config.name} on ${sourceName}'s ${round.contributions[round.contributions.length - 1]?.type ?? "contribution"}]\n\n${text.trim()}`,
             type: "evidence_response",
             targets_which: sourceContributionId,
-            tool_calls: toolResults.length > 0 ? toolResults.map(t => ({
-              tool: t.tool,
-              callID: t.callID,
-              title: t.title ?? null,
-              output: t.output ? String(t.output).slice(0, 2000) : null,
-              error: t.error ? String(t.error).slice(0, 500) : null,
-              metadata: t.metadata ?? null,
-            })) : null,
+            tool_calls: contributionTools && contributionTools.length ? contributionTools : null,
             prompt_context: promptContext,
             created_at: new Date().toISOString(),
           };
@@ -576,14 +616,22 @@ export class RoundExecutor {
       const agentToolsConfig = getConfig().agentTools;
       const toolsMap = {};
       if (agentToolsConfig?.enabled) {
-        if (agentToolsConfig?.builtIn?.web_fetch) toolsMap.web_fetch = true;
-        if (agentToolsConfig?.builtIn?.web_search) toolsMap.web_search = true;
-        if (agentToolsConfig?.builtIn?.read) toolsMap.read = true;
-        if (agentToolsConfig?.builtIn?.bash?.enabled || agentToolsConfig?.builtIn?.bash === true) toolsMap.bash = true;
-        if (agentToolsConfig?.builtIn?.glob) toolsMap.glob = true;
-        if (agentToolsConfig?.builtIn?.grep) toolsMap.grep = true;
-        if (agentToolsConfig?.loom?.loom_vector_search) toolsMap.loom_vector_search = true;
+        const t = resolveBuiltInTools(agentToolsConfig);
+        if (t.webfetch) toolsMap.webfetch = true;
+        if (t.websearch) toolsMap.websearch = true;
+        if (t.read) toolsMap.read = true;
+        if (t.bash) toolsMap.bash = true;
+        if (t.glob) toolsMap.glob = true;
+        if (t.grep) toolsMap.grep = true;
+        if (agentToolsConfig.loom?.loom_vector_search) toolsMap.loom_vector_search = true;
       }
+      const summonedToolKeys = Object.keys(toolsMap);
+      this.#logger.info("agent_tools_offered", `${resolvedPersona.name} (summoned) offered ${summonedToolKeys.length} tool(s)`, {
+        participant: summonedId,
+        round: stateManager.getCurrentRound(),
+        tools: summonedToolKeys,
+        tool_choice: summonedToolKeys.length > 0 ? "auto" : "none",
+      });
 
       // Use requester's model
       let model = null;
@@ -645,6 +693,8 @@ export class RoundExecutor {
 
       if (!text || text.trim().length < 10) return;
 
+      const contributionTools = mapToolResults(toolResults);
+
       const contribution = {
         id: stateManager.nextContributionId(),
         round: stateManager.getCurrentRound(),
@@ -652,14 +702,7 @@ export class RoundExecutor {
         content: `[Summoned: ${resolvedPersona.name} (${resolvedPersona.tier})]\n\n${text.trim()}`,
         type: "summoned_response",
         targets_which: null,
-        tool_calls: toolResults.length > 0 ? toolResults.map(t => ({
-          tool: t.tool,
-          callID: t.callID,
-          title: t.title ?? null,
-          output: t.output ? String(t.output).slice(0, 2000) : null,
-          error: t.error ? String(t.error).slice(0, 500) : null,
-          metadata: t.metadata ?? null,
-        })) : null,
+        tool_calls: contributionTools && contributionTools.length ? contributionTools : null,
         prompt_context: promptContext,
         created_at: new Date().toISOString(),
       };
@@ -681,6 +724,211 @@ export class RoundExecutor {
       await sessionManager.deleteEphemeralSession(sessionId).catch(() => {});
       db.setSummoningParticipants(null);
     }
+  }
+
+  async executeVote(round, sourceParticipant, vote, sourceContributionId, {
+    client,
+    directory,
+    sessionManager,
+    getParticipantModel,
+    stateManager,
+    db,
+    callStats,
+  }) {
+    const config = getConfig();
+    const timeoutMs = config.agentTimeoutMs;
+    const allParticipants = stateManager.getParticipants();
+
+    // Source agent always votes — extract their vote from the contribution content
+    const sourceContribution = round.contributions.find((c) => c.id === sourceContributionId);
+    const sourceVoteText = sourceContribution?.content ?? "";
+
+    // All other active participants vote
+    const voters = allParticipants.filter(
+      (p) => p.config.id !== sourceParticipant.config.id && p.status !== "failed" && p.status !== "passed",
+    );
+
+    if (voters.length === 0) {
+      // Source-only vote: record tally immediately
+      const tallyContent = `[Vote Tally] ${vote.question}\nSource vote: ${sourceVoteText.slice(0, 200)}\nTotal voters: 1 (source only)`;
+      const tallyContribution = {
+        id: stateManager.nextContributionId(),
+        round: stateManager.getCurrentRound(),
+        participant_id: sourceParticipant.config.id,
+        content: tallyContent,
+        type: "vote_tally",
+        targets_which: sourceContributionId,
+        tool_calls: null,
+        prompt_context: { type: "vote_tally", question: vote.question, round: stateManager.getCurrentRound() },
+        created_at: new Date().toISOString(),
+      };
+      stateManager.addContribution(tallyContribution);
+      round.contributions.push(tallyContribution);
+      db.addContributionWithTurnRequest(stateManager.getMeetingId(), tallyContribution, null);
+      this.#options.onProgress?.(`${sourceParticipant.config.name} — vote tally (source only)`);
+      return;
+    }
+
+    db.setQueryingParticipants(voters.map((v) => v.config.id));
+
+    const voteResponses = [];
+
+    await Promise.allSettled(
+      voters.map(async (voter) => {
+        const model = getParticipantModel(voter);
+        const sessionId = await sessionManager.createEphemeralSession(voter);
+        try {
+          const previousStatus = voter.status;
+          voter.status = "speaking";
+          db.setParticipantStatus(voter.config.id, "speaking");
+
+          const prompt = buildVotePrompt(
+            sourceParticipant,
+            voter,
+            sourceContribution || sourceParticipant.config.name,
+            vote.question,
+            round.contributions,
+            stateManager.getCurrentRound(),
+            stateManager.getMaxRounds(),
+          );
+
+          const systemPrompt = `You are ${voter.config.name} (${voter.config.tier}). A fellow participant has called a vote. Cast your vote and provide brief reasoning. Respond directly and stay in character.`;
+
+          const promptContext = {
+            type: "vote_response",
+            system_prompt: systemPrompt,
+            user_prompt: prompt,
+            source_contribution_id: sourceContributionId,
+            source_participant_id: sourceParticipant.config.id,
+            question: vote.question,
+            round_contributions_used: round.contributions.slice(-4).map((c) => ({
+              id: c.id, participant_id: c.participant_id, type: c.type, content: c.content,
+            })),
+            round: stateManager.getCurrentRound(),
+          };
+
+          const result = await withTimeout(
+            client.session.prompt({
+              path: { id: sessionId },
+              body: {
+                system: systemPrompt,
+                model,
+                temperature: voter.tier_config.temperature,
+                parts: [{ type: "text", text: prompt }],
+                tools: {},
+                tool_choice: "none",
+              },
+              query: { directory },
+            }),
+            timeoutMs,
+          );
+
+          if (callStats) {
+            callStats.reflection_calls++;
+            const tokens = result?.data?.tokens;
+            if (tokens) {
+              callStats.input_tokens += tokens.input ?? 0;
+              callStats.output_tokens += tokens.output ?? 0;
+            }
+          }
+
+          if (result.error) throw new Error(result.error.message || JSON.stringify(result.error));
+
+          const { text } = extractAgentResponse(result.data);
+
+          if (!text || text.trim().length < 5) return;
+
+          const contribution = {
+            id: stateManager.nextContributionId(),
+            round: stateManager.getCurrentRound(),
+            participant_id: voter.config.id,
+            content: `[Vote from ${voter.config.name}]\n\n${text.trim()}`,
+            type: "vote_response",
+            targets_which: sourceContributionId,
+            tool_calls: null,
+            prompt_context: promptContext,
+            created_at: new Date().toISOString(),
+          };
+
+          stateManager.addContribution(contribution);
+          round.contributions.push(contribution);
+          voteResponses.push({ voter: voter.config.name, content: text.trim() });
+
+          db.addContributionWithTurnRequest(stateManager.getMeetingId(), contribution, null);
+
+          voter.status = previousStatus;
+          db.setParticipantStatus(voter.config.id, previousStatus);
+
+          this.#options.onProgress?.(`${voter.config.name} (${voter.config.tier}) — voted on poll`);
+          this.#options.onContribution?.(voter.config.name, stateManager.getCurrentRound(), "vote_response");
+
+        } catch (err) {
+          const info = extractErrorInfo(err);
+          this.#logError(`vote response for ${voter.config.name}`, err);
+          this.#logger.warn("vote_failed", `Vote response for ${voter.config.name} failed`, info);
+          voter.status = "listening";
+          db.setParticipantStatus(voter.config.id, "listening");
+        } finally {
+          await sessionManager.deleteEphemeralSession(sessionId).catch(() => {});
+        }
+      }),
+    );
+
+    db.setQueryingParticipants(null);
+
+    // Generate vote tally
+    const tallyLines = [`[Vote Tally] ${vote.question}`];
+    const voteCounts = {};
+
+    // Parse source vote
+    const sourceLetter = extractVoteLetter(sourceVoteText);
+    if (sourceLetter) {
+      voteCounts[sourceLetter] = (voteCounts[sourceLetter] || 0) + 1;
+      tallyLines.push(`${sourceLetter}: 1 vote (${sourceParticipant.config.name} — source)`);
+    }
+
+    // Parse voter responses
+    for (const vr of voteResponses) {
+      const letter = extractVoteLetter(vr.content);
+      if (letter) {
+        voteCounts[letter] = (voteCounts[letter] || 0) + 1;
+        const existing = tallyLines.find((l) => l.startsWith(`${letter}:`));
+        if (existing) {
+          const idx = tallyLines.indexOf(existing);
+          tallyLines[idx] = `${letter}: ${voteCounts[letter]} votes (${existing.match(/\((.+)\)/)?.[1] ?? ""}, ${vr.voter})`;
+        } else {
+          tallyLines.push(`${letter}: 1 vote (${vr.voter})`);
+        }
+      }
+    }
+
+    const totalVoters = 1 + voteResponses.length;
+    tallyLines.push(`Total voters: ${totalVoters}`);
+
+    // Determine winner
+    const sorted = Object.entries(voteCounts).sort((a, b) => b[1] - a[1]);
+    if (sorted.length > 0) {
+      const [winner, count] = sorted[0];
+      const pct = Math.round((count / totalVoters) * 100);
+      tallyLines.push(`Winner: ${winner} (${pct}%)`);
+    }
+
+    const tallyContent = tallyLines.join("\n");
+    const tallyContribution = {
+      id: stateManager.nextContributionId(),
+      round: stateManager.getCurrentRound(),
+      participant_id: sourceParticipant.config.id,
+      content: tallyContent,
+      type: "vote_tally",
+      targets_which: sourceContributionId,
+      tool_calls: null,
+      prompt_context: { type: "vote_tally", question: vote.question, votes: voteResponses, round: stateManager.getCurrentRound() },
+      created_at: new Date().toISOString(),
+    };
+    stateManager.addContribution(tallyContribution);
+    round.contributions.push(tallyContribution);
+    db.addContributionWithTurnRequest(stateManager.getMeetingId(), tallyContribution, null);
+    this.#options.onProgress?.(`${sourceParticipant.config.name} — vote tally: ${sorted.length > 0 ? `Winner ${sorted[0][0]}` : "no votes"}`);
   }
 
   #storeContribution(participant, result, round) {
@@ -756,7 +1004,7 @@ export class RoundExecutor {
       : "";
 
     const recentForPrompt = this.#stateManager.getWeave().filter(
-      (c) => c.round != null && c.round >= currentRound - 1,
+      (c) => c.round != null && c.round >= currentRound - 1 && c.type !== "vote_response",
     ).slice(-4);
 
     const systemPrompt = buildAgentSystemPrompt(participant);
@@ -894,6 +1142,16 @@ export class RoundExecutor {
       const toolsMap = this.#buildToolsMap(config);
       const agentToolsConfig = config.agentTools;
 
+      // Observability: surface the exact tool set offered to this session so
+      // "no tools offered" vs "tools offered but unused" is distinguishable.
+      const offeredTools = Object.keys(toolsMap);
+      this.#logger.info("agent_tools_offered", `${participant.config.name} offered ${offeredTools.length} tool(s)`, {
+        participant: participant.config.id,
+        round: currentRound,
+        tools: offeredTools,
+        tool_choice: offeredTools.length > 0 ? "auto" : "none",
+      });
+
       const result = await withTimeout(
         this.#client.session.prompt({
           path: { id: ephemeralSessionId },
@@ -922,14 +1180,16 @@ export class RoundExecutor {
       const { text: agentText, toolResults } = extractAgentResponse(result.data);
 
       if (toolResults.length > 0) {
-        this.#logger.info("tool_results", `${participant.config.name} used ${toolResults.length} tool(s)`, {
-          tools: toolResults.map((t) => ({
-            tool: t.tool,
-            callID: t.callID,
-            hasOutput: !!t.output,
-            hasError: !!t.error,
-          })),
-        });
+        const tools = toolResults.map((t) => ({
+          tool: t.tool,
+          callID: t.callID,
+          status: t.status ?? null,
+          attempted_tool: t.attempted_tool ?? null,
+          hasOutput: !!t.output,
+          hasError: !!t.error,
+        }));
+        const attempts = tools.filter((t) => t.status === "error" || t.attempted_tool).length;
+        this.#logger.info("tool_results", `${participant.config.name} used ${toolResults.length} tool(s)${attempts > 0 ? ` (${attempts} failed/attempted)` : ""}`, { tools });
       }
 
       const maxToolCalls = agentToolsConfig?.maxToolCallsPerTurn ?? 5;
@@ -943,14 +1203,8 @@ export class RoundExecutor {
       const response = parseAgentResponse(participant.config.id, safeContent);
       if (!response) throw new Error("Failed to parse agent response");
 
-      response.tool_calls = toolResults.length > 0 ? toolResults.map((t) => ({
-        tool: t.tool,
-        callID: t.callID,
-        title: t.title ?? null,
-        output: t.output ? String(t.output).slice(0, 2000) : null,
-        error: t.error ? String(t.error).slice(0, 500) : null,
-        metadata: t.metadata ?? null,
-      })) : null;
+      response.tool_calls = mapToolResults(toolResults);
+      if (response.tool_calls && response.tool_calls.length === 0) response.tool_calls = null;
 
       this.#recordModelSuccess(model);
       response.prompt_context = promptContext;
@@ -971,14 +1225,14 @@ export class RoundExecutor {
     const agentToolsConfig = config.agentTools;
     const toolsMap = {};
     if (agentToolsConfig?.enabled) {
-      const builtIn = agentToolsConfig.builtIn;
-      if (builtIn?.web_fetch) toolsMap.web_fetch = true;
-      if (builtIn?.web_search) toolsMap.web_search = true;
-      if (builtIn?.read) toolsMap.read = true;
-      if (builtIn?.bash?.enabled || builtIn?.bash === true) toolsMap.bash = true;
-      if (builtIn?.glob) toolsMap.glob = true;
-      if (builtIn?.grep) toolsMap.grep = true;
-      if (builtIn?.lsp) toolsMap.lsp = true;
+      const t = resolveBuiltInTools(agentToolsConfig);
+      if (t.webfetch) toolsMap.webfetch = true;
+      if (t.websearch) toolsMap.websearch = true;
+      if (t.read) toolsMap.read = true;
+      if (t.bash) toolsMap.bash = true;
+      if (t.glob) toolsMap.glob = true;
+      if (t.grep) toolsMap.grep = true;
+      if (t.lsp) toolsMap.lsp = true;
       if (agentToolsConfig.loom?.loom_vector_search) toolsMap.loom_vector_search = true;
     }
     return toolsMap;

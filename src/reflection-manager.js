@@ -1,6 +1,6 @@
 import { buildReflectionPrompt } from "./prompts.js";
-import { extractText, extractAgentResponse, withTimeout, findMostSimilar } from "./shared.js";
-import { getConfig } from "./config.js";
+import { extractText, extractAgentResponse, mapToolResults, withTimeout, findMostSimilar } from "./shared.js";
+import { getConfig, resolveBuiltInTools } from "./config.js";
 import { Logger, extractErrorInfo } from "./logger.js";
 
 const reflectionLogger = new Logger();
@@ -78,15 +78,23 @@ export async function runMidRoundReflections(round, triggerParticipant, activePa
       stateManager.getMaxRounds(),
     );
 
-    // Build tools map for reflection (reduced set: web_fetch, web_search, read, loom_vector_search)
+    // Build tools map for reflection (reduced set: webfetch, websearch, read, loom_vector_search)
     const agentToolsConfig = getConfig().agentTools;
     const reflectionTools = {};
     if (agentToolsConfig?.enabled) {
-      if (agentToolsConfig?.builtIn?.web_fetch) reflectionTools.web_fetch = true;
-      if (agentToolsConfig?.builtIn?.web_search) reflectionTools.web_search = true;
-      if (agentToolsConfig?.builtIn?.read) reflectionTools.read = true;
-      if (agentToolsConfig?.loom?.loom_vector_search) reflectionTools.loom_vector_search = true;
+      const t = resolveBuiltInTools(agentToolsConfig);
+      if (t.webfetch) reflectionTools.webfetch = true;
+      if (t.websearch) reflectionTools.websearch = true;
+      if (t.read) reflectionTools.read = true;
+      if (agentToolsConfig.loom?.loom_vector_search) reflectionTools.loom_vector_search = true;
     }
+    const reflectionToolKeys = Object.keys(reflectionTools);
+    reflectionLogger.info("agent_tools_offered", `${listener.config.name} offered ${reflectionToolKeys.length} tool(s)`, {
+      participant: listener.config.id,
+      round: stateManager.getCurrentRound(),
+      tools: reflectionToolKeys,
+      tool_choice: reflectionToolKeys.length > 0 ? "auto" : "none",
+    });
 
     const systemPrompt = `You are ${listener.config.name} (${listener.config.tier}). This is your reflection on the deliberation — it will be visible to other participants.`;
     const promptContext = {
@@ -132,12 +140,15 @@ export async function runMidRoundReflections(round, triggerParticipant, activePa
     // Use extractAgentResponse to handle tool call parts
     const { text, toolResults } = extractAgentResponse(result.data);
 
-    // Log tool results for observability
+    // Log tool results for observability (including failed/attempted calls)
     if (toolResults.length > 0) {
-      reflectionLogger.info("reflection_tool_results", `${listener.config.name} used ${toolResults.length} tool(s) in reflection`, {
+      const failures = toolResults.filter((t) => t.status === "error" || t.attempted_tool).length;
+      reflectionLogger.info("reflection_tool_results", `${listener.config.name} used ${toolResults.length} tool(s) in reflection${failures > 0 ? ` (${failures} failed/attempted)` : ""}`, {
         tools: toolResults.map(t => ({
           tool: t.tool,
           callID: t.callID,
+          status: t.status ?? null,
+          attempted_tool: t.attempted_tool ?? null,
           hasOutput: !!t.output,
           hasError: !!t.error,
         })),
@@ -145,6 +156,8 @@ export async function runMidRoundReflections(round, triggerParticipant, activePa
     }
 
     if (!text || text.trim().length < 10) return;
+
+    const contributionTools = mapToolResults(toolResults);
 
     // Build visible header with reflection context
     const header = `[Reflection on #${triggerParticipant.currentContributionId} [${triggerParticipant.currentContributionType.toUpperCase()}] by ${triggerParticipant.config.name} (Round ${stateManager.getCurrentRound()})]`;
@@ -157,14 +170,7 @@ export async function runMidRoundReflections(round, triggerParticipant, activePa
       content: `${header}\n\n${text.trim()}`,
       type: "reflection",
       targets_which: triggerParticipant.currentContributionId,
-      tool_calls: toolResults.length > 0 ? toolResults.map(t => ({
-        tool: t.tool,
-        callID: t.callID,
-        title: t.title ?? null,
-        output: t.output ? String(t.output).slice(0, 2000) : null,
-        error: t.error ? String(t.error).slice(0, 500) : null,
-        metadata: t.metadata ?? null,
-      })) : null,
+      tool_calls: contributionTools && contributionTools.length ? contributionTools : null,
       prompt_context: promptContext,
       created_at: new Date().toISOString(),
     };
