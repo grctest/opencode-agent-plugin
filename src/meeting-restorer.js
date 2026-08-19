@@ -55,7 +55,6 @@ export function restoreStateFromDb({ db, stateManager, meetingId, options }) {
     context: meeting.context ?? "",
     fabric: meeting.fabric ?? "",
     max_rounds: meeting.max_rounds,
-    convergence_mode: meeting.convergence,
     tags: meeting.tags ? JSON.parse(meeting.tags) : [],
     current_round: meeting.round,
     status: "weaving",

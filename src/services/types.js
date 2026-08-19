@@ -31,8 +31,6 @@
  * @property {boolean} rights.contribute
  * @property {boolean} rights.request_turn
  * @property {boolean} rights.call_vote
- * @property {boolean} rights.veto
- * @property {boolean} rights.force_end
  */
 
 /**
@@ -88,7 +86,6 @@
  * @property {'initializing'|'weaving'|'converged'|'cancelled'|'timeout'|'max_rounds_reached'|'aborted'|'deadlocked'} status
  * @property {Object|null} artifact
  * @property {Object[]} objections
- * @property {'consensus'|'majority'|'moderator_forces'} convergence_mode
  * @property {string[]} tags
  * @property {number} next_contribution_id
  */

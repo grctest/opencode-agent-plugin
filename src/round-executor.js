@@ -905,12 +905,11 @@ export class RoundExecutor {
     const totalVoters = 1 + voteResponses.length;
     tallyLines.push(`Total voters: ${totalVoters}`);
 
-    // Determine winner
+    // Leading option
     const sorted = Object.entries(voteCounts).sort((a, b) => b[1] - a[1]);
     if (sorted.length > 0) {
       const [winner, count] = sorted[0];
-      const pct = Math.round((count / totalVoters) * 100);
-      tallyLines.push(`Winner: ${winner} (${pct}%)`);
+      tallyLines.push(`Leading option: ${winner} (${count} votes)`);
     }
 
     const tallyContent = tallyLines.join("\n");
@@ -961,7 +960,6 @@ export class RoundExecutor {
         round: this.#stateManager.getCurrentRound(),
         priority: result.request_next.priority,
         reason: sanitizeForPrompt(result.request_next.reason),
-        resolved: "pending",
       };
       if (!round.turn_requests) round.turn_requests = [];
       round.turn_requests.push(turnRequest);

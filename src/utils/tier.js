@@ -21,8 +21,6 @@ export const BASE_RIGHTS = {
   contribute: true,
   request_turn: true,
   call_vote: false,
-  veto: false,
-  force_end: false,
 };
 
 /** Returns deliberation rights for a given tier. */
@@ -33,11 +31,11 @@ export function getRightsForTier(tier) {
     case "mid":
       return { ...BASE_RIGHTS, call_vote: true };
     case "senior":
-      return { ...BASE_RIGHTS, call_vote: true, veto: true };
+      return { ...BASE_RIGHTS, call_vote: true };
     case "principal":
-      return { ...BASE_RIGHTS, call_vote: true, veto: true, force_end: true };
+      return { ...BASE_RIGHTS, call_vote: true };
     default:
-      return { contribute: true, request_turn: false, call_vote: false, veto: false, force_end: false };
+      return { contribute: true, request_turn: false, call_vote: false };
   }
 }
 

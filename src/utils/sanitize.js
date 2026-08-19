@@ -4,7 +4,7 @@
  */
 
 // Known directive patterns that must be preserved through sanitization
-const DIRECTIVE_PATTERN = /\[(PASS|PROPOSE|CHALLENGE|REFINE|SUPPORT|DISSENT|SYNTHESIZE|QUESTION|REFUSE|YIELD|CONTEST[^\]]*|#\d+|NEXT:[^\]]*|VETO|FORCE_END|CALL_VOTE|REQUEST_NEXT:[^\]]*)\]/gi;
+const DIRECTIVE_PATTERN = /\[(PASS|PROPOSE|CHALLENGE|REFINE|SUPPORT|DISSENT|SYNTHESIZE|QUESTION|REFUSE|YIELD|CONTEST[^\]]*|#\d+|NEXT:[^\]]*|CALL_VOTE|REQUEST_NEXT:[^\]]*)\]/gi;
 
 /**
  * Sanitizes text for safe inclusion in LLM prompts.

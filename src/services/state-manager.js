@@ -27,7 +27,6 @@ export class StateManager {
    * @param {string} initialState.status
    * @param {Object|null} initialState.artifact
    * @param {Array} initialState.objections
-   * @param {string} initialState.convergence_mode
    * @param {Array} initialState.tags
    * @param {number} initialState.next_contribution_id
    * @param {Object} [initialState.parent_session_id]
@@ -47,11 +46,6 @@ export class StateManager {
       rounds: Object.freeze(this.#state.rounds.map((r) => Object.freeze({ ...r }))),
     });
     return frozen;
-  }
-
-  getMutableState() {
-    this.#logger.warn("deprecated_api", "getMutableState() is deprecated — use targeted mutators instead");
-    return this.#state;
   }
 
   getParticipants() {
@@ -100,10 +94,6 @@ export class StateManager {
 
   getRounds() {
     return this.#state.rounds;
-  }
-
-  getConvergenceMode() {
-    return this.#state.convergence_mode;
   }
 
   getMeetingId() {
@@ -242,13 +232,12 @@ export class StateManager {
    * Restores all mutable state properties from a database-loaded meeting.
    * Used by the orchestrator when resuming a persisted meeting.
    */
-  restore({ participants, question, context, fabric, max_rounds, convergence_mode, tags, current_round, status, weave, next_contribution_id, state_of_play }) {
+  restore({ participants, question, context, fabric, max_rounds, tags, current_round, status, weave, next_contribution_id, state_of_play }) {
     if (participants !== undefined) this.#state.participants = participants;
     if (question !== undefined) this.#state.question = question;
     if (context !== undefined) this.#state.context = context;
     if (fabric !== undefined) this.#state.fabric = fabric;
     if (max_rounds !== undefined) this.#state.max_rounds = max_rounds;
-    if (convergence_mode !== undefined) this.#state.convergence_mode = convergence_mode;
     if (tags !== undefined) this.#state.tags = tags;
     if (current_round !== undefined) this.#state.current_round = current_round;
     if (status !== undefined) this.#state.status = status;

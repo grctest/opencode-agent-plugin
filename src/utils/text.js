@@ -1,5 +1,3 @@
-import { getConfig } from "../config.js";
-
 /** Extracts text content from an LLM response data object. */
 export function extractText(data) {
   if (!data?.parts) return null;
@@ -133,15 +131,6 @@ export function mapToolResults(toolResults) {
       metadata: t.metadata ?? null,
     };
   });
-}
-
-/** Enforces a word limit on text, appending [truncated] if exceeded. */
-export function enforceWordLimit(text, maxWords) {
-  if (!text || typeof text !== "string") return "";
-  const limit = maxWords ?? getConfig().maxContributionWords;
-  const words = text.split(/\s+/);
-  if (words.length <= limit) return text;
-  return words.slice(0, limit - 1).join(" ") + " [truncated]";
 }
 
 /** Wraps a promise with a timeout. Rejects if the promise doesn't resolve in time. */

@@ -343,7 +343,6 @@ export function startDashboard(directory, port) {
             state: api.getState(),
             participants: api.getParticipants(),
             contributions,
-            turn_requests_legacy: api.getTurnRequestsLegacy(),
             turn_requests: api.getTurnRequests(),
             orchestrator_messages: api.getOrchestratorMessages(meetingId),
             round_summaries: api.getRoundSummaries(meetingId),

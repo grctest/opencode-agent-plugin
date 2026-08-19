@@ -15,7 +15,7 @@ A real-time web dashboard shows every agent contributing as it happens. If you r
 ## Features
 
 - **Structured turn-taking** with priority turn requests
-- **Tier-based roles** — junior to principal, each with escalating expectations and rights
+- **Tier-based roles** — junior to principal, each with escalating expectations
 - **Moderator agent** — spawned on demand to break deadlocks and drive the deliberation to a close
 - **Deterministic termination** — participants all pass, round limit reached, or hard timeout
 - **Minority report** — unresolved dissenting views are preserved in the output
@@ -85,7 +85,7 @@ Models are stored globally at:
 
 1. **RAG Context Retrieval** — Round summaries and contributions are chunked, embedded, and indexed. When prompting agents, the system retrieves relevant prior context using cosine similarity.
 
-2. **Semantic Drift Detection** — Embeddings are available for computing semantic drift between rounds, but drift is not currently computed or visualized.
+2. **Semantic Drift Detection** — Embeddings are available for computing semantic drift between rounds, but drift is not currently computed or visualized (removed; see `docs/dead-code-review.md`).
 
 > ⚠️ **Status:** The embedding model is now initialized at plugin startup, so `/knit` meetings use real embeddings (see `docs/embedder-init-issue.md`). If the model is unavailable, semantic features (vector search, reflection targeting, room composition) degrade visibly via a keyword-based fallback and warnings rather than silent placeholder noise.
 
@@ -134,7 +134,6 @@ loom_viz
 | `context` | Additional context, background files, or constraints | — |
 | `participants` | Custom participant list (name, persona, agenda, tier) | auto-composed from domain |
 | `max_rounds` | Maximum deliberation rounds (1–10) | `3` |
-| `models` | Per-tier model assignments (use `/knit_models` to discover) | auto-assigned |
 | `meeting_timeout` | Maximum meeting duration in ms (60000–1800000) | `900000` (15 min) |
 | `fresh` | Force a fresh loom even if a previous meeting exists | `false` |
 

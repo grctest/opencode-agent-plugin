@@ -16,8 +16,6 @@ Programmatically enforce that only agents with the right tier can use certain di
 |-----------|--------------|-------------|
 | `[INTERJECT]` | Any | Currently prompt-guided |
 | `[CALL_VOTE]` | Mid+ | Not implemented |
-| `[VETO]` | Senior+ | Not implemented |
-| `[FORCE_END]` | Principal | Not implemented |
 | `[REFUSE]` | Any | Not implemented |
 
 ### Why Deferred
@@ -31,8 +29,11 @@ Programmatically enforce that only agents with the right tier can use certain di
 Once interjection is stable, add governance directives incrementally:
 1. Add `[REFUSE: reason]` (small, low-risk)
 2. Add `[CALL_VOTE]` (requires vote tallying logic)
-3. Add `[VETO]` and `[FORCE_END]` (requires synthesis override logic)
-4. Add programmatic enforcement (check `can(participant, action)` before processing)
+3. Add programmatic enforcement (check `can(participant, action)` before processing)
+
+### Removed
+
+`[VETO]` and `[FORCE_END]` were two governance directives that implied a participant could block or end a meeting. Their rights flags, sanitize patterns, and docs rows were removed; nothing ever consumed them behaviorally. They can return later as part of a synthesis-override mechanism.
 
 ---
 

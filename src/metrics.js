@@ -1,37 +1,19 @@
 /**
  * Simple in-memory metrics collector for the Loom deliberation engine.
- * Tracks LLM call counts, latencies, contribution stats, and meeting gauges.
+ * Tracks LLM call counts and latency buckets. Only live, actively-written
+ * fields are kept (see docs/metrics-and-observability.md).
  */
 
 const counters = {
   llm_calls_by_type: {},
-  llm_errors_by_type: {},
-  contributions_by_type: {},
-  turn_requests_granted: 0,
-  turn_requests_denied: 0,
-  reflections_generated: 0,
-  syntheses_completed: 0,
-  syntheses_failed: 0,
-  meetings_started: 0,
-  meetings_completed: 0,
-  meetings_failed: 0,
-  session_recreations: 0,
-  input_tokens: 0,
-  output_tokens: 0,
 };
 
 const latencies = {
   llm_prompt_ms: [],
-  reflection_ms: [],
   synthesis_ms: [],
 };
 
-const gauges = {
-  active_meetings: 0,
-  active_sessions: 0,
-};
-
-/** Records a counter increment for a keyed sub-counter (e.g., llm_calls_by_type.orchestrator). */
+/** Records a counter increment for a keyed sub-counter (e.g., llm_calls_by_type.agent). */
 export function incrementKeyedCounter(category, key, amount = 1) {
   if (counters[category]) {
     counters[category][key] = (counters[category][key] ?? 0) + amount;
@@ -67,13 +49,10 @@ export function getMetricsSnapshot() {
     counters: {
       ...counters,
       llm_calls_by_type: { ...counters.llm_calls_by_type },
-      llm_errors_by_type: { ...counters.llm_errors_by_type },
-      contributions_by_type: { ...counters.contributions_by_type },
     },
     latencies: Object.fromEntries(
       Object.entries(latencies).map(([k, v]) => [k, latencyStats(v)])
     ),
-    gauges: { ...gauges },
     timestamp: new Date().toISOString(),
   };
 }

@@ -178,7 +178,7 @@ export class MeetingDatabase {
         "initializing",
         input.context ?? "",
         input.maxRounds,
-        input.convergence,
+        input.convergence ?? "moderator_forces", // display-only; default for legacy rows
         input.domain ?? null,
         JSON.stringify(input.tags ?? []),
         input.parentSessionId,
@@ -230,7 +230,7 @@ export class MeetingDatabase {
           tags = ?, parent_session_id = ?, opencode_session_id = ?, embedding_model = ?, embedding_dim = ?, updated_at = ?
         WHERE id = ?
       `).run(
-        input.question, input.context ?? "", input.maxRounds, input.convergence,
+        input.question, input.context ?? "", input.maxRounds, input.convergence ?? "moderator_forces",
         input.domain ?? null, JSON.stringify(input.tags ?? []),
         input.parentSessionId, input.opencodeSessionId,
         input.embedding_model ?? null, input.embedding_dim ?? null, now, this.#meetingId,
@@ -547,8 +547,8 @@ export class MeetingDatabase {
   addTurnRequest(meetingId, turnRequest) {
     this.#db
       .prepare(
-        `INSERT INTO turn_requests (meeting_id, participant_id, target_participant_id, round, content, priority, granted, pushback, resolved, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO turn_requests (meeting_id, participant_id, target_participant_id, round, content, priority, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         meetingId,
@@ -557,9 +557,6 @@ export class MeetingDatabase {
         turnRequest.round ?? null,
         turnRequest.reason,
         turnRequest.priority,
-        turnRequest.granted ? 1 : 0,
-        turnRequest.pushback ?? null,
-        turnRequest.resolved,
         isoNow(),
       );
   }
@@ -591,8 +588,8 @@ export class MeetingDatabase {
       if (turnRequest) {
         this.#db
           .prepare(
-            `INSERT INTO turn_requests (meeting_id, participant_id, target_participant_id, round, content, priority, granted, pushback, resolved, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO turn_requests (meeting_id, participant_id, target_participant_id, round, content, priority, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             meetingId,
@@ -601,9 +598,6 @@ export class MeetingDatabase {
             turnRequest.round ?? null,
             turnRequest.reason,
             turnRequest.priority,
-            turnRequest.granted ? 1 : 0,
-            turnRequest.pushback ?? null,
-            turnRequest.resolved,
             isoNow(),
           );
       }
@@ -618,7 +612,7 @@ export class MeetingDatabase {
   getTurnRequests(meetingId) {
     const rows = this.#db
       .prepare(
-        `SELECT id, participant_id, target_participant_id, round, content as reason, priority, granted, pushback, resolved, created_at
+        `SELECT id, participant_id, target_participant_id, round, content as reason, priority, created_at
          FROM turn_requests WHERE meeting_id = ? ORDER BY id ASC`,
       )
       .all(meetingId);
@@ -630,9 +624,6 @@ export class MeetingDatabase {
       priority: r.priority,
       content: r.reason,
       reason: r.reason,
-      granted: r.granted === 1,
-      pushback: r.pushback,
-      resolved: r.resolved,
       created_at: r.created_at,
     }));
   }
@@ -835,7 +826,7 @@ export class MeetingDatabase {
 
     const turnRequests = this.#db
       .prepare(
-        `SELECT id, participant_id, target_participant_id, round, content as reason, priority, granted, pushback, resolved, created_at
+        `SELECT id, participant_id, target_participant_id, round, content as reason, priority, created_at
          FROM turn_requests WHERE meeting_id = ? ORDER BY id ASC`,
       )
       .all(meetingId);

@@ -62,9 +62,6 @@ export function initSchema(db) {
       round INTEGER,
       content TEXT NOT NULL,
       priority INTEGER NOT NULL DEFAULT 0,
-      granted INTEGER NOT NULL DEFAULT 0,
-      pushback TEXT,
-      resolved TEXT NOT NULL DEFAULT 'pending',
       created_at TEXT NOT NULL
     );
 

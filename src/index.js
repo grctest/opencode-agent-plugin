@@ -237,12 +237,6 @@ export const Loom = async (input) => {
             .describe(
               "Only set true if the user explicitly asked to preview the room before deliberating. Default: false — run directly.",
             ),
-          convergence: tool.schema
-            .enum(["consensus", "majority", "moderator_forces"])
-            .optional()
-            .describe(
-              "How the deliberation decides to end. Default: moderator_forces",
-            ),
           models: tool.schema
             .array(
               tool.schema.object({
@@ -389,7 +383,6 @@ export const Loom = async (input) => {
             result.status = state.status;
             result.round = state.current_round;
             result.maxRounds = state.max_rounds;
-            result.convergenceMode = state.convergence_mode;
             result.tags = state.tags;
             result.question = state.question;
             result.context = state.context;

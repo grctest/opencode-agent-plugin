@@ -106,56 +106,6 @@ export class VectorIndex {
   }
 
   /**
-   * Computes semantic drift between two rounds using vector centroid distance.
-   * @param {number} roundA
-   * @param {number} roundB
-   * @returns {Promise<number>} cosine distance (0 = identical, 2 = opposite)
-   */
-  async computeSemanticDrift(roundA, roundB) {
-    try {
-      const chunksA = this.#database.getFabricChunks().filter((c) => c.round === roundA);
-      const chunksB = this.#database.getFabricChunks().filter((c) => c.round === roundB);
-      if (chunksA.length === 0 || chunksB.length === 0) return 1;
-
-      const centroidA = await this.#computeCentroid(chunksA.map((c) => c.content));
-      const centroidB = await this.#computeCentroid(chunksB.map((c) => c.content));
-
-      if (!centroidA || !centroidB) return 1;
-
-      let dot = 0, normA = 0, normB = 0;
-      for (let i = 0; i < centroidA.length; i++) {
-        dot += centroidA[i] * centroidB[i];
-        normA += centroidA[i] * centroidA[i];
-        normB += centroidB[i] * centroidB[i];
-      }
-      const denom = Math.sqrt(normA) * Math.sqrt(normB);
-      return denom === 0 ? 1 : 1 - dot / denom;
-    } catch {
-      return 1;
-    }
-  }
-
-  async #computeCentroid(texts) {
-    if (texts.length === 0) return null;
-    const embeddings = await Promise.all(texts.map((t) => embedText(t)));
-    const dim = embeddings[0].length;
-    const centroid = new Float32Array(dim);
-    for (const vec of embeddings) {
-      for (let i = 0; i < dim; i++) {
-        centroid[i] += vec[i];
-      }
-    }
-    for (let i = 0; i < dim; i++) {
-      centroid[i] /= embeddings.length;
-    }
-    let norm = 0;
-    for (let i = 0; i < dim; i++) norm += centroid[i] * centroid[i];
-    norm = Math.sqrt(norm);
-    if (norm > 0) for (let i = 0; i < dim; i++) centroid[i] /= norm;
-    return centroid;
-  }
-
-  /**
    * Splits text into chunks suitable for embedding.
    * Strategy: split on paragraph boundaries, respect token limit.
    */

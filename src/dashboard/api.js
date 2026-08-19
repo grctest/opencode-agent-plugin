@@ -2,21 +2,13 @@ import { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { resolveLoomBaseDir } from "../paths.js";
+import { parseReflections } from "../utils/db-parsing.js";
 
 const DB_CACHE_MAX = 10;
 
 const DB_REFRESH_INTERVAL_MS = 2000;
 
 const DB_TTL_MS = 5 * 60 * 1000;
-
-function parseReflections(raw) {
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed.filter((x) => typeof x === "string");
-  } catch { /* legacy plain text */ }
-  return [raw];
-}
 
 export class DashboardApi {
   /** @type {Database} */
@@ -272,25 +264,10 @@ export class DashboardApi {
   getTurnRequests() {
     return this.#db
       .prepare(
-        `SELECT id, participant_id, target_participant_id, round, content, priority, granted, pushback, resolved, created_at
+        `SELECT id, participant_id, target_participant_id, round, content, priority, created_at
          FROM turn_requests ORDER BY id ASC`,
       )
       .all();
-  }
-
-  getTurnRequestsLegacy() {
-    return this.#db
-      .prepare(
-        `SELECT participant_id, target_participant_id, round, content as reason, priority
-         FROM turn_requests ORDER BY id ASC`,
-      )
-      .all()
-      .map((r) => ({
-        participant_id: r.participant_id,
-        target: r.target_participant_id ?? "",
-        priority: r.priority,
-        reason: r.reason,
-      }));
   }
 
   getMaxTurnRequestId() {
@@ -460,7 +437,7 @@ export class DashboardApi {
       for (const tr of turnRequests) {
         const participant = participants.find((p) => p.id === tr.participant_id);
         const name = participant?.name ?? tr.participant_id;
-        lines.push(`- **[${name}]** P${tr.priority}: ${tr.content} → ${tr.granted ? "granted" : "denied"}`);
+        lines.push(`- **[${name}]** P${tr.priority}: ${tr.content}`);
       }
       lines.push("");
     }
@@ -532,9 +509,6 @@ export class DashboardApi {
         round: tr.round,
         priority: tr.priority,
         content: tr.content,
-        granted: tr.granted,
-        pushback: tr.pushback,
-        resolved: tr.resolved,
         createdAt: tr.created_at,
       })),
       errors: errors.map(e => ({
@@ -617,7 +591,7 @@ export class DashboardApi {
       for (const tr of turnRequests) {
         const participant = participants.find((p) => p.id === tr.participant_id);
         const name = participant?.name ?? tr.participant_id;
-        yield `- **[${name}]** P${tr.priority}: ${tr.content} → ${tr.granted ? "granted" : "denied"}\n`;
+        yield `- **[${name}]** P${tr.priority}: ${tr.content}\n`;
       }
       yield `\n`;
     }

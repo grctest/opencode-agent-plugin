@@ -720,7 +720,7 @@ The meeting terminates when any of these hold after a round:
 | All participants have passed or failed (`activeCount === 0`) | early termination |
 | `current_round >= max_rounds` | guaranteed termination |
 
-The legacy `convergence` argument (`consensus` / `majority` / `moderator_forces`) is stored for backward-compatibility but is no longer part of the `/knit` contract; termination is deterministic (see table above). Hard timeouts (absolute meeting timeout, stall watchdog) and user cancellation also stop the weave loop and proceed to synthesis.
+The old `convergence` argument (`consensus` / `majority` / `moderator_forces`) was removed from the `/knit` contract entirely; the `meetings.convergence` column persists only as a display label (see `docs/removing-convergence-system.md`). Termination is deterministic (see table above). Hard timeouts (absolute meeting timeout, stall watchdog) and user cancellation also stop the weave loop and proceed to synthesis.
 
 Terminal statuses: `converged`, `cancelled`, `timeout`, `max_rounds_reached`, `aborted`, `deadlocked` (the last two surface via the state machine but are not produced by the current orchestration paths; `max_rounds_reached` and `deadlocked` are reserved).
 
@@ -1087,7 +1087,6 @@ Draft synthesis:
   status: "weaving",   // initializing | weaving | converged | cancelled | timeout | max_rounds_reached | aborted | deadlocked
   artifact: null,      // set after synthesis
   objections: [],      // collected at synthesis time
-  convergence_mode: "moderator_forces",
   tags: ["engineering", "security"],
   next_contribution_id: 14,
   next_speaker_id: null,          // set by moderator "break" ruling
@@ -1612,18 +1611,12 @@ The handler wires metadata callbacks to the chat context for live UX:
 
 ### In-Memory Metrics (`metrics.js`)
 
-A simple process-wide collector with three buckets, exposed via `/api/metrics` and `getMetricsSnapshot()`:
+A simple process-wide collector exposed via `/api/metrics` and `getMetricsSnapshot()`:
 
-> **Note:** Most counters and gauges are defined but never written. The two live telemetry
-> paths are `llm_calls_by_type` (agent/synthesis) and the `llm_prompt_ms` / `synthesis_ms`
-> latency buckets (see `docs/metrics-and-observability.md`). The counters below are listed
-> verbatim from `metrics.js` for accuracy, not because they are populated.
+- **Counter** — `llm_calls_by_type` (agent/synthesis).
+- **Latencies** — `llm_prompt_ms`, `synthesis_ms` (last 100 samples; aggregated into count/avg/p50/p95/max).
 
-- **Counters** — `llm_calls_by_type` (agent/synthesis), `llm_errors_by_type`, `contributions_by_type`, `turn_requests_granted/denied`, `reflections_generated`, `syntheses_completed/failed`, `meetings_started/completed/failed`, `session_recreations`, `input_tokens`, `output_tokens`.
-- **Latencies** — `llm_prompt_ms`, `reflection_ms`, `synthesis_ms` (last 100 samples; aggregated into count/avg/p50/p95/max).
-- **Gauges** — `active_meetings`, `active_sessions`.
-
-RoundExecution records per-call tokens and records `llm_prompt_ms` per agent call; reflections and synthesis record their own buckets.
+RoundExecution records per-call tokens and `llm_prompt_ms` per agent call; synthesis records its own bucket. Previously defined but never-written counters (turn request grants/denials, reflections, syntheses, meetings, tokens, gauges) were removed — see `docs/metrics-and-observability.md`.
 
 ### Per-Meeting Metrics
 

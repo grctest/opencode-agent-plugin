@@ -91,7 +91,6 @@ export class MeetingOrchestrator {
       status: "initializing",
       artifact: null,
       objections: [],
-      convergence_mode: options.convergence,
       tags: options.tags ?? [],
       next_contribution_id: 0,
       state_of_play: "",
@@ -251,7 +250,7 @@ export class MeetingOrchestrator {
           question: this.#options.question,
           context: this.#options.context,
           maxRounds: this.#options.maxRounds,
-          convergence: this.#options.convergence,
+          convergence: "moderator_forces", // display-only; termination is deterministic
           tags: this.#options.tags ?? [],
           parentSessionId: this.#options.parentSessionId,
           opencodeSessionId: this.#options.opencodeSessionId ?? this.#options.parentSessionId,

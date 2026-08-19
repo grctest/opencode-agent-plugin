@@ -512,14 +512,10 @@ input {
 
 /* Existing text styles */
 .loom-text-live { color: #16a34a; }
-.loom-text-granted { color: #16a34a; }
-.loom-text-denied { color: #dc2626; }
 .loom-text-active { color: #eab308; }
 .loom-text-agent-errors { color: #ef4444; font-weight: 500; }
 
 [data-theme="light"] .loom-text-live { color: #15803d; }
-[data-theme="light"] .loom-text-granted { color: #15803d; }
-[data-theme="light"] .loom-text-denied { color: #b91c1c; }
 [data-theme="light"] .loom-text-active { color: #a16207; }
 [data-theme="light"] .loom-text-agent-errors { color: #dc2626; }
 

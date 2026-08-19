@@ -228,7 +228,6 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
           question,
           context: sanitizedContext,
           maxRounds,
-          convergence: args.convergence ?? "moderator_forces",
           tags: [],
           parentSessionId: sessionID,
           opencodeSessionId: sessionID,
@@ -298,7 +297,6 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
       opencodeSessionId: sessionID,
       participants,
       maxRounds,
-      convergence: args.convergence ?? "moderator_forces",
       meetingTimeoutMs: args.meeting_timeout,
       tags: derivedTags,
       agentTools,
@@ -389,7 +387,6 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
           };
         }),
         maxRounds: existingMeeting.max_rounds,
-        convergence: args.convergence ?? "moderator_forces",
         meetingTimeoutMs: args.meeting_timeout,
         agentTools,
         availableModels: available,
