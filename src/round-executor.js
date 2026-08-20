@@ -1,7 +1,7 @@
 import { buildAgentSystemPrompt, buildAgentUserPrompt, buildQueryPrompt, buildEvidencePrompt, buildSummonPrompt, buildVotePrompt } from "./prompts.js";
 import { parseAgentResponse } from "./validation.js";
 import { getConfig, resolveBuiltInTools } from "./config.js";
-import { extractText, extractAgentResponse, mapToolResults, truncate, withTimeout } from "./shared.js";
+import { extractAgentResponse, mapToolResults, truncate } from "./shared.js";
 import { Logger, extractErrorInfo } from "./logger.js";
 import { runMidRoundReflections } from "./reflection-manager.js";
 import { sanitizeForPrompt, sanitizeForDisplay } from "./utils/sanitize.js";
@@ -28,8 +28,6 @@ function extractVoteLetter(text) {
 }
 
 export class RoundExecutor {
-  #client;
-  #directory;
   #db;
   #stateManager;
   #vectorIndex;
@@ -47,9 +45,7 @@ export class RoundExecutor {
   #tools;
   #availableModels;
 
-  constructor({ client, directory, db, stateManager, vectorIndex, options, sessionManager, promptParent, getParticipantModel, logError, tools = null, availableModels = [] }) {
-    this.#client = client;
-    this.#directory = directory;
+  constructor({ db, stateManager, vectorIndex, options, sessionManager, promptParent, getParticipantModel, logError, tools = null, availableModels = [] }) {
     this.#db = db;
     this.#stateManager = stateManager;
     this.#vectorIndex = vectorIndex;
@@ -135,8 +131,6 @@ export class RoundExecutor {
         if (sourceContribution) {
           p.currentContribution = result.content;
           await this.executeQueries(round, p, result.query, sourceContribution.id, {
-            client: this.#client,
-            directory: this.#directory,
             sessionManager: this.#sessionManager,
             getParticipantModel: this.#getParticipantModel,
             stateManager: this.#stateManager,
@@ -152,8 +146,6 @@ export class RoundExecutor {
         if (sourceContribution) {
           p.currentContribution = result.content;
           await this.executeEvidenceRequests(round, p, result.evidence, sourceContribution.id, {
-            client: this.#client,
-            directory: this.#directory,
             sessionManager: this.#sessionManager,
             getParticipantModel: this.#getParticipantModel,
             stateManager: this.#stateManager,
@@ -166,8 +158,6 @@ export class RoundExecutor {
       // Persona summons: if this agent summoned an external expert
       if (result?.summon && result.content !== "[PASS]") {
         await this.executeSummons(round, p, result.summon, {
-          client: this.#client,
-          directory: this.#directory,
           sessionManager: this.#sessionManager,
           stateManager: this.#stateManager,
           db: this.#db,
@@ -180,8 +170,6 @@ export class RoundExecutor {
         const sourceContribution = round.contributions[round.contributions.length - 1];
         if (sourceContribution) {
           await this.executeVote(round, p, result.vote, sourceContribution.id, {
-            client: this.#client,
-            directory: this.#directory,
             sessionManager: this.#sessionManager,
             getParticipantModel: this.#getParticipantModel,
             stateManager: this.#stateManager,
@@ -203,8 +191,6 @@ export class RoundExecutor {
           p.currentContributionType = result.type;
 
           await runMidRoundReflections(round, p, allActive, {
-            client: this.#client,
-            directory: this.#directory,
             sessionManager: this.#sessionManager,
             getParticipantModel: this.#getParticipantModel,
             stateManager: this.#stateManager,
@@ -258,8 +244,6 @@ export class RoundExecutor {
    * Each response becomes a query_response contribution in the weave.
    */
   async executeQueries(round, sourceParticipant, query, sourceContributionId, {
-    client,
-    directory,
     sessionManager,
     getParticipantModel,
     stateManager,
@@ -333,32 +317,27 @@ export class RoundExecutor {
             round: stateManager.getCurrentRound(),
           };
 
-          const result = await withTimeout(
-            client.session.prompt({
-              path: { id: sessionId },
-              body: {
-                system: systemPrompt,
-                model,
-                temperature: target.tier_config.temperature,
-                parts: [{ type: "text", text: prompt }],
-                tools: queryTools,
-                tool_choice: Object.keys(queryTools).length > 0 ? "auto" : undefined,
-              },
-              query: { directory },
-            }),
+          const result = await sessionManager.getContract().prompt({
+            sessionId,
+            system: systemPrompt,
+            model,
+            temperature: target.tier_config.temperature,
+            parts: [{ type: "text", text: prompt }],
+            tools: queryTools,
+            toolChoice: Object.keys(queryTools).length > 0 ? "auto" : undefined,
             timeoutMs,
-          );
+          });
 
           if (callStats) {
             callStats.reflection_calls++;
-            const tokens = result?.data?.tokens;
+            const tokens = result.tokens;
             if (tokens) {
               callStats.input_tokens += tokens.input ?? 0;
               callStats.output_tokens += tokens.output ?? 0;
             }
           }
 
-          if (result.error) throw new Error(result.error.message || JSON.stringify(result.error));
+          if (!result.ok) throw result.error;
 
           const { text, toolResults } = extractAgentResponse(result.data);
 
@@ -408,8 +387,6 @@ export class RoundExecutor {
   }
 
   async executeEvidenceRequests(round, sourceParticipant, evidence, sourceContributionId, {
-    client,
-    directory,
     sessionManager,
     getParticipantModel,
     stateManager,
@@ -481,32 +458,27 @@ export class RoundExecutor {
             round: stateManager.getCurrentRound(),
           };
 
-          const result = await withTimeout(
-            client.session.prompt({
-              path: { id: sessionId },
-              body: {
-                system: systemPrompt,
-                model,
-                temperature: target.tier_config.temperature,
-                parts: [{ type: "text", text: prompt }],
-                tools: evidenceTools,
-                tool_choice: Object.keys(evidenceTools).length > 0 ? "required" : undefined,
-              },
-              query: { directory },
-            }),
+          const result = await sessionManager.getContract().prompt({
+            sessionId,
+            system: systemPrompt,
+            model,
+            temperature: target.tier_config.temperature,
+            parts: [{ type: "text", text: prompt }],
+            tools: evidenceTools,
+            toolChoice: Object.keys(evidenceTools).length > 0 ? "required" : undefined,
             timeoutMs,
-          );
+          });
 
           if (callStats) {
             callStats.reflection_calls++;
-            const tokens = result?.data?.tokens;
+            const tokens = result.tokens;
             if (tokens) {
               callStats.input_tokens += tokens.input ?? 0;
               callStats.output_tokens += tokens.output ?? 0;
             }
           }
 
-          if (result.error) throw new Error(result.error.message || JSON.stringify(result.error));
+          if (!result.ok) throw result.error;
 
           const { text, toolResults } = extractAgentResponse(result.data);
 
@@ -553,8 +525,6 @@ export class RoundExecutor {
   }
 
   async executeSummons(round, sourceParticipant, summon, {
-    client,
-    directory,
     sessionManager,
     stateManager,
     db,
@@ -662,32 +632,27 @@ export class RoundExecutor {
         round: stateManager.getCurrentRound(),
       };
 
-      const result = await withTimeout(
-        client.session.prompt({
-          path: { id: sessionId },
-          body: {
-            system: systemPrompt,
-            model,
-            temperature: 0.7,
-            parts: [{ type: "text", text: prompt }],
-            tools: toolsMap,
-            tool_choice: Object.keys(toolsMap).length > 0 ? "auto" : undefined,
-          },
-          query: { directory },
-        }),
+      const result = await sessionManager.getContract().prompt({
+        sessionId,
+        system: systemPrompt,
+        model,
+        temperature: 0.7,
+        parts: [{ type: "text", text: prompt }],
+        tools: toolsMap,
+        toolChoice: Object.keys(toolsMap).length > 0 ? "auto" : undefined,
         timeoutMs,
-      );
+      });
 
       if (callStats) {
         callStats.reflection_calls++;
-        const tokens = result?.data?.tokens;
+        const tokens = result.tokens;
         if (tokens) {
           callStats.input_tokens += tokens.input ?? 0;
           callStats.output_tokens += tokens.output ?? 0;
         }
       }
 
-      if (result.error) throw new Error(result.error.message || JSON.stringify(result.error));
+      if (!result.ok) throw result.error;
 
       const { text, toolResults } = extractAgentResponse(result.data);
 
@@ -727,8 +692,6 @@ export class RoundExecutor {
   }
 
   async executeVote(round, sourceParticipant, vote, sourceContributionId, {
-    client,
-    directory,
     sessionManager,
     getParticipantModel,
     stateManager,
@@ -807,32 +770,27 @@ export class RoundExecutor {
             round: stateManager.getCurrentRound(),
           };
 
-          const result = await withTimeout(
-            client.session.prompt({
-              path: { id: sessionId },
-              body: {
-                system: systemPrompt,
-                model,
-                temperature: voter.tier_config.temperature,
-                parts: [{ type: "text", text: prompt }],
-                tools: {},
-                tool_choice: "none",
-              },
-              query: { directory },
-            }),
+          const result = await sessionManager.getContract().prompt({
+            sessionId,
+            system: systemPrompt,
+            model,
+            temperature: voter.tier_config.temperature,
+            parts: [{ type: "text", text: prompt }],
+            tools: {},
+            toolChoice: "none",
             timeoutMs,
-          );
+          });
 
           if (callStats) {
             callStats.reflection_calls++;
-            const tokens = result?.data?.tokens;
+            const tokens = result.tokens;
             if (tokens) {
               callStats.input_tokens += tokens.input ?? 0;
               callStats.output_tokens += tokens.output ?? 0;
             }
           }
 
-          if (result.error) throw new Error(result.error.message || JSON.stringify(result.error));
+          if (!result.ok) throw result.error;
 
           const { text } = extractAgentResponse(result.data);
 
@@ -1150,29 +1108,24 @@ export class RoundExecutor {
         tool_choice: offeredTools.length > 0 ? "auto" : "none",
       });
 
-      const result = await withTimeout(
-        this.#client.session.prompt({
-          path: { id: ephemeralSessionId },
-          body: {
-            system: promptContext.system_prompt,
-            model,
-            temperature: participant.tier_config.temperature,
-            parts: [{ type: "text", text: promptContext.user_prompt }],
-            tools: toolsMap,
-            tool_choice: Object.keys(toolsMap).length > 0 ? "auto" : undefined,
-          },
-          query: { directory: this.#directory },
-        }),
+      const result = await this.#sessionManager.getContract().prompt({
+        sessionId: ephemeralSessionId,
+        system: promptContext.system_prompt,
+        model,
+        temperature: participant.tier_config.temperature,
+        parts: [{ type: "text", text: promptContext.user_prompt }],
+        tools: toolsMap,
+        toolChoice: Object.keys(toolsMap).length > 0 ? "auto" : undefined,
         timeoutMs,
-      );
+      });
       const llmMs = Date.now() - llmStart;
       incrementKeyedCounter("llm_calls_by_type", "agent");
       recordLatency("llm_prompt_ms", llmMs);
 
       this.#recordTokens(result);
 
-      if (result.error) {
-        throw new Error(result.error.message || JSON.stringify(result.error));
+      if (!result.ok) {
+        throw result.error;
       }
 
       const { text: agentText, toolResults } = extractAgentResponse(result.data);

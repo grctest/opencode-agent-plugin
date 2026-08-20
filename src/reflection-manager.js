@@ -1,5 +1,5 @@
 import { buildReflectionPrompt } from "./prompts.js";
-import { extractText, extractAgentResponse, mapToolResults, withTimeout, findMostSimilar } from "./shared.js";
+import { extractAgentResponse, mapToolResults, findMostSimilar } from "./shared.js";
 import { getConfig, resolveBuiltInTools } from "./config.js";
 import { Logger, extractErrorInfo } from "./logger.js";
 
@@ -17,8 +17,6 @@ const reflectionLogger = new Logger();
  * @param {Object} deps - Dependencies
  */
 export async function runMidRoundReflections(round, triggerParticipant, activeParticipants, {
-  client,
-  directory,
   sessionManager,
   getParticipantModel,
   stateManager,
@@ -110,32 +108,27 @@ export async function runMidRoundReflections(round, triggerParticipant, activePa
       round: stateManager.getCurrentRound(),
     };
 
-    const result = await withTimeout(
-      client.session.prompt({
-        path: { id: sessionId },
-        body: {
-          system: systemPrompt,
-          model,
-          temperature: listener.tier_config.temperature,
-          parts: [{ type: "text", text: prompt }],
-          tools: reflectionTools,
-          tool_choice: Object.keys(reflectionTools).length > 0 ? "auto" : undefined,
-        },
-        query: { directory },
-      }),
+    const result = await sessionManager.getContract().prompt({
+      sessionId,
+      system: systemPrompt,
+      model,
+      temperature: listener.tier_config.temperature,
+      parts: [{ type: "text", text: prompt }],
+      tools: reflectionTools,
+      toolChoice: Object.keys(reflectionTools).length > 0 ? "auto" : undefined,
       timeoutMs,
-    );
+    });
 
     if (callStats) {
       callStats.reflection_calls++;
-      const tokens = result?.data?.tokens;
+      const tokens = result.tokens;
       if (tokens) {
         callStats.input_tokens += tokens.input ?? 0;
         callStats.output_tokens += tokens.output ?? 0;
       }
     }
 
-    if (result.error) throw new Error(result.error.message || JSON.stringify(result.error));
+    if (!result.ok) throw result.error;
 
     // Use extractAgentResponse to handle tool call parts
     const { text, toolResults } = extractAgentResponse(result.data);

@@ -239,7 +239,14 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
         composedRoom = await composeRoomWithSimilarity(args.question, seed, meetingDb);
         participants = composedRoom.participants;
 
-        if (modelMap.size === 0 && available.length > 0) {
+        // Apply the tier plan (from args.models / pendingModels) to composed
+        // participants, mirroring the custom-participants branch, then fill any
+        // remaining gaps from the available pool. This keeps persisted
+        // provider_id/model_id populated even when a model plan is present.
+        participants = participants.map((p) =>
+          p.model ? p : { ...p, model: modelMap.get(p.tier) ?? undefined }
+        );
+        if (available.length > 0) {
           participants = assignModelsToParticipants(participants, available, sessionModel);
         }
 
@@ -255,7 +262,7 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
       }
     }
 
-    if (modelMap.size === 0 && available.length > 0 && participants.length > 0 && !participants[0]?.model) {
+    if (available.length > 0 && participants.length > 0 && participants.some((p) => !p.model)) {
       participants = assignModelsToParticipants(participants, available, sessionModel);
     }
 
@@ -437,6 +444,7 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
     if (action === "reset") {
       const prevCount = enabledModels?.size ?? 0;
       enabledModels = null;
+      pendingModels = null;
       return {
         title: "Model Filter Reset",
         output: `Model filter cleared. All discovered models are now available for Loom agents (${prevCount} models were previously restricted).`,
@@ -489,6 +497,7 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
 
       const removed = requested.filter((id) => enabledModels?.has(id));
       for (const id of requested) enabledModels?.delete(id);
+      if (removed.length > 0) pendingModels = null;
       return {
         title: "Models Disabled",
         output: `Disabled ${removed.length} model(s):\n${removed.map((m) => `- ${m}`).join("\n")}\n\n${enabledModels?.size ?? 0} model(s) remain available for Loom agents.`,

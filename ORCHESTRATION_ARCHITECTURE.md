@@ -1169,7 +1169,10 @@ Per-model failure tracking (`circuitBreaker.failureThreshold: 3`, `circuitBreake
 
 ### Database Errors
 
-Database operations are wrapped in try-catch; schema migration runs in an explicit transaction. Indexing and other best-effort operations log and continue.
+Database operations are wrapped in try-catch; best-effort operations log and continue. There is no
+migration machinery — `schema.js` ships exactly one `initSchema()` with the final schema (alpha:
+DBs are wiped whenever a session is deleted). Indexing and other best-effort operations log and
+continue.
 
 ### All-Failed / All-Passed Handling
 
@@ -1443,7 +1446,7 @@ Orchestrator calls can use a cheaper/faster model instead of the highest-tier ag
 `#promptOrchestrator` routes to the fast-path model when `fastPathModel` is set:
 
 ```javascript
-const useModel = (fastPathModel && (type === "moderation" || type === "compaction" || type === "summary" || type === "domain"))
+const useModel = (fastPathModel && (type === "moderation" || type === "compaction" || type === "summary"))
   ? fastPathModel
   : model;
 ```
@@ -1453,7 +1456,6 @@ const useModel = (fastPathModel && (type === "moderation" || type === "compactio
 | `moderation` | Yes | Moderator rulings (Section 8) |
 | `summary` | Yes | LLM round summaries (Section 13) |
 | `compaction` | Yes (legacy) | Reserved — compaction removed |
-| `domain` | Yes (legacy) | Reserved — domain detection removed |
 | `turn_order` | No (via planner) | `planTurnOrder` selects `fastPathModel` itself (Section 9) |
 
 Note: turn-order planning is special — `#promptOrchestrator` doesn't fast-path `turn_order`, but `planTurnOrder` picks `fastPathModel || getHighestTierModel()` as its model before calling the orchestrator, so it still benefits when configured.
@@ -1661,7 +1663,7 @@ Explicit configuration always wins over automatic assignment:
 
 ### 4. Orchestrator & Fallback Model Safeguards
 
-- **Fast-path routing** (`fastPathModel`): cheap models for moderation/summary/compaction/domain orchestrator calls; turn-order planning selects it itself (Section 21).
+- **Fast-path routing** (`fastPathModel`): cheap models for moderation/summary/compaction orchestrator calls; turn-order planning selects it itself (Section 21).
 - **Model fallback** (`modelFallback.*`): a failed agent turn is retried on its model, then on a healthy fallback selected by `selectFallbackModel()` (Section 16).
 - `getHighestTierModel()` acts as a safety net: `#getParticipantModel(participant, fallbackOnError)` substitutes the highest-tier healthy model whenever a participant's own model is missing or unhealthy (used by directives, votes, and synthesis).
 

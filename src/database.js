@@ -1,7 +1,7 @@
 import { mkdirSync, existsSync, readdirSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { Logger, extractErrorInfo } from "./logger.js";
-import { initSchema, migrateSchema } from "./database/schema.js";
+import { initSchema } from "./database/schema.js";
 import { resolveLoomBaseDir, getMeetingDbPath } from "./paths.js";
 import {
   loadSessionIndex,
@@ -94,7 +94,7 @@ export class MeetingDatabase {
     const db = new DatabaseClass(dbPath, { readonly: true });
     try {
       const row = db.prepare(
-        `SELECT id, question, context, status, round, max_rounds, convergence, domain, fabric
+        `SELECT id, question, context, status, round, max_rounds, convergence, fabric
          FROM meetings LIMIT 1`
       ).get();
       return row ?? null;
@@ -120,7 +120,6 @@ export class MeetingDatabase {
       dbLogger.warn("sqlite_vec_not_found", "sqlite-vec extension not found — vector search disabled", { expectedPath: VEC0_PATH });
     }
     initSchema(this.#db);
-    migrateSchema(this.#db);
     this.#initVectorTable();
     this.#cleanupOldErrors();
     this.#checkIntegrity();
@@ -153,7 +152,9 @@ export class MeetingDatabase {
     try {
       this.#db.prepare("DELETE FROM agent_errors WHERE created_at < datetime('now', '-30 days')").run();
       this.#db.prepare("DELETE FROM error_log WHERE created_at < datetime('now', '-30 days')").run();
-    } catch { /* non-critical */ }
+    } catch (err) {
+      dbLogger.warn("old_errors_cleanup_failed", "Failed to clean up old error rows", extractErrorInfo(err));
+    }
   }
 
   // ── Write Operations ─────────────────────────────────────────────
@@ -161,8 +162,8 @@ export class MeetingDatabase {
   initializeMeeting(input) {
     const now = isoNow();
     const insertMeeting = this.#db.prepare(
-      `INSERT OR REPLACE INTO meetings (id, question, context, status, round, fabric, max_rounds, convergence, domain, tags, parent_session_id, opencode_session_id, embedding_model, embedding_dim, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT OR REPLACE INTO meetings (id, question, context, status, round, fabric, max_rounds, convergence, tags, parent_session_id, opencode_session_id, embedding_model, embedding_dim, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     const insertParticipant = this.#db.prepare(
       `INSERT INTO participants (id, meeting_id, name, persona, agenda, tier, provider_id, model_id, session_id, known_biases, communication_style, preferred_contribution_types)
@@ -179,7 +180,6 @@ export class MeetingDatabase {
         input.context ?? "",
         input.maxRounds,
         input.convergence ?? "moderator_forces", // display-only; default for legacy rows
-        input.domain ?? null,
         JSON.stringify(input.tags ?? []),
         input.parentSessionId,
         input.opencodeSessionId,
@@ -226,12 +226,12 @@ export class MeetingDatabase {
     const existing = this.#db.prepare(`SELECT id FROM meetings WHERE id = ?`).get(this.#meetingId);
     if (existing) {
       this.#db.prepare(`
-        UPDATE meetings SET question = ?, context = ?, max_rounds = ?, convergence = ?, domain = ?,
+        UPDATE meetings SET question = ?, context = ?, max_rounds = ?, convergence = ?,
           tags = ?, parent_session_id = ?, opencode_session_id = ?, embedding_model = ?, embedding_dim = ?, updated_at = ?
         WHERE id = ?
       `).run(
         input.question, input.context ?? "", input.maxRounds, input.convergence ?? "moderator_forces",
-        input.domain ?? null, JSON.stringify(input.tags ?? []),
+        JSON.stringify(input.tags ?? []),
         input.parentSessionId, input.opencodeSessionId,
         input.embedding_model ?? null, input.embedding_dim ?? null, now, this.#meetingId,
       );
@@ -356,12 +356,6 @@ export class MeetingDatabase {
     this.#db
       .prepare("UPDATE meetings SET state_of_play = ?, updated_at = ? WHERE id = ?")
       .run(stateOfPlay, isoNow(), this.#meetingId);
-  }
-
-  updateMeetingDomain(meetingId, domain) {
-    this.#db
-      .prepare("UPDATE meetings SET domain = ?, updated_at = ? WHERE id = ?")
-      .run(domain, isoNow(), meetingId);
   }
 
   updateMeetingTags(meetingId, tags) {
@@ -708,7 +702,7 @@ export class MeetingDatabase {
   getMeeting() {
     const row = this.#db
       .prepare(
-        `SELECT id, question, context, status, round, fabric, max_rounds, convergence, domain, tags, parent_session_id, opencode_session_id, next_speaker_id, state_of_play, stats, embedding_model, embedding_dim, created_at
+        `SELECT id, question, context, status, round, fabric, max_rounds, convergence, tags, parent_session_id, opencode_session_id, next_speaker_id, state_of_play, stats, embedding_model, embedding_dim, created_at
          FROM meetings WHERE id = ?`,
       )
       .get(this.#meetingId);
@@ -814,7 +808,7 @@ export class MeetingDatabase {
 
   getTranscriptData(meetingId) {
     const meeting = this.#db
-      .prepare("SELECT question, fabric, domain FROM meetings WHERE id = ?")
+      .prepare("SELECT question, fabric FROM meetings WHERE id = ?")
       .get(meetingId);
 
     const contributions = this.#db
@@ -867,7 +861,6 @@ export class MeetingDatabase {
     return {
       question: meeting?.question ?? "",
       fabric: meeting?.fabric ?? "",
-      domain: meeting?.domain ?? null,
       rounds,
     };
   }
@@ -1259,6 +1252,10 @@ export async function readSessionIdFromDbAsync(dbPath) {
     await ensureDb();
     const db = new DatabaseClass(dbPath, { readonly: true });
     try {
+      // Check if meetings table exists before querying
+      const tableCheck = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='meetings'").get();
+      if (!tableCheck) return null;
+
       const row = db.prepare("SELECT opencode_session_id FROM meetings LIMIT 1").get();
       return row?.opencode_session_id ?? null;
     } finally {

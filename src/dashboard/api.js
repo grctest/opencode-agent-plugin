@@ -105,7 +105,7 @@ export class DashboardApi {
   getState() {
     const row = this.#db
       .prepare(
-        `SELECT id as meeting_id, question, context, status, round, max_rounds, convergence, fabric, domain, stats, reflecting_participants, querying_participants, evidence_participants, summoning_participants, state_of_play, created_at
+        `SELECT id as meeting_id, question, context, status, round, max_rounds, convergence, fabric, stats, reflecting_participants, querying_participants, evidence_participants, summoning_participants, state_of_play, created_at
          FROM meetings LIMIT 1`,
       )
       .get();
@@ -480,7 +480,6 @@ export class DashboardApi {
         round: meeting?.round ?? 0,
         maxRounds: meeting?.max_rounds ?? 0,
         convergence: meeting?.convergence ?? "Unknown",
-        domain: meeting?.domain ?? null,
         fabric: meeting?.fabric ?? "",
         createdAt: meeting?.created_at ?? null,
       },

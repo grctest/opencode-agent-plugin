@@ -187,7 +187,7 @@ export class MeetingOrchestrator {
 
   async #promptOrchestrator(system, model, message, type = "orchestrator", round = null) {
     const fastPathModel = getConfig().fastPathModel;
-    const useModel = (fastPathModel && (type === "moderation" || type === "compaction" || type === "summary" || type === "domain"))
+    const useModel = (fastPathModel && (type === "moderation" || type === "compaction" || type === "summary"))
       ? fastPathModel
       : model;
 
@@ -229,7 +229,7 @@ export class MeetingOrchestrator {
       this.#vectorIndex = new VectorIndex(db);
 
       this.#sessionManager = new SessionManager(this.#client, this.#directory, this.#parentSessionId, this.#logger);
-      this.#synthesisCoordinator = new SynthesisCoordinator(this.#client, this.#directory, this.#sessionManager);
+      this.#synthesisCoordinator = new SynthesisCoordinator(this.#sessionManager);
 
       // Ensure the meeting row exists BEFORE indexing personas.
       // The persona_embeddings table has a FK to meetings(id), so the meeting
@@ -315,8 +315,6 @@ export class MeetingOrchestrator {
       }
 
       this.#roundExecutor = new RoundExecutor({
-        client: this.#client,
-        directory: this.#directory,
         db,
         stateManager: this.#stateManager,
         vectorIndex: this.#vectorIndex,
@@ -460,6 +458,7 @@ export class MeetingOrchestrator {
       activeParticipants,
       promptOrchestrator: async (system, model, message, type) => this.#promptOrchestrator(system, model, message, type, round.number),
       getHighestTierModel: () => this.#getHighestTierModel(),
+      getFallbackModel: () => this.#getAllowedFallbackModel(),
       state: this.#stateManager.getState(),
     });
 

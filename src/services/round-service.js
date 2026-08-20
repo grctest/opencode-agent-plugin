@@ -29,10 +29,11 @@ export class RoundService {
    * @param {Array} params.activeParticipants
    * @param {Function} params.promptOrchestrator
    * @param {Function} params.getHighestTierModel
+   * @param {Function} [params.getFallbackModel]
    * @returns {Promise<Object>} Updated round with summary
    */
    async runRound(params) {
-    const { round, activeParticipants, promptOrchestrator, getHighestTierModel } = params;
+    const { round, activeParticipants, promptOrchestrator, getHighestTierModel, getFallbackModel } = params;
 
     this.#roundExecutor.resetRoundStats();
 
@@ -40,7 +41,7 @@ export class RoundService {
     // Reflections now happen mid-round in runPromptPhase — no separate phase needed
 
     // Summarize the round
-    round.summary = await summarizeRound(round, params.state, promptOrchestrator, getHighestTierModel);
+    round.summary = await summarizeRound(round, params.state, promptOrchestrator, getHighestTierModel, getFallbackModel);
 
     return { round };
   }

@@ -52,42 +52,31 @@ function formatContribution(c, reflectionMap) {
 }
 
 /**
- * Generates a summary for a completed round.
- * Uses heuristic counts as the baseline; always escalates to an LLM-generated
- * semantic summary for rounds with substantive contributions.
+ * Generates a summary for a completed round using LLM-based summarization.
+ * Always attempts LLM summarization; throws on failure instead of falling back to placeholder.
  */
-export async function summarizeRound(round, state, promptOrchestrator, getHighestTierModel) {
+export async function summarizeRound(round, state, promptOrchestrator, getHighestTierModel, getFallbackModel) {
   const contribCount = round.contributions.length;
   if (contribCount === 0) return "No contributions this round.";
 
-  const types = round.contributions.map((c) => c.type);
-  const typeCounts = {};
-  for (const t of types) typeCounts[t] = (typeCounts[t] ?? 0) + 1;
-  const typeSummary = Object.entries(typeCounts).map(([t, c]) => `${c} ${t}`).join(", ");
+  // Try primary model, then fallback
+  const model = getHighestTierModel() ?? (getFallbackModel ? getFallbackModel() : null);
+  if (!model) throw new Error("No model available for semantic summary — check model assignment");
 
-  let summary = `Round contributions (${contribCount}): ${typeSummary}.`;
-  if (round.turn_requests.length > 0) {
-    summary += ` ${round.turn_requests.length} turn request(s).`;
-  }
+  // Filter to only substantive contributions (no reflections, query responses, etc.)
+  const summaryContributions = round.contributions.filter((c) => SUMMARY_TYPES.has(c.type));
 
-  try {
-    const model = getHighestTierModel();
-    if (!model) throw new Error("No model available for semantic summary");
+  // Build reflection outcome map and format contributions
+  const reflectionMap = buildReflectionMap(round.contributions);
+  const formattedContributions = summaryContributions
+    .map((c) => formatContribution(c, reflectionMap))
+    .join("\n\n");
 
-    // Filter to only substantive contributions (no reflections, query responses, etc.)
-    const summaryContributions = round.contributions.filter((c) => SUMMARY_TYPES.has(c.type));
+  // Adapt prompt based on whether we have substantive contributions
+  const hasSubstantiveContent = formattedContributions.trim().length > 0;
 
-    // Build reflection outcome map and format contributions
-    const reflectionMap = buildReflectionMap(round.contributions);
-    const formattedContributions = summaryContributions
-      .map((c) => formatContribution(c, reflectionMap))
-      .join("\n\n");
-
-    if (formattedContributions.trim().length === 0) {
-      return summary;
-    }
-
-    const prompt = `Summarize this deliberation round. What was established? What remains contested?
+  const prompt = hasSubstantiveContent
+    ? `Summarize this deliberation round. What was established? What remains contested?
 
 ## Question
 ${state.question || "(no question provided)"}
@@ -104,16 +93,25 @@ Focus on:
 Provide your summary in this format:
 - **Established:** {what was decided or agreed}
 - **Contested:** {what remains disputed and by whom}
-- **Open:** {unresolved questions or next decisions needed}`;
+- **Open:** {unresolved questions or next decisions needed}`
+    : `Summarize this deliberation round. The round contained ${contribCount} contribution(s) but no substantive positions were staked.
 
-    const semanticSummary = await promptOrchestrator("You are a neutral summarizer.", model, prompt, "summary");
-    if (semanticSummary && semanticSummary.trim().length > 10) {
-      summary = semanticSummary.trim();
-    }
-  } catch (err) {
-    const info = extractErrorInfo(err);
-    summarizerLogger.warn("summary_fallback", "Semantic summary failed — using heuristic", info);
+## Question
+${state.question || "(no question provided)"}
+
+## Round ${round.number || "?"}
+Contribution types: ${round.contributions.map((c) => c.type).join(", ")}
+Turn requests: ${round.turn_requests.length}
+
+## Instructions
+Provide a brief summary noting that no substantive deliberation occurred this round. Mention what types of contributions were made and any turn requests.`;
+
+  const semanticSummary = await promptOrchestrator("You are a neutral summarizer.", model, prompt, "summary");
+
+  if (semanticSummary && semanticSummary.trim().length > 0) {
+    return semanticSummary.trim();
   }
 
-  return summary;
+  // If LLM returned empty response, throw to make the failure visible
+  throw new Error("LLM returned empty summary response");
 }

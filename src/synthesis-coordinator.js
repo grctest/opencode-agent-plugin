@@ -1,7 +1,6 @@
 import { buildSynthesisPrompt } from "./prompts.js";
 import { formatFinalRoundTranscript } from "./fabric-manager.js";
 import { finalizeSynthesis, validateSynthesisSections, NEUTRAL_SYNTHESIZER_SYSTEM } from "./synthesizer.js";
-import { extractText, withTimeout } from "./shared.js";
 import { getConfig } from "./config.js";
 import { extractErrorInfo } from "./logger.js";
 import { incrementKeyedCounter, recordLatency } from "./metrics.js";
@@ -10,13 +9,9 @@ const MAX_CRITIQUE_RETRIES = 2;
 const REQUIRED_SECTIONS = ["Decision", "Reasoning", "Action Items", "Dissenting Views", "Open Questions", "Confidence"];
 
 export class SynthesisCoordinator {
-  #client;
-  #directory;
   #sessionManager;
 
-  constructor(client, directory, sessionManager) {
-    this.#client = client;
-    this.#directory = directory;
+  constructor(sessionManager) {
     this.#sessionManager = sessionManager;
   }
 
@@ -69,28 +64,23 @@ export class SynthesisCoordinator {
         additionalFeedback;
 
       const llmStart = Date.now();
-      const result = await withTimeout(
-        this.#client.session.prompt({
-          path: { id: sessionId },
-          body: {
-            system: NEUTRAL_SYNTHESIZER_SYSTEM,
-            model,
-            temperature: synthesizer.tier_config.temperature,
-            parts: [{ type: "text", text: userPrompt }],
-          },
-          query: { directory: this.#directory },
-        }),
-        getConfig().synthesisTimeoutMs,
-      );
+      const result = await this.#sessionManager.getContract().prompt({
+        sessionId,
+        system: NEUTRAL_SYNTHESIZER_SYSTEM,
+        model,
+        temperature: synthesizer.tier_config.temperature,
+        parts: [{ type: "text", text: userPrompt }],
+        timeoutMs: getConfig().synthesisTimeoutMs,
+      });
       const llmMs = Date.now() - llmStart;
       incrementKeyedCounter("llm_calls_by_type", "synthesis");
       recordLatency("synthesis_ms", llmMs);
 
-      if (result.error) {
-        throw new Error(result.error.message || JSON.stringify(result.error));
+      if (!result.ok) {
+        throw result.error;
       }
 
-      const text = extractText(result.data);
+      const text = result.text;
       if (!text) {
         throw new Error("Synthesizer returned empty response");
       }
@@ -129,22 +119,17 @@ ${text.slice(0, 6000)}`;
 
     for (let attempt = 0; attempt < MAX_CRITIQUE_RETRIES; attempt++) {
       try {
-        const result = await withTimeout(
-          this.#client.session.prompt({
-            path: { id: sessionId },
-            body: {
-              system: NEUTRAL_SYNTHESIZER_SYSTEM,
-              model,
-              temperature: synthesizer.tier_config.temperature,
-              parts: [{ type: "text", text: critiquePrompt }],
-            },
-            query: { directory: this.#directory },
-          }),
-          getConfig().synthesisTimeoutMs,
-        );
+        const result = await this.#sessionManager.getContract().prompt({
+          sessionId,
+          system: NEUTRAL_SYNTHESIZER_SYSTEM,
+          model,
+          temperature: synthesizer.tier_config.temperature,
+          parts: [{ type: "text", text: critiquePrompt }],
+          timeoutMs: getConfig().synthesisTimeoutMs,
+        });
 
-        if (result.error) throw new Error(result.error.message || JSON.stringify(result.error));
-        const text2 = extractText(result.data);
+        if (!result.ok) throw result.error;
+        const text2 = result.text;
         if (!text2 || !text2.trim()) return text;
 
         if (/^\[NO_CHANGES\]\s*$/i.test(text2.trim())) {

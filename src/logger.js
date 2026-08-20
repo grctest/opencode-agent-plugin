@@ -31,6 +31,7 @@ export class Logger {
   #meetingId = null;
   #correlationId = null;
   #minLevel = resolveMinLevel();
+  #throttleMap = new Map();
 
   constructor(meetingId = null) {
     this.#meetingId = meetingId;
@@ -39,6 +40,24 @@ export class Logger {
 
   forMeeting(meetingId) {
     return new Logger(meetingId);
+  }
+
+  /**
+   * Logs at WARN level but emits at most one message per key within throttleMs.
+   * Prevents legitimate transient failures (e.g. session delete, DB lock) from
+   * spamming logs while still surfacing the problem once.
+   * @param {string} key - Dedup key (e.g. "${session-id}:delete").
+   * @param {string} context
+   * @param {string} message
+   * @param {Object|null} details
+   * @param {number} [throttleMs=30000]
+   */
+  warnThrottled(key, context, message, details = null, throttleMs = 30000) {
+    const now = Date.now();
+    const last = this.#throttleMap.get(key) ?? 0;
+    if (now - last < throttleMs) return;
+    this.#throttleMap.set(key, now);
+    this.warn(context, message, details);
   }
 
   debug(context, message, details = null) {

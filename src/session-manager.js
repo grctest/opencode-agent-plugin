@@ -1,7 +1,7 @@
-import { extractText, withTimeout } from "./shared.js";
 import { extractErrorInfo } from "./logger.js";
 import { withRetry, isRetryableError } from "./utils/retry.js";
 import { getConfig } from "./config.js";
+import { SessionContract } from "./session-contract.js";
 
 const MAX_PROGRESS_FAILURES_BEFORE_ALERT = 3;
 
@@ -10,6 +10,7 @@ export class SessionManager {
   #directory;
   #parentSessionId;
   #logger;
+  #contract;
   #progressFailureCount = 0;
   #progressAlerted = false;
   #sessionMeetingMap = new Map();
@@ -19,6 +20,15 @@ export class SessionManager {
     this.#directory = directory;
     this.#parentSessionId = parentSessionId;
     this.#logger = logger;
+    this.#contract = new SessionContract(client, directory, logger);
+  }
+
+  /**
+   * Shared session contract used by all prompt/delete call sites so behavior
+   * (timeout, retry, error normalization, throttled delete warnings) is unified.
+   */
+  getContract() {
+    return this.#contract;
   }
 
   getParentSessionId() {
@@ -50,27 +60,13 @@ export class SessionManager {
   }
 
   async #createSessionWithRetry(title, onRetry = null) {
-    return withRetry(async () => {
-      const result = await this.#client.session.create({
-        body: {
-          parentID: this.#parentSessionId,
-          title,
-        },
-        query: { directory: this.#directory },
-      });
-
-      if (!result.data || result.error) {
-        throw new Error(`Failed to create session "${title}": ${result.error?.message || "unknown error"}`);
-      }
-
-      return result.data.id;
-    }, {
-      maxAttempts: getConfig().maxRetryAttempts ?? 3,
-      baseDelayMs: getConfig().retryBaseDelayMs ?? 1000,
-      maxDelayMs: getConfig().retryMaxDelayMs ?? 5000,
-      retryable: isRetryableError,
+    const { ok, sessionId, error } = await this.#contract.create({
+      title,
+      parentID: this.#parentSessionId,
       onRetry,
     });
+    if (!ok) throw error;
+    return sessionId;
   }
 
   async createChildSession(participant) {
@@ -103,14 +99,8 @@ export class SessionManager {
    * Best-effort deletion of an ephemeral session.
    */
   async deleteEphemeralSession(sessionId) {
-    try {
-      await this.#client.session.delete({
-        path: { id: sessionId },
-        query: { directory: this.#directory },
-      });
-    } catch {
-      // Best effort — session may already be deleted
-    }
+    const { ok } = await this.#contract.delete(sessionId);
+    this.unregisterSession(sessionId);
   }
 
   /**
@@ -123,37 +113,29 @@ export class SessionManager {
     const sessionId = await this.#createSessionWithRetry("Loom · Orchestrator (ephemeral)");
     try {
       const result = await withRetry(async () => {
-        const inner = await withTimeout(
-          this.#client.session.prompt({
-            path: { id: sessionId },
-            body: { system, model, tools: {}, parts: [{ type: "text", text: message }] },
-            query: { directory: this.#directory },
-          }),
-          getConfig().agentTimeoutMs,
-        );
-        if (inner.error) throw new Error(JSON.stringify(inner.error));
-        return inner;
+        const res = await this.#contract.prompt({
+          sessionId,
+          system,
+          model,
+          tools: {},
+          parts: [{ type: "text", text: message }],
+        });
+        if (!res.ok) throw res.error;
+        return res;
       }, {
         maxAttempts: getConfig().maxRetryAttempts,
         baseDelayMs: getConfig().retryBaseDelayMs,
         maxDelayMs: getConfig().retryMaxDelayMs,
         retryable: isRetryableError,
       });
-      return { text: extractText(result.data), tokens: result.data?.tokens };
+      return { text: result.text, tokens: result.tokens };
     } finally {
       this.deleteEphemeralSession(sessionId);
     }
   }
 
   async deleteSession(sessionId) {
-    try {
-      await this.#client.session.delete({
-        path: { id: sessionId },
-        query: { directory: this.#directory },
-      });
-    } catch {
-      // Best effort - session may already be deleted
-    }
+    await this.#contract.delete(sessionId);
   }
 
   postProgress(message) {
