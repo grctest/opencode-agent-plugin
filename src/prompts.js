@@ -23,173 +23,192 @@ export function delimitContext(context, label) {
   return `${delim}_BEGIN_\n${safe}\n${delim}_END_`;
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// Shared helpers — deduplicated prelude for reflection / query / evidence
+// ──────────────────────────────────────────────────────────────────────────────
+
+function getRecentContributionsBlock(contributions, participantId) {
+  if (!contributions || contributions.length === 0) return "";
+  const mine = contributions
+    .filter((c) => c.participant_id === participantId && c.type !== "pass")
+    .slice(-2)
+    .map((c) => sanitizeForDisplay(c.content));
+  if (mine.length === 0) return "";
+  return `Your last contributions:\n${mine.map((c) => `- "${c.slice(0, 300)}"`).join("\n")}`;
+}
+
+function getReflectionBlock(reflection) {
+  if (!reflection) return "";
+  return `Your current position:\n"${sanitizeForDisplay(reflection.slice(0, 500))}"`;
+}
+
+function buildEvidenceGuidance(kind) {
+  const cfg = getConfig().agentTools;
+  if (!cfg?.enabled) return "";
+  if (kind === "reflection") {
+    return `
+## Research Tools — Reflection (optional but grounded)
+
+Tool ladder: loom_vector_search (recall what was said) → websearch (verify current fact) → read/grep (verify local file) → webfetch (deep dive ONLY after a search hit). One call max unless evidence request.
+
+- **loom_vector_search**: recall a prior [#id] you’re citing — prefer this over memory
+- **websearch**: verify a claim before you revise your stance
+- **webfetch**: open a URL returned by websearch
+- **read**: inspect a file referenced in discussion
+
+Cite as Source: [#id] or Source: https://… . Synthesize, don’t dump. Reflection is visible — ground it.
+If tool returns error or 0 hits, write “evidence unavailable — searched X, 0 hits” and proceed with experience-qualified claim. Do not retry same query.`;
+  }
+  if (kind === "query") {
+    return `
+## Research Tools — Query (optional)
+
+You may call one tool to verify before answering. Prefer loom_vector_search if the answer is “what was said”, websearch if it’s a current fact. Cite Source: [#id] or URL if you use one.
+If tool returns error or 0 hits, write “evidence unavailable — searched X” and answer with “insufficient evidence” qualified.`;
+  }
+  if (kind === "evidence") {
+    return `
+## Research Tools — Evidence (REQUIRED)
+
+You MUST call at least one tool. No speculation.
+
+Tool ladder: websearch → webfetch/read/loom_vector_search. One focused query, then synthesize.
+
+Report: Finding (1 sentence) + Source (URL or [#id]) + Strength: strong | weak | inconclusive
+If inconclusive: state why — “0 hits” vs “contradictory sources” — and what would resolve it.
+If tool returns error or 0 hits, write “evidence unavailable — searched X, 0 hits” and explain what would resolve it; do not retry same query.`;
+  }
+  return "";
+}
+
+function buildSeniorityContext(listenerName, listenerTier, triggerName, triggerTier, listenerLevel, triggerLevel) {
+  // Evidence-weighted, not rank-weighted. Longer deliberation = weigh evidence, not title.
+  if (triggerLevel > listenerLevel) {
+    return `${triggerName} (${triggerTier}) is senior to you (${listenerTier}). Weigh their evidence, not their rank. If they cited a source/tool output, address that evidence directly. If they didn’t, you may demand it. Hold your ground if the evidence is weak.`;
+  } else if (triggerLevel < listenerLevel) {
+    return `${triggerName} (${triggerTier}) is junior to you (${listenerTier}). Junior challenges are often right because they ignore unwritten constraints — engage the argument, not the seniority. If they surfaced a blind spot, name it.`;
+  } else {
+    return `${triggerName} (${triggerTier}) is your peer. Engage point-for-point. If you disagree, do so with a counter-citation or a falsifiable scenario.`;
+  }
+}
+
+function buildRoundContext(currentRound, maxRounds) {
+  if (!currentRound || !maxRounds) {
+    return "Round context unknown — focus on substance and whether the trigger introduces new evidence.";
+  }
+  const progress = currentRound / maxRounds;
+  if (progress <= 0.33) {
+    return `Early deliberation (round ${currentRound}/${maxRounds}) — DIVERGE. Surface assumptions, name at least one hidden constraint, introduce distinct options. Don’t converge yet.`;
+  } else if (progress <= 0.66) {
+    return `Mid deliberation (round ${currentRound}/${maxRounds}) — CONVERGE candidates. Identify what’s settled vs contested, bundle related proposals, name the decision that would unlock next steps.`;
+  } else {
+    return `Late deliberation (round ${currentRound}/${maxRounds}) — LOCK or LEAVE OPEN. Avoid re-litigating settled points. If you reopen, cite new evidence. End with Position: [held|revised|expanded] because …`;
+  }
+}
+
+function buildTierDoctrine(tier, guidance) {
+  // Guidance is already persona-specific and now diversified; wrap with verb-first doctrine.
+  const doctrineMap = {
+    junior: "Junior doctrine: surface one naive question that exposes an unstated senior assumption. Offer a concrete example from your lens, then ask ‘What would we need to learn to answer it?’",
+    mid: "Mid doctrine: make one tradeoff explicit (cost / time / risk / quality). Translate a claim into a number or a measurable check.",
+    senior: "Senior doctrine: name the irreversible commitment and its mitigation/rollback. Cite one pattern or precedent you’ve seen.",
+    principal: "Principal doctrine: if at impasse, frame 2 options + decision criterion (cost, risk, time, reversibility) and a tie-break. Cut re-litigation: state ‘Settled: … Open: …’",
+    civilian: "Civilian doctrine: ground in lived routine. Test the proposal against a real Tuesday: time, money, safety, fatigue. ‘On my Tuesday at 7am this means …’",
+  };
+  const doc = doctrineMap[tier] ?? "Contribute a falsifiable claim or question — avoid generalities.";
+  // Persona’s tier_guidance is appended as the voice, not the rule.
+  const safe = escapeDelimiters(sanitizeForDisplay(guidance, 1000));
+  return `${doc}\n${safe}`;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Reflection / Query / Evidence / Vote / Summon
+// ──────────────────────────────────────────────────────────────────────────────
+
 /** Builds a prompt asking a listener to reflect on a speaker's contribution. */
 export function buildReflectionPrompt(listener, triggerParticipant, contribution, roundContributions, currentRound, maxRounds) {
   const safeSpeaker = sanitizeForDisplay(triggerParticipant.config.name);
   const safeContribution = sanitizeForDisplay(contribution);
-  const guidance = listener.config.reflection_guidance || "Reflect on this contribution and update your position.";
+  const guidance = listener.config.reflection_guidance || "Apply your domain lens; end with Position: [held|revised|expanded] because …";
 
   const previousReflection = listener.reflection || "";
-  const reflectionBlock = previousReflection
-    ? `Your previous reflection on this deliberation:\n"${sanitizeForDisplay(previousReflection)}"`
-    : "";
-
-  const myContributions = (roundContributions || [])
-    .filter((c) => c.participant_id === listener.config.id && c.type !== "pass")
-    .slice(-2)
-    .map((c) => sanitizeForDisplay(c.content));
-  const recentBlock = myContributions.length > 0
-    ? `Your recent contributions:\n${myContributions.map((c) => `- "${c}"`).join("\n")}`
-    : "";
-
-  // Seniority relationship
-  const TIER_ORDER = { junior: 0, mid: 1, senior: 2, principal: 3 };
+  const TIER_ORDER = { junior: 0, mid: 1, senior: 2, principal: 3, civilian: 1 };
   const listenerTierLevel = TIER_ORDER[listener.config.tier] ?? 1;
   const triggerTierLevel = TIER_ORDER[triggerParticipant.config.tier] ?? 1;
+
   const seniorityContext = buildSeniorityContext(
-    listener.config.name,
-    listener.config.tier,
-    triggerParticipant.config.name,
-    triggerParticipant.config.tier,
-    listenerTierLevel,
-    triggerTierLevel
+    listener.config.name, listener.config.tier,
+    triggerParticipant.config.name, triggerParticipant.config.tier,
+    listenerTierLevel, triggerTierLevel
   );
-
-  // Round context
   const roundContext = buildRoundContext(currentRound, maxRounds);
+  const toolSection = buildEvidenceGuidance("reflection");
 
-  // Prior stance context
-  const priorStanceContext = previousReflection
-    ? `You have already reflected on this deliberation. Your current position is recorded above. Update it based on this new contribution — keep what still holds, revise what has changed, add what's new.`
-    : "";
+  // Compress prior state to 1-sentence each (saves ~400 tokens vs prior 3-block dump)
+  const compressedPrior = previousReflection
+    ? `Your prior position (1 sentence): "${sanitizeForDisplay(previousReflection.slice(0, 280))}" — keep what holds, revise what changed, add what’s new.`
+    : "You have no prior reflection — take a clear initial position.";
 
-  const agentToolsConfig = getConfig().agentTools;
-  const reflectionToolUsageSection = agentToolsConfig?.enabled
-    ? `
-## Research Tools (Reflection)
+  const recentMine = getRecentContributionsBlock(roundContributions, listener.config.id);
 
-During reflection, you have access to research tools to ground your analysis in evidence. Use them to verify claims and check current facts before updating your position.
+  // Verb-first lens from persona; no templated boilerplate suffix — shared footer handles it.
+  return `## Reflection — ${listener.config.name} (${listener.config.tier})
 
-### When to Research
-- You need to verify what a participant actually said versus what you remember
-- You need to check current facts before revising your position on a claim
-- You need to recall specific earlier contributions that aren't in your recent context
+Your agenda: ${sanitizeForDisplay(listener.config.agenda, 400)}
 
-### Tool Selection
-- **loom_vector_search**: Verify what was actually said in the deliberation
-- **websearch**: Check current facts, data, or claims before updating your stance
-- **webfetch**: Deep-dive into a specific source for detailed verification
-- **read**: Examine project files or documents referenced in the discussion
+${recentMine ? recentMine + "\n\n" : ""}${compressedPrior}
 
-### Quality Standards
-- Synthesize findings into your reflection rather than listing raw results
-- Your reflection will be visible to other participants — ground it in verifiable evidence`
-    : "";
-
-  return `## Reflection
-
-You are **${listener.config.name}** (${listener.config.tier}). Your agenda: ${listener.config.agenda}
-
-${recentBlock}
-
-${reflectionBlock}
-
-Now **${safeSpeaker}** said:
+**Trigger — ${safeSpeaker} (${triggerParticipant.config.tier}) said:**
 "${safeContribution}"
 
-## Context for This Reflection
-
-**Seniority relationship:**
-${seniorityContext}
-
-**Round context:**
-${roundContext}
-
-${priorStanceContext ? `**Your prior stance:** ${priorStanceContext}` : ""}
-
-## Your Reflection Guidance
+## Lens
 ${guidance}
 
-${reflectionToolUsageSection}
+## How to Weigh
+- Seniority: ${seniorityContext}
+- Round: ${roundContext}
 
-Write your reflection on this contribution.
-This reflection will be visible to other participants in the deliberation.`;
+## Task
+Write a concise reflection (80-150 words) visible to all participants.
+Structure: 1) What the trigger gets right/wrong with citation or scenario, 2) How your lens changes the view, 3) Closing line: Position: [held|revised|expanded] because {one falsifiable cause}.
+If you cite deliberation content, use [#id]; if you cite external fact, use Source: URL. Do not re-emit <<< >>> boundaries.
+${toolSection}`;
 }
 
 /** Builds a prompt for a queried agent to respond to a direct question from another agent. */
-export function buildQueryPrompt(sourceAgent, targetAgent, sourceContribution, question, roundContributions, currentRound, maxRounds) {
+export function buildQueryPrompt(sourceAgent, targetAgent, sourceContribution, question, roundContributions, currentRound, maxRounds, stateOfPlay = "") {
   const safeSourceName = sanitizeForDisplay(sourceAgent.config.name);
-  const safeContribution = sanitizeForDisplay(sourceContribution);
   const safeQuestion = sanitizeForDisplay(question);
+  const safeContribution = sanitizeForDisplay(sourceContribution);
 
-  const previousReflection = targetAgent.reflection || "";
-  const reflectionBlock = previousReflection
-    ? `Your previous reflection on this deliberation:\n"${sanitizeForDisplay(previousReflection)}"`
-    : "";
-
-  const myContributions = (roundContributions || [])
-    .filter((c) => c.participant_id === targetAgent.config.id && c.type !== "pass")
-    .slice(-2)
-    .map((c) => sanitizeForDisplay(c.content));
-  const recentBlock = myContributions.length > 0
-    ? `Your recent contributions:\n${myContributions.map((c) => `- "${c}"`).join("\n")}`
-    : "";
-
-  const TIER_ORDER = { junior: 0, mid: 1, senior: 2, principal: 3 };
-  const sourceTierLevel = TIER_ORDER[sourceAgent.config.tier] ?? 1;
-  const targetTierLevel = TIER_ORDER[targetAgent.config.tier] ?? 1;
+  const TIER_ORDER = { junior: 0, mid: 1, senior: 2, principal: 3, civilian: 1 };
   const seniorityContext = buildSeniorityContext(
-    targetAgent.config.name,
-    targetAgent.config.tier,
-    sourceAgent.config.name,
-    sourceAgent.config.tier,
-    targetTierLevel,
-    sourceTierLevel,
+    targetAgent.config.name, targetAgent.config.tier,
+    sourceAgent.config.name, sourceAgent.config.tier,
+    TIER_ORDER[targetAgent.config.tier] ?? 1,
+    TIER_ORDER[sourceAgent.config.tier] ?? 1,
   );
-
   const roundContext = buildRoundContext(currentRound, maxRounds);
+  const toolSection = buildEvidenceGuidance("query");
 
-  const agentToolsConfig = getConfig().agentTools;
-  const queryToolUsageSection = agentToolsConfig?.enabled
-    ? `
-## Research Tools
+  const recentMine = getRecentContributionsBlock(roundContributions, targetAgent.config.id);
+  const reflectionLine = targetAgent.reflection ? `Your current position: "${sanitizeForDisplay(targetAgent.reflection.slice(0, 240))}"` : "";
+  const sopSnippet = stateOfPlay ? `State of Play — Open Questions (what answer would unblock):\n${sanitizeForDisplay(stateOfPlay, 600)}\n\n` : "";
 
-You may use research tools to ground your answer in evidence. Use them to verify claims before responding.
+  return `## Direct Query — to ${sanitizeForDisplay(targetAgent.config.name)} (${targetAgent.config.tier}) from ${safeSourceName} (${sourceAgent.config.tier})
 
-### Tool Selection
-- **loom_vector_search**: Verify what was actually said in the deliberation
-- **websearch**: Check current facts, data, or claims
-- **webfetch**: Deep-dive into a specific source for detailed verification
-- **read**: Examine project files or documents referenced in the discussion`
-    : "";
-
-  return `## Direct Query
-
-**${safeSourceName}** (${sourceAgent.config.tier}) asks you:
-
+Context (what they said):
 "${safeContribution}"
 
----
-**Their question:** "${safeQuestion}"
+Their question:
+"${safeQuestion}"
 
-${recentBlock}
+${sopSnippet}${recentMine ? recentMine + "\n\n" : ""}${reflectionLine ? reflectionLine + "\n\n" : ""}Seniority: ${seniorityContext}
+Round: ${roundContext}
 
-${reflectionBlock}
-
-## Context
-
-**Seniority relationship:**
-${seniorityContext}
-
-**Round context:**
-${roundContext}
-
-## Your Task
-
-Answer the question directly. Address ${safeSourceName}'s specific concern.
-You may use research tools if needed. Stay in character.
-Do NOT use contribution type tags ([PROPOSE], [CHALLENGE], etc.) — just answer.
-${queryToolUsageSection}`;
+## Task
+Answer in 2-4 sentences, no contribution tags ([PROPOSE] etc). Address the specific question; if it’s “what was said”, prefer loom_vector_search over memory. If you don’t know, say “insufficient evidence” — do not speculate. Cite Source: [#id] or URL if you use evidence. Stay in character.
+${toolSection}`;
 }
 
 /**
@@ -197,142 +216,88 @@ ${queryToolUsageSection}`;
  */
 export function buildEvidencePrompt(sourceAgent, targetAgent, sourceContribution, question, roundContributions, currentRound, maxRounds) {
   const safeSourceName = sanitizeForDisplay(sourceAgent.config.name);
-  const safeContribution = sanitizeForDisplay(sourceContribution);
   const safeQuestion = sanitizeForDisplay(question);
+  const safeContribution = sanitizeForDisplay(sourceContribution);
 
-  const previousReflection = targetAgent.reflection || "";
-  const reflectionBlock = previousReflection
-    ? `Your previous reflection on this deliberation:\n"${sanitizeForDisplay(previousReflection)}"`
-    : "";
-
-  const myContributions = (roundContributions || [])
-    .filter((c) => c.participant_id === targetAgent.config.id && c.type !== "pass")
-    .slice(-2)
-    .map((c) => sanitizeForDisplay(c.content));
-  const recentBlock = myContributions.length > 0
-    ? `Your recent contributions:\n${myContributions.map((c) => `- "${c}"`).join("\n")}`
-    : "";
-
-  const TIER_ORDER = { junior: 0, mid: 1, senior: 2, principal: 3 };
-  const sourceTierLevel = TIER_ORDER[sourceAgent.config.tier] ?? 1;
-  const targetTierLevel = TIER_ORDER[targetAgent.config.tier] ?? 1;
+  const TIER_ORDER = { junior: 0, mid: 1, senior: 2, principal: 3, civilian: 1 };
   const seniorityContext = buildSeniorityContext(
-    targetAgent.config.name,
-    targetAgent.config.tier,
-    sourceAgent.config.name,
-    sourceAgent.config.tier,
-    targetTierLevel,
-    sourceTierLevel,
+    targetAgent.config.name, targetAgent.config.tier,
+    sourceAgent.config.name, sourceAgent.config.tier,
+    TIER_ORDER[targetAgent.config.tier] ?? 1,
+    TIER_ORDER[sourceAgent.config.tier] ?? 1,
   );
-
   const roundContext = buildRoundContext(currentRound, maxRounds);
+  const toolSection = buildEvidenceGuidance("evidence");
 
-  const agentToolsConfig = getConfig().agentTools;
-  const evidenceToolUsageSection = agentToolsConfig?.enabled
-    ? `
-## Research Tools (REQUIRED)
+  const recentMine = getRecentContributionsBlock(roundContributions, targetAgent.config.id);
+  const reflectionLine = targetAgent.reflection ? `Your current position: "${sanitizeForDisplay(targetAgent.reflection.slice(0, 240))}"` : "";
 
-You MUST use at least one research tool to find concrete evidence. Do NOT speculate or reason from memory alone.
+  return `## Evidence Request — to ${sanitizeForDisplay(targetAgent.config.name)} (${targetAgent.config.tier}) from ${safeSourceName} (${sourceAgent.config.tier})
 
-### Tool Selection
-- **websearch**: Search for current facts, data, benchmarks, or claims related to the evidence request
-- **webfetch**: Deep-dive into a specific source URL for detailed evidence
-- **read**: Examine project files or documents referenced in the discussion
-- **loom_vector_search**: Verify what was actually said in the deliberation
-
-### Reporting Requirements
-- Report what you found and cite sources where possible
-- If evidence is inconclusive or unavailable, explicitly state this
-- Distinguish between strong evidence and weak/indirect evidence`
-    : "";
-
-  return `## Evidence Request
-
-**${safeSourceName}** (${sourceAgent.config.tier}) is requesting evidence regarding:
-
+Context:
 "${safeContribution}"
 
----
-**Their evidence question:** "${safeQuestion}"
+Evidence question:
+"${safeQuestion}"
 
-${recentBlock}
+${recentMine ? recentMine + "\n\n" : ""}${reflectionLine ? reflectionLine + "\n\n" : ""}Seniority: ${seniorityContext}
+Round: ${roundContext}
 
-${reflectionBlock}
-
-## Context
-
-**Seniority relationship:**
-${seniorityContext}
-
-**Round context:**
-${roundContext}
-
-## Your Task
-
-Find concrete evidence to address this question. You MUST use research tools — do not speculate.
-Report what you found, cite sources, and note if evidence is inconclusive or unavailable.
-Stay in character.
-Do NOT use contribution type tags ([PROPOSE], [CHALLENGE], etc.) — just present your findings.
-${evidenceToolUsageSection}`;
+## Task
+Provide grounded evidence (100-180 words). No contribution tags.
+Required structure:
+- Finding: {one sentence answer}
+- Source: {URL or [#id] or “searched X, 0 hits”}
+- Strength: strong | weak | inconclusive — and why (sample size, recency, conflict)
+If inconclusive, name what would resolve it. Stay in character — translate evidence through your lens.
+${toolSection}`;
 }
 
 /**
  * Builds a prompt for a voting agent to cast their vote on a poll.
  */
-export function buildVotePrompt(sourceAgent, targetAgent, sourceContribution, question, roundContributions, currentRound, maxRounds) {
+export function buildVotePrompt(sourceAgent, targetAgent, sourceContribution, question, roundContributions, currentRound, maxRounds, stateOfPlay = "") {
   const safeSourceName = sanitizeForDisplay(sourceAgent.config.name);
-  const safeContribution = sanitizeForDisplay(sourceContribution);
   const safeQuestion = sanitizeForDisplay(question);
 
-  const previousReflection = targetAgent.reflection || "";
-  const reflectionBlock = previousReflection
-    ? `Your previous reflection on this deliberation:\n"${sanitizeForDisplay(previousReflection)}"`
-    : "";
+  // Extract a concise source context (first 400 chars of source contribution)
+  const sourceSnippet = sanitizeForDisplay(
+    typeof sourceContribution === "string" ? sourceContribution : sourceContribution?.content ?? "",
+    500
+  );
 
-  const myContributions = (roundContributions || [])
-    .filter((c) => c.participant_id === targetAgent.config.id && c.type !== "pass")
-    .slice(-2)
-    .map((c) => sanitizeForDisplay(c.content));
-  const recentBlock = myContributions.length > 0
-    ? `Your recent contributions:\n${myContributions.map((c) => `- "${c}"`).join("\n")}`
-    : "";
-
+  const reflectionLine = targetAgent.reflection ? `Your current position: "${sanitizeForDisplay(targetAgent.reflection.slice(0, 200))}"` : "";
+  const recentMine = getRecentContributionsBlock(roundContributions, targetAgent.config.id);
   const roundContext = buildRoundContext(currentRound, maxRounds);
+  const sopSnippet = stateOfPlay
+    ? `State of Play — Decisions & Disagreements (your vote is on these):\n${sanitizeForDisplay(stateOfPlay, 700)}\n\n`
+    : "";
 
-  return `## Vote Requested
+  return `## Vote Requested — to ${sanitizeForDisplay(targetAgent.config.name)} (${targetAgent.config.tier}) from ${safeSourceName} (${sourceAgent.config.tier})
 
-**${safeSourceName}** (${sourceAgent.config.tier}) asks:
+Source proposal (excerpt):
+"${sourceSnippet.slice(0, 400)}"
 
-"${safeContribution}"
+Vote question:
+"${safeQuestion}"
 
----
-**Vote on:** "${safeQuestion}"
+${sopSnippet}${recentMine ? recentMine + "\n" : ""}${reflectionLine ? reflectionLine + "\n" : ""}Round: ${roundContext}
 
-${recentBlock}
+## Task — Cast Your Vote
 
-${reflectionBlock}
+Choose one option letter (A, B, C, …) as listed in the vote question. If options aren’t lettered, treat distinct proposals in SoP Decisions as A/B/C in order.
 
-## Context
+Format exactly:
+[Vote: X]
+One sentence criterion (cost / risk / time / reversibility) for your choice.
 
-**Round context:**
-${roundContext}
-
-## Your Task
-
-Vote by choosing one option (A, B, etc.) and provide 1-2 sentences explaining your reasoning.
-
-Format your response exactly as:
-[Vote: <letter>]
-<1-2 sentence justification>
-
-Do NOT use contribution type tags ([PROPOSE], [CHALLENGE], etc.).
-Stay in character.`;
+No contribution tags. Stay in character — your criterion should reflect your agenda.`;
 }
 
 /**
  * Builds a prompt for a summoned guest expert persona.
  */
-export function buildSummonPrompt(summonedPersona, requester, issue, roundContributions, currentRound, maxRounds) {
+export function buildSummonPrompt(summonedPersona, requester, issue, roundContributions, currentRound, maxRounds, stateOfPlay = "") {
   const safeRequesterName = sanitizeForDisplay(requester.config.name);
   const safeIssue = sanitizeForDisplay(issue);
   const safePersonaName = sanitizeForDisplay(summonedPersona.name);
@@ -341,101 +306,79 @@ export function buildSummonPrompt(summonedPersona, requester, issue, roundContri
     .slice(-4)
     .map((c) => {
       const id = c.id != null ? `[#${c.id}]` : "";
-      return `- ${id} [${c.participant_id}] (${c.type}): ${sanitizeForDisplay(c.content)}`;
+      return `- ${id} [${c.participant_id}] (${c.type}): ${sanitizeForDisplay(c.content).slice(0, 280)}`;
     })
     .join("\n");
   const recentBlock = recentContributions.length > 0
-    ? `### Recent Deliberation Context\n${recentContributions}`
+    ? `### Recent Relevant Contributions (last 4)\n${recentContributions}`
     : "*(No prior contributions yet)*";
 
   const roundContext = buildRoundContext(currentRound, maxRounds);
-
   const expertise = Array.isArray(summonedPersona.expertise)
     ? summonedPersona.expertise.join(", ")
     : summonedPersona.expertise || "general";
   const style = summonedPersona.communication_style || "Direct and professional";
+  const sopSnippet = stateOfPlay
+    ? `\n### State of Play — Decisions (what’s settled, build on it)\n${sanitizeForDisplay(stateOfPlay, 700)}\n`
+    : "";
 
-  return `## Guest Expertise
-
-You are **${safePersonaName}** (${summonedPersona.tier}), a guest expert summoned into this deliberation.
+  return `## Guest Expert — ${safePersonaName} (${summonedPersona.tier}) summoned by ${safeRequesterName} (${requester.config.tier})
 
 ### Your Persona
-${summonedPersona.persona}
+${sanitizeForDisplay(summonedPersona.persona, 600)}
 
-### Your Expertise
-${expertise}
+### Expertise
+${sanitizeForDisplay(expertise, 300)}
 
-### Your Communication Style
-${style}
+### Voice
+${sanitizeForDisplay(style, 300)}
 
----
-
-**${safeRequesterName}** (${requester.config.tier}) has asked you to address the following issue:
+Issue you were summoned for:
 "${safeIssue}"
-
+${sopSnippet}
 ${recentBlock}
 
-**Round context:**
-${roundContext}
+Round: ${roundContext}
 
-## Your Task
+## Guest Norms
+- Additive, not adversarial. Build on what’s settled; don’t re-litigate State-of-Play without new evidence.
+- Synthesize through your expert lens; name one constraint others missed.
+- 100-150 words, no contribution tags. If you use a tool, cite Source: URL or [#id].
+- If tool returns error or 0 hits, write “evidence unavailable” and proceed with experience.
 
-Provide your expert perspective on this issue. Use research tools to ground your response in evidence.
-Stay in character based on your persona. Be direct and specific.
-Do NOT use contribution type tags ([PROPOSE], [CHALLENGE], etc.) — just provide your analysis.`;
+Provide your expert perspective — concise, grounded, in character.`;
 }
 
-/**
- * Builds context about the seniority relationship between the reflecting agent
- * and the agent who triggered the reflection.
- */
-function buildSeniorityContext(listenerName, listenerTier, triggerName, triggerTier, listenerLevel, triggerLevel) {
-  if (triggerLevel > listenerLevel) {
-    return `${triggerName} (${triggerTier}) outranks you (${listenerTier}). If their challenge has merit, update your position seriously. If it doesn't, hold your ground with evidence.`;
-  } else if (triggerLevel < listenerLevel) {
-    return `${triggerName} (${triggerTier}) is more junior than you (${listenerTier}). Evaluate their challenge on its merits, not seniority. Junior agents sometimes see what seniors miss.`;
-  } else {
-    return `${triggerName} (${triggerTier}) is your peer. Engage directly and challenge back if you disagree.`;
-  }
-}
-
-/**
- * Builds context about the current round's position in the deliberation.
- */
-function buildRoundContext(currentRound, maxRounds) {
-  if (!currentRound || !maxRounds) {
-    return "Deliberation round unknown. Reflect on the contribution's substance.";
-  }
-
-  const progress = currentRound / maxRounds;
-
-  if (progress <= 0.33) {
-    return `Early deliberation (round ${currentRound}/${maxRounds}). Be exploratory — this is the time to surface concerns and test assumptions.`;
-  } else if (progress <= 0.66) {
-    return `Mid deliberation (round ${currentRound}/${maxRounds}). Start converging — identify what's settled and what remains contested.`;
-  } else {
-    return `Late deliberation (round ${currentRound}/${maxRounds}). Focus on unresolved issues. Avoid re-litigating points already settled.`;
-  }
-}
+// ──────────────────────────────────────────────────────────────────────────────
+// Moderator & Turn Order
+// ──────────────────────────────────────────────────────────────────────────────
 
 /** Builds a prompt for the moderator to plan turn order for the next round. */
 export function buildTurnOrderPrompt(stateOfPlay, roundSummary, turnRequests, participants) {
   const safeStateOfPlay = sanitizeForDisplay(stateOfPlay, 2000);
   const safeRoundSummary = sanitizeForDisplay(roundSummary, 1000);
-  
+
   const requestsList = turnRequests.map((r) => {
     const p = participants.find((pp) => pp.config.id === r.participant_id);
     const name = p?.config.name ?? r.participant_id;
     const tier = p?.config.tier ?? "mid";
-    return `  - ${r.participant_id} (${name}, ${tier}): Priority ${r.priority} — "${sanitizeForDisplay(r.reason, 100)}"`;
+    // Include type hint if available on request (challenge vs propose)
+    const hint = r.type ? ` (${r.type})` : "";
+    const toolHint = r.hasEvidence ? " [evidence]" : "";
+    return `  - ${r.participant_id} (${name}, ${tier}${hint}${toolHint}): Priority ${r.priority} — "${sanitizeForDisplay(r.reason, 100)}"`;
   }).join("\n");
 
   const participantsList = participants
     .filter((p) => p.status !== "failed")
-    .map((p) => `  - ${p.config.id} (${p.config.name}, ${p.config.tier})`)
+    .map((p) => {
+      const cnt = p.contributions_count ?? 0;
+      const didPass = p.status === "passed" ? " [passed last round]" : "";
+      const hasReflect = p.reflection ? " [has reflection]" : "";
+      return `  - ${p.config.id} (${p.config.name}, ${p.config.tier}, ${cnt} contribs${didPass}${hasReflect})`;
+    })
     .join("\n");
 
-  return `You are the turn order planner for a multi-agent deliberation.
+  return `You are the turn order planner for a multi-agent deliberation. Favor longer, richer deliberation — give diverse voices room. Avoid starvation.
 
 ## Current State of Play
 ${safeStateOfPlay || "(No state of play yet)"}
@@ -443,279 +386,349 @@ ${safeStateOfPlay || "(No state of play yet)"}
 ## Last Round Summary
 ${safeRoundSummary || "(First round)"}
 
-## Agent Turn Requests
+## Agent Turn Requests (priority already capped by tier)
 ${requestsList || "(No requests — use default order)"}
 
 ## Active Participants
 ${participantsList}
 
 ## Task
-Return a JSON array of participant IDs ordered by who should speak first to push the deliberation forward efficiently.
+Return a JSON array of participant IDs ordered by who should speak first to push deliberation forward thoroughly.
 
-Rules:
-1. Higher priority requests should generally speak first
-2. Tie-break by: (1) who spoke least recently, (2) seniority tier (principal > senior > mid > junior)
-3. Ensure all active participants get a turn
-4. Consider the State of Play to avoid circular arguments
-5. If no requests, return participants in their current order
+Ranking doctrine (in order):
+1. Evidence-backed challenges/requests first (tool output or [#id] citation signals substance over heat)
+2. Higher priority requests next
+3. Proposals introducing a new option before refinements/supports of an existing one
+4. Anti-starvation: anyone who spoke last without new reflection/evidence is demoted one rank
+5. Tie-break: (a) who spoke least recently, then (b) seniority principal > senior > mid > junior > civilian
 
-Respond with ONLY a JSON array of participant IDs: ["id1", "id2", "id3"]`;
+Constraints:
+- Include every active participant exactly once
+- Consider State of Play to avoid immediate circular re-litigation (same 2 speakers challenge↔challenge without third voice = circular)
+- If no requests, return participants in current order
+
+Respond with ONLY a JSON array: ["id1", "id2", "id3"]`;
 }
 
 /** Builds a prompt for the moderator to rule on deadlocks, circular arguments, or force convergence. */
 export function buildModeratorPrompt(situation, currentRound, maxRounds, totalContributions, recentContributions, previousRulings = [], stateOfPlay = "") {
   const safeSituation = sanitizeForDisplay(situation);
   const contributionsList = recentContributions.map((c) =>
-    `  - ${c.content ? sanitizeForDisplay(c.content.slice(0, 100)) : "(no content)"}...`
+    `  - [${c.type ?? "?"}] ${c.participant_id ?? "?"}: ${c.content ? sanitizeForDisplay(c.content.slice(0, 140)) : "(no content)"}`
   ).join("\n");
 
   const relevantRulings = previousRulings.length > 10 ? previousRulings.slice(-10) : previousRulings;
   const rulingsSection = relevantRulings.length > 0
-    ? `\n## Your Previous Rulings (for consistency)\n${relevantRulings.map((r, i) => `  ${i + 1}. Round ${r.round}: ${r.decision} → ${r.next_speaker}`).join("\n")}\n`
+    ? `\n## Your Previous Rulings (for consistency — don’t contradict without new evidence)\n${relevantRulings.map((r, i) => `  ${i + 1}. Round ${r.round}: ${r.decision} → ${r.next_speaker}${r.reason ? ` — ${sanitizeForDisplay(r.reason, 120)}` : ""}`).join("\n")}\n`
     : "";
 
   const stateOfPlaySection = stateOfPlay
-    ? `\n## Current State of Play\n${sanitizeForDisplay(stateOfPlay, 2000)}\n\nUse this to distinguish between:\n- Circular arguments (revisiting settled points with no new evidence)\n- Legitimate disputes (unresolved disagreements that need more discussion)\n`
+    ? `\n## Current State of Play\n${sanitizeForDisplay(stateOfPlay, 2000)}\n\nUse this to score NEW_INFO: if last round’s points already appear in Agreements/Decisions with no new evidence, NEW_INFO=0. A legitimate dispute has unresolved Disagreements/Open Questions that need more voices.\n`
     : "";
 
-  return `You are the MODERATOR of a structured multi-agent deliberation. You do NOT contribute opinions or domain knowledge. Your ONLY job is process governance.
+  return `You are the MODERATOR — process governor, not participant. You do not contribute domain opinions. You govern flow. Default bias: KEEP DELIBERATING. Only converge when deliberation is genuinely exhausted — this group prefers thorough over terse.
 
-## Your Authority
-- Resolve deadlocks when two participants claim equal priority
-- Cut off circular arguments (3+ exchanges with no new information)
-- Declare convergence when all participants have passed
-- Force synthesis when maximum rounds are reached
-- Ensure all voices are heard fairly
+## Governance Doctrine (longer deliberation default)
 
-## Rules
-- Favor the participant who has spoken less recently
-- Favor the participant whose point is more on-topic
-- When in doubt, let the original speaker continue
-- Your rulings are final
-- Be consistent with your previous rulings unless circumstances have changed materially
+Favor thoroughness over speed. The group values dissent and edge cases. Only cut off when NEW_INFO is truly zero.
+
+## Rubric — score 0-2 each
+
+- NEW_INFO: Does last round introduce evidence/tool output or a distinct option not already in State-of-Play Decisions/Agreements? 0=none, 1=one new angle, 2=multiple new evidence/options
+- ENTRENCHMENT: Are the same 2 participants exchanging challenge↔challenge/dissent without a third voice or new evidence? 0=diverse, 1=mild repetition, 2=entrenched loop
+- COVERAGE: Have ≥70% of active participants contributed meaningfully this round (not just [PASS])? 0=sparse, 1=partial, 2=broad
+- DISSENT_DEPTH: Is there substantive unresolved Disagreements/Open Questions that deserve more voices before synthesis? 0=shallow/none, 1=one real dispute, 2=multiple substantive disputes
+
+Ruling policy (bias toward continue):
+- converge (next_speaker: synthesize) ONLY if NEW_INFO=0 AND COVERAGE≥1 AND (ENTRENCHMENT≥1 OR DISSENT_DEPTH=0) AND round ≥ minRounds
+- break (next_speaker: <active_id>) if ENTRENCHMENT=2 — redirect to the under-heard voice or the holder of the uncovered dissent
+- otherwise continue
+
 ${rulingsSection}
-${stateOfPlaySection}
-## Situation Requiring Your Ruling
+${stateOfPlaySection}## Situation Flagged by Heuristics
 ${safeSituation}
 
 ## Deliberation State
-Round: ${currentRound}/${maxRounds}
+Round: ${currentRound}/${maxRounds} (minRounds enforced externally — you may still return synthesize, it will be deferred)
 Contributions so far: ${totalContributions}
-Last 3 contributions:
+Recent contributions (last up to 7):
 ${contributionsList}
 
-## Respond With Your Ruling
+## Respond With Your Ruling — EXACT FORMAT REQUIRED
 <ruling>
-decision: <one sentence ruling>
+decision: <one sentence: continue | redirect to <name> | converge>
 next_speaker: <participant_id or "synthesize" or "continue">
-reason: <brief justification>
+reason: <one sentence referencing rubric scores, e.g. "NEW_INFO 0, ENTRENCHMENT 2, COVERAGE 2 — entrenched loop between X and Y without new evidence">
 </ruling>
 
-IMPORTANT: Respond ONLY with the <ruling> block above. Do not include any other text.`;
+IMPORTANT: Respond ONLY with the <ruling> block. No other text. next_speaker must be one of: continue, synthesize, or an active participant_id. If you return synthesize before minRounds, it will be deferred.`;
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Synthesis
+// ──────────────────────────────────────────────────────────────────────────────
 
 /** Builds a prompt for synthesizing the final deliberation artifact from all contributions. */
 export function buildSynthesisPrompt(question, transcript, participants = [], tags = [], stateOfPlay = "", objections = []) {
   const safeQuestion = sanitizeForDisplay(question, 20000);
   const safeTranscript = sanitizeForDisplay(transcript, 100000);
   const participantsSection = participants.length > 0
-    ? `\n## Participants\n${participants.map((p) => `- ${p.config.name} (${p.config.tier}): ${p.contributions_count} contributions`).join("\n")}\n`
+    ? `\n## Participants (activity)\n${participants.map((p) => `- ${sanitizeForDisplay(p.config.name, 80)} (${p.config.tier}): ${p.contributions_count} contributions${p.status === "failed" ? " [failed]" : p.status === "passed" ? " [passed late]" : ""}`).join("\n")}\n`
     : "";
 
   const tagContext = tags?.length > 0 ? tags.join(", ") : null;
 
   const stateOfPlaySection = stateOfPlay
-    ? `\n## State of Play (Final)\n${sanitizeForDisplay(stateOfPlay, 20000)}\n`
+    ? `\n## State of Play (Final — PRIMARY source)\n${sanitizeForDisplay(stateOfPlay, 20000)}\n`
     : "";
 
   const unresolvedObjections = (objections ?? []).filter((o) => o.unresolved);
+  const resolvedObjections = (objections ?? []).filter((o) => !o.unresolved);
   const objectionsSection = unresolvedObjections.length > 0
-    ? `\n## Unresolved Objections\n${unresolvedObjections.map((o) => `- ${sanitizeForDisplay(o.content, 1000)}`).join("\n")}\n`
+    ? `\n## Unresolved Dissent (must appear in Dissenting Views with holder + [#id])\n${unresolvedObjections.map((o) => `- ${sanitizeForDisplay(o.content, 600)} (holder: ${sanitizeForDisplay(o.participant_id ?? "unknown", 80)})`).join("\n")}\n`
+    : "";
+  const resolvedSection = resolvedObjections.length > 0
+    ? `\n## Resolved Concerns (do NOT re-list as dissent)\n${resolvedObjections.map((o) => `- ${sanitizeForDisplay(o.content, 600)} (resolved)`).join("\n")}\n`
     : "";
 
-  return `You are the synthesizer. The deliberation is complete. Produce the final artifact.
+  return `You are the synthesis auditor. The deliberation is complete. Produce the final artifact — comprehensive, citation-grounded, non-inventive.
 
 ## Original Question
 ${safeQuestion}
-${tagContext ? `\n## Tags\n${tagContext}\n` : ""}
-${stateOfPlaySection}${objectionsSection}
-## Deliberation Transcript
+${tagContext ? `\n## Tags (topic)\n${tagContext}\n` : ""}
+${stateOfPlaySection}${objectionsSection}${resolvedSection}
+## Deliberation Transcript (supporting detail — cite [#id] when using it)
 ${safeTranscript}
 ${participantsSection}
-## Instructions
-Produce a comprehensive, well-structured response that:
-1. Directly answers the original question
-2. Captures the strongest points from all perspectives
-3. Notes any unresolved disagreements
-4. Provides clear, actionable conclusions
-5. Identifies remaining risks or open questions
+## Synthesis Doctrine
 
-Use the State of Play as your primary reference for what was decided, agreed upon, and left unresolved. The transcript provides supporting detail and attribution.
+You are not a participant. You are an auditor. Every claim you make must be traceable.
 
-Format as markdown with these exact sections:
+1. **Grounding:** Every Decision and Action Item must cite at least one source: [#id] from transcript OR State-of-Play. No citation → do not include it.
+2. **Attribution:** Every Dissenting View must name holder + [#id]. Unresolved Objections above are mandatory dissent — include them.
+3. **No invention:** Do not invent numbers, dates, costs, tool results, or participant positions not in transcript/State-of-Play. If evidence conflicts, state both and set Confidence accordingly.
+4. **Resolved ≠ dissent:** Items in Resolved Concerns must NOT reappear as Dissenting Views.
+5. **Actionability:** Action Items are verbs with owners or “proposed owner: …” if unattributed.
+
+## Length — per-section budget (stay within, prefer thoroughness within budget)
+
+- Decision: 80-120 words — one paragraph, cites [#id]s
+- Reasoning: 150-250 words — 3-7 bullets, each who argued what + evidence + tradeoff, cite [#id] or State-of-Play
+- Action Items: 80-120 words — verbs with owners or “proposed: X” + cites
+- Dissenting Views: 80-120 words — each holder + [#id] (Unresolved Objections mandatory)
+- Open Questions: 60-90 words — why remains (missing evidence / tradeoff)
+- Confidence: 20-40 words — one word + rubric justification
+Total 500-900 words welcome; preserve numbers verbatim — do not round or invent figures not in transcript/SoP.
+
+## Required Sections — output these exact headings in this order, even if empty (write “None”)
+
 ## Decision
-## Reasoning
-## Action Items
-## Dissenting Views
-## Open Questions
-## Confidence
-
-For Confidence:
-- High = all active participants contributed meaningfully and there are no unresolved disagreements
-- Medium = general agreement with minor dissent, or some participants did not contribute
-- Low = significant disagreement remains, or many participants failed to contribute
-
-## Example Output Structure
-## Decision
-The team should adopt a phased migration approach, starting with the user authentication service.
+One-paragraph direct answer to the Original Question, citing key [#id]s. Preserve numbers verbatim.
 
 ## Reasoning
-The Staff Architect emphasized long-term maintainability, while the Security Engineer flagged the risk of session fixation. The Financial Analyst noted that a phased approach reduces upfront cost risk. The consensus was that a big-bang migration introduces unacceptable downtime risk.
+3-7 bullets or short paragraphs. Each bullet should reference who argued what and on what evidence. Show tradeoffs considered. Cite [#id] or State-of-Play. Preserve numbers verbatim.
 
 ## Action Items
-- Implement JWT for the auth service in Q1
-- Add refresh token rotation to address Security Engineer's concerns
-- Schedule migration review after auth service is stable
+- {verb} {what} — owner: {name or “proposed: X”} — cites [#id]
+(Empty → “None — deliberation surfaced no actionable consensus.”)
 
 ## Dissenting Views
-The Engineering Director advocated for a faster timeline, arguing that the team has capacity to handle a parallel migration.
+Each dissent on its own line: **{Holder}** ({tier}): {view} — [#id]
+If none, write “None — all active participants converged or passed.”
+Unresolved Objections above must appear here.
 
 ## Open Questions
-- What is the rollback plan if JWT causes client-side issues?
-- How will existing sessions be handled during the transition?
+- {question that remains} — why it remains (missing evidence / unresolved tradeoff)
 
 ## Confidence
-High`;
+One word: High | Medium | Low — then 1 sentence justification referencing the rubric:
+
+- High = ≥70% active participants contributed meaningfully AND 0 unresolved objections AND at least one tool- or vec-grounded claim
+- Medium = broad participation with 1 dissent, or majority participation with some passes
+- Low = significant disagreement remains, or many participants failed/passed, or key claims are ungrounded
+
+Cite rubric condition you met.
+
+## Negative Example (do NOT do this)
+## Decision
+We should migrate to JWT because everyone agreed.  ← BAD: no citations, vague consensus claim
+## Dissenting Views
+None  ← BAD when transcript has [CHALLENGE] entries
+
+## Good Fragment (abstract, domain-free)
+## Decision
+Adopt option B (incremental rollout of X) — [#4][#7] converged on risk/reversibility over speed. [#9]’s cost analysis (Source: https://… ) supports Q1 pilot.
+## Reasoning
+- **Staff Lead (senior, [#4])** proposed B citing maintainability; **Security Engineer (mid, [#5])** challenged revocation, then reflected [#14] accepting short-lived tokens with rotation.
+`;
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Agent system / user prompts — hierarchy rebuild
+// ──────────────────────────────────────────────────────────────────────────────
 
 /** Builds the system prompt for an agent in the multi-session architecture (identity + rules). */
 export function buildAgentSystemPrompt(participant) {
   const tier = participant.config.tier;
   const cfg = participant.config;
-  // Sanitize persona fields to prevent injection while preserving voice; strip delimiters
+
   const safePersonaRaw = typeof cfg.persona === 'string' ? cfg.persona : '';
   const safeAgendaRaw = typeof cfg.agenda === 'string' ? cfg.agenda : '';
-  const safePersona = escapeDelimiters(sanitizeForDisplay(safePersonaRaw, 2000));
-  const safeAgenda = escapeDelimiters(sanitizeForDisplay(safeAgendaRaw, 2000));
+  const safePersona = escapeDelimiters(sanitizeForDisplay(safePersonaRaw, 800));
+  const safeAgenda = escapeDelimiters(sanitizeForDisplay(safeAgendaRaw, 400));
 
-  const tierGuidance = cfg.tier_guidance || "Contribute your expertise to the deliberation. Challenge assumptions and propose alternatives.";
-  const safeTierGuidance = escapeDelimiters(sanitizeForDisplay(tierGuidance, 1000));
+  const tierGuidance = cfg.tier_guidance || "Contribute a falsifiable claim, question, or refinement — avoid generalities.";
+  const doctrine = buildTierDoctrine(tier, tierGuidance);
 
   const priorityCap = TURN_REQUEST_PRIORITY_CAP[tier] ?? 5;
-  const requestNextRule = `5. To request priority for the next round, add: [REQUEST_NEXT: Priority: <1-${priorityCap}>, Reason: "why you must speak next round"] — place this at the end of your response`;
+
+  // Tool ladder — single source of truth, rendered from config, not duplicated strings
   const agentToolsConfig = getConfig().agentTools;
-  const toolUsageSection = agentToolsConfig?.enabled
-    ? `
-## Research Tools
+  const toolSection = agentToolsConfig?.enabled
+    ? (() => {
+        const t = agentToolsConfig;
+        const builtIn = t.builtIn ?? {};
+        const has = (k) => !!builtIn[k] || !!builtIn[k.replace('web', 'web_')];
+        const tools = [];
+        if (has('websearch')) tools.push('websearch');
+        if (has('webfetch')) tools.push('webfetch');
+        if (has('read')) tools.push('read');
+        if (builtIn.glob) tools.push('glob');
+        if (builtIn.grep) tools.push('grep');
+        if (builtIn.bash?.enabled || builtIn.bash === true) tools.push('bash');
+        if (t.loom?.loom_vector_search) tools.push('loom_vector_search');
+        const toolList = tools.length ? tools.join(', ') : 'none enabled';
+        return `
+## Research Tools — Tool Ladder (use at most one per turn unless [EVIDENCE] requests)
 
-You have access to research tools that let you ground your contributions in real-world evidence. Strong deliberations are built on current, verified information — use your tools to bring that to the table.
+Available: ${toolList}
 
-### When to Research
-- The question involves current data, trends, statistics, or market conditions
-- A claim has been made that you're uncertain about or that may be outdated
-- You need specific examples, case studies, or precedents to strengthen your argument
-- You want to compare options, alternatives, or competing approaches with real data
-- The discussion references files, code, or documents you haven't seen
-- You need to recall earlier contributions not captured in the recent context
+Ladder: loom_vector_search (recall what was said → cheapest) → websearch (verify current fact) → read/grep/glob (verify local file) → webfetch (deep dive ONLY after a search hit)
+- **loom_vector_search**: “what did [#12] actually say?” — prefer over memory
+- **websearch**: current data, benchmarks, alternatives, precedents
+- **read / grep / glob**: inspect project files referenced in discussion
+- **webfetch**: open a URL returned by websearch (don’t guess URLs)
+- **bash**: only allowlisted commands (${Array.isArray(builtIn.bash?.allowlist) ? builtIn.bash.allowlist.join(', ') : 'git, ls, wc, head, tail, grep, find'})
 
-### Tool Selection
-- **websearch**: Find current information, compare options, discover trends, validate claims with sources
-- **webfetch**: Deep-dive into a specific URL for detailed content from articles or documentation
-- **read / glob / grep**: Examine project files, code, or local documents
-- **loom_vector_search**: Recall specific contributions from earlier in the deliberation
-
-### Research Quality
-- Make one focused search query rather than multiple vague ones
-- Synthesize what you find — don't just dump search results into your response
-- When you find useful information, weave it naturally into your argument with attribution
-- If a tool call is rejected as invalid, retry it using the exact tool names above (websearch, webfetch, read, glob, grep, loom_vector_search) — do not silently fall back to memory
-- If a search returns nothing useful, try once more with a single adjusted query before proceeding with your knowledge
-- Cite sources when they strengthen your credibility`
+Quality:
+- One focused query beats three vague ones. Synthesize, don’t dump.
+- If a tool is rejected as invalid, retry with exact names above — don’t silently fall back to memory.
+- If tool returns error or 0 hits, write “evidence unavailable — searched X, 0 hits” and proceed with experience-qualified claim. Do not retry same query.
+- Cite as Source: https://… or vec: round#id when it strengthens your point. Preserve numbers verbatim — do not round.`;
+      })()
     : "";
 
-  const biases = Array.isArray(cfg.known_biases) && cfg.known_biases.length > 0
-    ? cfg.known_biases.map((b) => `- ${escapeDelimiters(sanitizeForDisplay(b, 500))}`).join("\n")
-    : null;
+  // Bias check — render ALL biases (rotated per round to avoid silent drop)
+  // Previously slice(0,2) silently dropped the 3rd bias; now we surface all with light rotation
+  const allBiases = Array.isArray(cfg.known_biases) && cfg.known_biases.length > 0
+    ? cfg.known_biases.map((b) => escapeDelimiters(sanitizeForDisplay(b, 300)))
+    : [];
+  // Rotate starting index by round if available via participant state pseudo-random
+  let biasList = allBiases;
+  if (allBiases.length > 2) {
+    // Use participant name hash to rotate so every bias surfaces across deliberation
+    const hash = [...(cfg.name || "")].reduce((a,c)=>a+c.charCodeAt(0),0);
+    const start = hash % allBiases.length;
+    biasList = [...allBiases.slice(start), ...allBiases.slice(0, start)].slice(0, allBiases.length);
+  }
+  const biasCheck = biasList.length > 0
+    ? `Bias check: you tend to ${biasList.join("; ")}. Counter it in one sentence: explicitly name the value or convenience your bias would dismiss, then argue that side fairly before returning to your lens.`
+    : "Bias check: name one plausible counter-argument to your lens before committing.";
+
   const style = typeof cfg.communication_style === "string" && cfg.communication_style.trim().length > 0
-    ? escapeDelimiters(sanitizeForDisplay(cfg.communication_style.trim(), 500))
-    : null;
+    ? escapeDelimiters(sanitizeForDisplay(cfg.communication_style.trim(), 400))
+    : "Direct and specific. One claim per sentence.";
   const contribTypes = Array.isArray(cfg.preferred_contribution_types) && cfg.preferred_contribution_types.length > 0
-    ? escapeDelimiters(cfg.preferred_contribution_types.map((t)=> sanitizeForDisplay(t, 100)).join(", "))
-    : null;
+    ? escapeDelimiters(cfg.preferred_contribution_types.slice(0, 3).map((t)=> sanitizeForDisplay(t, 40)).join(", "))
+    : "propose, challenge, refine";
+
+  // Anti-patterns — convert prohibitions to positive replacements
   const antiPatterns = Array.isArray(cfg.anti_patterns) && cfg.anti_patterns.length > 0
-    ? cfg.anti_patterns.map((a) => `- ${escapeDelimiters(sanitizeForDisplay(a, 500))}`).join("\n")
+    ? cfg.anti_patterns.slice(0, 3).map((a) => {
+        const s = escapeDelimiters(sanitizeForDisplay(a, 300));
+        // If already positive ("Instead…") keep; else prefix with replacement cue
+        if (/instead|prefer|do:|try:/i.test(s)) return `- ${s}`;
+        return `- Instead of: "${s}" → say what you observed, with [#id] or Source.`;
+      }).join("\n")
     : null;
 
-  const dispositionSection = (biases || style || contribTypes)
-    ? `
-## Your Disposition
-${biases ? `You are prone to these known tendencies — name them when they might be coloring your view, and actively check them:\n${biases}\n` : ""}${style ? `Communicate in this register: ${style}\n` : ""}${contribTypes ? `You naturally contribute via: ${contribTypes}. Lean into these, but stay open to others when the moment calls for it.\n` : ""}`
-    : "";
+  const dispositionSection = `
+## Disposition
+- Voice: ${style}
+- Natural modes: ${contribTypes} — lean there, but use any tag when the moment calls for it
+- ${biasCheck}`;
 
   const antiPatternsSection = antiPatterns
     ? `
-## What NOT to Do
+## Craft (positive anti-patterns)
 ${antiPatterns}
 `
     : "";
 
-  return `You are **${escapeDelimiters(sanitizeForDisplay(cfg.name, 200))}** (${cfg.tier}) in a structured multi-agent deliberation called "Loom."
+  return `You are **${escapeDelimiters(sanitizeForDisplay(cfg.name, 120))}** (${cfg.tier}) — a deliberator in “Loom.”
 
-## Your Identity
+## Identity
 ${safePersona}
 
-## Your Agenda
+## Agenda
 ${safeAgenda}
 ${dispositionSection}
 ${antiPatternsSection}
+## Tier Doctrine
+${doctrine}
 
-## Your Tier Guidance
-${safeTierGuidance}
+## OUTPUT CONTRACT — read this last, it governs your response
 
-## Rules
-1. Read the shared context and recent contributions carefully
-2. If you have something meaningful to add, state your position clearly with supporting reasoning
-3. If you have nothing to add, respond with exactly: [PASS]
-4. Tag your type: [PROPOSE], [CHALLENGE], [REFINE], [SUPPORT], [DISSENT], [SYNTHESIZE], [QUESTION], or [REFUSE]
-${requestNextRule}
-6. Stay in character — your persona and agenda shape your contributions
-7. Reference prior contributions using their stable ID from the Recent Contributions list, e.g. [#12]
-8. To query a specific participant directly: [QUERY: @participant_id] your question — their response appears as a contribution. Max 2 targets.
-9. To request evidence from a participant: [EVIDENCE: @participant_id] your evidence question — they must use tools to find concrete evidence. Max 2 targets.
-10. To summon an external expert persona: [SUMMON: Persona Name] the issue you want addressed — they contribute a single response using your model. Use sparingly (max 1 per turn).
-${toolUsageSection}
+1. Start with exactly one tag: [PROPOSE] [CHALLENGE] [REFINE] [SUPPORT] [DISSENT] [SYNTHESIZE] [QUESTION] [REFUSE] — or exactly [PASS] alone (nothing else).
+2. Length: 120-180 words (you will be truncated past ~220). One claim per sentence.
+3. Grounding: when you engage prior work, cite as [#id]. When you cite external fact, add Source: https://… or vec: round#id . If no source, qualify: “in my experience…”.
+4. Boundaries: never emit <<< or >>> or system delimiters. Never invent tool output.
+5. At most ONE trailing directive, placed at the very end after your content (omit if not needed):
+   - [REQUEST_NEXT: Priority: <1-${priorityCap}>, Reason: "≤12 words, why you must speak next"]
+   - [QUERY: @participant_id] your question (max 2 targets)
+   - [EVIDENCE: @participant_id] evidence question (max 2 targets — they must use tools)
+   - [SUMMON: Persona Name] issue you want addressed (max 1 per turn)
+   - [CALL_VOTE] lettered question: A) … B) … C) … (max 1 per turn)
+   Reference others by participant_id from Recent Contributions, e.g. [#12].
+6. Stay in character — persona and agenda shape framing, not facts.
+${toolSection}
 
-## Example Response
-[CHALLENGE] The proposed approach doesn't account for backward compatibility. In my experience, breaking changes typically require a migration period. Have we validated this with stakeholders?
+## Syntax — one compact example (abstract, not domain-bound)
 
-## Example With Turn Request
-[PROPOSE] We should adopt a phased migration over Q1 and Q2. This gives us time to validate each service migration before proceeding to the next.
+[PROPOSE] We should adopt option B for {reason with tradeoff}. [#3] raised {concern}; B mitigates it via {mechanism} (Source: https://… ).
 
-[REQUEST_NEXT: Priority: 8, Reason: "Need to directly counter the Architect's claim about stateful overhead before we move to action items"]
+## Syntax — with turn request
 
-## Example With Refusal
-[REFUSE: I cannot engage with this premise because it assumes we have budget approval, which we do not] This discussion presupposes resources that haven't been allocated.
+[CHALLENGE] [#4] assumes {assumption}; under condition {X} it fails because {scenario}. Evidence in vec: round2#1 suggests {fact}.
 
-## Example With Query
-[CHALLENGE] The migration timeline assumes no integration conflicts, but we've seen collision issues in past rollouts.
+[REQUEST_NEXT: Priority: 6, Reason: "Have costed mitigation for [#4]'s risk"]
 
-[QUERY: @staff-architect] Based on the service dependency graph, which migrations are most likely to collide?
+## Syntax — refusal
 
-## Example With Evidence Request
-[CHALLENGE] The budget projections assume 30% YoY growth but industry benchmarks show 12-15% for this sector.
+[REFUSE: Missing budget approval — cannot evaluate cost tradeoff] This presupposes {resource} not yet allocated.
+`;
+}
 
-[EVIDENCE: @data-scientist] Find current industry growth benchmarks for SaaS companies in this vertical.
-
-## Example With Summons
-[PROPOSE] We need to evaluate the security implications of this architecture change. I'm not a security expert.
-
-[SUMMON: Security Engineer] What are the attack surfaces introduced by the new authentication flow?`;
+function budgetForType(type) {
+  switch (type) {
+    case "challenge":
+    case "dissent": return 280;
+    case "evidence_response":
+    case "query_response":
+    case "summoned_response": return 220;
+    case "propose":
+    case "refine": return 200;
+    case "support": return 180;
+    case "question": return 160;
+    case "vote_tally": return 140;
+    case "reflection": return 200;
+    default: return 180;
+  }
 }
 
 /**
- * Builds the user prompt for an agent's turn using the Golden Sandwich pattern:
- * System Prompt + State of Play + Vector RAG + Recent Contributions.
- * Each turn is stateless — fresh ephemeral session carries no prior history.
+ * Builds the user prompt for an agent's turn using the Weighted Golden Sandwich pattern:
+ * System Prompt (who) + State of Play (canonical) + Recent (live) + RAG (recall) — explicitly weighted.
  */
 export function buildAgentUserPrompt(participant, stateOfPlay, ragContext, recentContributions, round, question, tags = []) {
   const transcript =
@@ -724,7 +737,8 @@ export function buildAgentUserPrompt(participant, stateOfPlay, ragContext, recen
       : recentContributions
           .map((c) => {
             const id = c.id != null ? `[#${c.id}]` : "";
-            const safeContent = sanitizeForDisplay(c.content);
+            const budget = budgetForType(c.type);
+            const safeContent = sanitizeForDisplay(c.content).slice(0, budget);
             return `- ${id} [${c.participant_id}] (${c.type}): ${safeContent}`;
           })
           .join("\n");
@@ -735,35 +749,62 @@ export function buildAgentUserPrompt(participant, stateOfPlay, ragContext, recen
   const safeQuestion = sanitizeForDisplay(question);
   const tagContext = tags?.length > 0 ? tags.join(", ") : null;
 
-  const prompt = `## Question
+  const reflectionBlock = formatReflections(participant);
+
+  // Weight guidance — explicit, so models don’t treat RAG as equal to SoP
+  const ragHeader = ragContext
+    ? `## Recall — Vector-Retrieved Prior Context (may be stale — verify before citing)
+
+${ragDelimited}
+
+*Recall is retrieved because it semantically matched recent discussion — it is not canonical. State of Play below is canonical.*
+`
+    : "";
+
+  const sopHeader = stateOfPlayDelimited
+    ? `## State of Play — CANONICAL (treat as settled unless you challenge with evidence)
+
+${stateOfPlayDelimited}
+`
+    : "";
+
+  return `## Question (canonical)
 ${safeQuestion}
 ${tagContext ? `\n## Tags: ${tagContext}\n` : ""}
 ## Round ${round}
 
-${stateOfPlayDelimited ? `## State of Play\n${stateOfPlayDelimited}\n` : ""}
-${ragDelimited ? `## Relevant Prior Context\n${ragDelimited}\n` : ""}
-## Recent Contributions
+${sopHeader}${ragHeader}## Live — Recent Contributions (typed budget: challenge/dissent 280, evidence 220, propose 200 — weight reflects substance)
+
 ${transcriptDelimited}
 
-${formatReflections(participant)}
-## Your Turn
+${reflectionBlock}## Your Turn — Weighted Guidance
 
-Read the state of play, relevant context, and recent contributions. Then make your contribution or pass.`;
+- **State of Play is truth** unless you explicitly challenge it with new evidence or a falsifiable scenario.
+- **Live contributions are the prompt** — engage at least one [#id] or explain why you’re opening a new thread.
+- **Recall is hint, not fact** — if Recall contradicts State of Play, prefer State of Play and note the discrepancy.
 
-  return prompt;
+To challenge SoP: cite [#id] contradicting it + Source/tool output + falsifiable scenario. Otherwise write “SoP holds; discrepancy in Recall noted” and build on it.
+
+Rules:
+- 120-180 words, one tag at start or exactly [PASS]
+- Never emit <<< >>> delimiters — they are system boundaries, not content
+- If you reference prior work, cite [#id]; if you introduce a fact, add Source or qualify as experience
+- Preserve numbers verbatim — do not round or invent
+
+Make your contribution or pass.`;
 }
 
 function formatReflections(participant) {
+  // Compressed to 1-sentence prior + 1-line history; avoids 1200-char dumps.
   if (participant.reflectionHistory && participant.reflectionHistory.length > 0) {
-    const recent = participant.reflectionHistory.slice(-3);
-    const lines = recent.map((r) => `- Round ${r.round}: ${r.text.slice(0, 400).replace(/\n/g, " ")}`);
-    const latest = participant.reflection ?? recent[recent.length - 1]?.text ?? "";
-    if (recent.length === 1) {
-      return `## Your Reflection\n${latest}\n`;
+    const lastTwo = participant.reflectionHistory.slice(-2);
+    const latest = participant.reflection ?? lastTwo[lastTwo.length - 1]?.text ?? "";
+    const historyLine = lastTwo.map((r) => `R${r.round}: ${r.text.slice(0, 160).replace(/\n/g, " ")}`).join(" | ");
+    if (latest) {
+      return `## Your Prior Position (compressed)\nLatest: "${latest.slice(0, 320).replace(/\n/g, " ")}"\nHistory: ${historyLine}\n`;
     }
-    return `## Your Reflections (last ${recent.length})\n${lines.join("\n")}\n\n## Your Latest Reflection\n${latest}\n`;
   }
   const reflection = participant.reflection;
   if (!reflection) return "";
-  return `## Your Reflection\n${reflection}\n`;
+  return `## Your Prior Position\n"${reflection.slice(0, 320).replace(/\n/g, " ")}"\n`;
 }

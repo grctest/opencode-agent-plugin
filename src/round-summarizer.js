@@ -75,25 +75,30 @@ export async function summarizeRound(round, state, promptOrchestrator, getHighes
   // Adapt prompt based on whether we have substantive contributions
   const hasSubstantiveContent = formattedContributions.trim().length > 0;
 
+  // Collect evidence signals for richer summary
+  const evidenceContribs = round.contributions.filter(c => c.type === "evidence_response" || c.type === "query_response" || (c.tool_calls && c.tool_calls.length > 0));
+  const evidenceHint = evidenceContribs.length > 0
+    ? `\n## Evidence / Tool Signals (do not invent — use only if cited)\n${evidenceContribs.slice(0, 3).map(c => `- [#${c.id}] ${c.participant_id}: ${c.content.slice(0, 180)}${c.tool_calls ? ` [tools: ${c.tool_calls.map(t=>t.tool).join(',')}]` : ""}`).join("\n")}`
+    : "";
+
   const prompt = hasSubstantiveContent
-    ? `Summarize this deliberation round. What was established? What remains contested?
+    ? `You are a concise deliberation clerk. Summarize round ${round.number || "?"} in 60-90 words — no preamble, phrase-style bullets. Prefer longer deliberation nuance over terse collapse. Preserve numbers verbatim — do not round or invent.
 
 ## Question
 ${state.question || "(no question provided)"}
 
 ## Round ${round.number || "?"} Contributions
 ${formattedContributions}
+${evidenceHint}
 
-## Instructions
-Focus on:
-1. What decisions or positions were established
-2. What specific points remain contested and who holds each side
-3. Any new information or evidence introduced
+## Output — exactly 4 bullets, each one line:
 
-Provide your summary in this format:
-- **Established:** {what was decided or agreed}
-- **Contested:** {what remains disputed and by whom}
-- **Open:** {unresolved questions or next decisions needed}`
+- **Established:** {1-2 decisions/proposals that gained support, with holder [#id] }
+- **Contested:** {what remains disputed and who holds each side — name holders [#id]}
+- **Evidence:** {any tool or vec-grounded evidence introduced this round, with Source or [#id]; or “None”}
+- **Open:** {unresolved questions or next decision needed}
+
+Rules: cite [#id] when attributing. Keep Contested holders explicit. Evidence bullet must distinguish “None” from “weak/inconclusive”. Preserve numbers verbatim — do not round, estimate, or invent figures not in contributions.`
     : `Summarize this deliberation round. The round contained ${contribCount} contribution(s) but no substantive positions were staked.
 
 ## Question
@@ -102,11 +107,12 @@ ${state.question || "(no question provided)"}
 ## Round ${round.number || "?"}
 Contribution types: ${round.contributions.map((c) => c.type).join(", ")}
 Turn requests: ${round.turn_requests.length}
+${evidenceHint}
 
 ## Instructions
-Provide a brief summary noting that no substantive deliberation occurred this round. Mention what types of contributions were made and any turn requests.`;
+Provide 60-90 word summary with 4 bullets (Established / Contested / Evidence / Open) noting no substantive deliberation but mentioning contribution types and any turn requests.`;
 
-  const semanticSummary = await promptOrchestrator("You are a neutral summarizer.", model, prompt, "summary");
+  const semanticSummary = await promptOrchestrator("You are a concise deliberation clerk. 60-90 words. No preamble. Use short phrases, not sentences. Preserve numbers verbatim — do not round or invent.", model, prompt, "summary");
 
   if (semanticSummary && semanticSummary.trim().length > 0) {
     return semanticSummary.trim();

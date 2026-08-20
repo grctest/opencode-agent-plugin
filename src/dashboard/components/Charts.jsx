@@ -1,7 +1,7 @@
 import { useMemo, memo } from "react";
 import { cn } from "../utils.js";
 
-export const ParticipationMatrix = memo(function ParticipationMatrix({ participants, contributions, agentErrors, rounds, activeRound }) {
+export const ParticipationMatrix = memo(function ParticipationMatrix({ participants, contributions, agentErrors, orchestratorMessages, rounds, activeRound }) {
   const roundData = useMemo(() => {
     const contribMap = new Map();
     for (const c of contributions) {
@@ -36,14 +36,22 @@ export const ParticipationMatrix = memo(function ParticipationMatrix({ participa
       roundContribs.forEach((c, i) => orderMap.set(`${c.participant_id}:${r}`, i + 1));
     }
 
+    const speakingParticipants = new Set();
+    for (const p of participants) {
+      if (p.status === "speaking") {
+        speakingParticipants.add(p.id);
+      }
+    }
+
     const data = [];
     for (let r = 1; r <= rounds; r++) {
       const row = {};
       for (const p of participants) {
         const key = `${p.id}:${r}`;
         const reflectionCount = reflectionMap.get(key) || 0;
+        const isSpeaking = speakingParticipants.has(p.id);
         if (contribMap.has(key)) {
-          row[p.id] = { status: "contributed", order: orderMap.get(key) || null, reflectionCount };
+          row[p.id] = { status: isSpeaking ? "speaking" : "contributed", order: orderMap.get(key) || null, reflectionCount };
         } else if (errorMap.has(key)) {
           row[p.id] = { status: "error", order: null, reflectionCount };
         } else if (p.status === "passed") {
@@ -51,13 +59,38 @@ export const ParticipationMatrix = memo(function ParticipationMatrix({ participa
         } else if (activeRound && r > activeRound) {
           row[p.id] = { status: "future", order: null, reflectionCount };
         } else {
-          row[p.id] = { status: "none", order: null, reflectionCount };
+          row[p.id] = { status: isSpeaking ? "speaking" : "none", order: null, reflectionCount };
         }
       }
       data.push({ round: r, participants: row });
     }
     return { data, errorRounds };
   }, [participants, contributions, agentErrors, rounds, activeRound]);
+
+  const orchestratorData = useMemo(() => {
+    const msgs = orchestratorMessages ?? [];
+    const roundTasks = new Map();
+    for (const msg of msgs) {
+      if (!msg.round) continue;
+      if (!roundTasks.has(msg.round)) {
+        roundTasks.set(msg.round, new Map());
+      }
+      const tasks = roundTasks.get(msg.round);
+      if (msg.role === "user" && msg.type) {
+        if (!tasks.has(msg.type)) {
+          tasks.set(msg.type, { requested: true, completed: false });
+        }
+      } else if (msg.role === "assistant" && msg.type) {
+        const task = tasks.get(msg.type);
+        if (task) {
+          task.completed = true;
+        } else {
+          tasks.set(msg.type, { requested: true, completed: true });
+        }
+      }
+    }
+    return roundTasks;
+  }, [orchestratorMessages]);
 
   if (rounds === 0 || participants.length === 0) return null;
 
@@ -76,25 +109,54 @@ export const ParticipationMatrix = memo(function ParticipationMatrix({ participa
                   <span className="loom-matrix-participant-tier">{p.tier}</span>
                 </th>
               ))}
+              <th className="loom-matrix-orchestrator-col">Orch.</th>
             </tr>
           </thead>
           <tbody>
-            {roundData.data.map(({ round, participants: row }) => (
-              <tr key={round} className={cn(roundData.errorRounds.has(round) && "loom-matrix-row-error")}>
-                <td className="loom-matrix-round-label">R{round}</td>
-                {participants.map((p) => {
-                  const cell = row[p.id];
-                  const status = cell?.status ?? "none";
-                  const reflectionCount = cell?.reflectionCount ?? 0;
-                  if (status === "contributed" && cell.order) {
+            {roundData.data.map(({ round, participants: row }) => {
+              const tasks = orchestratorData.get(round) || new Map();
+              const taskTypes = ["moderation", "turn_order", "summary", "synthesis"];
+              return (
+                <tr key={round} className={cn(roundData.errorRounds.has(round) && "loom-matrix-row-error")}>
+                  <td className="loom-matrix-round-label">R{round}</td>
+                  {participants.map((p) => {
+                    const cell = row[p.id];
+                    const status = cell?.status ?? "none";
+                    const reflectionCount = cell?.reflectionCount ?? 0;
+                    if (status === "speaking") {
+                      return (
+                        <td key={p.id} className="loom-matrix-cell">
+                          <span className="loom-spinning-gear" title="Currently processing">
+                            <span aria-hidden="true">⚙</span>
+                          </span>
+                          {reflectionCount > 0 && (
+                            <span className="loom-matrix-reflection-badge" title={`${reflectionCount} reflection${reflectionCount !== 1 ? "s" : ""}`}>
+                              {reflectionCount}↩
+                            </span>
+                          )}
+                        </td>
+                      );
+                    }
+                    if (status === "contributed" && cell.order) {
+                      return (
+                        <td key={p.id} className="loom-matrix-cell">
+                          <span
+                            className="loom-matrix-number loom-matrix-contributed"
+                            title={`Spoke ${cell.order} in round ${round}`}
+                          >
+                            {cell.order}
+                          </span>
+                          {reflectionCount > 0 && (
+                            <span className="loom-matrix-reflection-badge" title={`${reflectionCount} reflection${reflectionCount !== 1 ? "s" : ""}`}>
+                              {reflectionCount}↩
+                            </span>
+                          )}
+                        </td>
+                      );
+                    }
                     return (
                       <td key={p.id} className="loom-matrix-cell">
-                        <span
-                          className="loom-matrix-number loom-matrix-contributed"
-                          title={`Spoke ${cell.order} in round ${round}`}
-                        >
-                          {cell.order}
-                        </span>
+                        <span className={cn("loom-matrix-dot", `loom-matrix-${status}`)} title={status} />
                         {reflectionCount > 0 && (
                           <span className="loom-matrix-reflection-badge" title={`${reflectionCount} reflection${reflectionCount !== 1 ? "s" : ""}`}>
                             {reflectionCount}↩
@@ -102,25 +164,28 @@ export const ParticipationMatrix = memo(function ParticipationMatrix({ participa
                         )}
                       </td>
                     );
-                  }
-                  return (
-                    <td key={p.id} className="loom-matrix-cell">
-                      <span className={cn("loom-matrix-dot", `loom-matrix-${status}`)} title={status} />
-                      {reflectionCount > 0 && (
-                        <span className="loom-matrix-reflection-badge" title={`${reflectionCount} reflection${reflectionCount !== 1 ? "s" : ""}`}>
-                          {reflectionCount}↩
-                        </span>
-                      )}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
+                  })}
+                  <td className="loom-matrix-cell loom-matrix-orchestrator-cell">
+                    {taskTypes.map((type) => {
+                      const task = tasks.get(type);
+                      if (!task) {
+                        return <span key={type} className="loom-matrix-dot loom-matrix-none" title={`${type}: pending`} />;
+                      }
+                      if (task.completed) {
+                        return <span key={type} className="loom-matrix-dot loom-matrix-contributed" title={`${type}: completed`} />;
+                      }
+                      return <span key={type} className="loom-spinning-gear" title={`${type}: processing`}><span aria-hidden="true">⚙</span></span>;
+                    })}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
       <div className="loom-matrix-legend">
         <span className="loom-matrix-legend-item"><span className="loom-matrix-number loom-matrix-contributed">1</span> Contributed (1st = first to speak)</span>
+        <span className="loom-matrix-legend-item"><span className="loom-spinning-gear"><span aria-hidden="true">⚙</span></span> Currently processing</span>
         <span className="loom-matrix-legend-item"><span className="loom-matrix-dot loom-matrix-error" /> Error</span>
         <span className="loom-matrix-legend-item"><span className="loom-matrix-dot loom-matrix-passed" /> Passed</span>
         <span className="loom-matrix-legend-item"><span className="loom-matrix-dot loom-matrix-none" /> Pending</span>

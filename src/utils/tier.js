@@ -55,22 +55,23 @@ export function getDefaultTemperatureForTier(tier) {
 
 /**
  * @deprecated Use participant.config.tier_guidance from persona files instead.
- * This function is kept for backward compatibility only.
- * Tier guidance should now be defined in each persona's tier_guidance field.
+ * This function is kept for backward compatibility only. Updated to match
+ * verb-first doctrine in src/prompts.js:buildTierDoctrine so custom
+ * participants without tier_guidance still behave correctly.
  */
 export function getPromptForTier(tier) {
   switch (tier) {
     case "junior":
-      return "Think creatively and bring fresh perspectives. Wild ideas are welcome — you won't be penalized for being wrong. Challenge senior thinking with naive questions that expose hidden assumptions.";
+      return "Junior doctrine: surface one naive question that exposes an unstated senior assumption. Offer a concrete example from your lens, then ask ‘What would we need to learn to answer it?’ Be falsifiable.";
     case "mid":
     case "civilian":
-      return "Balance creativity with evidence. When you disagree, explain why with specific reasoning. Synthesize others' points before adding your own.";
+      return "Mid doctrine: make one tradeoff explicit (cost/time/risk/quality). Translate a claim into a number or a measurable check. Cite a precedent or [#id] when you push back.";
     case "senior":
-      return "Prioritize accuracy and risk assessment. Cite patterns from experience. Be conservative with claims but commit fully when you do. Flag irreversible decisions.";
+      return "Senior doctrine: name the irreversible commitment and its mitigation/rollback. Cite one pattern or precedent you’ve seen — ‘Irreversible: … because … Mitigation: …’";
     case "principal":
-      return "See the whole system. Cut through noise and circular argument. When consensus is impossible, decide. Your primary role is to ensure this deliberation produces a clear, actionable answer.";
+      return "Principal doctrine: when at impasse, frame 2 viable options with decision criterion (cost/risk/time/reversibility) and a tie-break. State ‘Settled: … Open: …’ to cut re-litigation.";
     default:
-      return "Contribute your expertise to the deliberation. Challenge assumptions and propose alternatives.";
+      return "Contribute a falsifiable claim or question — avoid generalities. Cite [#id] when engaging prior work.";
   }
 }
 

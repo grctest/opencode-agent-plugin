@@ -574,6 +574,7 @@ export function App() {
                   turnRequests={turnRequests}
                   participants={participants}
                   agentErrors={agentErrors}
+                  orchestratorMessages={orchestratorMessages}
                   participantName={participantName}
                   totalRounds={totalRounds}
                   activeRound={activeRound}

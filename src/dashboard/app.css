@@ -1508,6 +1508,29 @@ input {
   font-weight: 600;
 }
 
+.loom-matrix-orchestrator-col {
+  min-width: 4rem;
+  text-align: center;
+}
+
+.loom-matrix-orchestrator-cell {
+  display: flex;
+  gap: 2px;
+  justify-content: center;
+}
+
+.loom-spinning-gear {
+  display: inline-flex;
+  animation: loom-spin 1s linear infinite;
+  font-size: 0.875rem;
+  line-height: 1;
+}
+
+@keyframes loom-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 /* Virtualized row */
 .loom-vrow {
   overflow: hidden;

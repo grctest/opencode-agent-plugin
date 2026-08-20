@@ -28,16 +28,39 @@ function MetricsFooter() {
   return (
     <div className="loom-card loom-mt-sm loom-metrics-footer">
       <h3 className="loom-title-sm loom-mb-sm">Live Telemetry (daemon)</h3>
-      <div className="loom-metrics-grid">
-        <span>Agent calls: {agentCalls} · Synthesis: {synthCalls}</span>
-        {llmLatency && llmLatency.count > 0 && (
-          <span>LLM prompt p50 {llmLatency.p50}ms p95 {llmLatency.p95}ms avg {llmLatency.avg}ms</span>
-        )}
-        {synthLatency && synthLatency.count > 0 && (
-          <span>Synthesis p50 {synthLatency.p50}ms p95 {synthLatency.p95}ms</span>
-        )}
+      <div className="loom-table-scroll">
+        <table className="loom-table loom-metrics-table">
+          <thead>
+            <tr>
+              <th>Metric</th>
+              <th>Count</th>
+              <th>p50</th>
+              <th>p95</th>
+              <th>avg</th>
+              <th>max</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Agent calls</td>
+              <td>{agentCalls}</td>
+              <td>{llmLatency?.p50 ?? "—"} {llmLatency ? "ms" : ""}</td>
+              <td>{llmLatency?.p95 ?? "—"} {llmLatency ? "ms" : ""}</td>
+              <td>{llmLatency?.avg ?? "—"} {llmLatency ? "ms" : ""}</td>
+              <td>{llmLatency?.max ?? "—"} {llmLatency ? "ms" : ""}</td>
+            </tr>
+            <tr>
+              <td>Synthesis calls</td>
+              <td>{synthCalls}</td>
+              <td>{synthLatency?.p50 ?? "—"} {synthLatency ? "ms" : ""}</td>
+              <td>{synthLatency?.p95 ?? "—"} {synthLatency ? "ms" : ""}</td>
+              <td>{synthLatency?.avg ?? "—"} {synthLatency ? "ms" : ""}</td>
+              <td>{synthLatency?.max ?? "—"} {synthLatency ? "ms" : ""}</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
-      <div className="loom-text-xs loom-text-muted">Counters: llm_calls_by_type (agent/synthesis) · Latencies: llm_prompt_ms, synthesis_ms</div>
+      <div className="loom-text-xs loom-text-muted loom-mt-xs">Counters: llm_calls_by_type (agent/synthesis) · Latencies: llm_prompt_ms, synthesis_ms · Updates every 5s</div>
     </div>
   );
 }
@@ -58,6 +81,7 @@ export const OverviewTab = memo(({
   turnRequests,
   participants,
   agentErrors,
+  orchestratorMessages,
   participantName,
   totalRounds,
   activeRound,
@@ -135,6 +159,7 @@ export const OverviewTab = memo(({
           participants={participants}
           contributions={contributions}
           agentErrors={agentErrors}
+          orchestratorMessages={orchestratorMessages}
           rounds={totalRounds}
           activeRound={activeRound}
         />

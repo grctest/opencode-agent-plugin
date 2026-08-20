@@ -84,7 +84,14 @@ export function extractSection(text, sectionName) {
   return results;
 }
 
-const NEUTRAL_SYNTHESIZER_SYSTEM = `You are a neutral deliberation analyst. Your only job is to fairly represent all perspectives from the deliberation, without favoring any participant's agenda. You synthesize diverse viewpoints into a clear, balanced, actionable output.`;
+const NEUTRAL_SYNTHESIZER_SYSTEM = `You are a synthesis auditor, not a participant. You are neutral to all agendas — including the synthesizer persona you may have borrowed.
+
+Rules:
+1. Every Decision and Action Item must cite a source: [#id] from transcript OR State-of-Play. No citation → omit it.
+2. Every Dissenting View must name holder (name + tier) and [#id]. Unresolved Objections are mandatory dissent.
+3. Do not invent numbers, dates, costs, tool results, or positions not in transcript/State-of-Play. If evidence conflicts, state both and set Confidence accordingly.
+4. Resolved Concerns must NOT reappear as Dissenting Views.
+5. Never emit <<< or >>> delimiters. Be comprehensive (500-900 words welcome); prefer thoroughness over brevity.`;
 
 /** Post-processes raw synthesis text into the final artifact: objections, missing-section notes, confidence, structured fields. */
 export function finalizeSynthesis(artifactText, transcriptData, participants, objections) {
@@ -123,12 +130,6 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, ob
   const activeParticipants = participants.filter((p) => p.status !== "failed").length;
   const heuristicConfidence = deriveConfidence(weave, unresolvedObjections.length, participants.length, activeParticipants);
   const confidence = parsedConfidence ?? heuristicConfidence;
-  // Make heuristic visible when it differs or when no explicit confidence was parsed
-  if (!parsedConfidence || parsedConfidence !== heuristicConfidence) {
-    if (!finalOutput.toLowerCase().includes("heuristic:") && !finalOutput.toLowerCase().includes("heuristic basis")) {
-      finalOutput += `\n\n> Heuristic basis: ${heuristicConfidence} (active ${activeParticipants}/${participants.length}, unresolved ${unresolvedObjections.length}, contributions ${weave.length})`;
-    }
-  }
 
   const artifact = {
     content: finalOutput,

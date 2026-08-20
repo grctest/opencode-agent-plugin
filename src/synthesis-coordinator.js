@@ -38,8 +38,8 @@ export class SynthesisCoordinator {
       const model = getParticipantModel(synthesizer);
       const transcript = formatFinalRoundTranscript(transcriptData, participants);
       artifactText = await this.#promptWithRetry(synthSessionId, synthesizer, transcriptData, transcript, model, participants, stateOfPlay, objections);
-      // Second pass: have the synthesizer audit its own work against the transcript.
-      artifactText = await this.#critique(synthSessionId, artifactText, transcript, model, synthesizer, participants);
+      // Second pass: have the synthesizer audit its own work against the transcript (most-contested slice, not head).
+      artifactText = await this.#critique(synthSessionId, artifactText, transcript, transcriptData, model, synthesizer, participants);
     } catch (err) {
       const info = extractErrorInfo(err);
       await this.#sessionManager.postProgress(`Synthesis session failed: ${info.message}`);
@@ -94,25 +94,89 @@ export class SynthesisCoordinator {
     }
   }
 
-  /** Second-pass audit: the synthesizer reviews its draft for misrepresentation, then fixes (one cycle). */
-  async #critique(sessionId, text, transcript, model, synthesizer, allParticipants) {
-    const truncateAtBoundary = (t, lim) => {
-      if (t.length <= lim) return t;
-      const s = t.slice(0, lim);
-      const lastHead = s.lastIndexOf("\n## ");
-      if (lastHead > lim - 1000) return s.slice(0, lastHead);
-      return s;
+  /** Second-pass audit: the synthesizer reviews its draft for grounding, then fixes. */
+  async #critique(sessionId, text, transcript, transcriptData, model, synthesizer, allParticipants) {
+    // Backward compat: if caller passes model as 3rd arg, shift
+    if (typeof transcriptData === "object" && transcriptData !== null && "providerID" in transcriptData) {
+      // transcriptData is actually model, shift args
+      allParticipants = synthesizer;
+      synthesizer = model;
+      model = transcriptData;
+      transcriptData = null;
+    }
+    const chunkText = (t, lim) => {
+      if (t.length <= lim) return [t];
+      // Prefer splitting at section boundaries; if still >lim, hard chunk
+      const parts = t.split(/\n(?=##\s)/);
+      const chunks = [];
+      let cur = "";
+      for (const p of parts) {
+        if ((cur + "\n" + p).length > lim && cur) { chunks.push(cur); cur = p; }
+        else cur = cur ? cur + "\n" + p : p;
+      }
+      if (cur) chunks.push(cur);
+      // Hard-split any oversized chunk
+      const out = [];
+      for (const c of chunks) {
+        if (c.length <= lim) out.push(c);
+        else for (let i=0;i<c.length;i+=lim) out.push(c.slice(i,i+lim));
+      }
+      return out;
     };
-    let critiquePrompt = `You are a neutral deliberation analyst reviewing your own synthesis.
+    const draftChunks = chunkText(text, 5500);
+    const draftForPrompt = draftChunks.length === 1
+      ? draftChunks[0]
+      : draftChunks.map((c,i)=>`--- Draft chunk ${i+1}/${draftChunks.length} ---\n${c}`).join("\n\n");
+    // Build most-contested transcript snippet: last 2 rounds verbatim + top 2 challenge/dissent from earlier rounds
+    let transcriptSnippet = "";
+    try {
+      if (transcriptData && Array.isArray(transcriptData.rounds) && transcriptData.rounds.length > 0) {
+        const rounds = transcriptData.rounds;
+        const lastTwo = rounds.slice(-2);
+        const earlier = rounds.slice(0, -2);
+        const contested = [];
+        for (const r of earlier) {
+          for (const c of (r.contributions || [])) {
+            if (c.type === "challenge" || c.type === "dissent") contested.push(c);
+          }
+        }
+        // Most recent contested first, take 2
+        const topContested = contested.slice(-2);
+        const parts = [];
+        if (topContested.length > 0) {
+          parts.push(`### Most contested earlier (top 2 challenge/dissent)\n` + topContested.map(c => `- [#${c.id}] ${c.participant_id} [${c.type}]: ${String(c.content).slice(0, 220)}`).join("\n"));
+        }
+        // Last two rounds full via formatter fallback if transcript empty
+        const lastTwoText = lastTwo.map(r => {
+          const cs = (r.contributions || []).map(c => `- [#${c.id}] ${c.participant_id} [${c.type}]: ${String(c.content).slice(0, 220)}`).join("\n");
+          return `### Round ${r.number} (last)\n${cs || "(no contributions)"}`;
+        }).join("\n\n");
+        parts.push(lastTwoText);
+        const combined = parts.join("\n\n");
+        transcriptSnippet = combined.slice(0, 4000);
+        // Fallback to head if combined empty
+        if (!transcriptSnippet.trim()) transcriptSnippet = transcript.slice(0, 4000);
+      } else {
+        transcriptSnippet = transcript.slice(0, 4000);
+      }
+    } catch {
+      transcriptSnippet = transcript.slice(0, 4000);
+    }
 
-Review the draft below against the deliberation transcript for:
-1. Misattributed views (a point credited to the wrong participant)
-2. Invented points not present in the deliberation
-3. Significant dissent that was omitted from "Dissenting Views"
-4. Decisions or action items not supported by any contribution
-5. If a Resolved Concerns section exists, verify each resolved item is not restated as unresolved dissent
+    let critiquePrompt = `You are a synthesis auditor reviewing your own synthesis for grounding. You prefer longer, thorough deliberation — do not suppress dissent to fake consensus.
 
-If corrections are needed, output the FULL revised synthesis with ALL required sections:
+Audit checklist (be strict):
+1. Grounding: list any Decision/Action Item sentence without [#id] or State-of-Play citation — those must be removed or cited.
+2. Attribution: is every Dissenting View credited to correct holder + [#id]? Any omitted significant dissent from transcript?
+3. Invention: any number, date, cost, or tool result not in transcript/State-of-Play?
+4. Support: any Decision/Action Item not supported by at least one contribution?
+5. Resolved vs Dissent: if Resolved Concerns exists, ensure none reappear as dissent.
+6. Confidence: does the Confidence justification match the rubric? (High≥70% active + 0 unresolved + ≥1 grounded claim)
+
+Transcript excerpt for grounding check:
+${transcriptSnippet}
+
+If corrections are needed, output the FULL revised synthesis with ALL required sections in order:
 ## Decision
 ## Reasoning
 ## Action Items
@@ -120,10 +184,10 @@ If corrections are needed, output the FULL revised synthesis with ALL required s
 ## Open Questions
 ## Confidence
 
-If the draft is accurate and complete, respond with exactly: [NO_CHANGES]
+If the draft is accurate, grounded, and complete, respond with exactly: [NO_CHANGES]
 
-Draft synthesis:
-${truncateAtBoundary(text, 6000)}`;
+Draft synthesis${draftChunks.length>1?` (${draftChunks.length} chunks)`: ""}:
+${draftForPrompt}`;
 
     for (let attempt = 0; attempt < MAX_CRITIQUE_RETRIES; attempt++) {
       try {

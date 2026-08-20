@@ -87,6 +87,12 @@ const Sidebar = memo(function Sidebar({
     return (orchestratorMessages ?? []).length;
   }, [orchestratorMessages]);
 
+  const isOrchestratorProcessing = useMemo(() => {
+    if (!orchestratorMessages || orchestratorMessages.length === 0) return false;
+    const last = orchestratorMessages[orchestratorMessages.length - 1];
+    return last && last.role === "user";
+  }, [orchestratorMessages]);
+
   const highestTierModel = useMemo(() => {
     if (!participants || participants.length === 0) return null;
     const tierOrder = ["principal", "senior", "mid", "junior"];
@@ -216,6 +222,11 @@ const Sidebar = memo(function Sidebar({
           >
             <div className="loom-sidebar-orchestrator-row">
               <span className="loom-sidebar-orchestrator-name">Orchestrator</span>
+              {isOrchestratorProcessing && (
+                <span className="loom-processing-indicator" title="Processing orchestrator prompt">
+                  <span className="loom-spinning-gear" aria-hidden="true">⚙</span>
+                </span>
+              )}
               {orchestratorActionCount > 0 && (
                 <span className="loom-badge loom-badge-orchestrator loom-sidebar-orchestrator-badge">
                   {orchestratorActionCount}

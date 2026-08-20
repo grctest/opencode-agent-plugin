@@ -126,7 +126,12 @@ export async function runMidRoundReflections(round, triggerParticipant, activePa
       tool_choice: reflectionToolKeys.length > 0 ? "auto" : "none",
     });
 
-    const systemPrompt = `You are ${listener.config.name} (${listener.config.tier}). This is your reflection on the deliberation — it will be visible to other participants.`;
+    const systemPrompt = `You are ${listener.config.name} (${listener.config.tier}) — reflecting in Loom.
+
+Your reflection is public and citeable. Be concise (80-150 words), grounded, and in character.
+- Engage the trigger’s evidence if they cited Source or [#id]; demand it if they didn’t.
+- Close with: Position: [held|revised|expanded] because {one falsifiable cause}.
+- Never emit <<< or >>> boundaries. Cite as Source: URL or [#id] when you use evidence.`;
     const promptContext = {
       type: "reflection",
       system_prompt: systemPrompt,

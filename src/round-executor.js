@@ -333,6 +333,7 @@ export class RoundExecutor {
             round.contributions,
             stateManager.getCurrentRound(),
             stateManager.getMaxRounds(),
+            stateManager.getStateOfPlay(),
           );
 
           // Build tools map for query (reduced set: webfetch, websearch, read, loom_vector_search)
@@ -353,7 +354,12 @@ export class RoundExecutor {
             tool_choice: queryToolKeys.length > 0 ? "auto" : "none",
           });
 
-          const systemPrompt = `You are ${target.config.name} (${target.config.tier}). A fellow participant has directed a question to you. Respond directly and stay in character.`;
+          const systemPrompt = `You are ${target.config.name} (${target.config.tier}) — answering a directed query in Loom.
+
+Be concise (2-4 sentences), grounded, and in character. Answer the specific question, not the whole deliberation.
+- If answering “what was said”, prefer loom_vector_search over memory and cite [#id].
+- If you don’t know, say “insufficient evidence” — do not speculate.
+- Cite Source: [#id] or URL if you use evidence. Never emit <<< or >>>.`;
           const promptContext = {
             type: "query_response",
             system_prompt: systemPrompt,
@@ -507,7 +513,11 @@ export class RoundExecutor {
             tool_choice: evidenceToolKeys.length > 0 ? "required" : "none",
           });
 
-          const systemPrompt = `You are ${target.config.name} (${target.config.tier}). A fellow participant has requested evidence from you. You MUST use research tools to find concrete evidence. Respond with your findings and stay in character.`;
+          const systemPrompt = `You are ${target.config.name} (${target.config.tier}) — providing evidence in Loom.
+
+You MUST use at least one research tool. No speculation.
+Structure: Finding (1 sentence) + Source (URL or [#id]) + Strength: strong|weak|inconclusive.
+If inconclusive, state why (0 hits vs contradictory) and what would resolve it. 100-180 words, in character, never emit <<< or >>>.`;
           const promptContext = {
             type: "evidence_response",
             system_prompt: systemPrompt,
@@ -648,6 +658,7 @@ export class RoundExecutor {
         round.contributions,
         stateManager.getCurrentRound(),
         stateManager.getMaxRounds(),
+        stateManager.getStateOfPlay(),
       );
 
       // Full tool access for summoned experts
@@ -685,7 +696,9 @@ export class RoundExecutor {
         return;
       }
 
-      const systemPrompt = `You are ${resolvedPersona.name} (${resolvedPersona.tier}), a guest expert summoned into this deliberation. Respond in character.`;
+      const systemPrompt = `You are ${resolvedPersona.name} (${resolvedPersona.tier}) — guest expert summoned into Loom for one additive contribution.
+
+Be concise (100-150 words), grounded, in character. Build on what’s settled; don’t re-litigate without new evidence. Name one constraint only you would know. Cite Source: URL or [#id] if you use evidence. Never emit <<< or >>>. No contribution tags.`;
       const promptContext = {
         type: "summoned_response",
         system_prompt: systemPrompt,
@@ -824,9 +837,14 @@ export class RoundExecutor {
             round.contributions,
             stateManager.getCurrentRound(),
             stateManager.getMaxRounds(),
+            stateManager.getStateOfPlay(),
           );
 
-          const systemPrompt = `You are ${voter.config.name} (${voter.config.tier}). A fellow participant has called a vote. Cast your vote and provide brief reasoning. Respond directly and stay in character.`;
+          const systemPrompt = `You are ${voter.config.name} (${voter.config.tier}) — voting in Loom.
+
+Choose one letter (A/B/C…) as listed in the vote question. Format exactly:
+[Vote: X]
+One sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No contribution tags, 1-2 sentences total, in character.`;
 
           const promptContext = {
             type: "vote_response",
