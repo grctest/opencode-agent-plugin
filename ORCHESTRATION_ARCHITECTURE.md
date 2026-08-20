@@ -40,7 +40,7 @@ A complete technical reference for how the Loom multi-agent deliberation system 
 When a user types `/knit` with a question, this is what happens:
 
 1. **Room composition** — The question is analyzed for complexity, then a team of 2–7 agents is assembled without any LLM call: each per-tier role is filled by the persona (from `personas/<tier>/*.json`) whose embedded description is most semantically similar to the question (via `PersonaIndex`). Each agent gets a name, persona description, agenda, tier, and topic tags.
-2. **Model assignment** — Each agent is assigned an LLM model. Principal/senior tiers get the top available model (the session's model when present); remaining tiers get the next-best unused models. Explicit per-participant `model`/`model_override` fields win over automatic assignment. The discovery pool can be narrowed with a per-session model filter (`/knit_models enable/disable`, Section 26).
+ 2. **Model assignment** — Each agent is assigned an LLM model. Principal/senior tiers get the top available model (the session's model when present); remaining tiers get the next-best unused models. Explicit per-participant `model`/`model_override` fields win over automatic assignment. The discovery pool can be narrowed with a per-session model filter (`/enable_knit_models` / `/disable_knit_models`, Section 26).
 3. **Rounds execute** — A round is a single sequential prompt phase:
    - Each agent speaks in turn via a fresh **ephemeral** LLM session, seeing the state of play, vector-RAG context, recent contributions, and their own prior reflection.
    - After a challenge or dissent, the single **most persona-similar** active participant (excluding the challenger) is selected via embeddings to reflect on it immediately (mid-round reflection).
@@ -105,9 +105,9 @@ Personas live under `<plugin>/personas/<tier>/*.json` (tier directories), with f
 
 ### Step 3: Model Assignment
 
-Models are discovered from the connected providers via `discoverModels()` (`provider.providers` API), with the user session's current model recorded as `sessionModel`. The discovery result may be narrowed by the `/knit_models` model filter (Section 26). If a session model can't be discovered the discovery result is empty (agents just carry their session model).
+Models are discovered from the connected providers via `discoverModels()` (`provider.providers` API), with the user session's current model recorded as `sessionModel`. The discovery result may be narrowed by the model filter (`/enable_knit_models` / `/disable_knit_models`, Section 26). If a session model can't be discovered the discovery result is empty (agents just carry their session model).
 
-`assignModelsToParticipants()` uses `assignModelsByTier()` (a single deterministic engine shared with the `/knit_models` preview so the two always agree):
+`assignModelsToParticipants()` uses `assignModelsByTier()` (a single deterministic engine shared with the `list_knit_models` preview so the two always agree):
 
 - Models are sorted by capability score (active + context window + reasoning capability; cost is display-only).
 - **Principal and senior** roles get the top model — the session model if present, else the best available.
@@ -1564,7 +1564,7 @@ Exposed as a plugin tool (`knit`) — invoked when the user types `/knit <questi
 
 ### Handler Flow (`createKnitHandler`)
 
-1. Discover models + session model; apply the optional `/knit_models` model filter to the pool (Section 26).
+1. Discover models + session model; apply the optional model filter (`list_knit_models` / `enable_knit_models` / `disable_knit_models`, Section 26) to the pool.
 2. If `fresh: true`, delete any existing meeting DB for the session.
 3. If an existing meeting exists (and not `fresh`/`dry_run`) → **extend** (Section 18).
 4. Otherwise compose a room (or use custom participants), assign models (honoring `models` per-tier overrides and per-participant `model`/`model_override`), and (optionally) preview with `dry_run`.
@@ -1586,7 +1586,7 @@ The handler wires metadata callbacks to the chat context for live UX:
 - `loom_cancel` — request cancellation (current round completes, then synthesis runs)
 - `loom_debug` — dump internal state of a running Loom (optional `include` filter)
 - `loom_viz` / `loom_stop` — start/stop the dashboard
-- `knit_models` — discover available models, preview tier assignments (`createModelPlan` + `formatModelPlan`), and manage a **session-scoped model filter**. Actions: `list` (default), `enable <provider/model>…`, `disable <provider/model>…`, `reset`. The filter restricts which discovered models Loom agents may use; the preview also stages the plan for the next `/knit`. (See Section 26.)
+- `list_knit_models` — discover available models, preview tier assignments (`createModelPlan` + `formatModelPlan`), showing cost/context/reasoning and current enabled/disabled status. `enable_knit_models` / `disable_knit_models` / `reset_knit_models` — manage a **session-scoped model filter**. The filter restricts which discovered models Loom agents may use; the preview also stages the plan for the next `/knit`. (See Section 26.)
 
 ### Session Index & Cleanup
 
@@ -1638,16 +1638,16 @@ A recap of every knob that controls which LLM runs an agent or the orchestrator.
 
 `discoverModels()` (`src/services/model-service.js`) reads the connected providers via `client.provider.providers` and records the user session's current model as `sessionModel`. Deprecated models are excluded.
 
-A **session-scoped model filter** (`enabledModels` in the knit handler) is maintained with `/knit_models`:
-- `/knit_models` — lists all discovered models with `provider/model` identifiers, cost, context window, and reasoning capability, plus the proposed tier assignment plan.
-- `/knit_models enable <id>…` / `/knit_models disable <id>…` — restrict which discovered models Loom agents may use (`applyModelFilter`). Default (no filter) = all models.
-- `/knit_models reset` — clears the filter back to "all models".
+A **session-scoped model filter** (`enabledModels` in the knit handler) is maintained with four separate tools:
+- `/list_knit_models` — lists all discovered models with `provider/model` identifiers, cost, context window, reasoning capability, current enabled/disabled status, plus the proposed tier assignment plan.
+- `/enable_knit_models <id>…` / `/disable_knit_models <id>…` — restrict which discovered models Loom agents may use (`applyModelFilter`). Default (no filter) = all models.
+- `/reset_knit_models` — clears the filter back to "all models".
 
 The filter is mutable state on the knit handler (per opencode session, not persisted) and is applied to the discovery result before composition, assignment, and the `availableModels` list passed to the orchestrator for fallback selection.
 
 ### 2. Tier-Based Assignment
 
-`assignModelsToParticipants()` → `assignModelsByTier()` is the single deterministic assignment engine (shared with the `/knit_models` preview so both always agree):
+`assignModelsToParticipants()` → `assignModelsByTier()` is the single deterministic assignment engine (shared with the `list_knit_models` preview so both always agree):
 
 - Models are sorted by a capability score (`scoreModel`: active status + context window + reasoning capability; cost is display-only).
 - Principal/senior roles receive the session model (or the best available); mid/junior get the next-best unused models.

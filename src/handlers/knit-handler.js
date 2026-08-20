@@ -438,19 +438,7 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
     }
   }
 
-  async function handleKnitModels(args) {
-    const action = (args?.action ?? "list");
-
-    if (action === "reset") {
-      const prevCount = enabledModels?.size ?? 0;
-      enabledModels = null;
-      pendingModels = null;
-      return {
-        title: "Model Filter Reset",
-        output: `Model filter cleared. All discovered models are now available for Loom agents (${prevCount} models were previously restricted).`,
-      };
-    }
-
+  async function handleListKnitModels() {
     let available;
     try {
       const result = await discoverModels(client, directory, "");
@@ -466,45 +454,7 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
     }
 
     const modelKey = (m) => `${m.providerID}/${m.modelID}`;
-    const allKeys = new Set(available.map(modelKey));
 
-    if (action === "enable" || action === "disable") {
-      const requested = args?.models ?? [];
-      if (requested.length === 0) {
-        return {
-          title: "Model Filter Error",
-          output: `Please specify model identifiers to ${action}.\n\nRun \`/knit_models\` to see available models with their exact identifiers.`,
-        };
-      }
-
-      const invalid = requested.filter((id) => !allKeys.has(id));
-      if (invalid.length > 0) {
-        const suggestions = [...allKeys].join("\n");
-        return {
-          title: "Model Filter Error",
-          output: `The following identifiers were not found:\n\n${invalid.map((i) => `- ${i}`).join("\n")}\n\nValid identifiers:\n${suggestions}\n\nRun \`/knit_models\` to see the full list.`,
-        };
-      }
-
-      if (action === "enable") {
-        if (!enabledModels) enabledModels = new Set(allKeys);
-        for (const id of requested) enabledModels.add(id);
-        return {
-          title: "Models Enabled",
-          output: `Enabled ${requested.length} model(s):\n${requested.map((m) => `- ${m}`).join("\n")}\n\n${enabledModels.size} model(s) are now available for Loom agents.`,
-        };
-      }
-
-      const removed = requested.filter((id) => enabledModels?.has(id));
-      for (const id of requested) enabledModels?.delete(id);
-      if (removed.length > 0) pendingModels = null;
-      return {
-        title: "Models Disabled",
-        output: `Disabled ${removed.length} model(s):\n${removed.map((m) => `- ${m}`).join("\n")}\n\n${enabledModels?.size ?? 0} model(s) remain available for Loom agents.`,
-      };
-    }
-
-    // Default: list
     const { sessionModel } = await discoverModels(client, directory, "");
     const plan = createModelPlan(available, undefined, sessionModel);
     pendingModels = plan.participants;
@@ -538,14 +488,112 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
     }
     lines.push("");
     lines.push("Copy the exact `provider/model` identifier to enable or disable a model:");
-    lines.push("- `/knit_models enable openai/gpt-4.1`");
-    lines.push("- `/knit_models disable openai/o1`");
-    lines.push("- `/knit_models reset`");
+    lines.push("- `/enable_knit_models openai/gpt-4.1`");
+    lines.push("- `/disable_knit_models openai/o1`");
+    lines.push("- `/reset_knit_models`");
     lines.push("");
     lines.push(formatModelPlan(plan));
 
     return lines.join("\n");
   }
 
-  return { handleKnit, handleKnitModels };
+  async function handleEnableKnitModels(args) {
+    const requested = args?.models ?? [];
+    if (requested.length === 0) {
+      return {
+        title: "Model Filter Error",
+        output: `Please specify model identifiers to enable.\n\nRun \`/list_knit_models\` to see available models with their exact identifiers.`,
+      };
+    }
+
+    let available;
+    try {
+      const result = await discoverModels(client, directory, "");
+      available = result.available;
+    } catch (err) {
+      const info = extractErrorInfo(err);
+      logger.error("model_discovery_failed", "Model discovery failed", info);
+      return `Model discovery failed: ${info.message}`;
+    }
+
+    if (available.length === 0) {
+      return "No active models found. Connect a provider (e.g. run `opencode auth login`).";
+    }
+
+    const modelKey = (m) => `${m.providerID}/${m.modelID}`;
+    const allKeys = new Set(available.map(modelKey));
+
+    const invalid = requested.filter((id) => !allKeys.has(id));
+    if (invalid.length > 0) {
+      const suggestions = [...allKeys].join("\n");
+      return {
+        title: "Model Filter Error",
+        output: `The following identifiers were not found:\n\n${invalid.map((i) => `- ${i}`).join("\n")}\n\nValid identifiers:\n${suggestions}\n\nRun \`/list_knit_models\` to see the full list.`,
+      };
+    }
+
+    if (!enabledModels) enabledModels = new Set(allKeys);
+    for (const id of requested) enabledModels.add(id);
+    return {
+      title: "Models Enabled",
+      output: `Enabled ${requested.length} model(s):\n${requested.map((m) => `- ${m}`).join("\n")}\n\n${enabledModels.size} model(s) are now available for Loom agents.`,
+    };
+  }
+
+  async function handleDisableKnitModels(args) {
+    const requested = args?.models ?? [];
+    if (requested.length === 0) {
+      return {
+        title: "Model Filter Error",
+        output: `Please specify model identifiers to disable.\n\nRun \`/list_knit_models\` to see available models with their exact identifiers.`,
+      };
+    }
+
+    let available;
+    try {
+      const result = await discoverModels(client, directory, "");
+      available = result.available;
+    } catch (err) {
+      const info = extractErrorInfo(err);
+      logger.error("model_discovery_failed", "Model discovery failed", info);
+      return `Model discovery failed: ${info.message}`;
+    }
+
+    if (available.length === 0) {
+      return "No active models found. Connect a provider (e.g. run `opencode auth login`).";
+    }
+
+    const modelKey = (m) => `${m.providerID}/${m.modelID}`;
+    const allKeys = new Set(available.map(modelKey));
+
+    const invalid = requested.filter((id) => !allKeys.has(id));
+    if (invalid.length > 0) {
+      const suggestions = [...allKeys].join("\n");
+      return {
+        title: "Model Filter Error",
+        output: `The following identifiers were not found:\n\n${invalid.map((i) => `- ${i}`).join("\n")}\n\nValid identifiers:\n${suggestions}\n\nRun \`/list_knit_models\` to see the full list.`,
+      };
+    }
+
+    if (!enabledModels) enabledModels = new Set(allKeys);
+    const removed = requested.filter((id) => enabledModels.has(id));
+    for (const id of requested) enabledModels.delete(id);
+    if (removed.length > 0) pendingModels = null;
+    return {
+      title: "Models Disabled",
+      output: `Disabled ${removed.length} model(s):\n${removed.map((m) => `- ${m}`).join("\n")}\n\n${enabledModels.size} model(s) remain available for Loom agents.`,
+    };
+  }
+
+  async function handleResetKnitModels() {
+    const prevCount = enabledModels?.size ?? 0;
+    enabledModels = null;
+    pendingModels = null;
+    return {
+      title: "Model Filter Reset",
+      output: `Model filter cleared. All discovered models are now available for Loom agents (${prevCount} models were previously restricted).`,
+    };
+  }
+
+  return { handleKnit, handleListKnitModels, handleEnableKnitModels, handleDisableKnitModels, handleResetKnitModels };
 }

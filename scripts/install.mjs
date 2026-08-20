@@ -260,7 +260,7 @@ console.log("══════════════════════�
 console.log("");
 console.log("Next steps:");
 console.log("  1. Restart opencode or reload plugins");
-console.log("  2. Run /knit_models to discover available models");
+console.log("  2. Run /list_knit_models to discover available models");
 console.log("  3. Run /knit \"your question\" to start a deliberation");
 console.log("");
 logInfo("Done.");

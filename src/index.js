@@ -179,7 +179,7 @@ export const Loom = async (input) => {
     process.exit(1);
   });
 
-  const { handleKnit, handleKnitModels } = createKnitHandler(client, directory, activeLooms, agentTools);
+  const { handleKnit, handleListKnitModels, handleEnableKnitModels, handleDisableKnitModels, handleResetKnitModels } = createKnitHandler(client, directory, activeLooms, agentTools);
 
   return {
     tool: {
@@ -247,7 +247,7 @@ export const Loom = async (input) => {
             )
             .optional()
             .describe(
-              "Model assignments per tier. Use knit_models to discover available options.",
+              "Model assignments per tier. Use list_knit_models to discover available options.",
             ),
           meeting_timeout: tool.schema
             .number()
@@ -432,20 +432,43 @@ export const Loom = async (input) => {
         },
       }),
 
-      knit_models: tool({
-        description: "Discover available models in your opencode session and propose tier assignments. Supports listing, enabling, disabling, and resetting the model filter for Loom agents.",
+      list_knit_models: tool({
+        description: "List all discovered models with their exact identifiers, cost, context window, reasoning capability, current enabled/disabled status, and proposed tier assignments.",
+        args: {},
+        execute: async () => {
+          return handleListKnitModels();
+        },
+      }),
+
+      enable_knit_models: tool({
+        description: "Enable specific models for Loom agents. Provide exact 'provider/model' identifiers as shown in list_knit_models output.",
         args: {
-          action: tool.schema
-            .string()
-            .optional()
-            .describe("Action: 'list' (default), 'enable', 'disable', or 'reset'"),
           models: tool.schema
             .array(tool.schema.string())
-            .optional()
-            .describe("Exact 'provider/model' identifiers to enable or disable (e.g. 'openai/gpt-4.1')"),
+            .describe("Exact 'provider/model' identifiers to enable (e.g. 'openai/gpt-4.1')"),
         },
         execute: async (args) => {
-          return handleKnitModels(args);
+          return handleEnableKnitModels(args);
+        },
+      }),
+
+      disable_knit_models: tool({
+        description: "Disable specific models for Loom agents. Provide exact 'provider/model' identifiers as shown in list_knit_models output.",
+        args: {
+          models: tool.schema
+            .array(tool.schema.string())
+            .describe("Exact 'provider/model' identifiers to disable (e.g. 'openai/gpt-4.1')"),
+        },
+        execute: async (args) => {
+          return handleDisableKnitModels(args);
+        },
+      }),
+
+      reset_knit_models: tool({
+        description: "Reset the model filter to default — all discovered models become available for Loom agents.",
+        args: {},
+        execute: async () => {
+          return handleResetKnitModels();
         },
       }),
 

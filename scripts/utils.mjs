@@ -68,7 +68,7 @@ export function detectOpencodeDir() {
 }
 
 export function isLoomCommand(filename) {
-  const loomCommands = ["knit.md", "knit_models.md"];
+  const loomCommands = ["knit.md", "list_knit_models.md", "enable_knit_models.md", "disable_knit_models.md", "reset_knit_models.md"];
   return loomCommands.includes(filename);
 }
 

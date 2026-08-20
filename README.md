@@ -100,15 +100,15 @@ Models are stored globally at:
 Preview available models before running:
 
 ```
-/knit_models
+/list_knit_models
 ```
 
-`/knit_models` lists all discovered models with their exact `provider/model` identifiers. You can restrict which models Loom agents use:
+`/list_knit_models` lists all discovered models with their exact `provider/model` identifiers, cost, context window, reasoning capability, and current enabled/disabled status. You can restrict which models Loom agents use:
 
 ```
-/knit_models enable openai/gpt-4.1 anthropic/claude-3-5-sonnet
-/knit_models disable openai/o1
-/knit_models reset
+/enable_knit_models openai/gpt-4.1 anthropic/claude-3-5-sonnet
+/disable_knit_models openai/o1
+/reset_knit_models
 ```
 
 Launch the dashboard:
@@ -122,7 +122,10 @@ loom_viz
 | Command | Description |
 |---------|-------------|
 | `/knit` | Start (or extend) a multi-agent deliberation |
-| `/knit_models` | Discover available models and manage model assignments |
+| `/list_knit_models` | List available models with enabled/disabled status and tier assignments |
+| `/enable_knit_models` | Enable specific models for Loom agents |
+| `/disable_knit_models` | Disable specific models for Loom agents |
+| `/reset_knit_models` | Reset model filter to default (all models enabled) |
 | `/loom_viz` | Start the real-time dashboard (default port 3210) |
 | `/loom_stop` | Stop the running dashboard |
 
@@ -137,12 +140,25 @@ loom_viz
 | `meeting_timeout` | Maximum meeting duration in ms (60000–1800000) | `900000` (15 min) |
 | `fresh` | Force a fresh loom even if a previous meeting exists | `false` |
 
-### `knit_models` arguments
+### `list_knit_models` arguments
+
+_No arguments_ — lists all discovered models with `provider/model` identifiers, cost, context window, reasoning capability, current enabled/disabled status, and the proposed tier assignment plan.
+
+### `enable_knit_models` arguments
 
 | Argument | Description | Default |
 |----------|-------------|---------|
-| `action` | `list`, `enable`, `disable`, or `reset` | `list` |
-| `models` | Exact `provider/model` identifiers to enable or disable | — |
+| `models` | Exact `provider/model` identifiers to enable | _(required)_ |
+
+### `disable_knit_models` arguments
+
+| Argument | Description | Default |
+|----------|-------------|---------|
+| `models` | Exact `provider/model` identifiers to disable | _(required)_ |
+
+### `reset_knit_models` arguments
+
+_No arguments_ — clears the filter back to all models.
 
 ### `loom_viz` arguments
 

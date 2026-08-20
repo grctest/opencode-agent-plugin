@@ -61,7 +61,7 @@ export { sortModelsByQuality };
  * Single model-assignment engine: quality-sorted and deterministic.
  * Principal/senior roles get the session model when available; remaining roles get
  * the next-best unused models. This is the one source of truth for both the
- * /knit_models preview plan and the real meeting assignment, so they always agree.
+ * list_knit_models preview plan and the real meeting assignment, so they always agree.
  */
 export function assignModelsByTier(available, sessionModel, roles) {
   if (available.length === 0) return [];
