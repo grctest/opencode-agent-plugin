@@ -468,12 +468,13 @@ export class MeetingDatabase {
     const roundValue = (typeof round === "object" && round !== null)
       ? (round.number ?? null)
       : round;
+    const safeContent = (content ?? "").toString();
     this.#db
       .prepare(
         `INSERT INTO orchestrator_messages (meeting_id, msg_type, role, content, round, created_at)
          VALUES (?, ?, ?, ?, ?, ?)`,
       )
-      .run(this.#meetingId, msgType, role, content, roundValue, isoNow());
+      .run(this.#meetingId, msgType, role, safeContent, roundValue, isoNow());
   }
 
   getOrchestratorMessages(meetingId) {

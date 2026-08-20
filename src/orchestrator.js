@@ -218,23 +218,28 @@ export class MeetingOrchestrator {
     if (this.#orchestratorMessages.length >= MAX_ORCHESTRATOR_MESSAGES) {
       this.#orchestratorMessages.shift();
     }
-    this.#orchestratorMessages.push({ type, role: "user", content: message, round, timestamp: Date.now() });
+    const safeMessage = (message ?? "").toString();
+    this.#orchestratorMessages.push({ type, role: "user", content: safeMessage, round, timestamp: Date.now() });
     if (this.#database) {
-      this.#database.addOrchestratorMessage(type, "user", message, round);
+      this.#database.addOrchestratorMessage(type, "user", safeMessage, round);
     }
     const { text: response, tokens } = await this.#sessionManager.promptOrchestrator(system, useModel, message);
     if (tokens) {
       this.#callStats.input_tokens += tokens.input ?? 0;
       this.#callStats.output_tokens += tokens.output ?? 0;
     }
+    const safeResponse = (response ?? "").toString();
+    if (!safeResponse.trim()) {
+      this.#logger.warn("orchestrator_empty_response", `Orchestrator returned empty text for type=${type} round=${round}`, { type, round });
+    }
     if (this.#orchestratorMessages.length >= MAX_ORCHESTRATOR_MESSAGES) {
       this.#orchestratorMessages.shift();
     }
-    this.#orchestratorMessages.push({ type, role: "assistant", content: response, round, timestamp: Date.now() });
+    this.#orchestratorMessages.push({ type, role: "assistant", content: safeResponse, round, timestamp: Date.now() });
     if (this.#database) {
-      this.#database.addOrchestratorMessage(type, "assistant", response, round);
+      this.#database.addOrchestratorMessage(type, "assistant", safeResponse, round);
     }
-    return response;
+    return safeResponse;
   }
 
   async initialize() {

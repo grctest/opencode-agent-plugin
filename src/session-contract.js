@@ -101,7 +101,7 @@ export class SessionContract {
       return {
         ok: true,
         data: result.data,
-        text: extractText(result.data),
+        text: extractText(result.data) ?? "",
         tokens: result.data?.tokens ?? null,
         error: null,
       };
