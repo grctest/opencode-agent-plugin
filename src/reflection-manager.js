@@ -27,36 +27,65 @@ export async function runMidRoundReflections(round, triggerParticipant, activePa
   if (activeParticipants.length === 0) return;
 
   // Select top-1 reflector by persona similarity to the challenge
-  const { embedText, isEmbedderInitialized } = await import("./services/embedding-service.js");
-  if (!isEmbedderInitialized()) {
-    reflectionLogger.warn("embedder_not_initialized", "Embedding service not available for reflection targeting");
-    return;
+  // Keyword fallback when embedder unavailable — preserves reflection liveness
+  function findMostSimilarByKeyword(text, participants) {
+    const tokens = (text || "").toLowerCase().split(/\W+/).filter((t) => t.length > 3);
+    if (tokens.length === 0) return participants[0] ?? null;
+    let best = null;
+    let bestScore = -1;
+    for (const p of participants) {
+      const hay = `${p.config.persona ?? ""} ${p.config.agenda ?? ""} ${(p.config.tags ?? []).join(" ")}`.toLowerCase();
+      let score = 0;
+      for (const tok of tokens) {
+        if (hay.includes(tok)) score += 2;
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        best = p;
+      }
+    }
+    return best;
   }
 
+  const { embedText, isEmbedderInitialized } = await import("./services/embedding-service.js");
+  const embedderReady = isEmbedderInitialized();
   const challengeText = triggerParticipant.currentContribution;
   if (!challengeText) return;
 
-  let challengeEmbedding;
-  try {
-    challengeEmbedding = await embedText(challengeText);
-  } catch (err) {
-    reflectionLogger.warn("challenge_embedding_failed", "Failed to embed challenge text for reflection targeting", extractErrorInfo(err));
-    return;
+  let listener = null;
+  let best = null;
+  if (embedderReady) {
+    let challengeEmbedding;
+    try {
+      challengeEmbedding = await embedText(challengeText);
+    } catch (err) {
+      reflectionLogger.warn("challenge_embedding_failed", "Failed to embed challenge text for reflection targeting", extractErrorInfo(err));
+    }
+    if (challengeEmbedding) {
+      const candidates = activeParticipants
+        .filter((p) => p.config.id !== triggerParticipant.config.id && p.embedding)
+        .map((p) => ({ id: p.config.id, embedding: p.embedding }));
+      best = findMostSimilar(challengeEmbedding, candidates);
+      if (best) {
+        listener = activeParticipants.find((p) => p.config.id === best.id);
+      }
+    }
   }
-  if (!challengeEmbedding) return;
-
-  // Build candidates: all active participants except the challenger, must have an embedding
-  const candidates = activeParticipants
-    .filter((p) => p.config.id !== triggerParticipant.config.id && p.embedding)
-    .map((p) => ({ id: p.config.id, embedding: p.embedding }));
-
-  const best = findMostSimilar(challengeEmbedding, candidates);
-  if (!best) {
-    reflectionLogger.info("no_similar_reflector", "No participant with embedding found for reflection targeting");
-    return;
+  // Fallback: keyword similarity when embedding unavailable or no candidate
+  if (!listener) {
+    const keywordCandidates = activeParticipants.filter((p) => p.config.id !== triggerParticipant.config.id);
+    const kwBest = findMostSimilarByKeyword(challengeText, keywordCandidates);
+    if (!kwBest) {
+      reflectionLogger.info("no_similar_reflector", "No participant found for reflection targeting (keyword fallback)");
+      return;
+    }
+    listener = kwBest;
+    if (!embedderReady) {
+      reflectionLogger.info("reflection_target_keyword_fallback", `Reflection targeting via keyword fallback — embedder unavailable, chose ${listener.config.name}`);
+    } else {
+      reflectionLogger.info("reflection_target_keyword_fallback", `Reflection targeting fallback — embedding had no candidate, chose ${listener.config.name} via keywords`);
+    }
   }
-
-  const listener = activeParticipants.find((p) => p.config.id === best.id);
   if (!listener) return;
 
   const config = getConfig();
@@ -76,7 +105,7 @@ export async function runMidRoundReflections(round, triggerParticipant, activePa
       stateManager.getMaxRounds(),
     );
 
-    // Build tools map for reflection (reduced set: webfetch, websearch, read, loom_vector_search)
+    // Build tools map for reflection — baseline 4 plus reflection-specific extras when enabled
     const agentToolsConfig = getConfig().agentTools;
     const reflectionTools = {};
     if (agentToolsConfig?.enabled) {
@@ -85,6 +114,9 @@ export async function runMidRoundReflections(round, triggerParticipant, activePa
       if (t.websearch) reflectionTools.websearch = true;
       if (t.read) reflectionTools.read = true;
       if (agentToolsConfig.loom?.loom_vector_search) reflectionTools.loom_vector_search = true;
+      if (agentToolsConfig.reflection?.bash) reflectionTools.bash = true;
+      if (agentToolsConfig.reflection?.glob) reflectionTools.glob = true;
+      if (agentToolsConfig.reflection?.grep) reflectionTools.grep = true;
     }
     const reflectionToolKeys = Object.keys(reflectionTools);
     reflectionLogger.info("agent_tools_offered", `${listener.config.name} offered ${reflectionToolKeys.length} tool(s)`, {
@@ -155,7 +187,8 @@ export async function runMidRoundReflections(round, triggerParticipant, activePa
     // Build visible header with reflection context
     const header = `[Reflection on #${triggerParticipant.currentContributionId} [${triggerParticipant.currentContributionType.toUpperCase()}] by ${triggerParticipant.config.name} (Round ${stateManager.getCurrentRound()})]`;
 
-    // Create a contribution object
+    // Create a contribution object — shares batch_id with challenger's turn for atomic grouping
+    const batchId = triggerParticipant.currentBatchId ?? crypto.randomUUID();
     const contribution = {
       id: stateManager.nextContributionId(),
       round: stateManager.getCurrentRound(),
@@ -163,6 +196,7 @@ export async function runMidRoundReflections(round, triggerParticipant, activePa
       content: `${header}\n\n${text.trim()}`,
       type: "reflection",
       targets_which: triggerParticipant.currentContributionId,
+      batch_id: batchId,
       tool_calls: contributionTools && contributionTools.length ? contributionTools : null,
       prompt_context: promptContext,
       created_at: new Date().toISOString(),
@@ -171,15 +205,21 @@ export async function runMidRoundReflections(round, triggerParticipant, activePa
     // Add to weave and round contributions
     stateManager.addContribution(contribution);
     round.contributions.push(contribution);
+    listener.contributions_count = stateManager.getWeave().filter((c) => c.participant_id === listener.config.id).length;
 
     // Update participant's latest reflection (for next-round context, stored WITHOUT header)
     listener.reflection = text.trim();
+    // Maintain rolling history (last 5) for P2.2
+    if (!listener.reflectionHistory) listener.reflectionHistory = [];
+    listener.reflectionHistory.push({ round: stateManager.getCurrentRound(), text: text.trim(), at: Date.now() });
+    if (listener.reflectionHistory.length > 5) listener.reflectionHistory.shift();
     db.setParticipantReflection(listener.config.id, text.trim());
 
     // Persist contribution
     db.addContributionWithTurnRequest(stateManager.getMeetingId(), contribution, null);
 
-    reflectionLogger.info("reflection_complete", `${listener.config.name} reflected on ${triggerParticipant.config.name}'s ${triggerParticipant.currentContributionType} (similarity: ${best.similarity.toFixed(3)})`);
+    const simInfo = best ? ` (similarity: ${best.similarity.toFixed(3)})` : " (keyword fallback)";
+    reflectionLogger.info("reflection_complete", `${listener.config.name} reflected on ${triggerParticipant.config.name}'s ${triggerParticipant.currentContributionType}${simInfo}`);
 
   } catch (err) {
     const info = extractErrorInfo(err);

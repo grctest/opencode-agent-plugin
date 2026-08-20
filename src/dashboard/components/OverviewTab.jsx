@@ -1,5 +1,46 @@
-import { memo, useMemo } from "react";
+import { memo, useMemo, useState, useEffect } from "react";
 import { ParticipationMatrix } from "./Charts.jsx";
+
+function MetricsFooter() {
+  const [metrics, setMetrics] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    const fetchMetrics = async () => {
+      try {
+        const res = await fetch("/api/metrics");
+        if (res.ok) {
+          const data = await res.json();
+          if (!cancelled) setMetrics(data);
+        }
+      } catch {}
+    };
+    fetchMetrics();
+    const id = setInterval(fetchMetrics, 5000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+  if (!metrics) return null;
+  const agentCalls = metrics.counters?.llm_calls_by_type?.agent ?? 0;
+  const synthCalls = metrics.counters?.llm_calls_by_type?.synthesis ?? 0;
+  const llmLatency = metrics.latencies?.llm_prompt_ms;
+  const synthLatency = metrics.latencies?.synthesis_ms;
+  const hasData = agentCalls > 0 || synthCalls > 0 || (llmLatency && llmLatency.count > 0);
+  if (!hasData) return null;
+  return (
+    <div className="loom-card loom-mt-sm loom-metrics-footer">
+      <h3 className="loom-title-sm loom-mb-sm">Live Telemetry (daemon)</h3>
+      <div className="loom-metrics-grid">
+        <span>Agent calls: {agentCalls} · Synthesis: {synthCalls}</span>
+        {llmLatency && llmLatency.count > 0 && (
+          <span>LLM prompt p50 {llmLatency.p50}ms p95 {llmLatency.p95}ms avg {llmLatency.avg}ms</span>
+        )}
+        {synthLatency && synthLatency.count > 0 && (
+          <span>Synthesis p50 {synthLatency.p50}ms p95 {synthLatency.p95}ms</span>
+        )}
+      </div>
+      <div className="loom-text-xs loom-text-muted">Counters: llm_calls_by_type (agent/synthesis) · Latencies: llm_prompt_ms, synthesis_ms</div>
+    </div>
+  );
+}
 
 const CALL_COUNTER_KEYS = [
   "agent_prompts",
@@ -112,6 +153,7 @@ export const OverviewTab = memo(({
           </div>
         </div>
       )}
+      <MetricsFooter />
     </div>
   );
 });

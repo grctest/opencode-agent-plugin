@@ -291,6 +291,15 @@ export class StateManager {
     }
   }
 
+  setParticipantEmbedding(participantId, embedding) {
+    const p = this.getParticipant(participantId);
+    if (p) {
+      p.embedding = embedding;
+    } else {
+      this.#logger.warn("participant_not_found", `setParticipantEmbedding: unknown participant "${participantId}"`);
+    }
+  }
+
   buildSharedState() {
     return {
       meeting_id: this.#state.id,

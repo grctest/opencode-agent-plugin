@@ -1,4 +1,4 @@
-import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync, watch } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Logger, extractErrorInfo } from "./logger.js";
@@ -27,7 +27,7 @@ function personasBasePath() {
 function userPersonasPath() {
   const configDir = process.env.LOOM_CONFIG_DIR || join(process.env.HOME || "/root", ".config", "opencode", "loom");
   const personasDir = join(configDir, "personas");
-  const tiers = ["junior", "mid", "senior", "principal"];
+  const tiers = ["junior", "mid", "senior", "principal", "civilian"];
   for (const tier of tiers) {
     if (existsSync(join(personasDir, tier))) {
       return personasDir;
@@ -67,7 +67,7 @@ function normalizePersona(persona) {
 }
 
 function loadPersonasFromPath(base) {
-  const tiers = ["junior", "mid", "senior", "principal"];
+  const tiers = ["junior", "mid", "senior", "principal", "civilian"];
   const result = {};
   let totalLoaded = 0;
   let totalRejected = 0;
@@ -146,8 +146,22 @@ let personaCache = null;
 let personaCachePath = null;
 let personaCacheTimestamp = 0;
 const PERSONA_CACHE_TTL_MS = 60000;
+let personaWatchSetup = false;
+function setupPersonaWatch() {
+  if (personaWatchSetup) return;
+  personaWatchSetup = true;
+  try {
+    const base = personasBasePath();
+    watch(base, { recursive: true }, () => { personaCache = null; });
+    const userPath = userPersonasPath();
+    if (userPath) {
+      try { watch(userPath, { recursive: true }, () => { personaCache = null; }); } catch {}
+    }
+  } catch {}
+}
 
 function loadPersonas() {
+  setupPersonaWatch();
   const basePath = personasBasePath();
   const userPath = userPersonasPath();
 
@@ -193,11 +207,11 @@ function getPersonaTags(persona) {
 }
 
 function analyzeQuestionComplexity(question) {
-  const wordCount = question.split(/\s+/).length;
+  const wordCount = question.trim().split(/\s+/).filter(Boolean).length;
   const questionMarks = (question.match(/\?/g) || []).length;
-  const hasMultipleDimensions = /and|or|vs|versus|compare|tradeoff|pros.?cons|advantages.?disadvantages/i.test(question);
-  const hasConditionals = /if|when|assuming|given that|depending on|considering/i.test(question);
-  const hasStakeholders = /team|customer|user|client|stakeholder|executive|leadership|board/i.test(question);
+  const hasMultipleDimensions = /\b(and|or|vs|versus|compare|tradeoff|pros\.?cons|advantages\.?disadvantages)\b/i.test(question);
+  const hasConditionals = /\b(if|when|assuming|given that|depending on|considering)\b/i.test(question);
+  const hasStakeholders = /\b(team|customer|user|client|stakeholder|executive|leadership|board)\b/i.test(question);
 
   let score = 0;
   if (wordCount > 30) score += 2; else if (wordCount > 15) score += 1;
@@ -253,10 +267,12 @@ function findPersonaByName(personas, tier, name) {
   return pool.find((p) => p.name === name) ?? null;
 }
 
-function buildParticipant(persona, tier) {
+function buildParticipant(persona, tier, indexSuffix = "") {
   const tags = getPersonaTags(persona);
+  const slug = persona.name.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
+  const suffix = indexSuffix ? `_${indexSuffix}` : "";
   return {
-    id: `${tier}_${persona.name.toLowerCase().replace(/\s+/g, "_")}`,
+    id: `${tier}_${slug}${suffix}`,
     name: persona.name,
     persona: persona.persona,
     agenda: persona.agenda,
@@ -280,16 +296,43 @@ function getDefaultCount(complexity) {
   }
 }
 
-export async function composeRoomWithSimilarity(question, seed, database) {
+export async function composeRoomWithSimilarity(question, database) {
   const used = new Set();
   const participants = [];
 
   const personas = getPersonas();
   const complexity = analyzeQuestionComplexity(question);
   const count = Math.max(2, Math.min(7, getDefaultCount(complexity)));
-  const roles = generateRolesFromComplexity(count, complexity);
+  let roles = generateRolesFromComplexity(count, complexity);
+  // Tier availability guard — degrade principals if not enough personas of that tier
+  try {
+    const tierCounts = Object.fromEntries(Object.entries(personas).map(([t, arr]) => [t, arr.length]));
+    const need = {};
+    for (const r of roles) need[r] = (need[r] || 0) + 1;
+    for (const tier of Object.keys(need)) {
+      if ((tierCounts[tier] ?? 0) < need[tier]) {
+        const deficit = need[tier] - (tierCounts[tier] ?? 0);
+        composerLogger.warn("tier_starved", `Not enough ${tier} personas (${tierCounts[tier] ?? 0} < ${need[tier]}) — degrading ${deficit} to senior/mid`);
+        // Replace deficit occurrences of this tier with fallback tier that has capacity
+        let replaced = 0;
+        for (let i = 0; i < roles.length && replaced < deficit; i++) {
+          if (roles[i] === tier) {
+            const fallbacks = ["principal", "senior", "mid", "junior"];
+            // Find highest tier with remaining capacity not equal to original tier
+            let fallback = tier === "principal" ? "senior" : tier === "senior" ? "mid" : "junior";
+            // Ensure fallback has free slots
+            const fallbackUsed = roles.filter((r) => r === fallback).length;
+            if ((tierCounts[fallback] ?? 0) > fallbackUsed) {
+              roles[i] = fallback;
+              replaced++;
+            }
+          }
+        }
+      }
+    }
+  } catch {}
 
-  const { isEmbedderInitialized, ensureEmbedderInitialized } = await import("./services/embedding-service.js");
+  const { isEmbedderInitialized, ensureEmbedderInitialized, embedText } = await import("./services/embedding-service.js");
   let embedderReady = isEmbedderInitialized();
   if (!embedderReady) {
     try {
@@ -312,14 +355,22 @@ export async function composeRoomWithSimilarity(question, seed, database) {
   const personaIndex = new PersonaIndex(database);
   await personaIndex.indexAll(personas);
 
+  // Reuse question embedding across tier searches
+  let questionEmbedding = null;
+  try { questionEmbedding = await embedText(question); } catch {}
   for (const tier of roles) {
-    const results = await personaIndex.search(question, tier, 5);
+    let results = [];
+    if (questionEmbedding) {
+      try { results = await personaIndex.searchWithEmbedding(questionEmbedding, tier, 5); } catch { results = await personaIndex.search(question, tier, 5); }
+    } else {
+      results = await personaIndex.search(question, tier, 5);
+    }
     const candidate = results.find((r) => !used.has(r.persona_name));
     if (candidate) {
       const persona = findPersonaByName(personas, tier, candidate.persona_name);
       if (persona) {
         used.add(persona.name);
-        participants.push(buildParticipant(persona, tier));
+        participants.push(buildParticipant(persona, tier, String(participants.length)));
       }
     }
   }
@@ -356,7 +407,7 @@ function composeRoomByKeyword(question, personas, roles, complexity, count, used
     const candidate = scored.find(({ persona }) => !used.has(persona.name));
     if (candidate) {
       used.add(candidate.persona.name);
-      participants.push(buildParticipant(candidate.persona, tier));
+      participants.push(buildParticipant(candidate.persona, tier, String(participants.length)));
     }
   }
 

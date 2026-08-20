@@ -1,4 +1,4 @@
-import { useRef, useMemo, useCallback, useState, memo } from "react";
+import { useRef, useMemo, useCallback, useState, useEffect, memo } from "react";
 import { cn, relativeTime } from "../utils.js";
 import { ContributionItem, TurnRequestItem, ThinkingCard, ReflectionRow, QueryResponseRow, EvidenceResponseRow, SummonedResponseRow, VoteResponseRow, VoteTallyRow, OrchestratorItem, ORCHESTRATOR_TYPE_META, ContentDialog, renderMarkdown } from "./Cards.jsx";
 import { LoadingSkeleton } from "./Skeleton.jsx";
@@ -692,9 +692,16 @@ const TimelineTabBase = ({
     return item ? getRowHeight(item) : CONTRIBUTION_HEIGHT;
   }, []);
 
+  const [viewportHeight, setViewportHeight] = useState(typeof window !== "undefined" ? window.innerHeight : 800);
+  useEffect(() => {
+    const onResize = () => setViewportHeight(window.innerHeight);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  const sumHeights = useMemo(() => flatItems.reduce((sum, item) => sum + getRowHeight(item), 0), [flatItems]);
   const listHeight = useMemo(() => {
-    return Math.min(600, flatItems.reduce((sum, item) => sum + getRowHeight(item), 0));
-  }, [flatItems]);
+    return Math.max(400, Math.min(window.innerHeight - 300, sumHeights));
+  }, [sumHeights, viewportHeight]);
 
   const rowProps = useMemo(() => ({
     items: flatItems,
@@ -725,7 +732,7 @@ const TimelineTabBase = ({
             rowHeight={rowHeightFn}
             rowComponent={TimelineRow}
             rowProps={rowProps}
-            overscanCount={3}
+            overscanCount={8}
             style={{ height: listHeight, width: "100%" }}
           />
         </div>

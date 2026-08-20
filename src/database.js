@@ -1,5 +1,6 @@
-import { mkdirSync, existsSync, readdirSync, unlinkSync } from "node:fs";
+import { mkdirSync, existsSync, readdirSync, unlinkSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { createRequire } from "node:module";
 import { Logger, extractErrorInfo } from "./logger.js";
 import { initSchema } from "./database/schema.js";
 import { resolveLoomBaseDir, getMeetingDbPath } from "./paths.js";
@@ -12,10 +13,62 @@ import {
 
 const dbLogger = new Logger();
 
-// sqlite-vec native extension path — load directly via db.loadExtension()
-// This bypasses the sqlite-vec npm package which fails in bundled context
-// because import.meta.resolve() can't find vec0.so when code is bundled.
-const VEC0_PATH = join(import.meta.dir, 'deps', 'node_modules', 'sqlite-vec-linux-x64', 'vec0.so');
+// sqlite-vec native extension resolution — supports Linux, macOS, Windows and both
+// bundled (plugins/loom.js → plugins/deps/...) and dev (src/ → node_modules/...) layouts.
+const VEC_CANDIDATE_PKGS = [
+  'sqlite-vec-linux-x64',
+  'sqlite-vec-linux-arm64',
+  'sqlite-vec-darwin-arm64',
+  'sqlite-vec-darwin-x64',
+  'sqlite-vec-win32-x64',
+];
+const VEC_EXTS = ['vec0.so', 'vec0.dylib', 'vec0.node'];
+let cachedVecPath = null;
+let vecPathResolved = false;
+
+function resolveVecPath() {
+  if (vecPathResolved) return cachedVecPath;
+  vecPathResolved = true;
+  const baseDir = (import.meta.dir ?? import.meta.dirname ?? '.');
+  const roots = [
+    join(baseDir, 'deps', 'node_modules'),
+    join(baseDir, '../deps', 'node_modules'),
+    join(baseDir, 'node_modules'),
+    join(baseDir, '../node_modules'),
+    join(baseDir, '../../node_modules'),
+  ];
+  // Also probe opencode global plugin deps (deployed layout)
+  try {
+    const home = process.env.HOME || '/root';
+    roots.push(join(home, '.config', 'opencode', 'plugins', 'deps', 'node_modules'));
+    roots.push(join(home, '.config', 'opencode', 'loom', 'deps', 'node_modules'));
+  } catch {}
+  for (const root of roots) {
+    for (const pkg of VEC_CANDIDATE_PKGS) {
+      for (const ext of VEC_EXTS) {
+        const p = join(root, pkg, ext);
+        if (existsSync(p)) {
+          cachedVecPath = p;
+          return cachedVecPath;
+        }
+      }
+    }
+  }
+  // Fallback: try to resolve via package entry (when sqlite-vec itself is installed)
+  try {
+    const req = createRequire(import.meta.url);
+    const pkgPath = req.resolve('sqlite-vec-linux-x64/package.json');
+    const dir = dirname(pkgPath);
+    for (const ext of VEC_EXTS) {
+      const p = join(dir, ext);
+      if (existsSync(p)) {
+        cachedVecPath = p;
+        return cachedVecPath;
+      }
+    }
+  } catch {}
+  return null;
+}
 
 // Single bun:sqlite import point — all DB access goes through this
 let DatabaseClass = null;
@@ -105,31 +158,55 @@ export class MeetingDatabase {
 
   constructor(dbPath, meetingId) {
     this.#meetingId = meetingId;
+    const existedBefore = existsSync(dbPath);
+    let fileAgeMs = null;
+    if (existedBefore) {
+      try { fileAgeMs = Date.now() - statSync(dbPath).mtimeMs; } catch {}
+    }
     mkdirSync(dirname(dbPath), { recursive: true });
     const db = new DatabaseClass(dbPath);
     this.#db = db;
     this.#db.exec("PRAGMA journal_mode = WAL");
     this.#db.exec("PRAGMA foreign_keys = ON");
-    if (existsSync(VEC0_PATH)) {
+    this.#db.exec("PRAGMA busy_timeout = 5000");
+    const vecPath = resolveVecPath();
+    if (vecPath && existsSync(vecPath)) {
       try {
-        this.#db.loadExtension(VEC0_PATH);
+        this.#db.loadExtension(vecPath);
       } catch (err) {
         dbLogger.warn("sqlite_vec_load_error", "Failed to load sqlite-vec extension", extractErrorInfo(err));
       }
     } else {
-      dbLogger.warn("sqlite_vec_not_found", "sqlite-vec extension not found — vector search disabled", { expectedPath: VEC0_PATH });
+      // Only warn once per process to avoid log spam
+      if (!vecPathResolved || !cachedVecPath) {
+        const searched = vecPath ? vecPath : 'no candidate found';
+        dbLogger.warn("sqlite_vec_not_found", "sqlite-vec extension not found — vector search degraded to keyword fallback", { searched, candidates: VEC_CANDIDATE_PKGS.join(',') });
+      }
     }
     initSchema(this.#db);
+    try { this.#db.exec("ALTER TABLE contributions ADD COLUMN batch_id TEXT"); } catch {}
+    try { this.#db.exec("CREATE INDEX IF NOT EXISTS idx_contributions_batch ON contributions(batch_id)"); } catch {}
     this.#initVectorTable();
-    this.#cleanupOldErrors();
-    this.#checkIntegrity();
+    // Throttle maintenance: run cleanup/integrity at most once per 24h per file, or for new DBs skip
+    const shouldMaintain = !existedBefore ? false : (fileAgeMs == null || fileAgeMs > 86400000) || process.env.LOOM_INTEGRITY_CHECK === '1';
+    if (shouldMaintain) {
+      this.#cleanupOldErrors();
+      this.#checkIntegrity();
+    } else if (!existedBefore) {
+      // For new DBs, still ensure old-error tables exist but don't scan
+    }
   }
 
   #initVectorTable(dim = 384) {
+    const safeDim = Number(dim);
+    if (!Number.isFinite(safeDim) || safeDim < 64 || safeDim > 2048 || Math.floor(safeDim) !== safeDim) {
+      dbLogger.warn("vec_table_invalid_dim", `Invalid embedding dimension ${dim} — expected integer 64..2048`, { dim });
+      return;
+    }
     try {
       this.#db.exec(`
-        CREATE VIRTUAL TABLE IF NOT EXISTS vec_fabric_chunks_${dim} USING vec0(
-          embedding float[${dim}]
+        CREATE VIRTUAL TABLE IF NOT EXISTS vec_fabric_chunks_${safeDim} USING vec0(
+          embedding float[${safeDim}]
         )
       `);
     } catch (err) {
@@ -160,10 +237,33 @@ export class MeetingDatabase {
   // ── Write Operations ─────────────────────────────────────────────
 
   initializeMeeting(input) {
+    // Guard: prevent cascade wipe if persona embeddings already indexed — caller should use upsertMeeting
+    try {
+      const embCount = this.#db.prepare(`SELECT COUNT(*) as c FROM persona_embeddings WHERE meeting_id = ?`).get(this.#meetingId)?.c ?? 0;
+      if (embCount > 0) {
+        dbLogger.warn("initialize_after_embeddings", "initializeMeeting called after persona embeddings indexed — use upsertMeeting to avoid CASCADE wipe", { meetingId: this.#meetingId, embCount });
+        // Fall through to upsert semantics instead of OR REPLACE wipe
+        return this.upsertMeeting(input);
+      }
+    } catch {}
     const now = isoNow();
     const insertMeeting = this.#db.prepare(
-      `INSERT OR REPLACE INTO meetings (id, question, context, status, round, fabric, max_rounds, convergence, tags, parent_session_id, opencode_session_id, embedding_model, embedding_dim, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO meetings (id, question, context, status, round, fabric, max_rounds, convergence, tags, parent_session_id, opencode_session_id, embedding_model, embedding_dim, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         question=excluded.question,
+         context=excluded.context,
+         status=excluded.status,
+         round=excluded.round,
+         fabric=excluded.fabric,
+         max_rounds=excluded.max_rounds,
+         convergence=excluded.convergence,
+         tags=excluded.tags,
+         parent_session_id=excluded.parent_session_id,
+         opencode_session_id=excluded.opencode_session_id,
+         embedding_model=excluded.embedding_model,
+         embedding_dim=excluded.embedding_dim,
+         updated_at=excluded.updated_at`,
     );
     const insertParticipant = this.#db.prepare(
       `INSERT INTO participants (id, meeting_id, name, persona, agenda, tier, provider_id, model_id, session_id, known_biases, communication_style, preferred_contribution_types)
@@ -475,8 +575,8 @@ export class MeetingDatabase {
   addContribution(meetingId, contribution) {
     this.#db
       .prepare(
-        `INSERT INTO contributions (meeting_id, participant_id, round, type, content, target_which, tool_calls, prompt_context, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO contributions (meeting_id, participant_id, round, type, content, target_which, batch_id, tool_calls, prompt_context, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         meetingId,
@@ -485,6 +585,7 @@ export class MeetingDatabase {
         contribution.type,
         contribution.content,
         contribution.targets_which ?? null,
+        contribution.batch_id ?? null,
         contribution.tool_calls ? JSON.stringify(contribution.tool_calls) : null,
         contribution.prompt_context ? JSON.stringify(contribution.prompt_context) : null,
         contribution.created_at ?? isoNow(),
@@ -494,7 +595,7 @@ export class MeetingDatabase {
   getContributions(meetingId) {
     const rows = this.#db
       .prepare(
-        `SELECT id, participant_id, round, type, content, target_which, tool_calls, prompt_context, created_at
+        `SELECT id, participant_id, round, type, content, target_which, batch_id, tool_calls, prompt_context, created_at
          FROM contributions WHERE meeting_id = ? ORDER BY id ASC`,
       )
       .all(meetingId);
@@ -505,6 +606,7 @@ export class MeetingDatabase {
       content: r.content,
       type: r.type,
       targets_which: r.target_which != null ? Number(r.target_which) : null,
+      batch_id: r.batch_id ?? null,
       tool_calls: r.tool_calls ? JSON.parse(r.tool_calls) : null,
       prompt_context: r.prompt_context ? JSON.parse(r.prompt_context) : null,
       created_at: r.created_at,
@@ -514,7 +616,7 @@ export class MeetingDatabase {
   getRecentContributions(meetingId, count) {
     const rows = this.#db
       .prepare(
-        `SELECT id, participant_id, round, type, content, target_which, tool_calls, prompt_context, created_at
+        `SELECT id, participant_id, round, type, content, target_which, batch_id, tool_calls, prompt_context, created_at
          FROM contributions WHERE meeting_id = ? ORDER BY id DESC LIMIT ?`,
       )
       .all(meetingId, count);
@@ -525,6 +627,7 @@ export class MeetingDatabase {
       content: r.content,
       type: r.type,
       targets_which: r.target_which != null ? Number(r.target_which) : null,
+      batch_id: r.batch_id ?? null,
       tool_calls: r.tool_calls ? JSON.parse(r.tool_calls) : null,
       prompt_context: r.prompt_context ? JSON.parse(r.prompt_context) : null,
       created_at: r.created_at,
@@ -560,12 +663,19 @@ export class MeetingDatabase {
    * Ensures both writes succeed or neither does, preventing orphaned records.
    */
   addContributionWithTurnRequest(meetingId, contribution, turnRequest) {
+    // Application-level FK check (schema has no FK on participant_id to avoid migration)
+    try {
+      const exists = this.#db.prepare(`SELECT 1 FROM participants WHERE id = ? AND meeting_id = ?`).get(contribution.participant_id, meetingId);
+      if (!exists) {
+        dbLogger.warn("orphan_contribution", `Contribution participant_id ${contribution.participant_id} not in participants for meeting ${meetingId}`);
+      }
+    } catch {}
     this.#db.exec('BEGIN TRANSACTION');
     try {
       this.#db
         .prepare(
-          `INSERT INTO contributions (meeting_id, participant_id, round, type, content, target_which, tool_calls, prompt_context, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO contributions (meeting_id, participant_id, round, type, content, target_which, batch_id, tool_calls, prompt_context, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           meetingId,
@@ -574,6 +684,7 @@ export class MeetingDatabase {
           contribution.type,
           contribution.content,
           contribution.targets_which ?? null,
+          contribution.batch_id ?? null,
           contribution.tool_calls ? JSON.stringify(contribution.tool_calls) : null,
           contribution.prompt_context ? JSON.stringify(contribution.prompt_context) : null,
           contribution.created_at ?? isoNow(),
@@ -813,7 +924,7 @@ export class MeetingDatabase {
 
     const contributions = this.#db
       .prepare(
-        `SELECT id, participant_id, round, type, content, target_which, created_at
+        `SELECT id, participant_id, round, type, content, target_which, batch_id, created_at
          FROM contributions WHERE meeting_id = ? ORDER BY round ASC, id ASC`,
       )
       .all(meetingId);
@@ -839,6 +950,7 @@ export class MeetingDatabase {
         type: c.type,
         round: c.round,
         targets_which: c.target_which != null ? Number(c.target_which) : null,
+        batch_id: c.batch_id ?? null,
         created_at: c.created_at,
       });
     }
@@ -955,11 +1067,16 @@ export class MeetingDatabase {
    * @param {number} dim - embedding dimension (default: 384)
    */
   storeFabricEmbedding(chunkId, embedding, dim = 384) {
+    const safeDim = Number(dim);
+    if (!Number.isFinite(safeDim) || safeDim < 64 || safeDim > 2048 || Math.floor(safeDim) !== safeDim) {
+      dbLogger.warn("store_embedding_invalid_dim", `Invalid dim ${dim} for storeFabricEmbedding`, { dim });
+      return;
+    }
     try {
       // Ensure the vector table exists for this dimension
-      this.#initVectorTable(dim);
+      this.#initVectorTable(safeDim);
       this.#db.prepare(
-        `INSERT INTO vec_fabric_chunks_${dim}(rowid, embedding) VALUES (?, vec_f32(?))`
+        `INSERT INTO vec_fabric_chunks_${safeDim}(rowid, embedding) VALUES (?, vec_f32(?))`
       ).run(chunkId, embedding);
     } catch (err) {
       dbLogger.debug("store_embedding_failed", "Failed to store fabric embedding", extractErrorInfo(err));
@@ -975,9 +1092,10 @@ export class MeetingDatabase {
    */
   storeFabricChunk(content, round, source = "round_summary") {
     try {
+      const nextIdx = this.#db.prepare(`SELECT COALESCE(MAX(chunk_index), -1) + 1 as n FROM fabric_chunks WHERE meeting_id = ?`).get(this.#meetingId)?.n ?? 0;
       const result = this.#db.prepare(
-        `INSERT INTO fabric_chunks (meeting_id, round, content, source, created_at) VALUES (?, ?, ?, ?, ?)`
-      ).run(this.#meetingId, round, content, source, isoNow());
+        `INSERT INTO fabric_chunks (meeting_id, round, chunk_index, content, source, created_at) VALUES (?, ?, ?, ?, ?, ?)`
+      ).run(this.#meetingId, round, nextIdx, content, source, isoNow());
       return result.lastInsertRowid;
     } catch (err) {
       dbLogger.debug("store_chunk_failed", "Failed to store fabric chunk", extractErrorInfo(err));
@@ -1009,15 +1127,20 @@ export class MeetingDatabase {
    * @returns {Array<{id: number, distance: number, content: string, round: number, source: string}>}
    */
   searchFabricVectors(queryEmbedding, topK = 5, dim = 384) {
+    const safeDim = Number(dim);
+    if (!Number.isFinite(safeDim) || safeDim < 64 || safeDim > 2048 || Math.floor(safeDim) !== safeDim) {
+      dbLogger.warn("search_invalid_dim", `Invalid dim ${dim} for searchFabricVectors`, { dim });
+      return [];
+    }
     try {
       const limit = Math.max(1, Math.floor(Number(topK) || 5));
       return this.#db.prepare(`
         SELECT v.rowid, v.distance, f.content, f.round, f.source
-        FROM vec_fabric_chunks_${dim} v
+        FROM vec_fabric_chunks_${safeDim} v
         JOIN fabric_chunks f ON f.id = v.rowid AND f.meeting_id = ?
-        WHERE v.embedding MATCH ? AND k = ${limit}
+        WHERE v.embedding MATCH ? AND k = ?
         ORDER BY v.distance
-      `).all(this.#meetingId, queryEmbedding);
+      `).all(this.#meetingId, queryEmbedding, limit);
     } catch {
       return [];
     }
@@ -1026,10 +1149,15 @@ export class MeetingDatabase {
   // ── Persona Embedding Methods ────────────────────────────────────────────
 
   #initPersonaVectorTable(dim = 384) {
+    const safeDim = Number(dim);
+    if (!Number.isFinite(safeDim) || safeDim < 64 || safeDim > 2048 || Math.floor(safeDim) !== safeDim) {
+      dbLogger.warn("persona_vec_table_invalid_dim", `Invalid persona embedding dimension ${dim}`, { dim });
+      return;
+    }
     try {
       this.#db.exec(`
-        CREATE VIRTUAL TABLE IF NOT EXISTS vec_persona_embeddings_${dim} USING vec0(
-          embedding float[${dim}],
+        CREATE VIRTUAL TABLE IF NOT EXISTS vec_persona_embeddings_${safeDim} USING vec0(
+          embedding float[${safeDim}],
           tier text
         )
       `);
@@ -1049,14 +1177,19 @@ export class MeetingDatabase {
    * @returns {number|null} row ID
    */
   storePersonaEmbedding(personaName, tier, tags, embeddingText, embedding, dim = 384) {
+    const safeDim = Number(dim);
+    if (!Number.isFinite(safeDim) || safeDim < 64 || safeDim > 2048 || Math.floor(safeDim) !== safeDim) {
+      dbLogger.warn("store_persona_invalid_dim", `Invalid dim ${dim} for storePersonaEmbedding`, { dim });
+      return null;
+    }
     try {
-      this.#initPersonaVectorTable(dim);
+      this.#initPersonaVectorTable(safeDim);
       const result = this.#db.prepare(
         `INSERT INTO persona_embeddings (meeting_id, persona_name, tier, tags, embedding_text, created_at) VALUES (?, ?, ?, ?, ?, ?)`
       ).run(this.#meetingId, personaName, tier, JSON.stringify(tags), embeddingText, isoNow());
       const rowId = result.lastInsertRowid;
       this.#db.prepare(
-        `INSERT INTO vec_persona_embeddings_${dim}(rowid, embedding, tier) VALUES (?, vec_f32(?), ?)`
+        `INSERT INTO vec_persona_embeddings_${safeDim}(rowid, embedding, tier) VALUES (?, vec_f32(?), ?)`
       ).run(rowId, embedding, tier);
       return rowId;
     } catch (err) {
@@ -1074,16 +1207,21 @@ export class MeetingDatabase {
    * @returns {Array<{id: number, distance: number, persona_name: string, tier: string, tags: string, embedding_text: string}>}
    */
   searchPersonaEmbeddings(queryEmbedding, tier, topK = 5, dim = 384) {
+    const safeDim = Number(dim);
+    if (!Number.isFinite(safeDim) || safeDim < 64 || safeDim > 2048 || Math.floor(safeDim) !== safeDim) {
+      dbLogger.warn("search_persona_invalid_dim", `Invalid dim ${dim} for searchPersonaEmbeddings`, { dim });
+      return [];
+    }
     try {
-      this.#initPersonaVectorTable(dim);
+      this.#initPersonaVectorTable(safeDim);
       const limit = Math.max(1, Math.floor(Number(topK) || 5));
       return this.#db.prepare(`
         SELECT v.rowid, v.distance, p.persona_name, p.tier, p.tags, p.embedding_text
-        FROM vec_persona_embeddings_${dim} v
+        FROM vec_persona_embeddings_${safeDim} v
         JOIN persona_embeddings p ON p.id = v.rowid AND p.meeting_id = ?
-        WHERE v.tier = ? AND v.embedding MATCH ? AND k = ${limit}
+        WHERE v.tier = ? AND v.embedding MATCH ? AND k = ?
         ORDER BY v.distance
-      `).all(this.#meetingId, tier, queryEmbedding);
+      `).all(this.#meetingId, tier, queryEmbedding, limit);
     } catch (err) {
       dbLogger.warn("search_persona_embeddings_failed", "Persona vector search failed", extractErrorInfo(err));
       return [];
@@ -1106,8 +1244,10 @@ export class MeetingDatabase {
   }
 
   countPersonaVecEmbeddings(dim = 384) {
+    const safeDim = Number(dim);
+    if (!Number.isFinite(safeDim) || safeDim < 64 || safeDim > 2048 || Math.floor(safeDim) !== safeDim) return 0;
     try {
-      const row = this.#db.prepare(`SELECT COUNT(*) as count FROM vec_persona_embeddings_${dim}`).get();
+      const row = this.#db.prepare(`SELECT COUNT(*) as count FROM vec_persona_embeddings_${safeDim}`).get();
       return row?.count ?? 0;
     } catch { /* table may not exist yet */ }
     return 0;
@@ -1126,11 +1266,13 @@ export class MeetingDatabase {
    * @returns {Float32Array|null}
    */
   getPersonaEmbeddingByName(personaName, dim = 384) {
+    const safeDim = Number(dim);
+    if (!Number.isFinite(safeDim) || safeDim < 64 || safeDim > 2048 || Math.floor(safeDim) !== safeDim) return null;
     try {
-      this.#initPersonaVectorTable(dim);
+      this.#initPersonaVectorTable(safeDim);
       const row = this.#db.prepare(`
         SELECT v.embedding
-        FROM vec_persona_embeddings_${dim} v
+        FROM vec_persona_embeddings_${safeDim} v
         JOIN persona_embeddings p ON p.id = v.rowid AND p.meeting_id = ?
         WHERE p.persona_name = ?
       `).get(this.#meetingId, personaName);
@@ -1148,12 +1290,14 @@ export class MeetingDatabase {
    */
   getPersonaEmbeddingsByNames(personaNames, dim = 384) {
     if (!personaNames || personaNames.length === 0) return new Map();
+    const safeDim = Number(dim);
+    if (!Number.isFinite(safeDim) || safeDim < 64 || safeDim > 2048 || Math.floor(safeDim) !== safeDim) return new Map();
     try {
-      this.#initPersonaVectorTable(dim);
+      this.#initPersonaVectorTable(safeDim);
       const placeholders = personaNames.map(() => '?').join(',');
       const rows = this.#db.prepare(`
         SELECT p.persona_name, v.embedding
-        FROM vec_persona_embeddings_${dim} v
+        FROM vec_persona_embeddings_${safeDim} v
         JOIN persona_embeddings p ON p.id = v.rowid AND p.meeting_id = ?
         WHERE p.persona_name IN (${placeholders})
       `).all(this.#meetingId, ...personaNames);

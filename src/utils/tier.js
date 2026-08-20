@@ -9,6 +9,7 @@ export const TURN_REQUEST_PRIORITY_CAP = {
   mid: 7,
   senior: 9,
   principal: 10,
+  civilian: 7,
 };
 
 /** Gets the maximum turn request priority a tier can self-report. */
@@ -29,6 +30,7 @@ export function getRightsForTier(tier) {
     case "junior":
       return { ...BASE_RIGHTS };
     case "mid":
+    case "civilian":
       return { ...BASE_RIGHTS, call_vote: true };
     case "senior":
       return { ...BASE_RIGHTS, call_vote: true };
@@ -43,7 +45,8 @@ export function getRightsForTier(tier) {
 export function getDefaultTemperatureForTier(tier) {
   switch (tier) {
     case "junior": return 0.7;
-    case "mid": return 0.5;
+    case "mid":
+    case "civilian": return 0.5;
     case "senior": return 0.3;
     case "principal": return 0.2;
     default: return 0.5;
@@ -60,6 +63,7 @@ export function getPromptForTier(tier) {
     case "junior":
       return "Think creatively and bring fresh perspectives. Wild ideas are welcome — you won't be penalized for being wrong. Challenge senior thinking with naive questions that expose hidden assumptions.";
     case "mid":
+    case "civilian":
       return "Balance creativity with evidence. When you disagree, explain why with specific reasoning. Synthesize others' points before adding your own.";
     case "senior":
       return "Prioritize accuracy and risk assessment. Cite patterns from experience. Be conservative with claims but commit fully when you do. Flag irreversible decisions.";

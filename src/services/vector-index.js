@@ -25,16 +25,13 @@ export class VectorIndex {
   async indexRound(roundNumber, roundSummary, contributions = []) {
     let indexed = 0;
     const dim = getEmbeddingDim();
+    const pending = [];
 
     if (roundSummary && roundSummary.trim()) {
       const chunks = this.#chunkText(roundSummary, `Round ${roundNumber} summary`);
       for (const chunk of chunks) {
         const chunkId = this.#database.storeFabricChunk(chunk, roundNumber, "round_summary");
-        if (chunkId != null) {
-          const embedding = await embedText(chunk);
-          this.#database.storeFabricEmbedding(chunkId, embedding, dim);
-          indexed++;
-        }
+        if (chunkId != null) pending.push({ chunkId, text: chunk });
       }
     }
 
@@ -44,9 +41,19 @@ export class VectorIndex {
       const chunks = this.#chunkText(text, `Round ${roundNumber} contribution`);
       for (const chunk of chunks) {
         const chunkId = this.#database.storeFabricChunk(chunk, roundNumber, "contribution");
-        if (chunkId != null) {
-          const embedding = await embedText(chunk);
-          this.#database.storeFabricEmbedding(chunkId, embedding, dim);
+        if (chunkId != null) pending.push({ chunkId, text: chunk });
+      }
+    }
+
+    // Batch embed with concurrency 4
+    const concurrency = 4;
+    for (let i = 0; i < pending.length; i += concurrency) {
+      const batch = pending.slice(i, i + concurrency);
+      const embeddings = await Promise.all(batch.map((p) => embedText(p.text).catch((e) => { vectorLogger.warn("embed_failed", `Failed to embed chunk for round ${roundNumber}`, extractErrorInfo(e)); return null; })));
+      for (let j = 0; j < batch.length; j++) {
+        const emb = embeddings[j];
+        if (emb) {
+          this.#database.storeFabricEmbedding(batch[j].chunkId, emb, dim);
           indexed++;
         }
       }
@@ -113,6 +120,9 @@ export class VectorIndex {
     const maxTokens = getEmbeddingMaxTokens();
     // Approximate: 1 token ≈ 4 characters for English text
     const maxChunkSize = maxTokens * 4;
+    if (text.length > maxChunkSize * 1.2) {
+      vectorLogger.debug("chunk_heuristic", `Chunking large text for ${sourceLabel}: ${text.length} chars > ${maxChunkSize} (maxTokens ${maxTokens}) — may truncate for non-English/code`);
+    }
     const paragraphs = text.split(/\n\n+/).filter((p) => p.trim().length > 0);
     const chunks = [];
     let current = "";

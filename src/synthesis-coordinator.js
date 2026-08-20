@@ -96,6 +96,13 @@ export class SynthesisCoordinator {
 
   /** Second-pass audit: the synthesizer reviews its draft for misrepresentation, then fixes (one cycle). */
   async #critique(sessionId, text, transcript, model, synthesizer, allParticipants) {
+    const truncateAtBoundary = (t, lim) => {
+      if (t.length <= lim) return t;
+      const s = t.slice(0, lim);
+      const lastHead = s.lastIndexOf("\n## ");
+      if (lastHead > lim - 1000) return s.slice(0, lastHead);
+      return s;
+    };
     let critiquePrompt = `You are a neutral deliberation analyst reviewing your own synthesis.
 
 Review the draft below against the deliberation transcript for:
@@ -103,6 +110,7 @@ Review the draft below against the deliberation transcript for:
 2. Invented points not present in the deliberation
 3. Significant dissent that was omitted from "Dissenting Views"
 4. Decisions or action items not supported by any contribution
+5. If a Resolved Concerns section exists, verify each resolved item is not restated as unresolved dissent
 
 If corrections are needed, output the FULL revised synthesis with ALL required sections:
 ## Decision
@@ -115,7 +123,7 @@ If corrections are needed, output the FULL revised synthesis with ALL required s
 If the draft is accurate and complete, respond with exactly: [NO_CHANGES]
 
 Draft synthesis:
-${text.slice(0, 6000)}`;
+${truncateAtBoundary(text, 6000)}`;
 
     for (let attempt = 0; attempt < MAX_CRITIQUE_RETRIES; attempt++) {
       try {

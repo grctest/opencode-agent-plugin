@@ -26,29 +26,45 @@ export class PersonaIndex {
 
     let indexed = 0;
     let failed = 0;
+    // Batch with concurrency 4 to avoid sequential 7s stall
+    const all = [];
     for (const [tier, tierPersonas] of Object.entries(personas)) {
       for (const persona of tierPersonas) {
+        all.push({ tier, persona });
+      }
+    }
+    const concurrency = 4;
+    for (let i = 0; i < all.length; i += concurrency) {
+      const batch = all.slice(i, i + concurrency);
+      const results = await Promise.all(batch.map(async ({ tier, persona }) => {
         try {
           const embeddingText = this.#buildEmbeddingText(persona);
           const embedding = await embedText(embeddingText);
-          const tags = persona.tags || persona.expertise || [];
+          return { tier, persona, embeddingText, embedding, err: null };
+        } catch (err) {
+          return { tier, persona, err };
+        }
+      }));
+      for (const r of results) {
+        if (r.err) {
+          failed++;
+          personaIndexLogger.warn("persona_index_failed", `Failed to index persona: ${r.persona.name}`, extractErrorInfo(r.err));
+          continue;
+        }
+        try {
+          const tags = r.persona.tags || r.persona.expertise || [];
           const rowId = this.#database.storePersonaEmbedding(
-            persona.name,
-            tier,
+            r.persona.name,
+            r.tier,
             tags,
-            embeddingText,
-            embedding,
+            r.embeddingText,
+            r.embedding,
             dim,
           );
-          if (rowId != null) {
-            indexed++;
-          } else {
-            failed++;
-            personaIndexLogger.warn("persona_store_returned_null", `storePersonaEmbedding returned null for persona: ${persona.name}`);
-          }
+          if (rowId != null) indexed++; else { failed++; personaIndexLogger.warn("persona_store_returned_null", `storePersonaEmbedding returned null for persona: ${r.persona.name}`); }
         } catch (err) {
           failed++;
-          personaIndexLogger.warn("persona_index_failed", `Failed to index persona: ${persona.name}`, extractErrorInfo(err));
+          personaIndexLogger.warn("persona_index_failed", `Failed to index persona: ${r.persona.name}`, extractErrorInfo(err));
         }
       }
     }
@@ -67,6 +83,11 @@ export class PersonaIndex {
   async search(queryText, tier, topK = 5) {
     const dim = getEmbeddingDim();
     const queryEmbedding = await embedText(queryText);
+    return this.#database.searchPersonaEmbeddings(queryEmbedding, tier, topK, dim);
+  }
+
+  async searchWithEmbedding(queryEmbedding, tier, topK = 5) {
+    const dim = getEmbeddingDim();
     return this.#database.searchPersonaEmbeddings(queryEmbedding, tier, topK, dim);
   }
 

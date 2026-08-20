@@ -19,19 +19,21 @@ export function deriveConfidence(weave, dissentCount, totalParticipants = 0, act
   return "low";
 }
 
-/** Parses the Confidence section as a single High/Medium/Low value. */
+/** Parses the Confidence section as a single High/Medium/Low value — anchored to heading, avoids "Highly". */
 export function parseConfidence(text) {
-  const match = text.match(/##\s*Confidence[\s\S]*?(High|Medium|Low)/i);
+  const tail = text.slice(-800);
+  const match = tail.match(/##\s*Confidence\b[^#]*?\b(High|Medium|Low)\b/i);
   if (match) return match[1].toLowerCase();
   return null;
 }
 
-/** Validates that all required sections exist in the synthesis output. Returns warnings for missing ones. */
+/** Validates that all required sections exist in the synthesis output (case-insensitive). Returns warnings for missing ones. */
 export function validateSynthesisSections(text) {
   const requiredSections = ["Decision", "Reasoning", "Action Items", "Dissenting Views", "Open Questions", "Confidence"];
+  const lower = text.toLowerCase();
   const warnings = [];
   for (const section of requiredSections) {
-    if (!text.includes(`## ${section}`)) {
+    if (!lower.includes(`## ${section.toLowerCase()}`)) {
       warnings.push(section);
     }
   }
@@ -54,7 +56,7 @@ export function extractSection(text, sectionName) {
   };
 
   for (const line of lines) {
-    if (line.startsWith("## ") && line.includes(sectionName)) {
+    if (line.startsWith("## ") && line.toLowerCase().includes(sectionName.toLowerCase())) {
       inSection = true;
       continue;
     }
@@ -87,7 +89,9 @@ const NEUTRAL_SYNTHESIZER_SYSTEM = `You are a neutral deliberation analyst. Your
 /** Post-processes raw synthesis text into the final artifact: objections, missing-section notes, confidence, structured fields. */
 export function finalizeSynthesis(artifactText, transcriptData, participants, objections) {
   const unresolvedObjections = (objections ?? []).filter((o) => o.unresolved);
+  const resolvedObjections = (objections ?? []).filter((o) => !o.unresolved);
   const objectionsText = unresolvedObjections.map((o) => `- ${o.content}`).join("\n");
+  const resolvedText = resolvedObjections.map((o) => `- ${o.content} (resolved)`).join("\n");
   
   // Collect refusals from the transcript
   const weave = transcriptData.rounds.flatMap((r) => r.contributions);
@@ -101,6 +105,9 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, ob
   
   if (objectionsText) {
     finalOutput = `${finalOutput}\n\n## Unresolved Objections\n${objectionsText}`;
+  }
+  if (resolvedText) {
+    finalOutput = `${finalOutput}\n\n## Resolved Concerns\n${resolvedText}`;
   }
   
   if (refusalsText) {
@@ -116,6 +123,12 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, ob
   const activeParticipants = participants.filter((p) => p.status !== "failed").length;
   const heuristicConfidence = deriveConfidence(weave, unresolvedObjections.length, participants.length, activeParticipants);
   const confidence = parsedConfidence ?? heuristicConfidence;
+  // Make heuristic visible when it differs or when no explicit confidence was parsed
+  if (!parsedConfidence || parsedConfidence !== heuristicConfidence) {
+    if (!finalOutput.toLowerCase().includes("heuristic:") && !finalOutput.toLowerCase().includes("heuristic basis")) {
+      finalOutput += `\n\n> Heuristic basis: ${heuristicConfidence} (active ${activeParticipants}/${participants.length}, unresolved ${unresolvedObjections.length}, contributions ${weave.length})`;
+    }
+  }
 
   const artifact = {
     content: finalOutput,

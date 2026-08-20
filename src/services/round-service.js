@@ -33,9 +33,10 @@ export class RoundService {
    * @returns {Promise<Object>} Updated round with summary
    */
    async runRound(params) {
-    const { round, activeParticipants, promptOrchestrator, getHighestTierModel, getFallbackModel } = params;
+    const { round, activeParticipants, promptOrchestrator, getHighestTierModel, getFallbackModel, deadline } = params;
 
     this.#roundExecutor.resetRoundStats();
+    if (deadline) this.#roundExecutor.setDeadline(deadline);
 
     await this.#roundExecutor.runPromptPhase(round, activeParticipants);
     // Reflections now happen mid-round in runPromptPhase — no separate phase needed

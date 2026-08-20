@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
 export function usePersistedState(key, defaultValue) {
   const [value, setValue] = useState(() => {
@@ -123,6 +123,148 @@ export function useSSEHandlers({ setContributions, setTurnRequests, setState, se
   }, []);
 }
 
+const POLLING_FALLBACK_INTERVAL = 3000;
+
+export function useSSE(meetingId, onEvent) {
+  const [connected, setConnected] = useState(false);
+  const [reconnectAttempt, setReconnectAttempt] = useState(0);
+  const [lastError, setLastError] = useState(null);
+  const esRef = useRef(null);
+  const reconnectTimeoutRef = useRef(null);
+  const pollingRef = useRef(null);
+  const lastPollIdRef = useRef(0);
+  const onEventRef = useRef(onEvent);
+  onEventRef.current = onEvent;
+  const maxReconnectAttempts = 10;
+
+  useEffect(() => {
+    if (!meetingId) return;
+    let cancelled = false;
+    let fallbackPoll = false;
+
+    function startPolling() {
+      if (fallbackPoll) return;
+      fallbackPoll = true;
+      setConnected(false);
+      setLastError("Live updates unavailable — using periodic refresh.");
+      const poll = async () => {
+        if (cancelled || !fallbackPoll) return;
+        try {
+          const timestamp = new Date().toISOString();
+          const cRes = await fetch(`/api/contributions?meeting=${meetingId}&since=${lastPollIdRef.current}&include_context=0`);
+          if (cRes.ok) {
+            const contribs = await cRes.json();
+            const arr = Array.isArray(contribs) ? contribs : (contribs.contributions ?? []);
+            if (arr.length > 0) {
+              lastPollIdRef.current = Math.max(...arr.map((c) => c.id ?? 0), lastPollIdRef.current);
+              onEventRef.current({ type: "contributions", data: arr, timestamp });
+            }
+          }
+          const sRes = await fetch(`/api/state?meeting=${meetingId}`);
+          if (sRes.ok) {
+            const sData = await sRes.json();
+            onEventRef.current({ type: "state", data: sData, timestamp });
+          }
+          const pRes = await fetch(`/api/participants?meeting=${meetingId}`);
+          if (pRes.ok) {
+            const pData = await pRes.json();
+            onEventRef.current({ type: "participants", data: pData, timestamp });
+          }
+        } catch (err) {
+          window.dispatchEvent(new CustomEvent("loom-sse-error", { detail: { message: err.message, phase: "polling" } }));
+        }
+        if (!cancelled && fallbackPoll) {
+          pollingRef.current = setTimeout(poll, POLLING_FALLBACK_INTERVAL);
+        }
+      };
+      pollingRef.current = setTimeout(poll, POLLING_FALLBACK_INTERVAL);
+    }
+
+    const handleSSEError = (e) => {
+      if (e?.detail?.message) setLastError(e.detail.message);
+    };
+    window.addEventListener("loom-sse-error", handleSSEError);
+
+    function connect() {
+      if (cancelled) return;
+      if (esRef.current) { esRef.current.close(); esRef.current = null; }
+      const es = new EventSource(`/api/stream?meeting=${meetingId}`);
+      esRef.current = es;
+      es.onopen = () => {
+        if (cancelled) return;
+        fetch(`/api/contributions?meeting=${meetingId}&since=${lastPollIdRef.current}&include_context=0`).then(async (r) => {
+          if (r.ok) {
+            const data = await r.json().catch(() => null);
+            const arr = Array.isArray(data) ? data : (data?.contributions ?? []);
+            if (arr.length > 0) {
+              lastPollIdRef.current = Math.max(...arr.map((c) => c.id ?? 0), lastPollIdRef.current);
+              onEventRef.current({ type: "contributions", data: arr, timestamp: new Date().toISOString() });
+            }
+          }
+        }).catch(() => {});
+        fallbackPoll = false;
+        if (pollingRef.current) clearTimeout(pollingRef.current);
+        setConnected(true);
+        setReconnectAttempt(0);
+        setLastError(null);
+        window.dispatchEvent(new CustomEvent("loom-sse-reset"));
+      };
+      es.onerror = () => {
+        if (cancelled) return;
+        setConnected(false);
+        es.close();
+        esRef.current = null;
+        setReconnectAttempt((prev) => {
+          if (prev >= maxReconnectAttempts) { startPolling(); return prev; }
+          setLastError(`Reconnecting to live updates (attempt ${prev + 1}/${maxReconnectAttempts}).`);
+          const delay = Math.min(1000 * Math.pow(2, prev), 30000);
+          reconnectTimeoutRef.current = setTimeout(connect, delay);
+          return prev + 1;
+        });
+      };
+      es.onmessage = (event) => {
+        if (cancelled) return;
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === "contributions" && Array.isArray(data.data)) {
+            lastPollIdRef.current = Math.max(...data.data.map((c) => c.id ?? 0), lastPollIdRef.current);
+          }
+          onEventRef.current(data);
+        } catch (err) {
+          window.dispatchEvent(new CustomEvent("loom-sse-error", { detail: { message: `Failed to parse SSE message: ${err.message}`, phase: "parse" } }));
+        }
+      };
+    }
+
+    connect();
+    return () => {
+      cancelled = true;
+      fallbackPoll = false;
+      window.removeEventListener("loom-sse-error", handleSSEError);
+      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+      if (pollingRef.current) clearTimeout(pollingRef.current);
+      if (esRef.current) { esRef.current.close(); esRef.current = null; }
+    };
+  }, [meetingId]);
+
+  useEffect(() => {
+    const handleInitial = (e) => {
+      const contributions = e.detail;
+      if (Array.isArray(contributions) && contributions.length > 0) {
+        lastPollIdRef.current = Math.max(...contributions.map(c=>c.id), 0, lastPollIdRef.current);
+      }
+    };
+    window.addEventListener("loom-initial-contributions", handleInitial);
+    window.addEventListener("loom-new-contributions", handleInitial);
+    return () => {
+      window.removeEventListener("loom-initial-contributions", handleInitial);
+      window.removeEventListener("loom-new-contributions", handleInitial);
+    };
+  }, []);
+
+  return { connected, reconnectAttempt, lastError, lastPollIdRef };
+}
+
 export function useEmbeddingStatus() {
   const [status, setStatus] = useState({ state: "idle", models: [] });
 
@@ -167,6 +309,7 @@ export function useMeetingApi(meetingId, resetKey) {
   const [embeddingDim, setEmbeddingDim] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const lastPollIdRef = useRef(0);
 
   const fetchMeetingData = useCallback(async (id) => {
     if (!id) {
@@ -175,7 +318,7 @@ export function useMeetingApi(meetingId, resetKey) {
     }
     setLoading(true);
     try {
-      const res = await fetch(`/api/meeting?meeting=${id}`);
+      const res = await fetch(`/api/meeting?meeting=${id}&include_context=0&limit=100`);
       if (!res.ok) {
         if (res.status === 404) {
           throw new Error("Meeting not found. It may have been deleted or is still initializing.");
@@ -201,7 +344,7 @@ export function useMeetingApi(meetingId, resetKey) {
         let nextOffset = (offset ?? 0) + (limit ?? all.length);
         while (all.length < total && nextOffset < total) {
           try {
-            const pres = await fetch(`/api/contributions?meeting=${id}&limit=${limit ?? 500}&offset=${nextOffset}`);
+            const pres = await fetch(`/api/contributions?meeting=${id}&limit=${limit ?? 500}&offset=${nextOffset}&include_context=0`);
             if (!pres.ok) break;
             const pdata = await pres.json();
             const batch = pdata.contributions ?? [];
@@ -213,6 +356,8 @@ export function useMeetingApi(meetingId, resetKey) {
         }
       }
       setContributions(all);
+      lastPollIdRef.current = Math.max(...all.map((c) => c.id ?? 0), 0);
+      window.dispatchEvent(new CustomEvent("loom-initial-contributions", { detail: all }));
       setError(null);
     } catch (e) {
       setError(e.message);
@@ -226,6 +371,12 @@ export function useMeetingApi(meetingId, resetKey) {
       fetchMeetingData(meetingId);
     }
   }, [meetingId, fetchMeetingData, resetKey]);
+
+  useEffect(() => {
+    if (contributions.length > 0) {
+      lastPollIdRef.current = Math.max(...contributions.map(c=>c.id), 0);
+    }
+  }, [contributions]);
 
   useSSEHandlers({ setContributions, setTurnRequests, setState, setParticipants, setAgentErrors, setArtifact, setOrchestratorMessages });
 

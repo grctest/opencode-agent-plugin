@@ -43,8 +43,10 @@ const STATUS_COLORS = {
   converged: "loom-badge-converged",
   deadlocked: "loom-badge-deadlocked",
   max_rounds_reached: "loom-badge-max_rounds_reached",
+  exhausted: "loom-badge-max_rounds_reached",
   initializing: "loom-badge-initializing",
   aborted: "loom-badge-aborted",
+  failed: "loom-badge-aborted",
   cancelled: "loom-badge-aborted",
   timeout: "loom-badge-timeout",
 };

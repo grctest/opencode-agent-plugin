@@ -50,6 +50,12 @@ function installFiles(opencodeDir) {
       rmSync(join(commandDir, file));
       logInfo(`  Replaced command → ${commandDir}/${file}`);
     }
+    // Explicit legacy cleanup: old single-file model command that used subcommands
+    const legacyModelCmd = join(commandDir, "knit_models.md");
+    if (existsSync(legacyModelCmd)) {
+      rmSync(legacyModelCmd);
+      logInfo(`  Removed legacy command → ${legacyModelCmd} (replaced by list/enable/disable/reset_knit_models)`);
+    }
   } else {
     mkdirSync(commandDir, { recursive: true });
   }

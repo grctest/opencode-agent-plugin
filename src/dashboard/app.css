@@ -2052,3 +2052,27 @@ input {
   color: var(--color-foreground);
 }
 
+/* Responsive floor — desktop-only but single-column at 768px */
+@media (max-width: 768px) {
+  .loom-layout {
+    flex-direction: column;
+    height: auto;
+    min-height: 100vh;
+  }
+  .loom-sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .loom-main {
+    padding: 1rem;
+  }
+  .loom-stats-grid {
+    grid-template-columns: 1fr;
+  }
+  .loom-matrix-scroll {
+    overflow-x: scroll;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+

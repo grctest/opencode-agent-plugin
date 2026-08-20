@@ -64,6 +64,12 @@ function cleanOldInstallation(opencodeDir) {
       logInfo(`  Removed old command → ${commandDir}/${file}`);
       cleaned = true;
     }
+    const legacyModelCmd = join(commandDir, "knit_models.md");
+    if (existsSync(legacyModelCmd)) {
+      rmSync(legacyModelCmd);
+      logInfo(`  Removed legacy command → ${legacyModelCmd} (replaced by list/enable/disable/reset_knit_models)`);
+      cleaned = true;
+    }
   }
 
   // Remove old personas folder

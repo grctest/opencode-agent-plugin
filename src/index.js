@@ -1,5 +1,5 @@
 import { tool } from "@opencode-ai/plugin";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { isAgentSessionClient } from "./client-types.js";
 import { deleteMeetingFiles, deleteMeetingsBySessionId, findMeetingBySessionId, getDbPathForMeeting, getDatabasesBySessionId, loadSessionIndex, MeetingDatabase } from "./database.js";
@@ -58,15 +58,35 @@ export const Loom = async (input) => {
 
   const activeLooms = new Map();
   let activeDashboard = null;
+  const meetingResolveCache = new Map(); // sessionID -> { meeting, at }
+  const RESOLVE_CACHE_TTL_MS = 30000;
+  const RESOLVE_CACHE_MAX = 100;
 
   /**
    * Resolves an ephemeral session ID to its Loom meeting database path.
    * Used by agent tools to find which meeting the current session belongs to.
+   * Cached to avoid readdirSync scan per tool call.
    */
   async function resolveMeeting(sessionID) {
+    const cached = meetingResolveCache.get(sessionID);
+    if (cached && (Date.now() - cached.at) < RESOLVE_CACHE_TTL_MS) {
+      return cached.meeting;
+    }
+    // Rate-limit: if same sessionID requested >10 times/sec, return cached even if expired
+    // (simple: if cached exists within 1s, reuse)
+    if (cached && (Date.now() - cached.at) < 1000) {
+      return cached.meeting;
+    }
     // 1. Direct session → meeting lookup via DB index
     const meeting = await findMeetingBySessionId(directory, sessionID);
-    if (meeting) return meeting;
+    if (meeting) {
+      if (meetingResolveCache.size >= RESOLVE_CACHE_MAX) {
+        const oldest = meetingResolveCache.keys().next().value;
+        meetingResolveCache.delete(oldest);
+      }
+      meetingResolveCache.set(sessionID, { meeting, at: Date.now() });
+      return meeting;
+    }
 
     // 2. Fallback: walk up to parent session
     try {
@@ -76,7 +96,15 @@ export const Loom = async (input) => {
       });
       const parentID = sessionResult?.data?.parentID;
       if (parentID && parentID !== sessionID) {
-        return await findMeetingBySessionId(directory, parentID);
+        const parentMeeting = await findMeetingBySessionId(directory, parentID);
+        if (parentMeeting) {
+          if (meetingResolveCache.size >= RESOLVE_CACHE_MAX) {
+            const oldest = meetingResolveCache.keys().next().value;
+            meetingResolveCache.delete(oldest);
+          }
+          meetingResolveCache.set(sessionID, { meeting: parentMeeting, at: Date.now() });
+          return parentMeeting;
+        }
       }
     } catch {
       // Session may not exist or API may not support .get()
@@ -256,11 +284,6 @@ export const Loom = async (input) => {
             .max(1800000)
             .optional()
             .describe("Maximum meeting duration in ms. Default: 900000 (15 min)"),
-          seed: tool.schema
-            .number()
-            .int()
-            .optional()
-            .describe("Random seed for room composition. Use the same seed to reproduce a room, or omit for variety."),
           fresh: tool.schema
             .boolean()
             .optional()
@@ -274,22 +297,35 @@ export const Loom = async (input) => {
           "Check the status of a running Loom deliberation session. " +
           "Internal tool for agents to monitor progress. Not a user command.",
         args: {
-          loom_id: tool.schema.string().describe("The ID of the Loom session to check"),
+          loom_id: tool.schema.string().describe("The ID of the Loom session to check (loom_id or meeting_id, both work)"),
         },
         execute: async (args, _context) => {
           const engine = activeLooms.get(args.loom_id);
-          if (!engine) {
-            return "No active Loom found with that ID.";
+          if (engine) {
+            const state = engine.getState();
+            return `**Loom Status:** ${state.status}\n**Round:** ${state.current_round}/${state.max_rounds}\n**Contributions:** ${state.weave.length}\n**Meeting ID:** ${engine.getMeetingId()}`;
           }
-          const state = engine.getState();
-          return `**Loom Status:** ${state.status}\n**Round:** ${state.current_round}/${state.max_rounds}\n**Contributions:** ${state.weave.length}\n**Meeting ID:** ${engine.getMeetingId()}`;
+          // Fallback: completed loom — try DB by meetingId
+          try {
+            const { getMeetingDbPath } = await import("./paths.js");
+            const dbPath = getMeetingDbPath(directory, args.loom_id);
+            if (dbPath && existsSync(dbPath)) {
+              const { DashboardApi } = await import("./dashboard/api.js");
+              const api = DashboardApi.get(dbPath);
+              const state = api.getState();
+              if (state) {
+                return `**Loom Status (completed):** ${state.status}\n**Round:** ${state.round}/${state.max_rounds}\n**Meeting ID:** ${args.loom_id} (from DB)`;
+              }
+            }
+          } catch {}
+          return "No active Loom found with that ID.";
         },
       }),
 
       loom_cancel: tool({
         description: "Cancel a running Loom deliberation session.",
         args: {
-          loom_id: tool.schema.string().describe("The ID of the Loom session to cancel"),
+          loom_id: tool.schema.string().describe("The ID of the Loom session to cancel (loom_id or meeting_id)"),
         },
         execute: async (args, _context) => {
           const engine = activeLooms.get(args.loom_id);
@@ -363,72 +399,149 @@ export const Loom = async (input) => {
       loom_debug: tool({
         description: "Inspect internal state of a running or completed loom for debugging.",
         args: {
-          loom_id: tool.schema.string().describe("The ID of the Loom session to inspect"),
+          loom_id: tool.schema.string().describe("The ID of the Loom session to inspect (loom_id or meeting_id)"),
           include: tool.schema
-            .array(tool.schema.enum(['state', 'participants', 'contributions', 'rounds', 'fabric', 'orchestratorMessages']))
+            .array(tool.schema.enum(['state', 'participants', 'contributions', 'rounds', 'fabric', 'orchestratorMessages', 'config']))
             .optional()
-            .describe("Which parts of the loom state to include (default: all)"),
+            .describe("Which parts of the loom state to include (default: all — include 'config' for resolved config + warnings)"),
         },
         execute: async (args, _context) => {
-          const engine = activeLooms.get(args.loom_id);
-          if (!engine) {
-            return "No active Loom found with that ID. For completed looms, use the dashboard export feature.";
-          }
-          
-          const state = engine.getState();
           const include = args.include || ['state', 'participants', 'contributions', 'rounds', 'fabric', 'orchestratorMessages'];
-          
-          const result = {};
-          if (include.includes('state')) {
-            result.status = state.status;
-            result.round = state.current_round;
-            result.maxRounds = state.max_rounds;
-            result.tags = state.tags;
-            result.question = state.question;
-            result.context = state.context;
+          const engine = activeLooms.get(args.loom_id);
+          if (engine) {
+            const state = engine.getState();
+            const result = {};
+            if (include.includes('state')) {
+              result.status = state.status;
+              result.round = state.current_round;
+              result.maxRounds = state.max_rounds;
+              result.tags = state.tags;
+              result.question = state.question;
+              result.context = state.context;
+            }
+            if (include.includes('participants')) {
+              result.participants = state.participants.map(p => ({
+                id: p.config.id,
+                name: p.config.name,
+                tier: p.config.tier,
+                status: p.status,
+                contributions: p.contributions_count,
+                has_reflection: !!p.reflection,
+                model: p.config.model ? `${p.config.model.providerID}/${p.config.model.modelID}` : 'unassigned',
+              }));
+            }
+            if (include.includes('contributions')) {
+              result.contributions = state.weave.map(c => ({
+                id: c.id,
+                round: c.round,
+                participantId: c.participant_id,
+                type: c.type,
+                contentPreview: c.content.slice(0, 2000),
+                tool_calls: c.tool_calls ?? null,
+                prompt_context_hash: c.prompt_context ? String(JSON.stringify(c.prompt_context).length) : null,
+                timestamp: new Date(c.created_at ?? c.timestamp).toISOString(),
+              }));
+            }
+            if (include.includes('rounds')) {
+              result.rounds = state.rounds.map(r => ({
+                number: r.number,
+                contributionCount: r.contributions.length,
+                turnRequestCount: r.turn_requests.length,
+                summary: r.summary,
+              }));
+            }
+            if (include.includes('fabric')) {
+              result.fabric = state.fabric;
+            }
+            if (include.includes('orchestratorMessages')) {
+              result.orchestratorMessages = engine.getOrchestratorMessages().map(m => ({
+                type: m.type,
+                role: m.role,
+                contentPreview: m.content.slice(0, 2000),
+                timestamp: new Date(m.timestamp).toISOString(),
+              }));
+            }
+            if (include.includes('config')) {
+              try {
+                const cfg = config.get();
+                const warnings = config.getWarnings();
+                const source = config.getSource();
+                result.config = { values: cfg, warnings, source, dormantNote: "turnRequestThresholds.autoGrant, maxTurnRequestsPerRound, maxTurnRequestWords are dormant — ordering is planTurnOrder" };
+              } catch {}
+            }
+            return JSON.stringify(result, null, 2);
           }
-          if (include.includes('participants')) {
-            result.participants = state.participants.map(p => ({
-              id: p.config.id,
-              name: p.config.name,
-              tier: p.config.tier,
-              status: p.status,
-              contributions: p.contributions_count,
-              has_reflection: !!p.reflection,
-              model: p.config.model ? `${p.config.model.providerID}/${p.config.model.modelID}` : 'unassigned',
-            }));
+          // Fallback: completed loom — load from DB via DashboardApi
+          try {
+            const { getMeetingDbPath } = await import("./paths.js");
+            const dbPath = getMeetingDbPath(directory, args.loom_id);
+            if (dbPath && existsSync(dbPath)) {
+              const { DashboardApi } = await import("./dashboard/api.js");
+              const api = DashboardApi.get(dbPath);
+              const state = api.getState();
+              const participants = api.getParticipants();
+              const contributions = api.getContributions(500, 0);
+              const rounds = state ? [{ number: state.round, contributions, turn_requests: api.getTurnRequests(), summary: "" }] : [];
+              const orchestratorMessages = api.getOrchestratorMessages(args.loom_id);
+              const result = {};
+              if (include.includes('state') && state) {
+                result.status = state.status;
+                result.round = state.round;
+                result.maxRounds = state.max_rounds;
+                result.question = state.question;
+                result.context = state.context;
+              }
+              if (include.includes('participants')) {
+                result.participants = participants.map(p => ({
+                  id: p.id,
+                  name: p.name,
+                  tier: p.tier,
+                  status: p.status,
+                  contributions: 0,
+                  has_reflection: !!p.reflection,
+                  model: p.provider_id && p.model_id ? `${p.provider_id}/${p.model_id}` : 'unassigned',
+                }));
+              }
+              if (include.includes('contributions')) {
+                result.contributions = contributions.map(c => ({
+                  id: c.id,
+                  round: c.round,
+                  participantId: c.participant_id,
+                  type: c.type,
+                  contentPreview: c.content.slice(0, 2000),
+                  tool_calls: c.tool_calls ?? null,
+                  prompt_context_hash: c.prompt_context ? String(JSON.stringify(c.prompt_context).length) : null,
+                  created_at: c.created_at,
+                }));
+              }
+              if (include.includes('rounds')) {
+                result.rounds = rounds;
+              }
+              if (include.includes('fabric') && state) {
+                result.fabric = state.fabric;
+              }
+              if (include.includes('orchestratorMessages')) {
+                result.orchestratorMessages = orchestratorMessages.map(m => ({
+                  type: m.type,
+                  role: m.role,
+                  contentPreview: m.content.slice(0, 2000),
+                  timestamp: new Date(m.created_at).toISOString(),
+                }));
+              }
+              if (include.includes('config')) {
+                try {
+                  const { createConfig } = await import("./config.js");
+                  const cfgInst = createConfig(directory);
+                  result.config = { values: cfgInst.get(), warnings: cfgInst.getWarnings(), source: cfgInst.getSource(), dormantNote: "turnRequestThresholds.autoGrant, maxTurnRequestsPerRound, maxTurnRequestWords are dormant — ordering is planTurnOrder" };
+                } catch {}
+              }
+              result._source = "db-fallback";
+              return JSON.stringify(result, null, 2);
+            }
+          } catch (e) {
+            return `No active Loom found with that ID. DB fallback failed: ${e.message}`;
           }
-          if (include.includes('contributions')) {
-            result.contributions = state.weave.map(c => ({
-              id: c.id,
-              round: c.round,
-              participantId: c.participant_id,
-              type: c.type,
-              contentPreview: c.content.slice(0, 200),
-              timestamp: new Date(c.timestamp).toISOString(),
-            }));
-          }
-          if (include.includes('rounds')) {
-            result.rounds = state.rounds.map(r => ({
-              number: r.number,
-              contributionCount: r.contributions.length,
-              turnRequestCount: r.turn_requests.length,
-              summary: r.summary,
-            }));
-          }
-          if (include.includes('fabric')) {
-            result.fabric = state.fabric;
-          }
-          if (include.includes('orchestratorMessages')) {
-            result.orchestratorMessages = engine.getOrchestratorMessages().map(m => ({
-              type: m.type,
-              role: m.role,
-              contentPreview: m.content.slice(0, 500),
-              timestamp: new Date(m.timestamp).toISOString(),
-            }));
-          }
-          
-          return JSON.stringify(result, null, 2);
+          return "No active Loom found with that ID. For completed looms, use the dashboard export feature.";
         },
       }),
 

@@ -161,6 +161,14 @@ export const ContributionItem = memo(({ contribution, participantName, onDialogO
           <TypeBadge type={contribution.type} />
           <span className="loom-text-xs loom-text-muted">Round {contribution.round}</span>
           <span className="loom-text-xs loom-text-muted">{relativeTime(contribution.created_at)}</span>
+          <button
+            onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(`**[${participantName}]** (${contribution.type}): ${content}`); }}
+            className="loom-copy-btn"
+            style={{ marginLeft: "auto", fontSize: "0.75rem", padding: "2px 6px", border: "1px solid #ccc", borderRadius: "4px", background: "transparent", cursor: "pointer" }}
+            aria-label="Copy markdown"
+          >
+            Copy
+          </button>
         </div>
       </div>
       {isLong ? (

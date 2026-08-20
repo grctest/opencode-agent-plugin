@@ -68,8 +68,13 @@ export function detectOpencodeDir() {
 }
 
 export function isLoomCommand(filename) {
-  const loomCommands = ["knit.md", "list_knit_models.md", "enable_knit_models.md", "disable_knit_models.md", "reset_knit_models.md"];
-  return loomCommands.includes(filename);
+  const loomCommands = ["knit.md", "list_knit_models.md", "enable_knit_models.md", "disable_knit_models.md", "reset_knit_models.md", "loom_viz.md", "loom_stop.md"];
+  if (loomCommands.includes(filename)) return true;
+  // Legacy single-file command — must be cleaned up on update/install
+  if (filename === "knit_models.md") return true;
+  // Fallback: any loom-related command file that might have been installed by older versions
+  if (/^(knit|loom)_/.test(filename) && filename.endsWith(".md")) return true;
+  return false;
 }
 
 export function findOpencodeJson(opencodeDir) {

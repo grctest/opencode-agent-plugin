@@ -17,6 +17,7 @@ function useSSE(meetingId, onEvent) {
   const esRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
   const pollingRef = useRef(null);
+  const lastPollIdRef = useRef(0);
   const onEventRef = useRef(onEvent);
   onEventRef.current = onEvent;
   const maxReconnectAttempts = 10;
@@ -36,16 +37,25 @@ function useSSE(meetingId, onEvent) {
       const poll = async () => {
         if (cancelled || !fallbackPoll) return;
         try {
-          const res = await fetch(`/api/meeting?meeting=${meetingId}&limit=500`);
-          if (res.ok) {
-            const data = await res.json();
-            const timestamp = new Date().toISOString();
-            const newContribs = Array.isArray(data) ? data : (data.contributions ?? []);
-            onEventRef.current({ type: "contributions", data: newContribs, timestamp });
-            if (data.state) onEventRef.current({ type: "state", data: data.state, timestamp });
-            if (data.participants) onEventRef.current({ type: "participants", data: data.participants, timestamp });
-            if (data.artifact) onEventRef.current({ type: "artifact", data: data.artifact, timestamp });
-            if (data.orchestrator_messages) onEventRef.current({ type: "orchestrator_messages", data: data.orchestrator_messages, timestamp });
+          const timestamp = new Date().toISOString();
+          const cRes = await fetch(`/api/contributions?meeting=${meetingId}&since=${lastPollIdRef.current}&include_context=0`);
+          if (cRes.ok) {
+            const contribs = await cRes.json();
+            const arr = Array.isArray(contribs) ? contribs : (contribs.contributions ?? []);
+            if (arr.length > 0) {
+              lastPollIdRef.current = Math.max(...arr.map((c) => c.id ?? 0), lastPollIdRef.current);
+              onEventRef.current({ type: "contributions", data: arr, timestamp });
+            }
+          }
+          const sRes = await fetch(`/api/state?meeting=${meetingId}`);
+          if (sRes.ok) {
+            const sData = await sRes.json();
+            onEventRef.current({ type: "state", data: sData, timestamp });
+          }
+          const pRes = await fetch(`/api/participants?meeting=${meetingId}`);
+          if (pRes.ok) {
+            const pData = await pRes.json();
+            onEventRef.current({ type: "participants", data: pData, timestamp });
           }
         } catch (err) {
           window.dispatchEvent(new CustomEvent("loom-sse-error", {
@@ -79,6 +89,18 @@ function useSSE(meetingId, onEvent) {
 
       es.onopen = () => {
         if (cancelled) return;
+        // Gap-fill: fetch any contributions missed during disconnect via incremental API
+        // Use a short timeout so reconnect feels immediate; fallback poll already tracks lastPollId
+        fetch(`/api/contributions?meeting=${meetingId}&since=${lastPollIdRef.current}&include_context=0`).then(async (r) => {
+          if (r.ok) {
+            const data = await r.json().catch(() => null);
+            const arr = Array.isArray(data) ? data : (data?.contributions ?? []);
+            if (arr.length > 0) {
+              lastPollIdRef.current = Math.max(...arr.map((c) => c.id ?? 0), lastPollIdRef.current);
+              onEventRef.current({ type: "contributions", data: arr, timestamp: new Date().toISOString() });
+            }
+          }
+        }).catch(() => {});
         fallbackPoll = false;
         if (pollingRef.current) clearTimeout(pollingRef.current);
         setConnected(true);
@@ -134,6 +156,21 @@ function useSSE(meetingId, onEvent) {
     };
   }, [meetingId]);
 
+  useEffect(() => {
+    const handleInitial = (e) => {
+      const contributions = e.detail;
+      if (Array.isArray(contributions) && contributions.length > 0) {
+        lastPollIdRef.current = Math.max(...contributions.map(c=>c.id), 0, lastPollIdRef.current);
+      }
+    };
+    window.addEventListener("loom-initial-contributions", handleInitial);
+    window.addEventListener("loom-new-contributions", handleInitial);
+    return () => {
+      window.removeEventListener("loom-initial-contributions", handleInitial);
+      window.removeEventListener("loom-new-contributions", handleInitial);
+    };
+  }, []);
+
   return { connected, reconnectAttempt, lastError };
 }
 
@@ -146,6 +183,7 @@ function ThemeProvider({ theme, setTheme, children }) {
     } else {
       document.documentElement.removeAttribute("data-theme");
     }
+    document.documentElement.style.colorScheme = theme === "system" ? "light dark" : theme;
     localStorage.setItem("loom-theme", theme);
   }, [theme]);
 
@@ -231,7 +269,15 @@ export function App() {
   const [selectedMeeting, setSelectedMeeting] = useState("");
   const [theme, setTheme] = useState(() => localStorage.getItem("loom-theme") ?? "system");
   const [activeTab, setActiveTab] = usePersistedState("active-tab", "overview");
-  const [collapsedRounds, setCollapsedRounds] = usePersistedState("collapsed-rounds", []);
+  const [collapsedMap, setCollapsedMap] = usePersistedState("collapsed-rounds", {});
+  const collapsedRounds = collapsedMap[selectedMeeting] ?? [];
+  const setCollapsedRounds = useCallback((updater) => {
+    setCollapsedMap((prev) => {
+      const current = prev[selectedMeeting] ?? [];
+      const next = typeof updater === "function" ? updater(current) : updater;
+      return { ...prev, [selectedMeeting]: next };
+    });
+  }, [selectedMeeting, setCollapsedMap]);
   const [extensions, setExtensions] = useState([]);
   const [extensionBanner, setExtensionBanner] = useState(null);
 
@@ -282,15 +328,66 @@ export function App() {
 
   const { connected, reconnectAttempt, lastError } = useSSE(selectedMeeting, handleSSEEvent);
 
+  const isValidMeetingId = useCallback((id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id), []);
+  const getMeetingIdFromUrl = useCallback(() => {
+    try {
+      const fromSearch = new URLSearchParams(location.search).get("meeting");
+      if (fromSearch && isValidMeetingId(fromSearch)) return fromSearch;
+      const fromHash = location.hash.slice(1);
+      if (fromHash && isValidMeetingId(fromHash)) return fromHash;
+    } catch {}
+    return null;
+  }, [isValidMeetingId]);
+
   useEffect(() => {
+    if (meetings.length === 0) return;
+    const urlId = getMeetingIdFromUrl();
+    if (urlId && meetings.some((m) => m.meeting_id === urlId)) {
+      if (selectedMeeting !== urlId) setSelectedMeeting(urlId);
+      return;
+    }
     if (!selectedMeeting && meetings.length > 0) {
       setSelectedMeeting(meetings[0].meeting_id);
     }
-  }, [meetings, selectedMeeting]);
+  }, [meetings, selectedMeeting, getMeetingIdFromUrl]);
+
+  useEffect(() => {
+    if (!selectedMeeting || !isValidMeetingId(selectedMeeting)) return;
+    try {
+      const url = new URL(window.location.href);
+      if (url.searchParams.get("meeting") !== selectedMeeting) {
+        url.searchParams.set("meeting", selectedMeeting);
+        window.history.replaceState(null, "", `?meeting=${selectedMeeting}${url.hash}`);
+      }
+    } catch {
+      if (location.hash.slice(1) !== selectedMeeting) {
+        window.history.replaceState(null, "", `#${selectedMeeting}`);
+      }
+    }
+  }, [selectedMeeting, isValidMeetingId]);
+
+  useEffect(() => {
+    const onPopState = () => {
+      const urlId = getMeetingIdFromUrl();
+      if (urlId && meetings.some((m) => m.meeting_id === urlId)) {
+        setSelectedMeeting(urlId);
+      }
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [meetings, getMeetingIdFromUrl]);
+
+  // Sync lastPollIdRef for SSE fallback from initial contributions
+  useEffect(() => {
+    if (contributions.length > 0) {
+      window.dispatchEvent(new CustomEvent("loom-initial-contributions", { detail: contributions }));
+    }
+  }, [contributions]);
 
   useEffect(() => {
     if (!state?.fabric) return;
     const fabric = state.fabric;
+    if (!fabric.includes("**Original Question:**")) return;
     const extensionRegex = /\*\*User Input:\*\*\s*([^\n]+(?:\n(?!\*\*User Input:\*\*)[^\n]*)*)/g;
     const found = [];
     let match;

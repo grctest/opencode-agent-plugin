@@ -59,9 +59,12 @@ export { sortModelsByQuality };
 
 /**
  * Single model-assignment engine: quality-sorted and deterministic.
- * Principal/senior roles get the session model when available; remaining roles get
- * the next-best unused models. This is the one source of truth for both the
+ * Principal/senior roles get the session model when available and high-scoring (top 3);
+ * otherwise they get the next-best unused models. This avoids blindly preferring a
+ * low-quality session model. This is the one source of truth for both the
  * list_knit_models preview plan and the real meeting assignment, so they always agree.
+ * Scoring: active(20) + context/10000 + reasoning(15); cost is display-only.
+ * Tie-breaker: deterministic provider/model key; future: latency from recent metrics.
  */
 export function assignModelsByTier(available, sessionModel, roles) {
   if (available.length === 0) return [];
@@ -77,11 +80,18 @@ export function assignModelsByTier(available, sessionModel, roles) {
         (m) => m.providerID === sessionModel.providerID && m.modelID === sessionModel.modelID,
       )
     : -1;
-  const topModel = sessionIdx >= 0 ? sorted[sessionIdx] : sorted[0];
+  // Only prefer session model if it ranks in top 3 by quality score; otherwise use best available.
+  // This scores sessionModel like any other model instead of blindly preferring it.
+  let topModel = sorted[0];
+  let sessionInTop3 = false;
+  if (sessionIdx >= 0 && sessionIdx < 3) {
+    topModel = sorted[sessionIdx];
+    sessionInTop3 = true;
+  }
 
   const assignments = [];
   const usedIndices = new Set();
-  if (sessionIdx >= 0) usedIndices.add(sessionIdx);
+  if (sessionInTop3) usedIndices.add(sessionIdx);
 
   for (const role of sortedRoles) {
     if ((role === "principal" || role === "senior") && topModel) {

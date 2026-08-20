@@ -9,7 +9,7 @@ import {
 import { Logger, extractErrorInfo } from "../logger.js";
 import { getConfig } from "../config.js";
 import { resolveLoomBaseDir, getMeetingDbPath } from "../paths.js";
-import { unlinkSync, writeFileSync, mkdirSync } from "fs";
+import { unlinkSync, writeFileSync, mkdirSync, openSync, fsyncSync, closeSync, renameSync } from "fs";
 import { join } from "path";
 import { sanitizeForPrompt } from "../utils/sanitize.js";
 
@@ -80,7 +80,8 @@ function createMeetingCallbacks(context, logger) {
  * @returns {Array} Filtered list of models
  */
 function applyModelFilter(allAvailable, enabledModels) {
-  if (!enabledModels || enabledModels.size === 0) return allAvailable;
+  if (enabledModels === null) return allAvailable;
+  if (enabledModels.size === 0) return [];
   return allAvailable.filter((m) => {
     const key = `${m.providerID}/${m.modelID}`;
     return enabledModels.has(key);
@@ -91,6 +92,20 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
   let pendingModels = null;
   let enabledModels = null;
   const logger = new Logger();
+  const sessionLocks = new Map();
+  async function withSessionLock(sessionId, fn) {
+    const prev = sessionLocks.get(sessionId) ?? Promise.resolve();
+    let release;
+    const next = new Promise((res) => { release = res; });
+    sessionLocks.set(sessionId, prev.then(() => next));
+    try {
+      await prev;
+      return await fn();
+    } finally {
+      release();
+      if (sessionLocks.get(sessionId) === next) sessionLocks.delete(sessionId);
+    }
+  }
 
   /**
    * Writes the full deliberation report to a persistent documentation file in the
@@ -100,16 +115,26 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
    * @returns {string|null} Absolute path to the written file
    */
   function writeReportFile(meetingId, report) {
+    const tmpSuffix = `${process.pid}.${crypto.randomUUID().slice(0, 8)}`;
+    let tmpPath = null;
     try {
       const baseDir = resolveLoomBaseDir(directory);
       const dir = join(baseDir, "meetings");
       mkdirSync(dir, { recursive: true });
       const filePath = join(dir, `${meetingId}.md`);
-      writeFileSync(filePath, report, "utf-8");
+      tmpPath = `${filePath}.tmp.${tmpSuffix}`;
+      writeFileSync(tmpPath, report, "utf-8");
+      try {
+        const fd = openSync(tmpPath, "r+");
+        fsyncSync(fd);
+        closeSync(fd);
+      } catch {}
+      renameSync(tmpPath, filePath);
       return filePath;
     } catch (err) {
       const info = extractErrorInfo(err);
       logger.warn("report_write_failed", "Failed to write deliberation report file", info);
+      if (tmpPath) try { unlinkSync(tmpPath); } catch {}
       return null;
     }
   }
@@ -145,6 +170,7 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
   async function handleKnit(args, context) {
     const sessionID = context.sessionID;
     const loomId = crypto.randomUUID();
+    return withSessionLock(sessionID, async () => {
 
     const { available: allAvailable, sessionModel } = await discoverModels(client, directory, sessionID);
 
@@ -155,9 +181,11 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
       if (existingMeeting) {
         const extDbPath = getDbPathForMeeting(directory, existingMeeting.meetingId);
         if (extDbPath) {
-          try { unlinkSync(extDbPath); } catch (err) {
-            if (err?.code !== 'ENOENT') {
-              logger.debug("fresh_delete_failed", "Failed to delete existing loom database", { error: err.message });
+          for (const suffix of ["", "-wal", "-shm"]) {
+            try { unlinkSync(`${extDbPath}${suffix}`); } catch (err) {
+              if (err?.code !== 'ENOENT') {
+                logger.debug("fresh_delete_failed", `Failed to delete ${extDbPath}${suffix}`, { error: err.message });
+              }
             }
           }
           logger.info("loom_fresh", "Cleared existing loom database for fresh start", { meetingId: existingMeeting.meetingId });
@@ -181,6 +209,9 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
     if (explicitModels && explicitModels.length > 0) {
       for (const m of explicitModels) {
         const tier = m.tier;
+        if (modelMap.has(tier)) {
+          logger.warn("duplicate_tier", `Duplicate tier "${tier}" in model map — last wins`);
+        }
         const providerId = "provider_id" in m ? m.provider_id : m.providerID;
         const modelId = "model_id" in m ? m.model_id : m.modelID;
         modelMap.set(tier, { providerID: providerId, modelID: modelId });
@@ -198,34 +229,42 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
           output: `Participant #${invalid + 1} is missing required fields (name, persona, agenda, tier).`,
         };
       }
-      participants = args.participants.map((p, i) => ({
-        id: p.name.toLowerCase().replace(/\s+/g, "_") + "_" + i,
-        name: p.name,
-        persona: p.persona,
-        agenda: p.agenda,
-        tier: p.tier,
-        model: modelMap.get(p.tier),
-        tags: p.tags || p.expertise || ["general"],
-        expertise: p.expertise || [],
-        known_biases: p.known_biases,
-        communication_style: p.communication_style,
-        preferred_contribution_types: p.preferred_contribution_types,
-      }));
+      const seenIds = new Set();
+      participants = args.participants.map((p, i) => {
+        const rawTags = p.tags ?? p.expertise ?? ["general"];
+        const tags = Array.isArray(rawTags) ? rawTags : typeof rawTags === "string" ? [rawTags] : ["general"];
+        const slug = p.name.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
+        let baseId = `${slug}_${i}`;
+        let id = baseId;
+        if (seenIds.has(id)) {
+          id = `${baseId}_${Math.random().toString(36).slice(2,6)}`;
+        }
+        seenIds.add(id);
+        return {
+          id,
+          name: p.name,
+          persona: p.persona,
+          agenda: p.agenda,
+          tier: p.tier,
+          model: modelMap.get(p.tier),
+          tags,
+          expertise: p.expertise || [],
+          known_biases: p.known_biases,
+          communication_style: p.communication_style,
+          preferred_contribution_types: p.preferred_contribution_types,
+        };
+      });
     } else {
-      const seed = args.seed ?? Date.now();
       meetingId = crypto.randomUUID();
       const dbPath = getMeetingDbPath(directory, meetingId);
+      let sanitizedQuestion = args.question ? sanitizeForPrompt(args.question, 5000) : '';
+      let sanitizedContext = args.context ? sanitizeForPrompt(args.context, 8000) : 'No additional context provided.';
+      const maxRounds = args.max_rounds ?? getConfig().defaultMaxRounds;
       try {
         meetingDb = await MeetingDatabase.create(dbPath, meetingId);
-
-        // Insert a meeting row BEFORE composition so the FK constraint on
-        // persona_embeddings(meeting_id -> meetings(id)) is satisfied when
-        // PersonaIndex stores embeddings during similarity search.
-        const question = args.question ? sanitizeForPrompt(args.question, 5000) : '';
-        const sanitizedContext = args.context ? sanitizeForPrompt(args.context, 8000) : 'No additional context provided.';
-        const maxRounds = args.max_rounds ?? getConfig().defaultMaxRounds;
+        // Insert meeting row BEFORE composition so FK on persona_embeddings is satisfied
         meetingDb.initializeMeeting({
-          question,
+          question: sanitizedQuestion,
           context: sanitizedContext,
           maxRounds,
           tags: [],
@@ -235,9 +274,43 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
           embedding_dim: null,
           participants: [],
         });
+        meetingDb.close();
+        meetingDb = null;
 
-        composedRoom = await composeRoomWithSimilarity(args.question, seed, meetingDb);
+        // Heavy embedding work — avoid holding DB during ONNX inference (busy_timeout 5000)
+        let composeDb = await MeetingDatabase.create(dbPath, meetingId);
+        try {
+          composedRoom = await composeRoomWithSimilarity(args.question, composeDb);
+        } finally {
+          try { composeDb.close(); } catch {}
+        }
         participants = composedRoom.participants;
+
+        // Persist real embedding model/dim if available
+        try {
+          const { isEmbedderInitialized, getEmbeddingDim } = await import("../services/embedding-service.js");
+          const { DEFAULT_EMBEDDING_MODEL } = await import("../services/model-manager.js");
+          if (isEmbedderInitialized()) {
+            const dim = getEmbeddingDim();
+            const modelName = DEFAULT_EMBEDDING_MODEL;
+            const tmpDb = await MeetingDatabase.create(dbPath, meetingId);
+            try {
+              tmpDb.upsertMeeting({
+                question: sanitizedQuestion,
+                context: sanitizedContext,
+                maxRounds,
+                tags: composedRoom.tags ?? [],
+                parentSessionId: sessionID,
+                opencodeSessionId: sessionID,
+                embedding_model: modelName,
+                embedding_dim: dim,
+                participants: [], // don't overwrite participants
+              });
+            } finally { try { tmpDb.close(); } catch {} }
+          } else if (composedRoom.reasoning && composedRoom.reasoning.includes("keyword-based")) {
+            // Degraded embedder — keep meeting row but composition is keyword fallback (visible via reasoning)
+          }
+        } catch {}
 
         // Apply the tier plan (from args.models / pendingModels) to composed
         // participants, mirroring the custom-participants branch, then fill any
@@ -250,6 +323,7 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
           participants = assignModelsToParticipants(participants, available, sessionModel);
         }
 
+        meetingDb = await MeetingDatabase.create(dbPath, meetingId);
         meetingDb.insertParticipants(participants);
       } catch (err) {
         logger.warn("similarity_composition_failed", "Similarity-based composition failed — using fallback", extractErrorInfo(err));
@@ -311,7 +385,10 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
       ...meetingCallbacks,
     });
 
+    // Store under both loomId (ephemeral) and meetingId (dashboard UUID) for alias support
+    const meetingIdKey = engine.getMeetingId();
     activeLooms.set(loomId, engine);
+    if (meetingIdKey && meetingIdKey !== loomId) activeLooms.set(meetingIdKey, engine);
 
     try {
       await engine.initialize();
@@ -348,8 +425,11 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
       };
     } finally {
       activeLooms.delete(loomId);
+      const mid = engine.getMeetingId();
+      if (mid) activeLooms.delete(mid);
       await engine.close();
     }
+    });
   }
 
   async function handleExtend(existingMeeting, args, context, loomId, sessionID, available = []) {
@@ -400,7 +480,9 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
         ...meetingCallbacks,
       });
 
+      const existingMeetingId = existingMeeting.meetingId;
       activeLooms.set(loomId, extEngine);
+      if (existingMeetingId && existingMeetingId !== loomId) activeLooms.set(existingMeetingId, extEngine);
 
       try {
         await extEngine.initialize();
@@ -429,6 +511,8 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
         throw extErr;
       } finally {
         activeLooms.delete(loomId);
+        const mid = extEngine.getMeetingId() || existingMeeting.meetingId;
+        if (mid) activeLooms.delete(mid);
         await extEngine.close();
       }
     } catch (extErr) {
@@ -440,9 +524,11 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
 
   async function handleListKnitModels() {
     let available;
+    let sessionModel;
     try {
       const result = await discoverModels(client, directory, "");
       available = result.available;
+      sessionModel = result.sessionModel;
     } catch (err) {
       const info = extractErrorInfo(err);
       logger.error("model_discovery_failed", "Model discovery failed", info);
@@ -455,7 +541,6 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
 
     const modelKey = (m) => `${m.providerID}/${m.modelID}`;
 
-    const { sessionModel } = await discoverModels(client, directory, "");
     const plan = createModelPlan(available, undefined, sessionModel);
     pendingModels = plan.participants;
 
@@ -468,7 +553,7 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
 
     for (const m of available) {
       const key = modelKey(m);
-      const isEnabled = enabledModels ? enabledModels.has(key) : true;
+      const isEnabled = enabledModels === null ? true : enabledModels.has(key);
       const status = isEnabled ? "enabled" : "disabled";
       const cost = m.cost.input === 0 && m.cost.output === 0
         ? "free"
@@ -532,8 +617,10 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
       };
     }
 
-    if (!enabledModels) enabledModels = new Set(allKeys);
+    if (enabledModels === null) enabledModels = new Set();
+    const added = requested.filter((id) => !enabledModels.has(id));
     for (const id of requested) enabledModels.add(id);
+    if (added.length > 0) pendingModels = null;
     return {
       title: "Models Enabled",
       output: `Enabled ${requested.length} model(s):\n${requested.map((m) => `- ${m}`).join("\n")}\n\n${enabledModels.size} model(s) are now available for Loom agents.`,
@@ -575,7 +662,7 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
       };
     }
 
-    if (!enabledModels) enabledModels = new Set(allKeys);
+    if (enabledModels === null) enabledModels = new Set(allKeys);
     const removed = requested.filter((id) => enabledModels.has(id));
     for (const id of requested) enabledModels.delete(id);
     if (removed.length > 0) pendingModels = null;

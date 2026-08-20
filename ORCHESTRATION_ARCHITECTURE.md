@@ -1,5 +1,7 @@
 # The Loom Orchestration Architecture
 
+**Schema version:** `meetings.status ∈ {initializing,weaving,converged,exhausted,timeout,cancelled,aborted,deadlocked}` — file pattern `.opencode/loom/meetings/<uuid>.db` — last verified `0.1.0`.
+
 A complete technical reference for how the Loom multi-agent deliberation system works, from user input to final output. Every LLM prompt, every data structure, every decision point. Written for someone who cannot read the source code.
 
 ---
@@ -58,7 +60,7 @@ When a user types `/knit` with a question, this is what happens:
 
 ### Step 1: Complexity Analysis
 
-`composeRoomWithSimilarity(question, seed, db)` scores the question:
+`composeRoomWithSimilarity(question, db)` scores the question:
 
 - **Word count:** >30 words → +2, >15 words → +1
 - **Question marks:** more than one `?` → +1
@@ -78,10 +80,7 @@ else:       [senior, mid, mid, junior, junior, junior, junior]
 
 Then a seniority boost is applied: `high` shifts every tier up one level, `low` shifts everyone down one level (e.g. high → `[principal, senior, mid, mid, junior, junior, junior]`).
 
-> **Note:** `composeRoomWithSimilarity(question, seed, db)` accepts a `seed` argument but
-> the composition is actually driven purely by the question's similarity search — the seed
-> is ignored. The `seed` argument and its `/knit` surface are candidates for removal
-> (see `docs/dead-code-review.md` §7).
+Composition is deterministic content-similarity; no `seed` parameter exists — rooms are reproducible given the same question and persona index.
 
 ### Step 2: Similarity-Based Persona Selection
 
@@ -89,7 +88,7 @@ There is **no LLM domain detection** — the now-removed `domain` pipeline was r
 
 1. All personas are loaded from JSON files (`personas/<tier>/*.json`, or legacy `<tier>.json` arrays) and embedded into the meeting database via `PersonaIndex.indexAll()` (tables `persona_embeddings` + `vec_persona_embeddings`, FK to `meetings(id)`).
 2. For each role tier in the role list, `PersonaIndex.search(question, tier, 5)` returns the 5 most similar personas for that tier; the first persona not already used is selected.
-3. ~(Seeded PRNG note removed — the seed arg is not used, see note above. Selection is deterministic given the same question and persona index.)
+3. Selection is deterministic given the same question and persona index.
 4. Meeting-level `tags` are derived from the selected participants' most common tags (top 3).
 5. Estimated rounds: high=4, medium=3, low=2.
 

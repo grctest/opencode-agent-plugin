@@ -14,6 +14,8 @@ export class SessionManager {
   #progressFailureCount = 0;
   #progressAlerted = false;
   #sessionMeetingMap = new Map();
+  #orchestratorSessionId = null;
+  #database = null;
 
   constructor(client, directory, parentSessionId, logger = null) {
     this.#client = client;
@@ -21,6 +23,10 @@ export class SessionManager {
     this.#parentSessionId = parentSessionId;
     this.#logger = logger;
     this.#contract = new SessionContract(client, directory, logger);
+  }
+
+  setDatabase(database) {
+    this.#database = database;
   }
 
   /**
@@ -104,38 +110,72 @@ export class SessionManager {
   }
 
   /**
-   * Prompts via a fresh ephemeral session. Each call is stateless — no accumulated
-   * history from prior calls. Creates a session, sends the prompt, and deletes the
-   * session in a finally block. Resolves with { text, tokens }.
+   * Prompts via a persistent orchestrator session (Option D) — one session for all
+   * orchestrator calls in a meeting. Falls back to ephemeral if persistent creation fails.
    * @returns {Promise<{ text: string, tokens?: { input: number; output: number } }>}
    */
   async promptOrchestrator(system, model, message) {
-    const sessionId = await this.#createSessionWithRetry("Loom · Orchestrator (ephemeral)");
-    try {
-      const result = await withRetry(async () => {
-        const res = await this.#contract.prompt({
-          sessionId,
-          system,
-          model,
-          tools: {},
-          parts: [{ type: "text", text: message }],
-        });
-        if (!res.ok) throw res.error;
-        return res;
-      }, {
-        maxAttempts: getConfig().maxRetryAttempts,
-        baseDelayMs: getConfig().retryBaseDelayMs,
-        maxDelayMs: getConfig().retryMaxDelayMs,
-        retryable: isRetryableError,
-      });
-      return { text: result.text, tokens: result.tokens };
-    } finally {
-      this.deleteEphemeralSession(sessionId);
+    // Try persistent session first (Option D)
+    let sessionId = this.#orchestratorSessionId;
+    if (!sessionId) {
+      try {
+        sessionId = await this.#createSessionWithRetry("Loom · Orchestrator (persistent)");
+        this.#orchestratorSessionId = sessionId;
+      } catch {
+        // Fallback to ephemeral per-prompt (previous behavior)
+        sessionId = await this.#createSessionWithRetry("Loom · Orchestrator (ephemeral)");
+        try {
+          const result = await withRetry(async () => {
+            const res = await this.#contract.prompt({
+              sessionId,
+              system,
+              model,
+              tools: {},
+              parts: [{ type: "text", text: message }],
+            });
+            if (!res.ok) throw res.error;
+            return res;
+          }, {
+            maxAttempts: getConfig().maxRetryAttempts,
+            baseDelayMs: getConfig().retryBaseDelayMs,
+            maxDelayMs: getConfig().retryMaxDelayMs,
+            retryable: isRetryableError,
+          });
+          return { text: result.text, tokens: result.tokens };
+        } finally {
+          this.deleteEphemeralSession(sessionId);
+        }
+      }
     }
+    // Persistent path — reuse session, do not delete
+    const result = await withRetry(async () => {
+      const res = await this.#contract.prompt({
+        sessionId,
+        system,
+        model,
+        tools: {},
+        parts: [{ type: "text", text: message }],
+      });
+      if (!res.ok) throw res.error;
+      return res;
+    }, {
+      maxAttempts: getConfig().maxRetryAttempts,
+      baseDelayMs: getConfig().retryBaseDelayMs,
+      maxDelayMs: getConfig().retryMaxDelayMs,
+      retryable: isRetryableError,
+    });
+    return { text: result.text, tokens: result.tokens };
   }
 
   async deleteSession(sessionId) {
     await this.#contract.delete(sessionId);
+  }
+
+  async deleteOrchestratorSession() {
+    if (this.#orchestratorSessionId) {
+      try { await this.#contract.delete(this.#orchestratorSessionId); } catch {}
+      this.#orchestratorSessionId = null;
+    }
   }
 
   postProgress(message) {
@@ -157,6 +197,10 @@ export class SessionManager {
           `Failed to post progress ${MAX_PROGRESS_FAILURES_BEFORE_ALERT}+ times — live status updates will not appear in the chat`,
           extractErrorInfo(err),
         );
+        // Persist degraded state so dashboard timeline shows the gap
+        try {
+          this.#database?.addOrchestratorMessage("progress_down", "assistant", "⚠️ Progress stream down — deliberation continues, dashboard not live.", null);
+        } catch {}
       } else {
         this.#logger?.warn("progress_post_failed", "Failed to post progress message", extractErrorInfo(err));
       }

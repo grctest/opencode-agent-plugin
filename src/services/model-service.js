@@ -229,6 +229,9 @@ function getModelDiversity(available, participants, tierMap, overrideMap) {
 /**
  * Returns the highest-tier model that is actually usable (principal > senior > mid > junior),
  * falling back to the first participant with a valid model.
+ * Ranking for model selection is capability-fit (active(20)+context/10k+reasoning(15)),
+ * cost is display-only; tie-breaker is latency if available else deterministic key.
+ * Session model is scored like any other and only preferred if in top 3 (handled in assignModelsByTier).
  * @param {Array<{tier:string, model?:{providerID:string, modelID:string}}>} participants
  * @returns {{providerID:string, modelID:string}|null}
  */

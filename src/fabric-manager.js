@@ -37,8 +37,12 @@ export function updateStateOfPlay(weave, question, tags) {
     if (c.type === "pass") continue;
     const raw = (c.content ?? "").trim();
     if (!raw) continue;
-    const content = cleanContent(raw);
+    let content = cleanContent(raw);
     if (!content) continue;
+    if (c.type === "reflection") {
+      // Keep reflection visible as a concise fact — header already indicates context
+      content = `[Reflected: ${content.slice(0, 280)}]`;
+    }
 
     const bucket = classifyContribution(c.type, content);
     switch (bucket) {
@@ -79,8 +83,9 @@ function classifyContribution(type, content) {
       return null;
     case "synthesize":
     case "refuse":
-    case "reflection":
       return null;
+    case "reflection":
+      return "keyFacts";
     default:
       return classifyByKeywords(content);
   }
@@ -155,11 +160,44 @@ function formatRoundLines(round, participants) {
   return lines;
 }
 
-/** Formats only the final round's transcript for synthesis (reduces token usage). */
+/** Formats transcript for synthesis: digest of earlier rounds + full final round + reflections. */
 export function formatFinalRoundTranscript(data, participants) {
-  if (!data.rounds || data.rounds.length === 0) return "";
-  const round = data.rounds[data.rounds.length - 1];
-  const lines = formatRoundLines(round, participants);
-  lines[0] = `### Round ${round.number} (Final)`;
-  return lines.join("\n");
+  const appendReflections = (lines) => {
+    const reflections = (participants || []).filter((p) => p.reflection).map((p) => `**${p.config.name} (${p.config.tier}) reflection**: ${p.reflection.slice(0, 400).replace(/\n/g, " ")}`);
+    if (reflections.length > 0) {
+      lines.push("### Final Reflections");
+      lines.push(...reflections);
+    }
+  };
+  if (!data.rounds || data.rounds.length === 0) {
+    const lines = [];
+    appendReflections(lines);
+    return lines.join("\n");
+  }
+  if (data.rounds.length === 1) {
+    const round = data.rounds[0];
+    const lines = formatRoundLines(round, participants);
+    lines[0] = `### Round ${round.number} (Final)`;
+    appendReflections(lines);
+    const joined = lines.join("\n");
+    return joined.length > 8000 ? joined.slice(0, 8000) + "\n...[truncated]" : joined;
+  }
+  const lines = [];
+  // Digest for rounds 1..n-1 (2 lines each, capped)
+  for (let i = 0; i < data.rounds.length - 1; i++) {
+    const r = data.rounds[i];
+    const summary = (r.summary || (r.contributions[0]?.content ?? "")).slice(0, 120).replace(/\n/g, " ");
+    const contested = (r.contributions.find((c) => c.type === "challenge" || c.type === "dissent")?.content ?? "").slice(0, 120).replace(/\n/g, " ");
+    lines.push(`### Round ${r.number} (digest)`);
+    if (summary) lines.push(`Summary: ${summary}`);
+    if (contested) lines.push(`Contested: ${contested}`);
+  }
+  const finalRound = data.rounds[data.rounds.length - 1];
+  const finalLines = formatRoundLines(finalRound, participants);
+  finalLines[0] = `### Round ${finalRound.number} (Final)`;
+  lines.push(...finalLines);
+  appendReflections(lines);
+  // Cap digest+final to ~8k chars to avoid token blowup
+  const joined = lines.join("\n");
+  return joined.length > 8000 ? joined.slice(0, 8000) + "\n...[truncated]" : joined;
 }

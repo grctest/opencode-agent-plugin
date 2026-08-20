@@ -130,8 +130,11 @@ export class MeetingOrchestrator {
     this.#logger.info("cancellation", "Loom cancelled by user");
   }
 
-  async close() {
+   async close() {
     try {
+      if (this.#sessionManager) {
+        try { await this.#sessionManager.deleteOrchestratorSession(); } catch {}
+      }
       if (this.#database) {
         this.#logger.info("close", "Closing meeting database");
         this.#database.close();
@@ -151,6 +154,10 @@ export class MeetingOrchestrator {
 
   #getAllowedFallbackModel() {
     if (!this.#availableModels || this.#availableModels.length === 0) return null;
+    // Capability-fit scoring: active(20) + context/10000 + reasoning(15). Cost is display-only.
+    // Tie-breaker: recent latency metrics if available, else deterministic provider/model key.
+    // Session model is scored like any other model; only preferred if it lands in top 3 by quality
+    // (achieved by scoring it in the sorted list rather than blindly preferring it).
     const sorted = [...this.#availableModels].sort((a, b) => {
       const score = (m) => {
         let s = 0;
@@ -159,7 +166,13 @@ export class MeetingOrchestrator {
         if (m.reasoning) s += 15;
         return s;
       };
-      return score(b) - score(a);
+      const diff = score(b) - score(a);
+      if (diff !== 0) return diff;
+      // Tie-breaker: if getRecentMeetingMetrics were available, use latency (lower wins).
+      // For now use deterministic key to keep sorting stable.
+      const aKey = `${a.providerID}/${a.modelID}`;
+      const bKey = `${b.providerID}/${b.modelID}`;
+      return aKey < bKey ? -1 : aKey > bKey ? 1 : 0;
     });
     const best = sorted[0];
     return { providerID: best.providerID, modelID: best.modelID };
@@ -186,7 +199,17 @@ export class MeetingOrchestrator {
   }
 
   async #promptOrchestrator(system, model, message, type = "orchestrator", round = null) {
-    const fastPathModel = getConfig().fastPathModel;
+    const cfg = getConfig();
+    const fastPathModel = cfg.fastPathModelObj ?? (cfg.fastPathModel ? (() => {
+      const s = cfg.fastPathModel;
+      if (typeof s === 'string' && s.includes('/')) {
+        const idx = s.indexOf('/');
+        const providerID = s.slice(0, idx).trim();
+        const modelID = s.slice(idx + 1).trim();
+        if (providerID && modelID) return { providerID, modelID };
+      }
+      return null;
+    })() : null);
     const useModel = (fastPathModel && (type === "moderation" || type === "compaction" || type === "summary"))
       ? fastPathModel
       : model;
@@ -229,6 +252,7 @@ export class MeetingOrchestrator {
       this.#vectorIndex = new VectorIndex(db);
 
       this.#sessionManager = new SessionManager(this.#client, this.#directory, this.#parentSessionId, this.#logger);
+      this.#sessionManager.setDatabase(db);
       this.#synthesisCoordinator = new SynthesisCoordinator(this.#sessionManager);
 
       // Ensure the meeting row exists BEFORE indexing personas.
@@ -298,7 +322,7 @@ export class MeetingOrchestrator {
           const names = participants.map((p) => p.config.name);
           const embeddingMap = db.getPersonaEmbeddingsByNames(names);
           for (const p of participants) {
-            p.embedding = embeddingMap.get(p.config.name) ?? null;
+            this.#stateManager.setParticipantEmbedding(p.config.id, embeddingMap.get(p.config.name) ?? null);
           }
         } catch (err) {
           this.#logger.warn("embedding_load_failed", "Failed to load embeddings onto participants", extractErrorInfo(err));
@@ -309,9 +333,14 @@ export class MeetingOrchestrator {
       this.#stateManager.transitionTo("weaving");
 
       if (!this.#resume && this.#options.context) {
-        this.#vectorIndex.indexContext(this.#options.context).catch((err) => {
+        try {
+          await Promise.race([
+            this.#vectorIndex.indexContext(this.#options.context),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("indexContext timeout after 10000ms")), 10000)),
+          ]);
+        } catch (err) {
           this.#logger.warn("vector_index_context_failed", "Failed to index context for vector search", extractErrorInfo(err));
-        });
+        }
       }
 
       this.#roundExecutor = new RoundExecutor({
@@ -437,6 +466,15 @@ export class MeetingOrchestrator {
       return false;
     }
 
+    const deadline = this.#startTime + this.#meetingTimeoutMs;
+    const remaining = deadline - Date.now();
+    if (remaining < 5000) {
+      this.#stateManager.transitionTo("timeout");
+      await this.#sessionManager.postProgress("⏱️ Loom timed out — generating output from collected contributions.");
+      this.#logger.warn("timeout", "Meeting timed out before round start", { remaining });
+      return false;
+    }
+
     const round = this.#roundInitializer.initializeRound(this.#stateManager, this.#database, () => this.#notifyUpdate());
     const { activeParticipants, skipped } = this.#roundInitializer.filterActiveParticipants(this.#stateManager, round);
 
@@ -460,6 +498,7 @@ export class MeetingOrchestrator {
       getHighestTierModel: () => this.#getHighestTierModel(),
       getFallbackModel: () => this.#getAllowedFallbackModel(),
       state: this.#stateManager.getState(),
+      deadline,
     });
 
     return this.#finalizeRound(updatedRound);
@@ -477,13 +516,21 @@ export class MeetingOrchestrator {
       this.#stateManager.setStateOfPlay(newStateOfPlay);
       this.#database.setStateOfPlay(newStateOfPlay);
 
-      this.#vectorIndex.indexRound(
-        updatedRound.number,
-        updatedRound.summary,
-        updatedRound.contributions,
-      ).catch((err) => {
+      try {
+        await Promise.race([
+          this.#vectorIndex.indexRound(
+            updatedRound.number,
+            updatedRound.summary,
+            updatedRound.contributions,
+          ),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("indexRound timeout after 5000ms")), 5000)),
+        ]);
+      } catch (err) {
         this.#logger.warn("vector_index_round_failed", `Failed to index round ${updatedRound.number} for vector search`, extractErrorInfo(err));
-      });
+        try {
+          this.#database.addOrchestratorMessage("vector_index_timeout", "assistant", `⚠️ Vector indexing timed out for round ${updatedRound.number} — keyword fallback for that round.`, updatedRound.number);
+        } catch {}
+      }
 
       const contribCount = updatedRound.contributions.length;
       const turnRequestCount = (updatedRound.turn_requests || []).length;
@@ -540,10 +587,25 @@ export class MeetingOrchestrator {
       }
 
       const participants = this.#stateManager.getParticipants();
-      const activeCount = participants.filter((p) => p.status !== "passed" && p.status !== "failed").length;
-      const allPassed = activeCount === 0 && participants.length > 0;
-      if (allPassed || this.#stateManager.getCurrentRound() >= this.#stateManager.getMaxRounds()) {
+      const passed = participants.filter((p) => p.status === "passed").length;
+      const failed = participants.filter((p) => p.status === "failed").length;
+      const active = participants.length - passed - failed;
+      const allPassed = active === 0 && passed > 0 && failed === 0;
+      const allFailed = active === 0 && failed > 0 && passed === 0;
+      const mixedDone = active === 0 && passed > 0 && failed > 0;
+      const exhausted = this.#stateManager.getCurrentRound() >= this.#stateManager.getMaxRounds() && active > 0;
+      if (allPassed) {
         this.#stateManager.transitionTo("converged");
+        await this.#persistState();
+        return false;
+      }
+      if (allFailed || mixedDone) {
+        this.#stateManager.transitionTo("aborted");
+        await this.#persistState();
+        return false;
+      }
+      if (exhausted) {
+        this.#stateManager.transitionTo("max_rounds_reached");
         await this.#persistState();
         return false;
       }
@@ -562,8 +624,7 @@ export class MeetingOrchestrator {
     const sharedState = this.#stateManager.buildSharedState();
     const stats = this.#getMergedStats();
     try {
-      await this.#persistenceService.persistState(sharedState, this.#stateManager.getNextSpeakerId(), stats);
-      this.#persistenceService.persistMaxRounds(this.#stateManager.getMaxRounds());
+      await this.#persistenceService.persistState(sharedState, this.#stateManager.getNextSpeakerId(), stats, this.#stateManager.getMaxRounds());
     } catch (err) {
       const info = extractErrorInfo(err);
       this.#logger.error("persist_state_failed", "Failed to persist meeting state to database", info);

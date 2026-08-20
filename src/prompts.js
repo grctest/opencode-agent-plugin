@@ -1,10 +1,15 @@
 import { TURN_REQUEST_PRIORITY_CAP } from "./shared.js";
-import { sanitizeForDisplay } from "./utils/sanitize.js";
+import { sanitizeForDisplay, sanitizeForPrompt } from "./utils/sanitize.js";
 import { getConfig } from "./config.js";
 
 /** Generates a stable delimiter that won't change across runs. */
 function makeDelimiter(label) {
   return `<<<LOOM_${label}>>>`;
+}
+
+function escapeDelimiters(text) {
+  if (!text) return text;
+  return text.replace(/<<</g, '\uFF3C\uFF3C\uFF3C').replace(/>>>/g, '\uFF3E\uFF3E\uFF3E');
 }
 
 /**
@@ -14,7 +19,8 @@ function makeDelimiter(label) {
 export function delimitContext(context, label) {
   if (!context || !context.trim()) return '';
   const delim = makeDelimiter(label);
-  return `${delim}_BEGIN_\n${context}\n${delim}_END_`;
+  const safe = escapeDelimiters(context);
+  return `${delim}_BEGIN_\n${safe}\n${delim}_END_`;
 }
 
 /** Builds a prompt asking a listener to reflect on a speaker's contribution. */
@@ -463,8 +469,9 @@ export function buildModeratorPrompt(situation, currentRound, maxRounds, totalCo
     `  - ${c.content ? sanitizeForDisplay(c.content.slice(0, 100)) : "(no content)"}...`
   ).join("\n");
 
-  const rulingsSection = previousRulings.length > 0
-    ? `\n## Your Previous Rulings (for consistency)\n${previousRulings.map((r, i) => `  ${i + 1}. Round ${r.round}: ${r.decision} → ${r.next_speaker}`).join("\n")}\n`
+  const relevantRulings = previousRulings.length > 10 ? previousRulings.slice(-10) : previousRulings;
+  const rulingsSection = relevantRulings.length > 0
+    ? `\n## Your Previous Rulings (for consistency)\n${relevantRulings.map((r, i) => `  ${i + 1}. Round ${r.round}: ${r.decision} → ${r.next_speaker}`).join("\n")}\n`
     : "";
 
   const stateOfPlaySection = stateOfPlay
@@ -509,8 +516,8 @@ IMPORTANT: Respond ONLY with the <ruling> block above. Do not include any other 
 
 /** Builds a prompt for synthesizing the final deliberation artifact from all contributions. */
 export function buildSynthesisPrompt(question, transcript, participants = [], tags = [], stateOfPlay = "", objections = []) {
-  const safeQuestion = sanitizeForDisplay(question);
-  const safeTranscript = sanitizeForDisplay(transcript, 15000);
+  const safeQuestion = sanitizeForDisplay(question, 20000);
+  const safeTranscript = sanitizeForDisplay(transcript, 100000);
   const participantsSection = participants.length > 0
     ? `\n## Participants\n${participants.map((p) => `- ${p.config.name} (${p.config.tier}): ${p.contributions_count} contributions`).join("\n")}\n`
     : "";
@@ -518,12 +525,12 @@ export function buildSynthesisPrompt(question, transcript, participants = [], ta
   const tagContext = tags?.length > 0 ? tags.join(", ") : null;
 
   const stateOfPlaySection = stateOfPlay
-    ? `\n## State of Play (Final)\n${sanitizeForDisplay(stateOfPlay, 3000)}\n`
+    ? `\n## State of Play (Final)\n${sanitizeForDisplay(stateOfPlay, 20000)}\n`
     : "";
 
   const unresolvedObjections = (objections ?? []).filter((o) => o.unresolved);
   const objectionsSection = unresolvedObjections.length > 0
-    ? `\n## Unresolved Objections\n${unresolvedObjections.map((o) => `- ${sanitizeForDisplay(o.content, 200)}`).join("\n")}\n`
+    ? `\n## Unresolved Objections\n${unresolvedObjections.map((o) => `- ${sanitizeForDisplay(o.content, 1000)}`).join("\n")}\n`
     : "";
 
   return `You are the synthesizer. The deliberation is complete. Produce the final artifact.
@@ -585,8 +592,14 @@ High`;
 export function buildAgentSystemPrompt(participant) {
   const tier = participant.config.tier;
   const cfg = participant.config;
+  // Sanitize persona fields to prevent injection while preserving voice; strip delimiters
+  const safePersonaRaw = typeof cfg.persona === 'string' ? cfg.persona : '';
+  const safeAgendaRaw = typeof cfg.agenda === 'string' ? cfg.agenda : '';
+  const safePersona = escapeDelimiters(sanitizeForDisplay(safePersonaRaw, 2000));
+  const safeAgenda = escapeDelimiters(sanitizeForDisplay(safeAgendaRaw, 2000));
 
   const tierGuidance = cfg.tier_guidance || "Contribute your expertise to the deliberation. Challenge assumptions and propose alternatives.";
+  const safeTierGuidance = escapeDelimiters(sanitizeForDisplay(tierGuidance, 1000));
 
   const priorityCap = TURN_REQUEST_PRIORITY_CAP[tier] ?? 5;
   const requestNextRule = `5. To request priority for the next round, add: [REQUEST_NEXT: Priority: <1-${priorityCap}>, Reason: "why you must speak next round"] — place this at the end of your response`;
@@ -621,16 +634,16 @@ You have access to research tools that let you ground your contributions in real
     : "";
 
   const biases = Array.isArray(cfg.known_biases) && cfg.known_biases.length > 0
-    ? cfg.known_biases.map((b) => `- ${b}`).join("\n")
+    ? cfg.known_biases.map((b) => `- ${escapeDelimiters(sanitizeForDisplay(b, 500))}`).join("\n")
     : null;
   const style = typeof cfg.communication_style === "string" && cfg.communication_style.trim().length > 0
-    ? cfg.communication_style.trim()
+    ? escapeDelimiters(sanitizeForDisplay(cfg.communication_style.trim(), 500))
     : null;
   const contribTypes = Array.isArray(cfg.preferred_contribution_types) && cfg.preferred_contribution_types.length > 0
-    ? cfg.preferred_contribution_types.join(", ")
+    ? escapeDelimiters(cfg.preferred_contribution_types.map((t)=> sanitizeForDisplay(t, 100)).join(", "))
     : null;
   const antiPatterns = Array.isArray(cfg.anti_patterns) && cfg.anti_patterns.length > 0
-    ? cfg.anti_patterns.map((a) => `- ${a}`).join("\n")
+    ? cfg.anti_patterns.map((a) => `- ${escapeDelimiters(sanitizeForDisplay(a, 500))}`).join("\n")
     : null;
 
   const dispositionSection = (biases || style || contribTypes)
@@ -646,18 +659,18 @@ ${antiPatterns}
 `
     : "";
 
-  return `You are **${cfg.name}** (${cfg.tier}) in a structured multi-agent deliberation called "Loom."
+  return `You are **${escapeDelimiters(sanitizeForDisplay(cfg.name, 200))}** (${cfg.tier}) in a structured multi-agent deliberation called "Loom."
 
 ## Your Identity
-${cfg.persona}
+${safePersona}
 
 ## Your Agenda
-${cfg.agenda}
+${safeAgenda}
 ${dispositionSection}
 ${antiPatternsSection}
 
 ## Your Tier Guidance
-${tierGuidance}
+${safeTierGuidance}
 
 ## Rules
 1. Read the shared context and recent contributions carefully
@@ -722,23 +735,34 @@ export function buildAgentUserPrompt(participant, stateOfPlay, ragContext, recen
   const safeQuestion = sanitizeForDisplay(question);
   const tagContext = tags?.length > 0 ? tags.join(", ") : null;
 
-  return `## Question
+  const prompt = `## Question
 ${safeQuestion}
 ${tagContext ? `\n## Tags: ${tagContext}\n` : ""}
 ## Round ${round}
 
 ${stateOfPlayDelimited ? `## State of Play\n${stateOfPlayDelimited}\n` : ""}
 ${ragDelimited ? `## Relevant Prior Context\n${ragDelimited}\n` : ""}
-## Recent Contributions (last 3-4)
+## Recent Contributions
 ${transcriptDelimited}
 
 ${formatReflections(participant)}
 ## Your Turn
 
 Read the state of play, relevant context, and recent contributions. Then make your contribution or pass.`;
+
+  return prompt;
 }
 
 function formatReflections(participant) {
+  if (participant.reflectionHistory && participant.reflectionHistory.length > 0) {
+    const recent = participant.reflectionHistory.slice(-3);
+    const lines = recent.map((r) => `- Round ${r.round}: ${r.text.slice(0, 400).replace(/\n/g, " ")}`);
+    const latest = participant.reflection ?? recent[recent.length - 1]?.text ?? "";
+    if (recent.length === 1) {
+      return `## Your Reflection\n${latest}\n`;
+    }
+    return `## Your Reflections (last ${recent.length})\n${lines.join("\n")}\n\n## Your Latest Reflection\n${latest}\n`;
+  }
   const reflection = participant.reflection;
   if (!reflection) return "";
   return `## Your Reflection\n${reflection}\n`;

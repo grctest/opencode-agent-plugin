@@ -110,6 +110,9 @@ const MIME_TYPES = {
 };
 
 function isAssetPathSafe(assetPath) {
+  if (assetPath.includes("..") || assetPath.includes("\0")) return false;
+  const ext = assetPath.slice(assetPath.lastIndexOf("."));
+  if (!MIME_TYPES[ext]) return false;
   const resolved = resolve(ASSETS_DIR, assetPath);
   return resolved.startsWith(ASSETS_DIR) && existsSync(resolved);
 }
@@ -126,6 +129,7 @@ export function startDashboard(directory, port) {
   const lastInterjectionId = new Map();
   const lastErrorId = new Map();
   const participantStatusCache = new Map();
+  const lastMtime = new Map();
 
   initEmbeddingModel();
 
@@ -157,6 +161,13 @@ export function startDashboard(directory, port) {
         const dbPath = getMeetingDbPath(directory, meetingId);
         if (!dbPath) continue;
         const api = DashboardApi.get(dbPath);
+        // Mtime gate — skip heavy reads when file unchanged (saves 140 reads/sec)
+        const currentMtime = api.refreshIfStale();
+        const prevMtime = lastMtime.get(meetingId);
+        if (prevMtime !== undefined && currentMtime === prevMtime) {
+          continue;
+        }
+        lastMtime.set(meetingId, currentMtime);
 
         const currentState = api.getState();
         if (currentState && TERMINAL_STATUSES.has(currentState.status)) {
@@ -293,6 +304,7 @@ export function startDashboard(directory, port) {
         lastOrchestratorMsgId.delete(meetingId);
         lastInterjectionId.delete(meetingId);
         lastErrorId.delete(meetingId);
+        lastMtime.delete(meetingId);
         participantStatusCache.delete(meetingId);
         participantStatusCache.delete(`state:${meetingId}`);
         participantStatusCache.delete(`terminal:${meetingId}`);
@@ -334,9 +346,13 @@ export function startDashboard(directory, port) {
         if (url.pathname === "/api/meeting") {
           const { api, meetingId, error } = getMeetingApi(url, directory);
           if (error) return error;
-          const limit = Math.min(Number(url.searchParams.get("limit")) || 200, 500);
+          const limit = Math.min(Number(url.searchParams.get("limit")) || 100, 500);
           const offset = Number(url.searchParams.get("offset")) || 0;
-          const contributions = api.getContributions(limit, offset);
+          const includeContext = url.searchParams.get("include_context") !== "0";
+          let contributions = api.getContributions(limit, offset);
+          if (!includeContext) {
+            contributions = contributions.map((c) => ({ ...c, prompt_context: null }));
+          }
           const totalContributions = api.getContributionsCount();
           const embeddingModel = api.getEmbeddingModel(meetingId);
           return Response.json({
@@ -452,13 +468,17 @@ export function startDashboard(directory, port) {
         if (url.pathname === "/api/contributions") {
           const { api, error } = getMeetingApi(url, directory);
           if (error) return error;
+          const includeContext = url.searchParams.get("include_context") !== "0";
           const since = Number(url.searchParams.get("since")) || 0;
           if (since > 0) {
-            return Response.json(api.getContributionsSince(since));
+            let contribs = api.getContributionsSince(since);
+            if (!includeContext) contribs = contribs.map((c) => ({ ...c, prompt_context: null }));
+            return Response.json(contribs);
           }
           const limit = Math.min(Number(url.searchParams.get("limit")) || 100, 500);
           const offset = Number(url.searchParams.get("offset")) || 0;
-          const contributions = api.getContributions(limit, offset);
+          let contributions = api.getContributions(limit, offset);
+          if (!includeContext) contributions = contributions.map((c) => ({ ...c, prompt_context: null }));
           const total = api.getContributionsCount();
           return Response.json({ contributions, total, limit, offset });
         }
@@ -609,6 +629,7 @@ export function startDashboard(directory, port) {
       lastOrchestratorMsgId.clear();
       lastInterjectionId.clear();
       lastErrorId.clear();
+      lastMtime.clear();
       participantStatusCache.clear();
       DashboardApi.closeAll();
       server.stop();

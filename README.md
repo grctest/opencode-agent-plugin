@@ -6,7 +6,7 @@ The Loom lets you convene a circle of AI agents with different expertise, senior
 
 ## How It Works
 
-You ask a question. The Loom uses an LLM to detect the domain — engineering, finance, business, creative, executive, or operations — and composes a team of AI agents with relevant expertise. Each agent runs in its own isolated session with its own model.
+You ask a question. The Loom uses embedding-based similarity search (no LLM domain detection) to compose a team of AI agents with relevant expertise — each persona's description is embedded and matched against your question via `PersonaIndex` cosine similarity. Each agent runs in its own isolated session with its own model.
 
 Agents deliberate in structured rounds: proposing ideas, challenging weak arguments, refining positions, and pushing back on assumptions. They can request turns with priority when they have something urgent to say. When agents stall or go in circles, a **moderator** — a separate LLM call using the strongest available model — steps in to break the deadlock, redirect the conversation, or wrap the deliberation up. Deliberation ends when participants all pass, the round limit is reached, or a hard timeout fires. Once it ends, a **synthesizer** produces the final artifact: decisions, action items, unresolved dissent, and a confidence level.
 
@@ -87,7 +87,26 @@ Models are stored globally at:
 
 2. **Semantic Drift Detection** — Embeddings are available for computing semantic drift between rounds, but drift is not currently computed or visualized (removed; see `docs/dead-code-review.md`).
 
-> ⚠️ **Status:** The embedding model is now initialized at plugin startup, so `/knit` meetings use real embeddings (see `docs/embedder-init-issue.md`). If the model is unavailable, semantic features (vector search, reflection targeting, room composition) degrade visibly via a keyword-based fallback and warnings rather than silent placeholder noise.
+The embedding model is initialized at plugin startup (`ensureEmbedderInitialized` in `src/index.js:48`), so `/knit` meetings use real embeddings. If the model is unavailable (e.g., ONNX load fails or model not downloaded), semantic features (vector search, reflection targeting, room composition) degrade visibly via a keyword-based fallback and warnings rather than silent placeholder noise — the meeting otherwise proceeds.
+
+### Where Meetings Live
+
+Meetings are stored per-project (or globally when no workspace):
+
+```
+# With workspace directory:
+<project>/.opencode/loom/meetings/<uuid>.db      # SQLite + WAL/SHM
+<project>/.opencode/loom/meetings/<uuid>.md      # Full markdown report (chat output)
+
+# Without workspace:
+~/.config/opencode/loom/meetings/<uuid>.db
+~/.config/opencode/loom/meetings/<uuid>.md
+
+# Top-level index (legacy):
+~/.config/opencode/loom/loom/session-index.json  # May be empty — per-meeting DBs are authoritative
+```
+
+Retention is manual — `session.deleted` event cleans up (`src/index.js:580`), or delete `meetings/<uuid>.db*` yourself. `fresh:true` on `/knit` unlinks `""`, `"-wal"`, `"-shm"` for the current session's loom before starting fresh.
 
 ## Quick Start
 
@@ -168,24 +187,26 @@ _No arguments_ — clears the filter back to all models.
 
 ## Personas
 
-The Loom ships with 35 personas across 6 domains, organized into four tiers:
+The Loom ships with 91 personas organized into five tiers (including `civilian` generalists), plus a `domains.json` vocabulary:
 
-| Tier | Count | Domains |
-|------|-------|---------|
-| junior | 11 | general, creative, engineering, finance, operations, executive, business |
-| mid | 10 | engineering, business, finance, creative, operations |
-| senior | 8 | engineering, finance, business, creative, operations |
-| principal | 6 | engineering, executive, creative, business, finance, operations |
+| Tier | Count | Domains (sample tags) |
+|------|-------|------------------------|
+| junior | 14 | general, creative, engineering, finance, operations, executive, business |
+| mid | 15 | engineering, business, finance, creative, operations |
+| senior | 11 | engineering, finance, business, creative, operations |
+| principal | 9 | engineering, executive, creative, business, finance, operations |
+| civilian | 42 | generalist — broad cross-domain personas loaded via `getPersonas()` |
+| **Total** | **91** | `domains.json` defines the tag vocabulary (6 domain families) |
 
-When you ask a question, the Loom uses an LLM to analyze the domain and select relevant personas. For example, a finance question gets finance experts; an engineering question gets engineers.
+When you ask a question, the Loom uses **embedding similarity** (not LLM domain detection) to select personas — the question is embedded and the most similar personas per tier are chosen via `PersonaIndex.search` (cosine similarity against `persona_embeddings`). For example, a finance question gets finance experts; an engineering question gets engineers.
 
-| Question Type | Domains Selected |
+| Question Type | Tags Matched |
 |---------------|------------------|
 | "Should I buy GameStop stock?" | finance, executive |
 | "How do we design our API?" | engineering, creative |
 | "What's our go-to-market strategy?" | business, operations |
 
-Each tier has different behavioral guidance defined in each persona's `tier_guidance` field. Personas also include a `reflection_guidance` field that specifies how they should approach reflections. Personas can be customized by editing the JSON files in the `personas/` directory.
+Each tier has different behavioral guidance defined in each persona's `tier_guidance` field. Personas also include a `reflection_guidance` field that specifies how they should approach reflections. Personas can be customized by editing the JSON files in the `personas/` directory. `civilian` tier maps to `mid` temperature (`0.5`) pending explicit `TIER_CONFIG` entry in `src/shared.js`.
 
 ## Dashboard
 
@@ -222,15 +243,17 @@ Other available options include agent and synthesis timeouts, turn request thres
 
 ## Known Limitations
 
-- Desktop-only webapp — not optimized for mobile viewports
+- Desktop-only webapp — not optimized for mobile viewports (responsive floor at 768px single-column, not full mobile)
 - No authentication or authorization on the dashboard API
 - SQLite-based persistence — not suitable for horizontal scaling
 - Per-meeting metrics are persisted to DB; process-wide counters in `metrics.js` are lost on restart and are mostly unpopulated (see `docs/metrics-and-observability.md`)
 - SSE reconnection uses exponential backoff but falls back to polling after 10 attempts
-- Fabric compaction uses LLM for semantic compression; falls back to rule-based extraction on failure
-- Dashboard shows the most recent meeting by default (single-meeting view; `/api/meetings` can switch)
-- No PDF export capability
-- Semantic retrieval and drift are degraded while the plugin-process embedder fix is pending (`docs/embedder-init-issue.md`)
+- State of play is rule-based derived from full weave (no LLM fabric compaction); round summaries use LLM only when conflict exists (`moderator_forces` mode)
+- Dashboard defaults to the most recent meeting (`created_at DESC`); URL deep link `?meeting=<uuid>` / `#<uuid>` preserves selection via history
+- No PDF export capability — Markdown (and JSON) only, now fully paginated (no 500-cap)
+- If the embedding model is unavailable at startup, room composition / vector search degrade to keyword fallback with visible warnings (not silent noise)
+
+**Schema version:** `meetings.status ∈ {initializing,weaving,converged,exhausted,timeout,cancelled,aborted,deadlocked}` — file pattern `.opencode/loom/meetings/<uuid>.db` — last verified `0.1.0`.
 
 ## License
 

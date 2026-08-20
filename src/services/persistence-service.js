@@ -24,12 +24,13 @@ export class PersistenceService {
   }
 
   /**
-   * Persists the complete meeting state atomically.
+   * Persists the complete meeting state atomically (including max_rounds for crash consistency).
    * @param {Object} sharedState
    * @param {string} nextSpeakerId
    * @param {Object} stats
+   * @param {number} [maxRounds] - when provided, persisted in same txn
    */
-   async persistState(sharedState, nextSpeakerId, stats) {
+   async persistState(sharedState, nextSpeakerId, stats, maxRounds = null) {
     await this.#db.transaction(async (db) => {
       db.prepare("UPDATE meetings SET fabric = ?, updated_at = ? WHERE id = ?")
         .run(sharedState.fabric, isoNow(), this.#meetingId);
@@ -41,16 +42,21 @@ export class PersistenceService {
         .run(nextSpeakerId ?? null, this.#meetingId);
       db.prepare("UPDATE meetings SET stats = ? WHERE id = ?")
         .run(stats ? JSON.stringify(stats) : null, this.#meetingId);
+      if (maxRounds != null) {
+        db.prepare("UPDATE meetings SET max_rounds = ?, updated_at = ? WHERE id = ?")
+          .run(maxRounds, isoNow(), this.#meetingId);
+      }
     });
    }
 
    /**
     * Persists max_rounds to the database.
     * @param {number} maxRounds
+    * @deprecated Use persistState with maxRounds param for atomicity; kept for compat
     */
    persistMaxRounds(maxRounds) {
-     this.#db.setMaxRounds(maxRounds);
-   }
+      this.#db.setMaxRounds(maxRounds);
+    }
 
   /**
    * Persists round summary.

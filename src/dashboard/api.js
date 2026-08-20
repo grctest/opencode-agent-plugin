@@ -70,6 +70,7 @@ export class DashboardApi {
   constructor(dbPath) {
     this.#dbPath = dbPath;
     this.#db = new Database(dbPath, { readonly: true });
+    try { this.#db.exec("PRAGMA busy_timeout = 5000"); } catch {}
     this.#lastModified = Date.now();
     this.#openedAt = Date.now();
     try {
@@ -78,6 +79,15 @@ export class DashboardApi {
     } catch {
       // DB file may have been deleted between cache check and stat — not fatal
     }
+  }
+
+  getMtimeMs() {
+    return this.#fileMtimeMs;
+  }
+
+  refreshIfStale() {
+    this.#maybeRefresh();
+    return this.#fileMtimeMs;
   }
 
   #touch() {
@@ -219,7 +229,7 @@ export class DashboardApi {
   getContributions(limit = 100, offset = 0) {
     return this.#db
       .prepare(
-        `SELECT id, participant_id, round, type, content, target_which, tool_calls, prompt_context, created_at
+        `SELECT id, participant_id, round, type, content, target_which, batch_id, tool_calls, prompt_context, created_at
          FROM contributions ORDER BY round ASC, id ASC LIMIT ? OFFSET ?`,
       )
       .all(limit, offset)
@@ -230,6 +240,7 @@ export class DashboardApi {
         type: r.type,
         content: r.content,
         targets_which: r.target_which != null ? Number(r.target_which) : null,
+        batch_id: r.batch_id ?? null,
         tool_calls: r.tool_calls ? JSON.parse(r.tool_calls) : null,
         prompt_context: r.prompt_context ? JSON.parse(r.prompt_context) : null,
         created_at: r.created_at,
@@ -244,7 +255,7 @@ export class DashboardApi {
   getContributionsSince(sinceId) {
     return this.#db
       .prepare(
-        `SELECT id, participant_id, round, type, content, target_which, tool_calls, prompt_context, created_at
+        `SELECT id, participant_id, round, type, content, target_which, batch_id, tool_calls, prompt_context, created_at
          FROM contributions WHERE id > ? ORDER BY id ASC`,
       )
       .all(sinceId)
@@ -255,6 +266,7 @@ export class DashboardApi {
         type: r.type,
         content: r.content,
         targets_which: r.target_which != null ? Number(r.target_which) : null,
+        batch_id: r.batch_id ?? null,
         tool_calls: r.tool_calls ? JSON.parse(r.tool_calls) : null,
         prompt_context: r.prompt_context ? JSON.parse(r.prompt_context) : null,
         created_at: r.created_at,
@@ -386,7 +398,11 @@ export class DashboardApi {
   exportMarkdown(meetingId) {
     const meeting = this.getState();
     const participants = this.getParticipants();
-    const contributions = this.getContributions(500, 0);
+    const totalCount = this.getContributionsCount();
+    const contributions = [];
+    for (let offset = 0; offset < totalCount; offset += 500) {
+      contributions.push(...this.getContributions(500, offset));
+    }
     const turnRequests = this.getTurnRequests();
     const errors = this.getAgentErrors();
     const artifact = this.getArtifact();
@@ -399,6 +415,9 @@ export class DashboardApi {
     lines.push(`**Rounds:** ${meeting?.round ?? 0}/${meeting?.max_rounds ?? 0}`);
     lines.push(`**Convergence:** ${meeting?.convergence ?? "Unknown"}`);
     lines.push(`**Meeting ID:** ${meetingId}`);
+    if (totalCount > 500) {
+      lines.push(`**Note:** Full export — ${totalCount} contributions included.`);
+    }
     lines.push("");
 
     if (artifact?.content) {
@@ -466,7 +485,11 @@ export class DashboardApi {
   exportJSON(meetingId) {
     const meeting = this.getState();
     const participants = this.getParticipants();
-    const contributions = this.getContributions(500, 0);
+    const totalCount = this.getContributionsCount();
+    const contributions = [];
+    for (let offset = 0; offset < totalCount; offset += 500) {
+      contributions.push(...this.getContributions(500, offset));
+    }
     const turnRequests = this.getTurnRequests();
     const errors = this.getAgentErrors();
     const artifact = this.getArtifact();
@@ -529,6 +552,7 @@ export class DashboardApi {
         createdAt: artifact.created_at,
       } : null,
       orchestratorMessages,
+      totalContributions: totalCount,
       exportedAt: new Date().toISOString(),
     };
 
@@ -563,8 +587,12 @@ export class DashboardApi {
     }
     yield `\n`;
 
-    // Stream contributions by round
-    const allContributions = this.getContributions(500, 0);
+    // Stream contributions by round — paginated for full history
+    const total = this.getContributionsCount();
+    const allContributions = [];
+    for (let offset = 0; offset < total; offset += 500) {
+      allContributions.push(...this.getContributions(500, offset));
+    }
     const roundMap = new Map();
     const roundNumbers = [];
     for (const c of allContributions) {
@@ -663,7 +691,16 @@ export function listDownloadedModels() {
   return models;
 }
 
+const listMeetingsCache = new Map(); // directory -> { at, data }
+const LIST_MEETINGS_TTL_MS = 2000;
+
 export function listMeetings(directory) {
+  const now = Date.now();
+  const cacheKey = directory || "__global__";
+  const cached = listMeetingsCache.get(cacheKey);
+  if (cached && cached.data && (now - cached.at) < LIST_MEETINGS_TTL_MS) {
+    return cached.data;
+  }
   const meetingsDir = join(resolveLoomBaseDir(directory), "meetings");
   if (!existsSync(meetingsDir)) return [];
 
@@ -683,6 +720,7 @@ export function listMeetings(directory) {
   for (const file of files) {
     try {
       const db = new Database(file, { readonly: true });
+      try { db.exec("PRAGMA busy_timeout = 5000"); } catch {}
       const state = db
         .prepare(
           `SELECT id as meeting_id, question, status, round, max_rounds, convergence, created_at FROM meetings LIMIT 1`,
@@ -711,6 +749,12 @@ export function listMeetings(directory) {
   }
 
   meetings.sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""));
+  listMeetingsCache.set(cacheKey, { at: now, data: meetings });
+  // Evict old entries beyond 50
+  if (listMeetingsCache.size > 50) {
+    const first = listMeetingsCache.keys().next().value;
+    listMeetingsCache.delete(first);
+  }
   return meetings;
 }
 

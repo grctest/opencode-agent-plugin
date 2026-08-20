@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const DEFAULT_CONFIG = {
@@ -80,7 +80,6 @@ const CONFIG_SCHEMA = {
 };
 
 const NESTED_SCHEMA = {
-  'synthesisMaxRetries': { type: 'number', min: 0, max: 5 },
   'moderatorTrigger.minContributions': { type: 'number', min: 1, max: 10 },
   'moderatorTrigger.recentChallenges': { type: 'number', min: 1, max: 10 },
   'moderatorTrigger.lookbackWindow': { type: 'number', min: 2, max: 10 },
@@ -112,6 +111,19 @@ const NESTED_SCHEMA = {
 function deepMerge(target, source) {
   const result = { ...target };
   for (const key of Object.keys(source)) {
+    // Polymorphic guard: builtIn.bash can be {enabled,allowlist} in target but boolean in source.
+    // Preserve allowlist when user writes bash:true/false shorthand.
+    if (
+      source[key] !== null &&
+      typeof source[key] === 'boolean' &&
+      target[key] !== null &&
+      typeof target[key] === 'object' &&
+      !Array.isArray(target[key]) &&
+      'enabled' in target[key]
+    ) {
+      result[key] = { ...target[key], enabled: source[key] };
+      continue;
+    }
     if (
       source[key] !== null &&
       typeof source[key] === 'object' &&
@@ -156,6 +168,104 @@ function validateConfigKey(key, value) {
   return { valid: true };
 }
 
+function stripJsoncComments(content) {
+  // String-aware state-machine parser: only strip // and /* */ when outside strings
+  let withoutComments = '';
+  let inString = false;
+  let stringChar = '';
+  let escaped = false;
+  for (let i = 0; i < content.length; i++) {
+    const ch = content[i];
+    const next = content[i + 1] ?? '';
+    if (inString) {
+      withoutComments += ch;
+      if (escaped) {
+        escaped = false;
+      } else if (ch === '\\') {
+        escaped = true;
+      } else if (ch === stringChar) {
+        inString = false;
+        stringChar = '';
+      }
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      inString = true;
+      stringChar = ch;
+      withoutComments += ch;
+      continue;
+    }
+    if (ch === '/' && next === '/') {
+      // line comment — skip to end of line
+      i++;
+      while (i + 1 < content.length && content[i + 1] !== '\n') {
+        i++;
+      }
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      // block comment — skip to */
+      i++;
+      while (i + 1 < content.length) {
+        i++;
+        if (content[i] === '*' && content[i + 1] === '/') {
+          i++;
+          break;
+        }
+      }
+      continue;
+    }
+    withoutComments += ch;
+  }
+
+  // Remove trailing commas respecting strings
+  let stripped = '';
+  inString = false;
+  stringChar = '';
+  escaped = false;
+  for (let i = 0; i < withoutComments.length; i++) {
+    const ch = withoutComments[i];
+    if (inString) {
+      stripped += ch;
+      if (escaped) {
+        escaped = false;
+      } else if (ch === '\\') {
+        escaped = true;
+      } else if (ch === stringChar) {
+        inString = false;
+        stringChar = '';
+      }
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      inString = true;
+      stringChar = ch;
+      stripped += ch;
+      continue;
+    }
+    if (ch === ',') {
+      let j = i + 1;
+      while (j < withoutComments.length && /\s/.test(withoutComments[j])) {
+        j++;
+      }
+      if (j < withoutComments.length && (withoutComments[j] === '}' || withoutComments[j] === ']')) {
+        continue;
+      }
+    }
+    stripped += ch;
+  }
+  return stripped;
+}
+
+export function parseFastPathModel(modelStr) {
+  if (!modelStr || typeof modelStr !== 'string' || !modelStr.includes('/')) return null;
+  const idx = modelStr.indexOf('/');
+  const providerID = modelStr.slice(0, idx).trim();
+  const modelID = modelStr.slice(idx + 1).trim();
+  if (!providerID || !modelID) return null;
+  return { providerID, modelID };
+}
+
 function findConfigFile(directory) {
   if (directory) {
     const projectConfig = join(directory, '.loomrc.json');
@@ -173,7 +283,18 @@ function findConfigFile(directory) {
     if (existsSync(candidate)) {
       try {
         const content = readFileSync(candidate, 'utf-8');
-        const parsed = JSON.parse(content);
+        let parsed;
+        try {
+          parsed = JSON.parse(content);
+        } catch (e) {
+          // Try jsonc stripping for .jsonc files or files with comments
+          if (candidate.endsWith('.jsonc') || content.includes('//') || content.includes('/*')) {
+            const stripped = stripJsoncComments(content);
+            parsed = JSON.parse(stripped);
+          } else {
+            throw e;
+          }
+        }
         if (parsed && typeof parsed === 'object' && parsed.loom) {
           return candidate;
         }
@@ -193,19 +314,60 @@ function getNestedValue(obj, path) {
   return current;
 }
 
-function validateNestedConfig(userConfig, warnings) {
+function setNestedValue(obj, path, value) {
+  const parts = path.split('.');
+  let current = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const part = parts[i];
+    if (current[part] == null || typeof current[part] !== 'object') {
+      current[part] = {};
+    }
+    current = current[part];
+  }
+  current[parts[parts.length - 1]] = value;
+}
+
+function validateNestedConfig(userConfig, merged, warnings) {
   for (const [path, schema] of Object.entries(NESTED_SCHEMA)) {
     const value = getNestedValue(userConfig, path);
     if (value === undefined) continue;
+    let invalid = false;
+    let reason = '';
     if (schema.type === 'number') {
       if (typeof value !== 'number' || !Number.isFinite(value)) {
-        warnings.push(`Config "${path}" must be a number, got ${typeof value}`);
+        reason = `must be a number, got ${typeof value}`;
+        invalid = true;
       } else if (schema.min !== undefined && value < schema.min) {
-        warnings.push(`Config "${path}" must be >= ${schema.min}, got ${value}`);
+        reason = `must be >= ${schema.min}, got ${value}`;
+        invalid = true;
       } else if (schema.max !== undefined && value > schema.max) {
-        warnings.push(`Config "${path}" must be <= ${schema.max}, got ${value}`);
+        reason = `must be <= ${schema.max}, got ${value}`;
+        invalid = true;
+      }
+    } else if (schema.type === 'boolean') {
+      if (typeof value !== 'boolean') {
+        reason = `must be a boolean, got ${typeof value}`;
+        invalid = true;
+      }
+    } else if (schema.type === 'string') {
+      if (typeof value !== 'string') {
+        reason = `must be a string, got ${typeof value}`;
+        invalid = true;
       }
     }
+    if (invalid) {
+      const defaultVal = getNestedValue(DEFAULT_CONFIG, path);
+      warnings.push(`Config "${path}" ${reason}. Using default: ${defaultVal}`);
+      setNestedValue(merged, path, defaultVal);
+    }
+  }
+}
+
+function validateCrossField(merged, warnings) {
+  if (merged.defaultMaxRounds < merged.minRounds) {
+    const prev = merged.minRounds;
+    merged.minRounds = merged.defaultMaxRounds;
+    warnings.push(`Config "minRounds" (${prev}) clamped to defaultMaxRounds (${merged.defaultMaxRounds}) — minRounds cannot exceed defaultMaxRounds.`);
   }
 }
 
@@ -217,7 +379,17 @@ function buildConfig(directory) {
   if (configFile) {
     try {
       const content = readFileSync(configFile, 'utf-8');
-      const parsed = JSON.parse(content);
+      let parsed;
+      try {
+        parsed = JSON.parse(content);
+      } catch (e) {
+        if (configFile.endsWith('.jsonc') || content.includes('//') || content.includes('/*')) {
+          const stripped = stripJsoncComments(content);
+          parsed = JSON.parse(stripped);
+        } else {
+          throw e;
+        }
+      }
       if (parsed && typeof parsed === 'object') {
         // .loomrc.json: top-level keys, no wrapper
         // opencode.json (legacy): "loom" key wrapper
@@ -244,7 +416,23 @@ function buildConfig(directory) {
     }
   }
 
-  validateNestedConfig(userConfig, warnings);
+  validateNestedConfig(userConfig, merged, warnings);
+  validateCrossField(merged, warnings);
+
+  // Dormant autoGrant check: turn order is planTurnOrder, not autoGrant
+  const autoGrantVal = getNestedValue(userConfig, 'turnRequestThresholds.autoGrant');
+  if (autoGrantVal !== undefined && autoGrantVal !== 9) {
+    warnings.push('Config "turnRequestThresholds.autoGrant" is dormant — turn order is planTurnOrder, not autoGrant (see docs).');
+  }
+
+  // Normalize fastPathModel: split "provider/model" string to object? Keep as string but validate
+  // Normalization is done lazily in orchestrator; here we just warn if malformed non-empty
+  if (merged.fastPathModel && typeof merged.fastPathModel === 'string' && merged.fastPathModel.includes('/') === false && merged.fastPathModel.trim() !== '') {
+    warnings.push(`Config "fastPathModel" should be "provider/model" format or empty, got "${merged.fastPathModel}". Ignoring.`);
+    merged.fastPathModel = '';
+  }
+  // Normalize fastPathModel once at buildConfig
+  merged.fastPathModelObj = parseFastPathModel(merged.fastPathModel);
 
   return { config: merged, warnings, source: configFile ?? null };
 }
@@ -280,7 +468,7 @@ export class Config {
   }
 }
 
-const configCache = new Map();
+const configCache = new Map(); // key -> { config: Config, createdAt: number, mtimeMs: number|null, source: string|null }
 const CONFIG_CACHE_TTL_MS = 300000; // 5 minutes
 const CONFIG_CACHE_MAX_SIZE = 50;
 
@@ -295,11 +483,33 @@ export function getConfigSource() {
   return config.getSource();
 }
 
+function getFileMtimeMs(filePath) {
+  if (!filePath) return null;
+  try {
+    return statSync(filePath).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
 export function createConfig(directory) {
   const key = directory || '__global__';
   const cached = configCache.get(key);
-  if (cached && (Date.now() - cached._createdAt) < CONFIG_CACHE_TTL_MS) {
-    return cached;
+  if (cached) {
+    const ageOk = (Date.now() - cached.createdAt) < CONFIG_CACHE_TTL_MS;
+    const currentMtime = getFileMtimeMs(cached.config.getSource());
+    const mtimeOk = currentMtime === cached.mtimeMs;
+    // If TTL valid and mtime unchanged, reuse
+    if (ageOk && mtimeOk) {
+      return cached.config;
+    }
+    // If file changed, invalidate this entry
+    if (!mtimeOk) {
+      configCache.delete(key);
+    } else if (!ageOk) {
+      // TTL expired — fall through to recreate
+      configCache.delete(key);
+    }
   }
   // Evict oldest entries if cache is too large
   if (configCache.size >= CONFIG_CACHE_MAX_SIZE) {
@@ -307,8 +517,13 @@ export function createConfig(directory) {
     configCache.delete(oldestKey);
   }
   const config = new Config(directory);
-  config._createdAt = Date.now();
-  configCache.set(key, config);
+  const entry = {
+    config,
+    createdAt: Date.now(),
+    mtimeMs: getFileMtimeMs(config.getSource()),
+    source: config.getSource(),
+  };
+  configCache.set(key, entry);
   return config;
 }
 

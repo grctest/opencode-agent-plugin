@@ -57,6 +57,7 @@ export function initSchema(db) {
       type TEXT NOT NULL,
       content TEXT NOT NULL,
       target_which TEXT,
+      batch_id TEXT,
       tool_calls TEXT,
       prompt_context TEXT,
       created_at TEXT NOT NULL
@@ -127,6 +128,7 @@ export function initSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_contributions_meeting_round ON contributions(meeting_id, round);
     CREATE INDEX IF NOT EXISTS idx_contributions_meeting ON contributions(meeting_id);
     CREATE INDEX IF NOT EXISTS idx_contributions_participant ON contributions(participant_id);
+    CREATE INDEX IF NOT EXISTS idx_contributions_batch ON contributions(batch_id);
     CREATE INDEX IF NOT EXISTS idx_turn_requests_meeting ON turn_requests(meeting_id);
     CREATE INDEX IF NOT EXISTS idx_turn_requests_participant ON turn_requests(participant_id);
     CREATE INDEX IF NOT EXISTS idx_agent_errors_meeting ON agent_errors(meeting_id);
