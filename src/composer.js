@@ -1,5 +1,6 @@
 import { readFileSync, existsSync, readdirSync, watch } from "node:fs";
 import { join, dirname } from "node:path";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { Logger, extractErrorInfo } from "./logger.js";
 import { PersonaIndex } from "./services/persona-index.js";
@@ -25,7 +26,7 @@ function personasBasePath() {
 }
 
 function userPersonasPath() {
-  const configDir = process.env.LOOM_CONFIG_DIR || join(process.env.HOME || "/root", ".config", "opencode", "loom");
+  const configDir = process.env.LOOM_CONFIG_DIR || join(homedir(), ".config", "opencode", "loom");
   const personasDir = join(configDir, "personas");
   const tiers = ["junior", "mid", "senior", "principal", "civilian"];
   for (const tier of tiers) {
@@ -228,22 +229,25 @@ function analyzeQuestionComplexity(question) {
 function generateRolesFromComplexity(count, complexity) {
   const seniorityBoost = complexity === "high" ? 1 : complexity === "medium" ? 0 : -1;
 
+  // Civilian inclusion (audit 03 PC1): low/medium-complexity rooms get one
+  // generalist civilian seat so the 40-persona civilian tier is auto-reachable.
+  // utils/tier.js already ranks civilian as mid-equivalent.
   if (count <= 3) {
-    return applySeniorityBoost(["mid", "junior", "junior"], seniorityBoost);
+    return applySeniorityBoost(["mid", "civilian", "junior"], seniorityBoost);
   } else if (count <= 5) {
-    return applySeniorityBoost(["senior", "mid", "junior", "junior", "junior"], seniorityBoost);
+    return applySeniorityBoost(["senior", "mid", "civilian", "junior", "junior"], seniorityBoost);
   } else {
-    return applySeniorityBoost(["senior", "mid", "mid", "junior", "junior", "junior", "junior"], seniorityBoost);
+    return applySeniorityBoost(["senior", "mid", "mid", "civilian", "junior", "junior", "junior"], seniorityBoost);
   }
 }
 
 function applySeniorityBoost(roles, boost) {
-  const tierOrder = ["junior", "mid", "senior", "principal"];
+  const tierOrder = ["junior", "mid", "civilian", "senior", "principal"];
   if (boost === 0) return roles;
 
   return roles.map((role) => {
     const idx = tierOrder.indexOf(role);
-    if (idx === -1) return role;
+    if (idx === -1 || role === "civilian") return role; // civilians keep their seat (PC1)
     const newIdx = Math.max(0, Math.min(tierOrder.length - 1, idx + boost));
     return tierOrder[newIdx];
   });
@@ -357,22 +361,57 @@ export async function composeRoomWithSimilarity(question, database) {
 
   // Reuse question embedding across tier searches
   let questionEmbedding = null;
-  try { questionEmbedding = await embedText(question); } catch {}
+  try { questionEmbedding = await embedText(question, { isQuery: true }); } catch (err) {
+    composerLogger.warnThrottled("compose.embed_failed", "Room composition", "Question embedding failed — composition falls back to keyword matching", extractErrorInfo(err));
+  }
+  // Relevance floor (audit 03 PC2): candidates beyond this cosine distance are
+  // treated as off-topic; the seat then goes to a deliberate generalist instead.
+  let maxDistance = 0.85;
+  try {
+    const configured = getConfig()?.composition?.maxCosineDistance;
+    if (Number.isFinite(configured) && configured > 0 && configured < 2) maxDistance = configured;
+  } catch {}
+  const selectedDistances = [];
   for (const tier of roles) {
     let results = [];
     if (questionEmbedding) {
-      try { results = await personaIndex.searchWithEmbedding(questionEmbedding, tier, 5); } catch { results = await personaIndex.search(question, tier, 5); }
+      try {
+        results = await personaIndex.searchWithEmbedding(questionEmbedding, tier, 5);
+      } catch (err) {
+        composerLogger.warnThrottled("compose.vector_search_failed", "Room composition", `Vector persona search failed for tier ${tier} — stepping down to keyword search`, extractErrorInfo(err));
+        database?.setSemanticDegraded?.(true);
+        results = await personaIndex.search(question, tier, 5);
+      }
     } else {
+      database?.setSemanticDegraded?.(true);
       results = await personaIndex.search(question, tier, 5);
     }
-    const candidate = results.find((r) => !used.has(r.persona_name));
+    // Threshold filter over vector results (keyword-fallback rows have no distance and pass through)
+    const onTopic = results.filter((r) => r.distance == null || r.distance <= maxDistance);
+    if (results.length > 0 && onTopic.length === 0) {
+      composerLogger.info("compose_no_on_topic", `No ${tier} candidate within distance ${maxDistance} of the question — leaving seat to deliberate generalist fallback`);
+    }
+    const candidate = onTopic.find((r) => !used.has(r.persona_name));
     if (candidate) {
+      selectedDistances.push({ tier, persona: candidate.persona_name, distance: candidate.distance ?? null });
       const persona = findPersonaByName(personas, tier, candidate.persona_name);
       if (persona) {
         used.add(persona.name);
         participants.push(buildParticipant(persona, tier, String(participants.length)));
       }
+    } else if (questionEmbedding) {
+      // Deliberate generalist pick: nearest civilian-tier persona not yet used
+      const generalistPool = personas.civilian ?? [];
+      const generalist = generalistPool.find((p) => !used.has(p.name));
+      if (generalist) {
+        composerLogger.info("compose_generalist_fallback", `Seated civilian generalist "${generalist.name}" for ${tier} seat (no on-topic candidate)`);
+        used.add(generalist.name);
+        participants.push(buildParticipant(generalist, "civilian", String(participants.length)));
+      }
     }
+  }
+  if (selectedDistances.length > 0) {
+    composerLogger.info("compose_selection_distances", "Persona selection distances", { distances: selectedDistances, maxDistance });
   }
 
   const estimatedRounds = complexity === "high" ? 4 : complexity === "medium" ? 3 : 2;

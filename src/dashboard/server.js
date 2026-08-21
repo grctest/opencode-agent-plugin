@@ -4,9 +4,10 @@ import {
   getMeetingDbPath,
   isValidMeetingId,
 } from "./api.js";
-import { join, resolve } from "node:path";
-import { existsSync, readFileSync } from "node:fs";
+import { join, resolve, sep } from "node:path";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { getMetricsSnapshot } from "../metrics.js";
+import { getConfig } from "../config.js";
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_QUANT } from "../services/model-manager.js";
 
 const embeddingStatus = {
@@ -111,16 +112,46 @@ const MIME_TYPES = {
 
 function isAssetPathSafe(assetPath) {
   if (assetPath.includes("..") || assetPath.includes("\0")) return false;
-  const ext = assetPath.slice(assetPath.lastIndexOf("."));
+  const lastDot = assetPath.lastIndexOf(".");
+  if (lastDot <= 0) return false;
+  const ext = assetPath.slice(lastDot);
   if (!MIME_TYPES[ext]) return false;
   const resolved = resolve(ASSETS_DIR, assetPath);
-  return resolved.startsWith(ASSETS_DIR) && existsSync(resolved);
+  // Trailing separator guard: a sibling dir like ".../dashboardX" must not pass (audit 10 S6)
+  if (!resolved.startsWith(ASSETS_DIR + sep)) return false;
+  // Symlink escape guard
+  try {
+    return realpathSync(resolved).startsWith(realpathSync(ASSETS_DIR) + sep) && existsSync(resolved);
+  } catch {
+    return false;
+  }
 }
 
 function sendSSE(controller, event) {
   const data = `data: ${JSON.stringify(event)}\n\n`;
   controller.enqueue(new TextEncoder().encode(data));
 }
+
+/**
+ * Clamp pagination params: reject negatives (SQLite treats LIMIT -1 as unlimited — audit 10 S3),
+ * floor offset at zero, coerce non-numeric input to defaults.
+ */
+function clampLimit(raw, fallback = 100, max = 500) {
+  const n = Math.floor(Number(raw));
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(Math.max(n, 0), max);
+}
+
+function clampOffset(raw) {
+  const n = Math.floor(Number(raw));
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return n;
+}
+
+const SECURITY_HEADERS = {
+  "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "DENY",
+};
 
 export function startDashboard(directory, port) {
   const sseClients = new Map();
@@ -133,17 +164,43 @@ export function startDashboard(directory, port) {
 
   initEmbeddingModel();
 
+  // Slow-consumer policy (audit 10 S5): a client whose queue stays full for this long is dropped.
+  const SLOW_CONSUMER_TIMEOUT_MS = 30000;
+
   const broadcast = (meetingId, event) => {
     const clients = sseClients.get(meetingId);
     if (!clients || clients.size === 0) return;
-    for (const controller of clients) {
+    for (const entry of clients) {
       try {
-        sendSSE(controller, event);
+        sendSSE(entry.controller, event);
+        entry.slowSince = null;
       } catch {
-        clients.delete(controller);
+        clients.delete(entry);
       }
     }
   };
+
+  // SSE heartbeat (audit 10 S5): keep idle connections alive through proxies.
+  const pingTimer = setInterval(() => {
+    for (const [meetingId, clients] of sseClients) {
+      if (clients.size === 0) continue;
+      const now = Date.now();
+      for (const entry of clients) {
+        try {
+          if (entry.controller.desiredSize !== undefined && entry.controller.desiredSize <= 0) {
+            if (!entry.slowSince) entry.slowSince = now;
+            else if (now - entry.slowSince > SLOW_CONSUMER_TIMEOUT_MS) clients.delete(entry);
+            continue;
+          }
+          entry.controller.enqueue(new TextEncoder().encode(": ping\n\n"));
+          entry.slowSince = null;
+        } catch {
+          clients.delete(entry);
+        }
+      }
+    }
+  }, 15000);
+  if (pingTimer.unref) pingTimer.unref();
 
   const ACTIVE_POLL_INTERVAL = 1000;
   const IDLE_POLL_INTERVAL = 5000;
@@ -262,7 +319,8 @@ export function startDashboard(directory, port) {
         const prevErrorId = lastErrorId.get(meetingId) ?? 0;
         if (maxErrorId > prevErrorId) {
           lastErrorId.set(meetingId, maxErrorId);
-          const newErrors = api.getAgentErrors().filter((e) => e.id > prevErrorId);
+          // Incremental fetch — WHERE id > ? instead of a full scan per tick (audit 10 S8)
+          const newErrors = api.getAgentErrorsAfter(prevErrorId);
           for (const err of newErrors) {
             broadcast(meetingId, {
               type: "agent_error",
@@ -299,7 +357,10 @@ export function startDashboard(directory, port) {
 
     // Prune stale entries for meetings with no SSE clients
     for (const meetingId of [...lastContributionId.keys()]) {
-      if (!sseClients.has(meetingId) || sseClients.get(meetingId).size === 0) {
+      const clients = sseClients.get(meetingId);
+      if (!clients || clients.size === 0) {
+        // Also remove the empty Set itself so the registry doesn't grow one dead entry per meeting (audit 10 S7)
+        if (clients) sseClients.delete(meetingId);
         lastContributionId.delete(meetingId);
         lastOrchestratorMsgId.delete(meetingId);
         lastInterjectionId.delete(meetingId);
@@ -320,8 +381,21 @@ export function startDashboard(directory, port) {
 
   pollTimer = setInterval(pollMeetings, currentPollInterval);
 
+  // Bind localhost by default; dashboard.host config restores LAN access deliberately (audit 10 S2).
+  let hostname = "127.0.0.1";
+  try {
+    const configuredHost = getConfig()?.dashboard?.host;
+    if (typeof configuredHost === "string" && configuredHost) hostname = configuredHost;
+  } catch {
+    // Config not available (e.g. standalone dashboard) — safe default holds
+  }
+  if (hostname !== "127.0.0.1" && hostname !== "localhost") {
+    console.warn(`[Loom dashboard] Non-loopback binding (${hostname}) exposes full transcripts to the network.`);
+  }
+
   const server = Bun.serve({
     port,
+    hostname,
     async fetch(req) {
       try {
         const url = new URL(req.url);
@@ -346,8 +420,8 @@ export function startDashboard(directory, port) {
         if (url.pathname === "/api/meeting") {
           const { api, meetingId, error } = getMeetingApi(url, directory);
           if (error) return error;
-          const limit = Math.min(Number(url.searchParams.get("limit")) || 100, 500);
-          const offset = Number(url.searchParams.get("offset")) || 0;
+          const limit = clampLimit(url.searchParams.get("limit"));
+          const offset = clampOffset(url.searchParams.get("offset"));
           const includeContext = url.searchParams.get("include_context") !== "0";
           let contributions = api.getContributions(limit, offset);
           if (!includeContext) {
@@ -475,8 +549,8 @@ export function startDashboard(directory, port) {
             if (!includeContext) contribs = contribs.map((c) => ({ ...c, prompt_context: null }));
             return Response.json(contribs);
           }
-          const limit = Math.min(Number(url.searchParams.get("limit")) || 100, 500);
-          const offset = Number(url.searchParams.get("offset")) || 0;
+          const limit = clampLimit(url.searchParams.get("limit"));
+          const offset = clampOffset(url.searchParams.get("offset"));
           let contributions = api.getContributions(limit, offset);
           if (!includeContext) contributions = contributions.map((c) => ({ ...c, prompt_context: null }));
           const total = api.getContributionsCount();
@@ -565,20 +639,29 @@ export function startDashboard(directory, port) {
           const { api, meetingId, error } = getMeetingApi(url, directory);
           if (error) return error;
 
+          // Hold the client entry in a per-stream closure — cancel() receives the cancel
+          // *reason*, not the controller (WHATWG Streams), so removal must use a captured
+          // reference rather than an argument (audit 10 S1).
+          let clientEntry = null;
+
           const stream = new ReadableStream({
             start(controller) {
               if (!sseClients.has(meetingId)) {
                 sseClients.set(meetingId, new Set());
               }
-              sseClients.get(meetingId).add(controller);
-              sendSSE(controller, {
+              clientEntry = { controller, slowSince: null };
+              sseClients.get(meetingId).add(clientEntry);
+              sendSSE(clientEntry.controller, {
                 type: "connected",
                 data: { connected: true },
                 timestamp: new Date().toISOString(),
               });
             },
-            cancel(controller) {
-              sseClients.get(meetingId)?.delete(controller);
+            cancel() {
+              if (clientEntry) {
+                sseClients.get(meetingId)?.delete(clientEntry);
+                clientEntry = null;
+              }
             },
           });
 
@@ -587,6 +670,7 @@ export function startDashboard(directory, port) {
               "Content-Type": "text/event-stream",
               "Cache-Control": "no-cache",
               Connection: "keep-alive",
+              ...SECURITY_HEADERS,
             },
           });
         }
@@ -597,14 +681,15 @@ export function startDashboard(directory, port) {
             return new Response("Not found", { status: 404 });
           }
           const filePath = join(ASSETS_DIR, assetPath);
-          const ext = filePath.slice(filePath.lastIndexOf("."));
+          const lastDot = filePath.lastIndexOf(".");
+          const ext = lastDot > 0 ? filePath.slice(lastDot) : "";
           const contentType = MIME_TYPES[ext] ?? "application/octet-stream";
           return new Response(Bun.file(filePath), {
-            headers: { "Content-Type": contentType },
+            headers: { "Content-Type": contentType, ...SECURITY_HEADERS },
           });
         }
 
-        return new Response("Not found", { status: 404 });
+        return new Response("Not found", { status: 404, headers: SECURITY_HEADERS });
       } catch (err) {
         const message = err instanceof Error ? err.message : "internal error";
         return Response.json({ error: message }, { status: 500 });
@@ -614,12 +699,14 @@ export function startDashboard(directory, port) {
 
   return {
     port: server.port,
+    hostname,
     stop: () => {
       if (pollTimer) clearInterval(pollTimer);
+      if (pingTimer) clearInterval(pingTimer);
       for (const clients of sseClients.values()) {
-        for (const controller of clients) {
+        for (const entry of clients) {
           try {
-            controller.close();
+            entry.controller.close();
           } catch {
           }
         }

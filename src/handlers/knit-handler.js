@@ -1,7 +1,7 @@
 import { MeetingOrchestrator } from "../orchestrator.js";
 import { composeRoomWithSimilarity, formatRoomPreview } from "../composer.js";
 import { createModelPlan, formatModelPlan } from "../model-discovery.js";
-import { findMeetingBySessionId, getDbPathForMeeting, MeetingDatabase } from "../database.js";
+import { findMeetingBySessionId, getDbPathForMeeting, deleteMeetingFiles, MeetingDatabase } from "../database.js";
 import {
   discoverModels,
   assignModelsToParticipants,
@@ -181,13 +181,9 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
       if (existingMeeting) {
         const extDbPath = getDbPathForMeeting(directory, existingMeeting.meetingId);
         if (extDbPath) {
-          for (const suffix of ["", "-wal", "-shm"]) {
-            try { unlinkSync(`${extDbPath}${suffix}`); } catch (err) {
-              if (err?.code !== 'ENOENT') {
-                logger.debug("fresh_delete_failed", `Failed to delete ${extDbPath}${suffix}`, { error: err.message });
-              }
-            }
-          }
+          // Unified deletion (audit 04 PD7): goes through deleteMeetingFiles so the
+          // session index is updated too — the old inline unlink left dangling entries.
+          deleteMeetingFiles(extDbPath);
           logger.info("loom_fresh", "Cleared existing loom database for fresh start", { meetingId: existingMeeting.meetingId });
         }
       }

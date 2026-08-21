@@ -6,7 +6,8 @@
 import { join } from "path";
 import { homedir } from "os";
 import { createRequire } from "module";
-import { readFile, readdir, access } from "fs/promises";
+import { readFile, readdir, access, createReadStream } from "fs/promises";
+import { createHash } from "crypto";
 import { Logger, extractErrorInfo } from "../logger.js";
 
 const modelLogger = new Logger();
@@ -57,6 +58,16 @@ async function resolveTokenizer() {
 
 export const DEFAULT_EMBEDDING_MODEL = "Snowflake/snowflake-arctic-embed-xs";
 export const DEFAULT_EMBEDDING_QUANT = "onnx/model_int8.onnx";
+
+/** Streamed SHA-256 of a file — used for model integrity verification (audit 12 SEC4). */
+async function sha256File(filePath) {
+  const hash = createHash("sha256");
+  const stream = createReadStream(filePath);
+  for await (const chunk of stream) {
+    hash.update(chunk);
+  }
+  return hash.digest("hex");
+}
 
 /**
  * Manages embedding models stored in ~/.config/opencode/loom/models/
@@ -136,7 +147,7 @@ export class ModelManager {
    * Load a model for inference.
    * @param {string} name - Model name (e.g., "Snowflake/snowflake-arctic-embed-xs")
    * @param {string} quant - Quantization path (e.g., "onnx/model_int8.onnx")
-   * @returns {Promise<{session: InferenceSession, tokenizer: Tokenizer, dims: number, maxTokens: number}>}
+   * @returns {Promise<{session: InferenceSession, tokenizer: Tokenizer, dims: number, maxTokens: number, meta: Object}>}
    */
   async loadModel(name, quant = "onnx/model_int8.onnx") {
     const modelDir = this.getModelDir(name);
@@ -158,6 +169,18 @@ export class ModelManager {
     const tokenizerPath = join(modelDir, "tokenizer.json");
     const tokenizerConfigPath = join(modelDir, "tokenizer_config.json");
 
+    // Integrity verification (audit 12 SEC4): fail loudly on checksum mismatch —
+    // a hijacked model file must never reach onnxruntime.
+    if (modelJson.sha256) {
+      const actual = await sha256File(modelPath);
+      if (actual !== modelJson.sha256) {
+        throw new Error(
+          `Integrity check FAILED for ${name}: SHA-256 mismatch (expected ${modelJson.sha256.slice(0, 16)}…, got ${actual.slice(0, 16)}…). ` +
+          `Re-download with: npm run model:download -- --model=${name}`
+        );
+      }
+    }
+
     // Dynamic imports for optional dependencies
     let ort, Tokenizer;
     ort = await resolveOnnx();
@@ -177,11 +200,17 @@ export class ModelManager {
     }
     const tokenizer = new Tokenizer(tokenizerData, tokenizerConfig);
 
+    // Encoder metadata (audit 06 V1): pooling strategy, prefixes, tensor names.
+    // Missing fields fall back to legacy behavior with a warning so old model.json
+    // files keep working.
+    const meta = normalizeModelMeta(modelJson, name);
+
     return {
       session,
       tokenizer,
       dims: modelJson.dims,
       maxTokens: modelJson.maxTokens,
+      meta,
     };
   }
 
@@ -189,12 +218,13 @@ export class ModelManager {
    * Embed text using a loaded model.
    * @param {InferenceSession} session - ONNX Runtime session
    * @param {Tokenizer} tokenizer - Hugging Face tokenizer
-   * @param {string} text - Text to embed
+   * @param {string} text - Text to embed (query/document prefix NOT yet applied)
    * @param {number} dims - Expected embedding dimension
    * @param {number} maxTokens - Maximum token limit
-   * @returns {Promise<Float32Array>} Normalized embedding vector
+   * @param {Object} [meta] - Normalized encoder metadata from loadModel()
+   * @returns {Promise<Float32Array>} Pooled (+ optionally normalized) embedding vector
    */
-  async embed(session, tokenizer, text, dims, maxTokens) {
+  async embed(session, tokenizer, text, dims, maxTokens, meta = DEFAULT_MODEL_META) {
     // Tokenize
     const encoded = await tokenizer.encode(text);
     let ids = encoded.ids;
@@ -203,56 +233,158 @@ export class ModelManager {
     if (ids.length > maxTokens) {
       ids = ids.slice(0, maxTokens);
     }
+    const seqLen = ids.length;
+    if (seqLen === 0) {
+      return new Float32Array(dims);
+    }
 
-    // Create input tensor [1, seq_len]
+    // Build only the input tensors this encoder expects (audit 06 V1):
+    // decoder-based models may not accept token_type_ids.
     const inputIds = BigInt64Array.from(ids.map(BigInt));
-    const attentionMask = BigInt64Array.from(ids.map(() => 1n));
-    const tokenTypeIds = new BigInt64Array(ids.length);
-
     const ort = await resolveOnnx();
 
-    const inputTensor = new ort.Tensor("int64", inputIds, [1, ids.length]);
-    const maskTensor = new ort.Tensor("int64", attentionMask, [1, ids.length]);
-    const typeTensor = new ort.Tensor("int64", tokenTypeIds, [1, ids.length]);
+    const feed = {};
+    for (const tensorName of meta.inputTensorNames) {
+      if (tensorName === "input_ids") {
+        feed[tensorName] = new ort.Tensor("int64", inputIds, [1, seqLen]);
+      } else if (tensorName === "attention_mask") {
+        // Single unpadded sequence — every position is a real token
+        feed[tensorName] = new ort.Tensor("int64", BigInt64Array.from({ length: seqLen }, () => 1n), [1, seqLen]);
+      } else if (tensorName === "token_type_ids") {
+        feed[tensorName] = new ort.Tensor("int64", new BigInt64Array(seqLen), [1, seqLen]);
+      } else {
+        modelLogger.warn("unknown_input_tensor", `Model metadata requests unknown tensor "${tensorName}" — skipped`);
+      }
+    }
 
     // Run inference
-    const results = await session.run({
-      input_ids: inputTensor,
-      attention_mask: maskTensor,
-      token_type_ids: typeTensor,
-    });
+    const results = await session.run(feed);
 
-    // Get token embeddings (last_hidden_state)
-    const embeddings = results.last_hidden_state || results.token_embeddings;
+    // Output tensor selection: prefer metadata, then the common fallbacks
+    const embeddings = results[meta.outputTensorName] || results.last_hidden_state || results.token_embeddings;
     if (!embeddings) {
       throw new Error("Model output not found. Check model format.");
     }
 
     const embeddingData = embeddings.data;
-    const seqLen = ids.length;
 
-    // Mean pooling: average all token embeddings
-    const pooled = new Float32Array(dims);
-    for (let i = 0; i < dims; i++) {
-      let sum = 0;
-      for (let j = 0; j < seqLen; j++) {
-        sum += Number(embeddingData[j * dims + i]);
-      }
-      pooled[i] = sum / seqLen;
-    }
+    // Pooling dispatch (audit 06 V1) — per-model strategy from model.json
+    const pooled = poolEmbeddings(embeddingData, dims, seqLen, meta.pooling);
 
-    // L2 normalize
-    let norm = 0;
-    for (let i = 0; i < dims; i++) {
-      norm += pooled[i] * pooled[i];
-    }
-    norm = Math.sqrt(norm);
-    if (norm > 0) {
+    // L2 normalize unless the model says otherwise
+    if (meta.normalize) {
+      let norm = 0;
       for (let i = 0; i < dims; i++) {
-        pooled[i] /= norm;
+        norm += pooled[i] * pooled[i];
+      }
+      norm = Math.sqrt(norm);
+      if (norm > 0) {
+        for (let i = 0; i < dims; i++) {
+          pooled[i] /= norm;
+        }
       }
     }
 
     return pooled;
   }
+}
+
+/** Legacy default: mean pooling over all tokens, standard BERT tensors. */
+export const DEFAULT_MODEL_META = Object.freeze({
+  pooling: "mean",
+  queryPrefix: "",
+  documentPrefix: "",
+  inputTensorNames: ["input_ids", "attention_mask", "token_type_ids"],
+  outputTensorName: "last_hidden_state",
+  paddingSide: "right",
+  normalize: true,
+});
+
+const VALID_POOLING = new Set(["cls", "mean", "max", "mean_sqrt_len", "weightedmean", "lasttoken"]);
+
+/**
+ * Normalize raw model.json into validated encoder metadata, warning on legacy files.
+ */
+function normalizeModelMeta(raw, modelName) {
+  const meta = { ...DEFAULT_MODEL_META };
+  if (!raw.pooling) {
+    modelLogger.warn("model_meta_missing_pooling", `model.json for ${modelName} has no "pooling" field — assuming mean (legacy file). Re-download or add metadata.`);
+  } else if (VALID_POOLING.has(raw.pooling)) {
+    meta.pooling = raw.pooling;
+  } else {
+    modelLogger.warn("model_meta_invalid_pooling", `Unknown pooling "${raw.pooling}" for ${modelName} — falling back to mean`);
+  }
+  if (typeof raw.queryPrefix === "string") meta.queryPrefix = raw.queryPrefix;
+  if (typeof raw.documentPrefix === "string") meta.documentPrefix = raw.documentPrefix;
+  if (Array.isArray(raw.inputTensorNames) && raw.inputTensorNames.every((t) => typeof t === "string")) {
+    meta.inputTensorNames = [...raw.inputTensorNames];
+  }
+  if (typeof raw.outputTensorName === "string") meta.outputTensorName = raw.outputTensorName;
+  if (raw.paddingSide === "left" || raw.paddingSide === "right") meta.paddingSide = raw.paddingSide;
+  if (raw.normalize === false) meta.normalize = false;
+  return meta;
+}
+
+/**
+ * Pool token embeddings into a single vector using the model's declared strategy.
+ * All strategies are mask-aware; sequences here are unpadded so the mask is implicit.
+ */
+function poolEmbeddings(data, dims, seqLen, pooling) {
+  const pooled = new Float32Array(dims);
+
+  switch (pooling) {
+    case "cls": {
+      // First token's hidden state
+      for (let i = 0; i < dims; i++) pooled[i] = Number(data[i]);
+      break;
+    }
+    case "max": {
+      for (let i = 0; i < dims; i++) pooled[i] = -Infinity;
+      for (let j = 0; j < seqLen; j++) {
+        const base = j * dims;
+        for (let i = 0; i < dims; i++) {
+          const v = Number(data[base + i]);
+          if (v > pooled[i]) pooled[i] = v;
+        }
+      }
+      break;
+    }
+    case "weightedmean": {
+      // Position-weighted mean (SGPT-style): weight_j = j+1
+      let weightSum = 0;
+      for (let j = 0; j < seqLen; j++) {
+        const w = j + 1;
+        weightSum += w;
+        const base = j * dims;
+        for (let i = 0; i < dims; i++) pooled[i] += w * Number(data[base + i]);
+      }
+      if (weightSum > 0) for (let i = 0; i < dims; i++) pooled[i] /= weightSum;
+      break;
+    }
+    case "mean_sqrt_len": {
+      for (let j = 0; j < seqLen; j++) {
+        const base = j * dims;
+        for (let i = 0; i < dims; i++) pooled[i] += Number(data[base + i]);
+      }
+      const denom = Math.sqrt(seqLen) || 1;
+      for (let i = 0; i < dims; i++) pooled[i] /= denom;
+      break;
+    }
+    case "lasttoken": {
+      // Last real token (unpadded sequence → index seqLen-1)
+      const base = (seqLen - 1) * dims;
+      for (let i = 0; i < dims; i++) pooled[i] = Number(data[base + i]);
+      break;
+    }
+    case "mean":
+    default: {
+      for (let j = 0; j < seqLen; j++) {
+        const base = j * dims;
+        for (let i = 0; i < dims; i++) pooled[i] += Number(data[base + i]);
+      }
+      for (let i = 0; i < dims; i++) pooled[i] /= seqLen;
+      break;
+    }
+  }
+  return pooled;
 }

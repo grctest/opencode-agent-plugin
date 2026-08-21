@@ -229,11 +229,12 @@ export async function planTurnOrder({ stateOfPlay, roundSummary, turnRequests, p
 
 /**
  * Fallback turn order when LLM planning fails.
- * Sorts by priority descending, then by tier (principal > senior > mid > junior).
+ * Sorts by priority descending, then by tier (principal > senior > mid > civilian/junior).
+ * Civilian ranks at mid per utils/tier.js and the shared TIER_ORDER (audit 02 P4).
  */
 function fallbackTurnOrder(turnRequests, participants) {
-  const tierOrder = { principal: 0, senior: 1, mid: 2, junior: 3 };
-  
+  const tierOrder = { principal: 0, senior: 1, mid: 2, civilian: 2, junior: 3 };
+
   // Sort requests by priority descending, then tier
   const sorted = [...turnRequests].sort((a, b) => {
     if (b.priority !== a.priority) return b.priority - a.priority;

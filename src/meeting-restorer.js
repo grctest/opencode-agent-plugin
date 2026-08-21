@@ -5,6 +5,9 @@ import { Logger, LoomError } from "./logger.js";
 
 const restorerLogger = new Logger();
 
+/** Terminal statuses that must never silently reopen as mid-deliberation (audit 05 LS1). */
+const TERMINAL_STATUSES = new Set(["converged", "cancelled", "timeout", "max_rounds_reached", "aborted", "deadlocked", "exhausted"]);
+
 /**
  * Restores in-memory meeting state from the database.
  * Used when extending a previously completed meeting.
@@ -20,6 +23,15 @@ export function restoreStateFromDb({ db, stateManager, meetingId, options }) {
   const meeting = db.getMeeting();
   if (!meeting) {
     throw new LoomError("Cannot resume: meeting not found in database", { phase: "resume", recoverable: false });
+  }
+
+  // Honor the persisted status (audit 05 LS1): terminal meetings stay terminal unless
+  // the caller explicitly asked for a fresh start.
+  if (TERMINAL_STATUSES.has(meeting.status) && !options?.fresh) {
+    throw new LoomError(
+      `Cannot resume: meeting is already ${meeting.status}. Use a fresh /knit to start over, or pass fresh:true to force.`,
+      { phase: "resume", recoverable: false, status: meeting.status }
+    );
   }
 
   const nextSpeakerId = meeting.next_speaker_id ?? null;
@@ -49,13 +61,23 @@ export function restoreStateFromDb({ db, stateManager, meetingId, options }) {
   }));
 
   const contributions = db.getContributions(meetingId);
+  // Defensive parse — one corrupt blob must not abort the whole resume (audit 05 LS2)
+  let tags = [];
+  if (meeting.tags) {
+    try {
+      const parsed = JSON.parse(meeting.tags);
+      tags = Array.isArray(parsed) ? parsed : [];
+    } catch (err) {
+      restorerLogger.warn("resume_tags_corrupt", "Meeting.tags was corrupt — resuming with empty tags", extractErrorInfo(err));
+    }
+  }
   stateManager.restore({
     participants,
     question: meeting.question,
     context: meeting.context ?? "",
     fabric: meeting.fabric ?? "",
     max_rounds: meeting.max_rounds,
-    tags: meeting.tags ? JSON.parse(meeting.tags) : [],
+    tags,
     current_round: meeting.round,
     status: "weaving",
     weave: contributions.map((c) => ({

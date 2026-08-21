@@ -36,6 +36,11 @@ function useSSE(meetingId, onEvent) {
 
       const poll = async () => {
         if (cancelled || !fallbackPoll) return;
+        // Visibility pause (audit 11 UF7 / audit 17 PF3): hidden tabs skip API calls
+        if (typeof document !== "undefined" && document.hidden) {
+          pollingRef.current = setTimeout(poll, POLLING_FALLBACK_INTERVAL);
+          return;
+        }
         try {
           const timestamp = new Date().toISOString();
           const cRes = await fetch(`/api/contributions?meeting=${meetingId}&since=${lastPollIdRef.current}&include_context=1`);
@@ -89,8 +94,8 @@ function useSSE(meetingId, onEvent) {
 
       es.onopen = () => {
         if (cancelled) return;
-        // Gap-fill: fetch any contributions missed during disconnect via incremental API
-        // Use a short timeout so reconnect feels immediate; fallback poll already tracks lastPollId
+        // Gap-fill: fetch any contributions missed during disconnect via incremental API.
+        // This is the SOLE recovery path — no unconditional full refetch on open (audit 11 UF4).
         fetch(`/api/contributions?meeting=${meetingId}&since=${lastPollIdRef.current}&include_context=1`).then(async (r) => {
           if (r.ok) {
             const data = await r.json().catch(() => null);
@@ -106,8 +111,10 @@ function useSSE(meetingId, onEvent) {
         setConnected(true);
         setReconnectAttempt(0);
         setLastError(null);
-        // Dispatch reset so the app re-fetches state from the server on reconnect
-        window.dispatchEvent(new CustomEvent("loom-sse-reset"));
+        // Note: no loom-sse-reset dispatch here — resetting on every open triggered
+        // the heavy /api/meeting refetch twice per load and fully on each reconnect
+        // (audit 11 UF4). The gap-fill above covers missed contributions; state
+        // refresh happens through the normal SSE state events.
       };
 
       es.onerror = () => {
@@ -258,7 +265,11 @@ function useMeetingsList() {
 
   useEffect(() => {
     fetchMeetings();
-    const interval = setInterval(fetchMeetings, 5000);
+    // Visibility-aware polling (audit 11 UF7 / audit 17 PF3): skip fetches in hidden tabs
+    const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      fetchMeetings();
+    }, 5000);
     return () => clearInterval(interval);
   }, [fetchMeetings]);
 

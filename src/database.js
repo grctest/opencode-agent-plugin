@@ -1,8 +1,9 @@
-import { mkdirSync, existsSync, readdirSync, unlinkSync, statSync } from "node:fs";
+import { mkdirSync, existsSync, readdirSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { homedir } from "node:os";
 import { createRequire } from "node:module";
 import { Logger, extractErrorInfo } from "./logger.js";
-import { initSchema } from "./database/schema.js";
+import { initSchema, runMigrations } from "./database/schema.js";
 import { resolveLoomBaseDir, getMeetingDbPath } from "./paths.js";
 import {
   loadSessionIndex,
@@ -39,7 +40,7 @@ function resolveVecPath() {
   ];
   // Also probe opencode global plugin deps (deployed layout)
   try {
-    const home = process.env.HOME || '/root';
+    const home = homedir();
     roots.push(join(home, '.config', 'opencode', 'plugins', 'deps', 'node_modules'));
     roots.push(join(home, '.config', 'opencode', 'loom', 'deps', 'node_modules'));
   } catch {}
@@ -159,10 +160,6 @@ export class MeetingDatabase {
   constructor(dbPath, meetingId) {
     this.#meetingId = meetingId;
     const existedBefore = existsSync(dbPath);
-    let fileAgeMs = null;
-    if (existedBefore) {
-      try { fileAgeMs = Date.now() - statSync(dbPath).mtimeMs; } catch {}
-    }
     mkdirSync(dirname(dbPath), { recursive: true });
     const db = new DatabaseClass(dbPath);
     this.#db = db;
@@ -184,17 +181,52 @@ export class MeetingDatabase {
       }
     }
     initSchema(this.#db);
-    try { this.#db.exec("ALTER TABLE contributions ADD COLUMN batch_id TEXT"); } catch {}
-    try { this.#db.exec("CREATE INDEX IF NOT EXISTS idx_contributions_batch ON contributions(batch_id)"); } catch {}
+    // Ordered migrations via PRAGMA user_version (audit 04 PD2) — replaces the old
+    // redundant ALTER TABLE patch that duplicated a column already in schema.js.
+    try {
+      runMigrations(this.#db, { logger: dbLogger });
+    } catch (err) {
+      dbLogger.error("db_migration_failed", "Database migration failed — continuing with base schema", extractErrorInfo(err));
+    }
     this.#initVectorTable();
-    // Throttle maintenance: run cleanup/integrity at most once per 24h per file, or for new DBs skip
-    const shouldMaintain = !existedBefore ? false : (fileAgeMs == null || fileAgeMs > 86400000) || process.env.LOOM_INTEGRITY_CHECK === '1';
+    // Retention throttle (audit 04 PD3): last-maintenance time lives in a meta
+    // table, NOT file mtime — an actively written DB resets mtime on every write,
+    // so the old gate never fired for busy meetings.
+    const shouldMaintain = existedBefore || process.env.LOOM_INTEGRITY_CHECK === '1'
+      ? this.#maintenanceDue()
+      : false;
     if (shouldMaintain) {
       this.#cleanupOldErrors();
       this.#checkIntegrity();
-    } else if (!existedBefore) {
-      // For new DBs, still ensure old-error tables exist but don't scan
+      this.#markMaintained();
     }
+  }
+
+  /** Ensures the meta(key,value) table exists for maintenance bookkeeping. */
+  #ensureMetaTable() {
+    try {
+      this.#db.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)");
+    } catch { /* best effort */ }
+  }
+
+  #maintenanceDue() {
+    this.#ensureMetaTable();
+    try {
+      const row = this.#db.prepare("SELECT value FROM meta WHERE key = 'last_maintenance_at'").get();
+      if (!row) return true;
+      return Date.now() - Number(row.value) > 86400000;
+    } catch {
+      return true;
+    }
+  }
+
+  #markMaintained() {
+    this.#ensureMetaTable();
+    try {
+      this.#db.prepare(
+        "INSERT INTO meta (key, value) VALUES ('last_maintenance_at', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+      ).run(String(Date.now()));
+    } catch { /* best effort */ }
   }
 
   #initVectorTable(dim = 384) {
@@ -227,8 +259,12 @@ export class MeetingDatabase {
 
   #cleanupOldErrors() {
     try {
-      this.#db.prepare("DELETE FROM agent_errors WHERE created_at < datetime('now', '-30 days')").run();
-      this.#db.prepare("DELETE FROM error_log WHERE created_at < datetime('now', '-30 days')").run();
+      // ISO timestamps (2026-08-21T…Z) compared against strftime output so the
+      // formats actually match — the old datetime('now') comparison mixed formats
+      // and was wrong at the boundary day (audit 04 PD3).
+      const cutoff = new Date(Date.now() - 30 * 86400000).toISOString();
+      this.#db.prepare("DELETE FROM agent_errors WHERE created_at < ?").run(cutoff);
+      this.#db.prepare("DELETE FROM error_log WHERE created_at < ?").run(cutoff);
     } catch (err) {
       dbLogger.warn("old_errors_cleanup_failed", "Failed to clean up old error rows", extractErrorInfo(err));
     }
@@ -456,6 +492,30 @@ export class MeetingDatabase {
     this.#db
       .prepare("UPDATE meetings SET state_of_play = ?, updated_at = ? WHERE id = ?")
       .run(stateOfPlay, isoNow(), this.#meetingId);
+  }
+
+  /**
+   * Latch a degradation flag on the meeting row (audit 07 EH2). Once set, sticky —
+   * degraded mode for a meeting is a fact about its history, not its current instant.
+   */
+  setSemanticDegraded(flag = true) {
+    try {
+      this.#db
+        .prepare("UPDATE meetings SET semantic_degraded = ?, updated_at = ? WHERE id = ?")
+        .run(flag ? 1 : 0, isoNow(), this.#meetingId);
+    } catch (err) {
+      dbLogger.warn("degradation_flag_failed", "Could not persist semantic_degraded flag", extractErrorInfo(err));
+    }
+  }
+
+  setPersistenceDegraded(flag = true) {
+    try {
+      this.#db
+        .prepare("UPDATE meetings SET persistence_degraded = ?, updated_at = ? WHERE id = ?")
+        .run(flag ? 1 : 0, isoNow(), this.#meetingId);
+    } catch (err) {
+      dbLogger.warn("degradation_flag_failed", "Could not persist persistence_degraded flag", extractErrorInfo(err));
+    }
   }
 
   updateMeetingTags(meetingId, tags) {
@@ -1092,13 +1152,41 @@ export class MeetingDatabase {
    * @param {string} source - e.g. 'round_summary', 'contribution', 'context'
    * @returns {number|null} chunk ID
    */
-  storeFabricChunk(content, round, source = "round_summary") {
+  /**
+   * Stores a text chunk and its embedding in one transaction (audit 04 PD5):
+   * an embed failure must not leave a permanent vectorless row, and chunk_index
+   * must be computed inside the transaction to be race-free.
+   * @param {string} content - text content
+   * @param {number} round - round number
+   * @param {string} source - e.g. 'round_summary', 'contribution', 'context'
+   * @param {{ embedding?: Float32Array, dim?: number }} [vector] - optional embedding to store atomically
+   * @returns {number|null} chunk ID
+   */
+  storeFabricChunk(content, round, source = "round_summary", vector = null) {
     try {
-      const nextIdx = this.#db.prepare(`SELECT COALESCE(MAX(chunk_index), -1) + 1 as n FROM fabric_chunks WHERE meeting_id = ?`).get(this.#meetingId)?.n ?? 0;
-      const result = this.#db.prepare(
-        `INSERT INTO fabric_chunks (meeting_id, round, chunk_index, content, source, created_at) VALUES (?, ?, ?, ?, ?, ?)`
-      ).run(this.#meetingId, round, nextIdx, content, source, isoNow());
-      return result.lastInsertRowid;
+      const insertChunk = (rawDb) => {
+        const nextIdx = rawDb.prepare(`SELECT COALESCE(MAX(chunk_index), -1) + 1 as n FROM fabric_chunks WHERE meeting_id = ?`).get(this.#meetingId)?.n ?? 0;
+        const result = rawDb.prepare(
+          `INSERT INTO fabric_chunks (meeting_id, round, chunk_index, content, source, created_at) VALUES (?, ?, ?, ?, ?, ?)`
+        ).run(this.#meetingId, round, nextIdx, content, source, isoNow());
+        return result.lastInsertRowid;
+      };
+
+      if (vector?.embedding) {
+        // Atomic path: row + vector commit together or not at all
+        this.#db.exec("BEGIN TRANSACTION");
+        try {
+          const chunkId = insertChunk(this.#db);
+          this.storeFabricEmbedding(chunkId, vector.embedding, vector.dim ?? 384);
+          this.#db.exec("COMMIT");
+          return chunkId;
+        } catch (err) {
+          this.#db.exec("ROLLBACK");
+          throw err;
+        }
+      }
+
+      return insertChunk(this.#db);
     } catch (err) {
       dbLogger.debug("store_chunk_failed", "Failed to store fabric chunk", extractErrorInfo(err));
       return null;
@@ -1217,15 +1305,28 @@ export class MeetingDatabase {
     try {
       this.#initPersonaVectorTable(safeDim);
       const limit = Math.max(1, Math.floor(Number(topK) || 5));
-      return this.#db.prepare(`
+      // Post-filter instead of in-query metadata filter (audit 03 PC3):
+      // `WHERE v.tier = ?` inside the KNN query errors on older sqlite-vec builds,
+      // which silently downgraded composition to keyword matching via the catch-all.
+      // Fetch a wider top-K unfiltered and filter by tier here.
+      const fetchK = Math.max(limit * 10, 50);
+      const rows = this.#db.prepare(`
         SELECT v.rowid, v.distance, p.persona_name, p.tier, p.tags, p.embedding_text
         FROM vec_persona_embeddings_${safeDim} v
         JOIN persona_embeddings p ON p.id = v.rowid AND p.meeting_id = ?
-        WHERE v.tier = ? AND v.embedding MATCH ? AND k = ?
+        WHERE v.embedding MATCH ? AND k = ?
         ORDER BY v.distance
-      `).all(this.#meetingId, tier, queryEmbedding, limit);
+      `).all(this.#meetingId, queryEmbedding, fetchK);
+      return rows.filter((r) => r.tier === tier).slice(0, limit);
     } catch (err) {
-      dbLogger.warn("search_persona_embeddings_failed", "Persona vector search failed", extractErrorInfo(err));
+      dbLogger.warnThrottled(
+        "search_persona_embeddings_failed",
+        "Persona vector search",
+        "Persona vector search failed — composition degrades to tag matching (audit 06 V5)",
+        extractErrorInfo(err)
+      );
+      // Latch the degradation flag so the dashboard can banner it (audit 07 EH2)
+      this.setSemanticDegraded(true);
       return [];
     }
   }

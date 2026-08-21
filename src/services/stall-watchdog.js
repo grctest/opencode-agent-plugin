@@ -38,9 +38,12 @@ export class StallWatchdog {
   }
 
   start(getStatus, cancelled) {
+    // Idempotent start (audit 05 LS5 / audit 09 R1): a second start() while running
+    // must be a full no-op — the old ordering reset #lastActivityAt and re-read
+    // config BEFORE the timer guard, silently extending the stall deadline.
+    if (this.#timer) return;
     const stallTimeoutMs = getConfig().stallTimeoutMs ?? 300000;
     this.#lastActivityAt = Date.now();
-    if (this.#timer) return;
     this.#timer = setInterval(() => {
       try {
         if (cancelled()) return;

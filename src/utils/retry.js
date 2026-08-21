@@ -20,27 +20,34 @@ export const DEFAULT_RETRY_CONFIG = {
  */
 export function isRetryableError(err) {
   if (!err) return false;
-  
-  // Network errors
-  if (err.code === 'ECONNREFUSED' || err.code === 'ETIMEDOUT' || err.code === 'ENOTFOUND') {
+
+  // Network errors (audit 09 R5: ECONNRESET/EPIPE are common transient faults that
+  // previously fell through to a full fallback-model attempt instead of a cheap retry)
+  if (
+    err.code === 'ECONNREFUSED' ||
+    err.code === 'ETIMEDOUT' ||
+    err.code === 'ENOTFOUND' ||
+    err.code === 'ECONNRESET' ||
+    err.code === 'EPIPE'
+  ) {
     return true;
   }
-  
+
   // Timeout errors
   if (err.message && /timed?\s*out/i.test(err.message)) {
     return true;
   }
-  
+
   // HTTP 5xx errors (if response object is attached)
   if (err.status >= 500 && err.status < 600) {
     return true;
   }
-  
-  // Rate limiting
-  if (err.status === 429) {
+
+  // Rate limiting + request timeout
+  if (err.status === 429 || err.status === 408) {
     return true;
   }
-  
+
   return false;
 }
 

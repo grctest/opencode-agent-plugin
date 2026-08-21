@@ -354,15 +354,18 @@ export class MeetingOrchestrator {
         }
       }
 
-      await this.#persistState();
+      // Transition first, then persist — the DB must never lag the in-memory status
+      // for the entire first round (audit 01 E1). transitionTo performs no I/O.
       this.#stateManager.transitionTo("weaving");
+      await this.#persistState();
 
       if (!this.#resume && this.#options.context) {
         try {
-          await Promise.race([
+          await this.#raceWithGuardTimer(
             this.#vectorIndex.indexContext(this.#options.context),
-            new Promise((_, reject) => setTimeout(() => reject(new Error("indexContext timeout after 10000ms")), 10000)),
-          ]);
+            10000,
+            "indexContext",
+          );
         } catch (err) {
           this.#logger.warn("vector_index_context_failed", "Failed to index context for vector search", extractErrorInfo(err));
         }
@@ -464,7 +467,7 @@ export class MeetingOrchestrator {
         break;
       }
 
-      if (Date.now() - this.#startTime > this.#meetingTimeoutMs) {
+      if (this.#remainingMs() <= 0) {
         this.#stateManager.transitionTo("timeout");
         await this.#sessionManager.postProgress("⏱️ Loom timed out — generating output from collected contributions.");
         this.#logger.warn("timeout", "Meeting timed out", { elapsed: Date.now() - this.#startTime, limit: this.#meetingTimeoutMs });
@@ -476,8 +479,28 @@ export class MeetingOrchestrator {
     }
   }
 
+  /**
+   * Single deadline authority (audit 01 E6) — every timeout check consults this.
+   */
+  #remainingMs() {
+    return this.#startTime + this.#meetingTimeoutMs - Date.now();
+  }
+
+  /**
+   * Promise.race with a guard timer that is always cleared and unref'd, so losing
+   * the race doesn't leak a pending timer (audit 05 LS6 / audit 17 PF1).
+   */
+  #raceWithGuardTimer(promise, timeoutMs, label) {
+    let timer;
+    const timeoutPromise = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} timeout after ${timeoutMs}ms`)), timeoutMs);
+      if (timer.unref) timer.unref();
+    });
+    return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timer));
+  }
+
   #checkTimeout() {
-    if (Date.now() - this.#startTime > this.#meetingTimeoutMs) {
+    if (this.#remainingMs() <= 0) {
       this.#stateManager.transitionTo("timeout");
       this.#logger.warn("timeout", "Meeting timed out", { elapsed: Date.now() - this.#startTime, limit: this.#meetingTimeoutMs });
       return true;
@@ -491,14 +514,15 @@ export class MeetingOrchestrator {
       return false;
     }
 
-    const deadline = this.#startTime + this.#meetingTimeoutMs;
-    const remaining = deadline - Date.now();
+    const remaining = this.#remainingMs();
     if (remaining < 5000) {
       this.#stateManager.transitionTo("timeout");
       await this.#sessionManager.postProgress("⏱️ Loom timed out — generating output from collected contributions.");
       this.#logger.warn("timeout", "Meeting timed out before round start", { remaining });
       return false;
     }
+
+    const deadline = this.#startTime + this.#meetingTimeoutMs;
 
     const round = this.#roundInitializer.initializeRound(this.#stateManager, this.#database, () => this.#notifyUpdate());
     const { activeParticipants, skipped } = this.#roundInitializer.filterActiveParticipants(this.#stateManager, round);
@@ -542,14 +566,15 @@ export class MeetingOrchestrator {
       this.#database.setStateOfPlay(newStateOfPlay);
 
       try {
-        await Promise.race([
+        await this.#raceWithGuardTimer(
           this.#vectorIndex.indexRound(
             updatedRound.number,
             updatedRound.summary,
             updatedRound.contributions,
           ),
-          new Promise((_, reject) => setTimeout(() => reject(new Error("indexRound timeout after 5000ms")), 5000)),
-        ]);
+          5000,
+          "indexRound",
+        );
       } catch (err) {
         this.#logger.warn("vector_index_round_failed", `Failed to index round ${updatedRound.number} for vector search`, extractErrorInfo(err));
         try {
@@ -635,14 +660,67 @@ export class MeetingOrchestrator {
         return false;
       }
 
+      // Contribution-mix steering (audit 01 E3): if last round was pure
+      // conflict with no consolidation, nudge the next round toward synthesis.
+      // Cheap, prompt-level, no new LLM calls — measured by PV5 telemetry.
+      const typeCounts = {};
+      for (const c of (updatedRound.contributions || [])) {
+        typeCounts[c.type] = (typeCounts[c.type] || 0) + 1;
+      }
+      if ((typeCounts.challenge || 0) + (typeCounts.dissent || 0) >= 3 && !typeCounts.synthesize) {
+        this.#stateManager.setNextRoundSteering(
+          "Steering note for the next speaker: last round had multiple challenges/dissents with no synthesis. Please consolidate positions above — cite [#id] — before opening a new challenge."
+        );
+      }
+
       await this.#persistState();
       return true;
     } catch (err) {
       const info = extractErrorInfo(err);
+      // Error taxonomy (audit 01 E2): distinguish "degrade and continue" from
+      // "the finalization logic itself is broken". Never silently return false —
+      // that is indistinguishable from a clean convergence.
+      const persistenceFailure = this.#isPersistenceError(err);
+      if (persistenceFailure) {
+        // Degrade: state stays in memory; the meeting can proceed to the next round.
+        this.#logger.warn("finalize_round_degraded", `Round ${updatedRound.number} finalization degraded by persistence failure`, info);
+        try {
+          await this.#persistState();
+        } catch (persistErr) {
+          this.#logger.error("finalize_round_persist_failed", `Could not persist state after degradation for round ${updatedRound.number}`, extractErrorInfo(persistErr));
+        }
+        return true;
+      }
+      // State-machine or logic error: abort honestly, persist the aborted status
+      // BEFORE rethrowing so the terminal status survives the unwinding (audit 05 note).
       this.#logger.error("finalize_round_failed", `Failed to finalize round ${updatedRound.number}`, info);
-      await this.#persistState();
-      return false;
+      try {
+        this.#stateManager.transitionTo("aborted");
+        await this.#persistState();
+        await this.#sessionManager.postProgress(`❌ Meeting aborted — internal error while finalizing round ${updatedRound.number}: ${err.message}`);
+      } catch (abortErr) {
+        this.#logger.error("finalize_round_abort_failed", "Could not persist aborted status during finalize failure", extractErrorInfo(abortErr));
+      }
+      throw err;
     }
+  }
+
+  /**
+   * Classify whether an error from finalization is a persistence/indexing problem
+   * (degradable) vs. a logic/state-machine error (must abort) — audit 01 E2.
+   */
+  #isPersistenceError(err) {
+    if (!(err instanceof Error)) return false;
+    const msg = String(err.message || "").toLowerCase();
+    return (
+      msg.includes("sqlite") ||
+      msg.includes("database") ||
+      msg.includes("disk i/o") ||
+      msg.includes("readonly") ||
+      err.code === "SQLITE_BUSY" ||
+      err.code === "SQLITE_READONLY" ||
+      err.code === "EACCES"
+    );
   }
 
    async #persistState() {

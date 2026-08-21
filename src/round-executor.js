@@ -8,24 +8,10 @@ import { sanitizeForPrompt, sanitizeForDisplay } from "./utils/sanitize.js";
 import { withRetry, isRetryableError, CircuitBreaker } from "./utils/retry.js";
 import { selectFallbackModel } from "./services/model-service.js";
 import { incrementKeyedCounter, recordLatency } from "./metrics.js";
+import { extractVoteLetter, buildTally } from "./utils/vote-tally.js";
+import { degrade } from "./utils/degrade.js";
 
-/**
- * Extracts a vote choice (A, B, C, etc. or 1,2,3) from a vote response string.
- * Supports both lettered [Vote: A] and numbered [Vote: 2] formats for backward compat.
- */
-function extractVoteLetter(text) {
-  if (!text) return null;
-  // Look for [Vote: X] where X is letter or number (1-2 chars)
-  const tagMatch = text.match(/\[Vote:\s*([A-Za-z0-9]+)\]/i);
-  if (tagMatch) return tagMatch[1].toUpperCase();
-  // Fallback: first standalone capital letter or number on its own line
-  const lines = text.split("\n");
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (/^[A-Za-z0-9]$/.test(trimmed) || /^[A-Za-z0-9]{1,2}$/.test(trimmed)) return trimmed.toUpperCase();
-  }
-  return null;
-}
+export { extractVoteLetter };
 
 export class RoundExecutor {
   #db;
@@ -93,10 +79,11 @@ export class RoundExecutor {
   }
 
    #recordModelFailure(model) {
-    const cbConfig = getConfig().circuitBreaker;
+    // Single config read (audit 09 R3): thresholds were captured at construction;
+    // re-reading here could disagree with the breaker's actual configuration.
     const state = this.#circuitBreaker.recordFailure(model);
-    if (state.failures >= cbConfig.failureThreshold) {
-      this.#options.onProgress?.(`⚠️ Model ${this.#modelKey(model)} marked unhealthy after ${state.failures} consecutive failures. Will retry in ${cbConfig.resetTimeoutMs / 60000} minutes.`);
+    if (state.failures >= this.#circuitBreaker.failureThreshold) {
+      this.#options.onProgress?.(`⚠️ Model ${this.#modelKey(model)} marked unhealthy after ${state.failures} consecutive failures. Will retry in ${this.#circuitBreaker.resetTimeoutMs / 60000} minutes.`);
       this.#logger.warn("circuit_breaker", `Model ${this.#modelKey(model)} marked unhealthy`, { failures: state.failures });
     }
    }
@@ -408,7 +395,7 @@ Be concise (2-4 sentences), grounded, and in character. Answer the specific ques
               };
               stateManager.addContribution(evidenceOnly);
               round.contributions.push(evidenceOnly);
-              db.addContributionWithTurnRequest(stateManager.getMeetingId(), evidenceOnly, null);
+              degrade("persist.contribution", "Persist contribution", () => db.addContributionWithTurnRequest(stateManager.getMeetingId(), evidenceOnly, null), null);
             }
             return;
           }
@@ -432,9 +419,9 @@ Be concise (2-4 sentences), grounded, and in character. Answer the specific ques
 
           stateManager.addContribution(contribution);
           round.contributions.push(contribution);
-          target.contributions_count = stateManager.getWeave().filter((c) => c.participant_id === target.config.id).length;
+          stateManager.incrementParticipantContributions(target.config.id);
 
-          db.addContributionWithTurnRequest(stateManager.getMeetingId(), contribution, null);
+          degrade("persist.contribution", "Persist contribution", () => db.addContributionWithTurnRequest(stateManager.getMeetingId(), contribution, null), null);
 
           // Restore target status
           target.status = previousStatus;
@@ -593,7 +580,7 @@ If inconclusive, state why (0 hits vs contradictory) and what would resolve it. 
               };
               stateManager.addContribution(evidenceOnly);
               round.contributions.push(evidenceOnly);
-              db.addContributionWithTurnRequest(stateManager.getMeetingId(), evidenceOnly, null);
+              degrade("persist.contribution", "Persist contribution", () => db.addContributionWithTurnRequest(stateManager.getMeetingId(), evidenceOnly, null), null);
             }
             return;
           }
@@ -615,9 +602,9 @@ If inconclusive, state why (0 hits vs contradictory) and what would resolve it. 
 
           stateManager.addContribution(contribution);
           round.contributions.push(contribution);
-          target.contributions_count = stateManager.getWeave().filter((c) => c.participant_id === target.config.id).length;
+          stateManager.incrementParticipantContributions(target.config.id);
 
-          db.addContributionWithTurnRequest(stateManager.getMeetingId(), contribution, null);
+          degrade("persist.contribution", "Persist contribution", () => db.addContributionWithTurnRequest(stateManager.getMeetingId(), contribution, null), null);
 
           target.status = previousStatus;
           db.setParticipantStatus(target.config.id, previousStatus);
@@ -723,14 +710,9 @@ If inconclusive, state why (0 hits vs contradictory) and what would resolve it. 
         tool_choice: summonedToolKeys.length > 0 ? "auto" : "none",
       });
 
-      // Use requester's model
-      let model = null;
-      try {
-        const { getParticipantModel } = await import("./orchestrator.js");
-        // Fallback: use a generic model lookup
-      } catch {}
-      // Direct model access from source participant config
-      model = sourceParticipant.config.model;
+      // Direct model access from source participant config (the old dead dynamic
+      // import of orchestrator was removed — audit 01 E4 / audit 16 MA4)
+      const model = sourceParticipant.config.model;
 
       if (!model) {
         this.#logger.warn("summon_no_model", "No model available for summoned persona");
@@ -801,7 +783,7 @@ Be concise (100-150 words), grounded, in character. Build on what’s settled; d
           };
           stateManager.addContribution(evidenceOnly);
           round.contributions.push(evidenceOnly);
-          db.addContributionWithTurnRequest(stateManager.getMeetingId(), evidenceOnly, null);
+          degrade("persist.contribution", "Persist contribution", () => db.addContributionWithTurnRequest(stateManager.getMeetingId(), evidenceOnly, null), null);
         }
         return;
       }
@@ -825,7 +807,7 @@ Be concise (100-150 words), grounded, in character. Build on what’s settled; d
       round.contributions.push(contribution);
       round.summons.push({ requesterId: sourceParticipant.config.id, personaName: resolvedPersona.name });
 
-      db.addContributionWithTurnRequest(stateManager.getMeetingId(), contribution, null);
+      degrade("persist.contribution", "Persist contribution", () => db.addContributionWithTurnRequest(stateManager.getMeetingId(), contribution, null), null);
 
       this.#options.onProgress?.(`${resolvedPersona.name} (${resolvedPersona.tier}) — summoned by ${sourceParticipant.config.name}`);
       this.#options.onContribution?.(resolvedPersona.name, stateManager.getCurrentRound(), "summoned_response");
@@ -877,8 +859,8 @@ Be concise (100-150 words), grounded, in character. Build on what’s settled; d
       };
       stateManager.addContribution(tallyContribution);
       round.contributions.push(tallyContribution);
-      sourceParticipant.contributions_count = stateManager.getWeave().filter((c) => c.participant_id === sourceParticipant.config.id).length;
-      db.addContributionWithTurnRequest(stateManager.getMeetingId(), tallyContribution, null);
+      stateManager.incrementParticipantContributions(sourceParticipant.config.id);
+      degrade("persist.contribution", "Persist contribution", () => db.addContributionWithTurnRequest(stateManager.getMeetingId(), tallyContribution, null), null);
       this.#options.onProgress?.(`${sourceParticipant.config.name} — vote tally (source only)`);
       return;
     }
@@ -890,7 +872,17 @@ Be concise (100-150 words), grounded, in character. Build on what’s settled; d
     await Promise.allSettled(
       voters.map(async (voter) => {
         const model = getParticipantModel(voter);
-        const sessionId = await sessionManager.createEphemeralSession(voter);
+        // Reuse the round-scoped session like queries/evidence do — vote fan-out
+        // is the heaviest interaction and shouldn't churn extra sessions (audit 01 E5)
+        let sessionId;
+        let isRoundScoped = false;
+        if (this.#roundSessionIds?.has(voter.config.id)) {
+          sessionId = this.#roundSessionIds.get(voter.config.id);
+          isRoundScoped = true;
+        } else {
+          sessionId = await sessionManager.createEphemeralSession(voter);
+          sessionManager.registerSessionMeeting(sessionId, stateManager.getMeetingId());
+        }
         try {
           const previousStatus = voter.status;
           voter.status = "speaking";
@@ -968,9 +960,9 @@ One sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No
           stateManager.addContribution(contribution);
           round.contributions.push(contribution);
           voteResponses.push({ voter: voter.config.name, content: text.trim() });
-          voter.contributions_count = stateManager.getWeave().filter((c) => c.participant_id === voter.config.id).length;
+          stateManager.incrementParticipantContributions(voter.config.id);
 
-          db.addContributionWithTurnRequest(stateManager.getMeetingId(), contribution, null);
+          degrade("persist.contribution", "Persist contribution", () => db.addContributionWithTurnRequest(stateManager.getMeetingId(), contribution, null), null);
 
           voter.status = previousStatus;
           db.setParticipantStatus(voter.config.id, previousStatus);
@@ -985,50 +977,27 @@ One sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No
           voter.status = "listening";
           db.setParticipantStatus(voter.config.id, "listening");
         } finally {
-          await sessionManager.deleteEphemeralSession(sessionId).catch(() => {});
+          if (!isRoundScoped) {
+            sessionManager.unregisterSession(sessionId);
+            await sessionManager.deleteEphemeralSession(sessionId).catch(() => {});
+          }
         }
       }),
     );
 
     db.setQueryingParticipants(null);
 
-    // Generate vote tally
-    const tallyLines = [`[Vote Tally] ${vote.question}`];
-    const voteCounts = {};
-
-    // Parse source vote
+    // Generate vote tally via the shared tally builder (audit 16 MA2)
     const sourceLetter = extractVoteLetter(sourceVoteText);
-    if (sourceLetter) {
-      voteCounts[sourceLetter] = (voteCounts[sourceLetter] || 0) + 1;
-      tallyLines.push(`${sourceLetter}: 1 vote (${sourceParticipant.config.name} — source)`);
-    }
-
-    // Parse voter responses
-    for (const vr of voteResponses) {
-      const letter = extractVoteLetter(vr.content);
-      if (letter) {
-        voteCounts[letter] = (voteCounts[letter] || 0) + 1;
-        const existing = tallyLines.find((l) => l.startsWith(`${letter}:`));
-        if (existing) {
-          const idx = tallyLines.indexOf(existing);
-          tallyLines[idx] = `${letter}: ${voteCounts[letter]} votes (${existing.match(/\((.+)\)/)?.[1] ?? ""}, ${vr.voter})`;
-        } else {
-          tallyLines.push(`${letter}: 1 vote (${vr.voter})`);
-        }
-      }
-    }
-
-    const totalVoters = 1 + voteResponses.length;
-    tallyLines.push(`Total voters: ${totalVoters}`);
-
-    // Leading option
-    const sorted = Object.entries(voteCounts).sort((a, b) => b[1] - a[1]);
-    if (sorted.length > 0) {
-      const [winner, count] = sorted[0];
-      tallyLines.push(`Leading option: ${winner} (${count} votes)`);
-    }
+    const { lines: tallyLines, counts: voteCounts } = buildTally({
+      question: vote.question,
+      sourceLetter,
+      sourceLabel: sourceParticipant.config.name,
+      responses: voteResponses,
+    });
 
     const tallyContent = tallyLines.join("\n");
+    const sorted = Object.entries(voteCounts).sort((a, b) => b[1] - a[1]);
     const tallyContribution = {
       id: stateManager.nextContributionId(),
       round: stateManager.getCurrentRound(),
@@ -1043,8 +1012,8 @@ One sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No
     };
     stateManager.addContribution(tallyContribution);
     round.contributions.push(tallyContribution);
-    sourceParticipant.contributions_count = stateManager.getWeave().filter((c) => c.participant_id === sourceParticipant.config.id).length;
-    db.addContributionWithTurnRequest(stateManager.getMeetingId(), tallyContribution, null);
+    stateManager.incrementParticipantContributions(sourceParticipant.config.id);
+    degrade("persist.contribution", "Persist contribution", () => db.addContributionWithTurnRequest(stateManager.getMeetingId(), tallyContribution, null), null);
     this.#options.onProgress?.(`${sourceParticipant.config.name} — vote tally: ${sorted.length > 0 ? `Winner ${sorted[0][0]}` : "no votes"}`);
   }
 
@@ -1069,7 +1038,7 @@ One sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No
     round.contributions.push(contribution);
     round.token_path.push(participant.config.id);
     // Derived count: recompute from weave to avoid drift across event types
-    participant.contributions_count = this.#stateManager.getWeave().filter((c) => c.participant_id === participant.config.id).length;
+    this.#stateManager.incrementParticipantContributions(participant.config.id);
     participant.status = "listening";
     this.#db.setParticipantStatus(participant.config.id, "listening");
 
@@ -1150,7 +1119,15 @@ One sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No
     ).slice(-12);
 
     const systemPrompt = buildAgentSystemPrompt(participant);
-    const userPrompt = buildAgentUserPrompt(
+    // Contribution-mix steering (audit 01 E3): only the first speaker of the
+    // next round receives the hint — cheap, prompt-level, no new LLM calls.
+    let steeringHint = "";
+    try {
+      const plannedFirst = this.#stateManager.getPlannedTurnOrder?.()?.[0] ?? this.#stateManager.getNextSpeakerId?.();
+      const isFirstSpeaker = !plannedFirst || plannedFirst === participant.config.id;
+      if (isFirstSpeaker) steeringHint = this.#stateManager.consumeNextRoundSteering();
+    } catch {}
+    const userPromptBase = buildAgentUserPrompt(
       participant,
       this.#stateManager.getStateOfPlay(),
       ragContext,
@@ -1159,6 +1136,7 @@ One sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No
       this.#stateManager.getQuestion(),
       this.#stateManager.getTags(),
     );
+    const userPrompt = steeringHint ? `${userPromptBase}\n\n${steeringHint}` : userPromptBase;
 
     const promptContext = {
       type: "agent_turn",
@@ -1238,7 +1216,7 @@ One sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No
         };
         // On transient success, also reset original breaker so it can be retried next turn
         if (lastError.value && isRetryableError(lastError.value)) {
-          try { this.#circuitBreaker.recordSuccess(activeModel); } catch {}
+          this.#circuitBreaker.recordSuccess(activeModel);
         }
         return response;
       } catch (err) {

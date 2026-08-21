@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { existsSync, readdirSync, statSync, readFileSync } from "node:fs";
 import { resolveLoomBaseDir } from "../paths.js";
 import { parseReflections } from "../utils/db-parsing.js";
 
@@ -9,6 +10,33 @@ const DB_CACHE_MAX = 10;
 const DB_REFRESH_INTERVAL_MS = 2000;
 
 const DB_TTL_MS = 5 * 60 * 1000;
+
+/**
+ * Safe JSON column parse — malformed rows must not 500 the endpoints that read them (audit 10 S4).
+ */
+function safeParseJson(value, fallback = null) {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * Single mapper so fetch and SSE emit identically-shaped turn-request rows (audit 11 UF2/UF3).
+ */
+function mapTurnRequest(r) {
+  return {
+    id: r.id,
+    participant_id: r.participant_id,
+    target_participant_id: r.target_participant_id,
+    round: r.round,
+    reason: r.content,
+    priority: r.priority,
+    created_at: r.created_at,
+  };
+}
 
 export class DashboardApi {
   /** @type {Database} */
@@ -115,7 +143,7 @@ export class DashboardApi {
   getState() {
     const row = this.#db
       .prepare(
-        `SELECT id as meeting_id, question, context, status, round, max_rounds, convergence, fabric, stats, reflecting_participants, querying_participants, evidence_participants, summoning_participants, state_of_play, created_at
+        `SELECT id as meeting_id, question, context, status, round, max_rounds, convergence, fabric, stats, reflecting_participants, querying_participants, evidence_participants, summoning_participants, state_of_play, semantic_degraded, persistence_degraded, created_at
          FROM meetings LIMIT 1`,
       )
       .get();
@@ -127,6 +155,9 @@ export class DashboardApi {
         row.stats = {};
       }
     }
+    // Degradation flags may be missing on pre-migration DBs (audit 07 EH2)
+    if (row.semantic_degraded === undefined) row.semantic_degraded = 0;
+    if (row.persistence_degraded === undefined) row.persistence_degraded = 0;
     if (row.reflecting_participants) {
       try {
         row.reflecting_participants = JSON.parse(row.reflecting_participants);
@@ -221,6 +252,15 @@ export class DashboardApi {
       .all();
   }
 
+  getAgentErrorsAfter(afterId) {
+    return this.#db
+      .prepare(
+        `SELECT id, participant_id, round, error_type, error_message, attempts, created_at
+         FROM agent_errors WHERE id > ? ORDER BY id ASC`,
+      )
+      .all(afterId);
+  }
+
   getMaxOrchestratorMessageId() {
     const row = this.#db.prepare(`SELECT MAX(id) as max_id FROM orchestrator_messages`).get();
     return row?.max_id ?? 0;
@@ -241,8 +281,8 @@ export class DashboardApi {
         content: r.content,
         targets_which: r.target_which != null ? Number(r.target_which) : null,
         batch_id: r.batch_id ?? null,
-        tool_calls: r.tool_calls ? JSON.parse(r.tool_calls) : null,
-        prompt_context: r.prompt_context ? JSON.parse(r.prompt_context) : null,
+        tool_calls: safeParseJson(r.tool_calls),
+        prompt_context: safeParseJson(r.prompt_context),
         created_at: r.created_at,
       }));
   }
@@ -267,8 +307,8 @@ export class DashboardApi {
         content: r.content,
         targets_which: r.target_which != null ? Number(r.target_which) : null,
         batch_id: r.batch_id ?? null,
-        tool_calls: r.tool_calls ? JSON.parse(r.tool_calls) : null,
-        prompt_context: r.prompt_context ? JSON.parse(r.prompt_context) : null,
+        tool_calls: safeParseJson(r.tool_calls),
+        prompt_context: safeParseJson(r.prompt_context),
         created_at: r.created_at,
       }));
   }
@@ -279,7 +319,8 @@ export class DashboardApi {
         `SELECT id, participant_id, target_participant_id, round, content, priority, created_at
          FROM turn_requests ORDER BY id ASC`,
       )
-      .all();
+      .all()
+      .map(mapTurnRequest);
   }
 
   getMaxTurnRequestId() {
@@ -290,10 +331,11 @@ export class DashboardApi {
   getTurnRequestsSince(sinceId) {
     return this.#db
       .prepare(
-        `SELECT participant_id, target_participant_id, content as reason, priority
+        `SELECT id, participant_id, target_participant_id, round, content, priority, created_at
          FROM turn_requests WHERE id > ? ORDER BY id ASC`,
       )
-      .all(sinceId);
+      .all(sinceId)
+      .map(mapTurnRequest);
   }
 
   getOrchestratorMessagesSince(sinceId, meetingId) {
@@ -380,8 +422,8 @@ export class DashboardApi {
       participant_reflection: participant?.reflection ?? "",
       round: contribution.round,
       type: contribution.type,
-      tool_calls: contribution.tool_calls ? JSON.parse(contribution.tool_calls) : null,
-      prompt_context: contribution.prompt_context ? JSON.parse(contribution.prompt_context) : null,
+      tool_calls: safeParseJson(contribution.tool_calls),
+      prompt_context: safeParseJson(contribution.prompt_context),
       created_at: contribution.created_at,
     };
   }
@@ -661,12 +703,10 @@ export class DashboardApi {
  * List all downloaded embedding models.
  */
 export function listDownloadedModels() {
-  const { homedir } = require("os");
-  const { join } = require("path");
   const modelDir = join(homedir(), ".config", "opencode", "loom", "models");
-  
+
   if (!existsSync(modelDir)) return [];
-  
+
   const models = [];
   try {
     const entries = readdirSync(modelDir, { withFileTypes: true });
@@ -677,7 +717,7 @@ export function listDownloadedModels() {
           try {
             const stat = statSync(modelJsonPath);
             if (stat.size > 0) {
-              const content = require("fs").readFileSync(modelJsonPath, "utf-8");
+              const content = readFileSync(modelJsonPath, "utf-8");
               const modelJson = JSON.parse(content);
               models.push(modelJson);
             }
@@ -690,7 +730,7 @@ export function listDownloadedModels() {
   } catch {
     // Skip on error
   }
-  
+
   return models;
 }
 

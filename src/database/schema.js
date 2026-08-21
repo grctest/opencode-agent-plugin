@@ -1,7 +1,25 @@
 /**
- * Final schema. No migration machinery — the DB is wiped whenever a session is
- * deleted, so we ship exactly one latest schema (see docs/database-and-migration-plan.md).
+ * Schema + ordered migrations (audit 04 PD2).
+ *
+ * The per-meeting DB is wiped when a session is deleted, but existing DBs must
+ * survive plugin updates — so schema evolution goes through PRAGMA user_version
+ * and an ordered migration list. New deployments start at LATEST_SCHEMA_VERSION
+ * directly; older files run only the migrations they are missing.
  */
+
+export const LATEST_SCHEMA_VERSION = 1;
+
+/**
+ * Ordered migrations. MIGRATIONS[n] upgrades a DB at user_version n to n+1.
+ * Each entry receives the raw bun:sqlite handle.
+ */
+export const MIGRATIONS = [
+  // v0 → v1: degradation flags on the meeting row (audit 07 EH2)
+  (db) => {
+    db.exec(`ALTER TABLE meetings ADD COLUMN semantic_degraded INTEGER NOT NULL DEFAULT 0`);
+    db.exec(`ALTER TABLE meetings ADD COLUMN persistence_degraded INTEGER NOT NULL DEFAULT 0`);
+  },
+];
 
 export function initSchema(db) {
   db.exec(`
@@ -26,6 +44,8 @@ export function initSchema(db) {
       querying_participants TEXT,
       evidence_participants TEXT,
       summoning_participants TEXT,
+      semantic_degraded INTEGER NOT NULL DEFAULT 0,
+      persistence_degraded INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -175,4 +195,39 @@ export function initSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_persona_embeddings_meeting ON persona_embeddings(meeting_id);
     CREATE INDEX IF NOT EXISTS idx_persona_embeddings_tier ON persona_embeddings(meeting_id, tier);
   `);
+}
+
+/**
+ * Brings a database to the latest schema version, running any pending migrations.
+ * Safe to call on brand-new DBs (schema init + version stamp) and existing ones
+ * (migrations applied in order inside a transaction).
+ * @param {import("bun:sqlite").Database} rawDb
+ * @param {{ logger?: { info?: Function, warn?: Function } }} [opts]
+ */
+export function runMigrations(rawDb, opts = {}) {
+  const log = opts.logger ?? {};
+  const row = rawDb.prepare("PRAGMA user_version").get();
+  const current = Number(row?.user_version ?? 0);
+
+  if (current > LATEST_SCHEMA_VERSION) {
+    throw new Error(
+      `Database schema version ${current} is newer than this plugin supports (${LATEST_SCHEMA_VERSION}) — update the plugin.`
+    );
+  }
+
+  if (current === LATEST_SCHEMA_VERSION) return current;
+
+  rawDb.exec("BEGIN TRANSACTION");
+  try {
+    for (let v = current; v < MIGRATIONS.length; v++) {
+      MIGRATIONS[v](rawDb);
+      if (log.info) log.info("db_migration_applied", `Applied database migration v${v} → v${v + 1}`);
+    }
+    rawDb.prepare(`PRAGMA user_version = ${LATEST_SCHEMA_VERSION}`).run();
+    rawDb.exec("COMMIT");
+  } catch (err) {
+    rawDb.exec("ROLLBACK");
+    throw err;
+  }
+  return LATEST_SCHEMA_VERSION;
 }

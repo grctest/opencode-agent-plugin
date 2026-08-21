@@ -1,0 +1,42 @@
+## Question (canonical)
+Should we migrate to JWTs?
+
+## Tags: security
+
+## Round [object Object]
+
+## State of Play — CANONICAL (treat as settled unless you challenge with evidence)
+
+<<<LOOM_STATE_OF_PLAY>>>_BEGIN_
+## Decisions
+- none
+<<<LOOM_STATE_OF_PLAY>>>_END_
+## Recall — Vector-Retrieved Prior Context (may be stale — verify before citing)
+
+<<<LOOM_RELEVANT_PRIOR_CONTEXT>>>_BEGIN_
+Prior JWT context
+<<<LOOM_RELEVANT_PRIOR_CONTEXT>>>_END_
+
+*Recall is retrieved because it semantically matched recent discussion — it is not canonical. State of Play below is canonical.*
+## Live — Recent Contributions (typed budget: challenge/dissent 280, evidence 220, propose 200, code blocks 320 — weight reflects substance)
+
+<<<LOOM_CONTRIBUTIONS>>>_BEGIN_
+- [#1] [p1] (propose): Use JWTs
+<<<LOOM_CONTRIBUTIONS>>>_END_
+
+## Your Turn — Weighted Guidance
+
+- **State of Play is truth** unless you explicitly challenge it with new evidence or a falsifiable scenario.
+- **Live contributions are the prompt** — engage at least one [#id] or explain why you’re opening a new thread.
+- **Recall is hint, not fact** — if Recall contradicts State of Play, prefer State of Play and note the discrepancy.
+- **Files Involved** (if SoP has them) is file list for code analysis — build on those paths with file=src/... citations.
+
+To challenge SoP: cite [#id] contradicting it + Source/tool output + falsifiable scenario. Otherwise write “SoP holds; discrepancy in Recall noted” and build on it.
+
+Rules:
+- 120-180 words for prose; 150-350 when contributing code diffs (``` file=src/... ``` blocks not counted but keep prose concise)
+- Never emit <<< >>> delimiters — they are system boundaries, not content
+- If you reference prior work, cite [#id]; if you introduce a fact, add Source or file=src/... or qualify as experience
+- Preserve code and numbers verbatim — do not round or invent
+
+Make your contribution or pass.

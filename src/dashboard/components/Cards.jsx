@@ -213,14 +213,17 @@ export const ContributionItem = memo(({ contribution, participantName, onDialogO
 });
 
 export const TurnRequestItem = memo(({ turnRequest, participantName }) => {
+  // Server now normalizes rows to {participant_id, target_participant_id, reason}
+  // via one mapper in api.js (audit 11 UF3) — read the normalized fields.
+  const target = turnRequest.target_participant_id ?? turnRequest.target;
   return (
     <div className="loom-card loom-card-dashed">
       <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center loom-mb-xs">
         <span className="loom-title-sm">{participantName}</span>
         <span className="loom-badge loom-badge-turn-request">turn request</span>
         <span className="loom-text-xs loom-text-muted">priority {turnRequest.priority}</span>
-        {turnRequest.target && (
-          <span className="loom-text-xs loom-text-muted">→ {turnRequest.target}</span>
+        {target && (
+          <span className="loom-text-xs loom-text-muted">→ {target}</span>
         )}
       </div>
       <p className="loom-text loom-text-muted">{turnRequest.reason}</p>

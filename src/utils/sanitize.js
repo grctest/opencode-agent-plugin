@@ -1,52 +1,100 @@
 /**
  * Input sanitization utilities for prompt injection prevention.
- * All user-provided content that goes into LLM prompts should pass through these.
+ *
+ * Policy ("fence, don't mangle" — audit 12 SEC2):
+ * - Structural injection defense lives in delimiter fencing (prompts.js delimitContext).
+ * - These helpers never destroy legitimate content: brackets/braces/links survive intact.
+ * - User-supplied text additionally gets a NARROW directive neutralizer: a zero-width
+ *   joiner is inserted after a line-start "[" when the line looks like a protocol tag,
+ *   so weaker models cannot obey fenced-but-plausible fake directives.
  */
 
-// Known directive patterns that must be preserved through sanitization
-const DIRECTIVE_PATTERN = /\[(PASS|PROPOSE|CHALLENGE|REFINE|SUPPORT|DISSENT|SYNTHESIZE|QUESTION|REFUSE|YIELD|CONTEST[^\]]*|#\d+|NEXT:[^\]]*|CALL_VOTE|REQUEST_NEXT:[^\]]*)\]/gi;
+import { randomBytes } from "node:crypto";
+
+// Migration-fallback tags only (audit 12 SEC3): the live contract is loom_* tools;
+// these two remain parseable by the fallback parser path. Dead forms ([YIELD],
+// [CONTEST…], [NEXT:…]) are removed from the whitelist.
+const DIRECTIVE_PATTERN = /\[(PASS|PROPOSE|CHALLENGE|REFINE|SUPPORT|DISSENT|SYNTHESIZE|QUESTION|REFUSE|#\d+|CALL_VOTE|REQUEST_NEXT:[^\]]*)\]/gi;
+
+// A line that begins with something directive-shaped, e.g. "[DISSENT] ..." or "[#99] fake"
+const LINE_START_DIRECTIVE_RE = /^\s*\[(?:[A-Z_]{3,}|#\d+)[^\]\n]*\]/gm;
 
 /**
- * Sanitizes text for safe inclusion in LLM prompts.
- * Preserves known directive patterns, strips unknown bracket content and HTML/XML tags.
- * @param {string} text - Input text to sanitize
- * @param {number} [maxLen=10000] - Maximum allowed length
- * @returns {string} Sanitized text
+ * Per-call random sentinel namespace. Input containing literal "\x00<digits>\x00"
+ * can no longer forge restorations because each call draws its own prefix.
  */
-export function sanitizeForPrompt(text, maxLen = 10000) {
-  if (!text || typeof text !== 'string') return '';
-  // Extract and protect known directives before stripping brackets
-  const directives = [];
-  let sanitized = text.replace(DIRECTIVE_PATTERN, (match) => {
-    directives.push(match);
-    return `\x00${directives.length - 1}\x00`;
-  });
-  // Strip remaining brackets and HTML
-  sanitized = sanitized
-    .replace(/[\[\]{}]/g, '')
-    .replace(/<[^>]*>/g, '');
-  // Restore directives
-  sanitized = sanitized.replace(/\x00(\d+)\x00/g, (_, idx) => directives[parseInt(idx)]);
-  return sanitized.slice(0, maxLen).trim();
+function makeSentinel() {
+  return `\x00${randomBytes(6).toString("hex")}\u0001`;
 }
 
 /**
- * Sanitizes text for safe display in UI/logs and for prompt display (preserves citations).
- * Strips HTML/XML tags but preserves directive patterns like [#12], [PROPOSE], etc.
+ * Neutralizes imitation directives in UNTRUSTED text: inserts a zero-width joiner
+ * after the leading "[" of any line that opens with a directive-shaped token.
+ * Legitimate prose, code, and markdown links are untouched.
+ */
+export function neutralizeImitationDirectives(text) {
+  if (!text || typeof text !== "string") return text ?? "";
+  return text.replace(LINE_START_DIRECTIVE_RE, (match) => match.replace(/^\s*\[/, (lead) => lead + "\u200D"));
+}
+
+/**
+ * Removes control characters (except newline/tab/carriage-return) and strips
+ * HTML/XML tags — display safety without content destruction.
+ */
+function stripUnsafeChars(text) {
+  return text
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+    .replace(/<[^>]*>/g, "");
+}
+
+/**
+ * Sanitizes untrusted (user-supplied) text for inclusion in LLM prompts.
+ * Does NOT strip brackets/braces — code arrays and markdown links survive.
+ * Line-start imitation directives are neutralized with an invisible joiner.
+ * @param {string} text - Input text to sanitize
+ * @param {number} [maxLen=10000] - Maximum allowed length (truncation happens FIRST)
+ * @returns {string} Sanitized text
+ */
+export function sanitizeForPrompt(text, maxLen = 10000) {
+  if (!text || typeof text !== "string") return "";
+  // Truncate before any processing so restoration can never splice across the cut
+  const bounded = text.length > maxLen ? text.slice(0, maxLen) : text;
+  const cleaned = stripUnsafeChars(bounded);
+  return neutralizeImitationDirectives(cleaned).trim();
+}
+
+/**
+ * Sanitizes text for safe display in UI/logs and prompt display (preserves citations
+ * and whitelisted protocol tags via a hardened, unforgeable sentinel scheme).
  * Unlike sanitizeForPrompt, it keeps brackets for citation visibility.
  * @param {string} text - Input text to sanitize
- * @param {number} [maxLen=5000] - Maximum allowed length
+ * @param {number} [maxLen=5000] - Maximum allowed length (truncation happens FIRST)
  * @returns {string} Sanitized text
  */
 export function sanitizeForDisplay(text, maxLen = 5000) {
-  if (!text || typeof text !== 'string') return '';
+  if (!text || typeof text !== "string") return "";
+  // Truncate before extraction so a cut can never split a sentinel
+  const bounded = text.length > maxLen ? text.slice(0, maxLen) : text;
+
+  // Strip unsafe chars FIRST — our sentinels contain control characters and
+  // must never pass through the stripping step.
+  const cleaned = stripUnsafeChars(bounded);
+
+  const sentinel = makeSentinel();
   const directives = [];
-  let sanitized = text.replace(DIRECTIVE_PATTERN, (match) => {
+  let sanitized = cleaned.replace(DIRECTIVE_PATTERN, (match) => {
     directives.push(match);
-    return `\x00${directives.length - 1}\x00`;
+    return `${sentinel}${directives.length - 1}${sentinel}`;
   });
-  // Strip HTML/XML tags but keep brackets for citations
-  sanitized = sanitized.replace(/<[^>]*>/g, '');
-  sanitized = sanitized.replace(/\x00(\d+)\x00/g, (_, idx) => directives[parseInt(idx)]);
-  return sanitized.slice(0, maxLen).trim();
+
+  // Restore with strict index-bounds validation — out-of-range drops instead of splicing "undefined"
+  sanitized = sanitized.replace(new RegExp(`${sentinel}(\\d+)${sentinel}`, "g"), (_, idx) => {
+    const i = parseInt(idx, 10);
+    return Number.isInteger(i) && i >= 0 && i < directives.length ? directives[i] : "";
+  });
+  // Belt-and-braces: any orphaned sentinel (shouldn't exist post-truncation-fix) is dropped
+  sanitized = sanitized.split(sentinel).join("");
+
+  return sanitized.trim();
 }

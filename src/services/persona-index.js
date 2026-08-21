@@ -82,7 +82,7 @@ export class PersonaIndex {
    */
   async search(queryText, tier, topK = 5) {
     const dim = getEmbeddingDim();
-    const queryEmbedding = await embedText(queryText);
+    const queryEmbedding = await embedText(queryText, { isQuery: true });
     return this.#database.searchPersonaEmbeddings(queryEmbedding, tier, topK, dim);
   }
 

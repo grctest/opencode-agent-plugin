@@ -15,6 +15,7 @@ export const EMBEDDING_DIM = 384;
 let currentModel = null;
 let currentDim = EMBEDDING_DIM;
 let currentMaxTokens = 512;
+/** @type {{ modelName: string, quant: string, promise: Promise<void> } | null} */
 let initInFlight = null;
 
 /**
@@ -26,13 +27,20 @@ let initInFlight = null;
  * @param {string} projectRoot - Project root directory
  */
 export async function initializeEmbedder(modelName, quant = "onnx/model_int8.onnx", projectRoot) {
-  if (currentModel?.name === modelName) return;
-  if (initInFlight) return initInFlight;
+  // Key-aware in-flight caching (audit 06 V3): only share the in-flight load when
+  // it is for the SAME (model, quant) pair.
+  if (currentModel?.name === modelName && currentModel?.quant === quant) return;
+  if (initInFlight && initInFlight.modelName === modelName && initInFlight.quant === quant) {
+    return initInFlight.promise;
+  }
 
-  initInFlight = doInitialize(modelName, quant, projectRoot).finally(() => {
-    initInFlight = null;
-  });
-  return initInFlight;
+  const promise = doInitialize(modelName, quant, projectRoot);
+  initInFlight = { modelName, quant, promise };
+  try {
+    return await promise;
+  } finally {
+    if (initInFlight?.promise === promise) initInFlight = null;
+  }
 }
 
 /**
@@ -42,19 +50,31 @@ export async function initializeEmbedder(modelName, quant = "onnx/model_int8.onn
  * @returns {Promise<void>}
  */
 export async function ensureEmbedderInitialized(modelName, quant = "onnx/model_int8.onnx", projectRoot) {
-  if (currentModel) return;
   if (initInFlight) return initInFlight;
+  // Key-aware init (audit 06 V3): a mismatched already-loaded model must be
+  // reloaded loudly rather than silently no-op'd.
+  if (currentModel) {
+    if (currentModel.name === modelName && currentModel.quant === quant) return;
+    embedLogger.warn(
+      "embedder_model_mismatch",
+      `Embedding service already loaded ${currentModel.name} but ${modelName} was requested — reloading`,
+    );
+    currentModel = null;
+  }
   return initializeEmbedder(modelName, quant, projectRoot);
 }
 
 async function doInitialize(modelName, quant, projectRoot) {
   const manager = new ModelManager(projectRoot);
 
-  const { session, tokenizer, dims, maxTokens } = await manager.loadModel(modelName, quant);
-  currentModel = { name: modelName, session, tokenizer, manager, dims, maxTokens };
+  const { session, tokenizer, dims, maxTokens, meta } = await manager.loadModel(modelName, quant);
+  currentModel = { name: modelName, quant, session, tokenizer, manager, dims, maxTokens, meta };
   currentDim = dims;
   currentMaxTokens = maxTokens;
-  embedLogger.info("embedder_initialized", `Embedding service initialized with ${modelName} (${dims}d, maxTokens=${maxTokens})`);
+  embedLogger.info(
+    "embedder_initialized",
+    `Embedding service initialized with ${modelName} (${dims}d, maxTokens=${maxTokens}, pooling=${meta.pooling}${meta.queryPrefix ? ", queryPrefix set" : ""})`
+  );
 }
 
 /**
@@ -82,21 +102,36 @@ export function getEmbeddingMaxTokens() {
  * Generate an embedding for the given text using the real model.
  * Throws if no embedder is initialized or inference fails — never silently
  * degrades, so callers can render honest "semantic features unavailable" state.
+ *
+ * @param {string} text - Text to embed
+ * @param {{ isQuery?: boolean }} [opts] - isQuery=true applies the model's
+ *   query-side prefix (asymmetric-retrieval models need different treatment for
+ *   queries vs documents — audit 06 V1). Defaults to document-side.
+ * @returns {Promise<Float32Array>}
  */
-export async function embedText(text) {
+export async function embedText(text, opts = {}) {
   if (!currentModel) {
     throw new Error("Embedding service not initialized — semantic features are disabled. Load a model to enable them.");
   }
+  const meta = currentModel.meta;
+  const prefix = opts.isQuery ? (meta?.queryPrefix ?? "") : (meta?.documentPrefix ?? "");
+  const prepared = prefix && text ? prefix + text : text;
   try {
     return await currentModel.manager.embed(
       currentModel.session,
       currentModel.tokenizer,
-      text,
+      prepared,
       currentModel.dims,
       currentModel.maxTokens,
+      meta,
     );
   } catch (err) {
     embedLogger.warn("embed_failed", "Real embedder failed", extractErrorInfo(err));
     throw err;
   }
+}
+
+/** Metadata of the loaded encoder, or null. */
+export function getEmbedderMeta() {
+  return currentModel ? { name: currentModel.name, quant: currentModel.quant, ...currentModel.meta } : null;
 }

@@ -11,6 +11,8 @@ import { VectorIndex } from "./services/vector-index.js";
 import { resolveLoomBaseDir } from "./paths.js";
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_QUANT } from "./services/model-manager.js";
 import { buildQueryPrompt, buildEvidencePrompt, buildVotePrompt, buildSummonPrompt } from "./prompts.js";
+import * as sharedVoteTally from "./utils/vote-tally.js";
+import { degrade } from "./utils/degrade.js";
 
 const PROGRESS_PATTERN =
   /^🎬|^⚠️|^ℹ️|is thinking\.\.\.|— synthesize:|— critique:|Round \d+ (complete|starting)|Synthesizing final output|✅ Completed|❌ Error:/;
@@ -45,10 +47,15 @@ export const Loom = async (input) => {
   // uses real embeddings rather than placeholder noise. This mirrors the
   // dashboard's initEmbeddingModel(), which previously was the only place the
   // model got loaded. Failures are non-fatal: semantic features degrade visibly.
+  // Single config-driven startup (audit 06 V4): honor the configured model here,
+  // once — orchestrator consumes whatever this loads.
+  const startupConfig = createConfig().get();
+  const resolvedModel = startupConfig.embeddingModel ?? DEFAULT_EMBEDDING_MODEL;
+  const resolvedQuant = startupConfig.embeddingQuant ?? DEFAULT_EMBEDDING_QUANT;
   const { ensureEmbedderInitialized, getEmbeddingDim } = await import("./services/embedding-service.js");
-  ensureEmbedderInitialized(DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_QUANT)
+  ensureEmbedderInitialized(resolvedModel, resolvedQuant)
     .then(() => {
-      logger.info("embedder_initialized", `Embedding model loaded: ${DEFAULT_EMBEDDING_MODEL} (${getEmbeddingDim()}d)`);
+      logger.info("embedder_initialized", `Embedding model loaded: ${resolvedModel} (${getEmbeddingDim()}d)`);
     })
     .catch((err) => {
       logger.warn(
@@ -272,7 +279,7 @@ export const Loom = async (input) => {
                 };
                 stateManager.addContribution(contrib);
                 if (roundObj) roundObj.contributions.push(contrib);
-                try { db.addContributionWithTurnRequest(stateManager.getState().id, contrib, null); } catch (dbErr) { logger.warn('contribution_db_failed', `Failed to persist ${contrib.type} for ${target.config.id} — visible in memory only this session`, { error: dbErr?.message }); }
+                degrade("contribution_db_failed", "Failed to persist contribution — visible in memory only this session", () => db.addContributionWithTurnRequest(stateManager.getState().id, contrib, null), null);
                 results.push({ participantId: target.config.id, name: target.config.name, content: content.slice(0,800), contributionId: contrib.id });
               } catch {
                 results.push({ participantId: target.config.id, name: target.config.name, content: content.slice(0,800) });
@@ -412,17 +419,7 @@ export const Loom = async (input) => {
           const sourceSnippet = caller?.currentContribution ?? args.question.slice(0,300);
           // Voters = all other active participants excluding caller
           const voters = allParticipants.filter(p => (!caller || p.config.id !== caller.config.id) && p.status !== "failed" && p.status !== "passed");
-          const extractVoteLetter = (text) => {
-            if (!text) return null;
-            const tagMatch = text.match(/\[Vote:\s*([A-Za-z0-9]+)\]/i);
-            if (tagMatch) return tagMatch[1].toUpperCase();
-            const lines = text.split("\n");
-            for (const line of lines) {
-              const trimmed = line.trim();
-              if (/^[A-Za-z0-9]$/.test(trimmed) || /^[A-Za-z0-9]{1,2}$/.test(trimmed)) return trimmed.toUpperCase();
-            }
-            return null;
-          };
+          const extractVoteLetter = (text) => sharedVoteTally.extractVoteLetter(text);
           if (voters.length === 0) {
             const tallyContent = `[Vote Tally] ${args.question}\nSource vote: ${sourceSnippet.slice(0,200)}\nTotal voters: 1 (source only)`;
             try {
@@ -440,7 +437,7 @@ export const Loom = async (input) => {
               };
               stateManager.addContribution(tallyContrib);
               if (roundObj) roundObj.contributions.push(tallyContrib);
-              try { db.addContributionWithTurnRequest(stateManager.getState().id, tallyContrib, null); } catch (dbErr) { logger.warn('tally_db_failed', `Failed to persist vote_tally — visible in memory only this session`, { error: dbErr?.message }); }
+              degrade("tally_db_failed", "Failed to persist vote_tally — visible in memory only this session", () => db.addContributionWithTurnRequest(stateManager.getState().id, tallyContrib, null), null);
               return { inline: true, question: args.question, tally: tallyContent.slice(0,800), votes: [], tallyId: tallyContrib.id, note: "Vote completed inline — source only." };
             } catch (e) {
               return { inline: true, question: args.question, tally: tallyContent.slice(0,800), votes: [], note: `Vote inline stored failed: ${e.message}` };
@@ -508,7 +505,7 @@ export const Loom = async (input) => {
               voteResponses.push({ voter: voter.config.name, content: text.trim() });
               voterResults.push({ voter: voter.config.id, name: voter.config.name, content: text.trim().slice(0,200) });
               voter.contributions_count = stateManager.getWeave().filter((c) => c.participant_id === voter.config.id).length;
-              try { db.addContributionWithTurnRequest(stateManager.getState().id, contrib, null); } catch (dbErr) { logger.warn('vote_response_db_failed', `Failed to persist vote_response for ${voter.config.id} — visible in memory only this session`, { error: dbErr?.message }); }
+              degrade("vote_response_db_failed", "Failed to persist vote_response — visible in memory only this session", () => db.addContributionWithTurnRequest(stateManager.getState().id, contrib, null), null);
               voter.status = previousStatus;
               try { db.setParticipantStatus(voter.config.id, previousStatus); } catch {}
             } catch (err) {
@@ -520,29 +517,13 @@ export const Loom = async (input) => {
               await sessionManager.deleteEphemeralSession(sessionId).catch(()=>{});
             }
           }));
-          // Tally generation (mirrors RoundExecutor.executeVote)
-          const tallyLines = [`[Vote Tally] ${args.question}`];
-          const voteCounts = {};
-          const sourceLetter = extractVoteLetter(sourceSnippet);
-          if (sourceLetter) {
-            voteCounts[sourceLetter] = (voteCounts[sourceLetter] || 0) + 1;
-            tallyLines.push(`${sourceLetter}: 1 vote (${caller?.config?.name ?? "source"} — source)`);
-          }
-          for (const vr of voteResponses) {
-            const letter = extractVoteLetter(vr.content);
-            if (letter) {
-              voteCounts[letter] = (voteCounts[letter] || 0) + 1;
-              const existing = tallyLines.find((l) => l.startsWith(`${letter}:`));
-              if (existing) {
-                const idx = tallyLines.indexOf(existing);
-                tallyLines[idx] = `${letter}: ${voteCounts[letter]} votes (${existing.match(/\((.+)\)/)?.[1] ?? ""}, ${vr.voter})`;
-              } else {
-                tallyLines.push(`${letter}: 1 vote (${vr.voter})`);
-              }
-            }
-          }
-          const totalVoters = 1 + voteResponses.length;
-          tallyLines.push(`Total voters: ${totalVoters}`);
+          // Tally generation via shared builder (audit 16 MA2 — mirrors RoundExecutor.executeVote)
+          const { lines: tallyLines, counts: voteCounts } = sharedVoteTally.buildTally({
+            question: args.question,
+            sourceLetter: extractVoteLetter(sourceSnippet),
+            sourceLabel: caller?.config?.name ?? "source",
+            responses: voteResponses,
+          });
           const sorted = Object.entries(voteCounts).sort((a, b) => b[1] - a[1]);
           if (sorted.length > 0) {
             const [winner, count] = sorted[0];
@@ -563,7 +544,7 @@ export const Loom = async (input) => {
           };
           stateManager.addContribution(tallyContrib);
           if (roundObj) roundObj.contributions.push(tallyContrib);
-          try { db.addContributionWithTurnRequest(stateManager.getState().id, tallyContrib, null); } catch (dbErr) { logger.warn('tally_db_failed', `Failed to persist final vote_tally — visible in memory only this session`, { error: dbErr?.message }); }
+          degrade("tally_db_failed", "Failed to persist final vote_tally — visible in memory only this session", () => db.addContributionWithTurnRequest(stateManager.getState().id, tallyContrib, null), null);
           return { inline: true, question: args.question, tally: tallyContent.slice(0,800), votes: voterResults, tallyId: tallyContrib.id, note: "Vote completed inline — tally and vote_response/tally rows stored, returned for same-turn synthesis." };
         } catch (e) {
           return { error: `loom_vote inline failed: ${e.message}`, queued: true, question: args.question };
@@ -663,7 +644,7 @@ export const Loom = async (input) => {
             };
             stateManager2.addContribution(contrib2);
             if (roundObj2) roundObj2.contributions.push(contrib2);
-            try { db2.addContributionWithTurnRequest(stateManager2.getState().id, contrib2, null); } catch (dbErr) { logger.warn('summon_db_failed', `Failed to persist summoned_response for ${found.name} — visible in memory only this session`, { error: dbErr?.message }); }
+            degrade("summon_db_failed", "Failed to persist summoned_response — visible in memory only this session", () => db2.addContributionWithTurnRequest(stateManager2.getState().id, contrib2, null), null);
           } catch {}
           return { inline: true, persona_name: args.persona_name, issue: args.issue, guest: found.name, content, note: "Inline summon — guest perspective returned for synthesis and stored as indented summoned_response row." };
         } catch (e) {
@@ -699,15 +680,45 @@ export const Loom = async (input) => {
     }
   };
 
+  // Async abort — SIGINT/SIGTERM can briefly await before exit so
+  // any in-flight persistState() has a grace window to complete (audit 05 LS8).
+  // The sync "exit" handler below is intentionally minimal: async work cannot
+  // complete there, so it only does best-effort flag setting.
+  const markActiveMeetingsAbortedAsync = async () => {
+    for (const [id, engine] of activeLooms) {
+      try {
+        const state = engine.getState();
+        if (state.status !== "converged" && state.status !== "cancelled" &&
+            state.status !== "timeout" && state.status !== "max_rounds_reached" &&
+            state.status !== "aborted" && state.status !== "deadlocked") {
+          engine.cancel();
+          logger.warn("process_exit", `Marking meeting ${id} as aborted due to process exit`);
+        }
+      } catch { /* best effort */ }
+    }
+    // Grace window for in-flight DB writes to settle
+    await new Promise((r) => setTimeout(r, 500));
+  };
+
   const originalExit = process.exit.bind(process);
   const wrappedExit = (code) => {
     markActiveMeetingsAborted();
     return originalExit(code);
   };
 
-  process.on("exit", () => markActiveMeetingsAborted());
-  process.on("SIGINT", () => { markActiveMeetingsAborted(); process.exit(130); });
-  process.on("SIGTERM", () => { markActiveMeetingsAborted(); process.exit(143); });
+  // "exit" is synchronous — async DB ops cannot complete here (audit 05 LS8).
+  // Keep it as a no-op flag setter; real persistence happens in SIGINT/SIGTERM.
+  process.on("exit", () => {
+    try { markActiveMeetingsAborted(); } catch {}
+  });
+  process.on("SIGINT", async () => {
+    await markActiveMeetingsAbortedAsync();
+    process.exit(130);
+  });
+  process.on("SIGTERM", async () => {
+    await markActiveMeetingsAbortedAsync();
+    process.exit(143);
+  });
   process.on("uncaughtException", (err) => {
     logger.error("uncaught_exception", "Uncaught exception — aborting active meetings", { message: err.message, stack: err.stack });
     markActiveMeetingsAborted();
@@ -978,7 +989,7 @@ export const Loom = async (input) => {
                 const cfg = config.get();
                 const warnings = config.getWarnings();
                 const source = config.getSource();
-                result.config = { values: cfg, warnings, source, dormantNote: "turnRequestThresholds.autoGrant, maxTurnRequestsPerRound, maxTurnRequestWords are dormant — ordering is planTurnOrder" };
+                result.config = { values: cfg, warnings, source, dormantNote: "maxTurnRequestsPerRound was removed from the schema (never enforced — ordering is planTurnOrder)" };
               } catch {}
             }
             return JSON.stringify(result, null, 2);
@@ -1044,7 +1055,7 @@ export const Loom = async (input) => {
                 try {
                   const { createConfig } = await import("./config.js");
                   const cfgInst = createConfig(directory);
-                  result.config = { values: cfgInst.get(), warnings: cfgInst.getWarnings(), source: cfgInst.getSource(), dormantNote: "turnRequestThresholds.autoGrant, maxTurnRequestsPerRound, maxTurnRequestWords are dormant — ordering is planTurnOrder" };
+                  result.config = { values: cfgInst.get(), warnings: cfgInst.getWarnings(), source: cfgInst.getSource(), dormantNote: "maxTurnRequestsPerRound was removed from the schema (never enforced — ordering is planTurnOrder)" };
                 } catch {}
               }
               result._source = "db-fallback";

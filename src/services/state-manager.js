@@ -38,14 +38,40 @@ export class StateManager {
   }
 
   getState() {
-    // Deep-freeze to prevent callers from mutating nested arrays/objects
-    const frozen = Object.freeze({
+    // Deep-freeze projections — callers must never mutate meeting state (audit 05 LS4).
+    // Copies are frozen, not the live internals, so internal mutation paths keep working.
+    const deepFreeze = (value) => {
+      if (value === null || typeof value !== "object") return value;
+      Object.freeze(value);
+      for (const key of Object.keys(value)) {
+        if (value[key] !== null && typeof value[key] === "object") {
+          value[key] = deepFreeze(value[key]);
+        }
+      }
+      return value;
+    };
+    const frozenCopy = (v) => {
+      if (v === null || typeof v !== "object") return v;
+      let cloned;
+      try {
+        cloned = structuredClone(v);
+      } catch {
+        cloned = JSON.parse(JSON.stringify(v));
+      }
+      return deepFreeze(cloned);
+    };
+    return Object.freeze({
       ...this.#state,
       participants: Object.freeze(this.#state.participants.map((p) => Object.freeze({ ...p }))),
       weave: Object.freeze([...this.#state.weave]),
       rounds: Object.freeze(this.#state.rounds.map((r) => Object.freeze({ ...r }))),
+      artifact: this.#state.artifact ? frozenCopy(this.#state.artifact) : this.#state.artifact,
+      objections: Array.isArray(this.#state.objections) ? Object.freeze(this.#state.objections.map((o) => Object.freeze({ ...o }))) : this.#state.objections,
+      tags: Array.isArray(this.#state.tags) ? Object.freeze([...this.#state.tags]) : this.#state.tags,
+      stats: this.#state.stats && typeof this.#state.stats === "object" ? frozenCopy(this.#state.stats) : this.#state.stats,
+      planned_turn_order: Array.isArray(this.#state.planned_turn_order) ? Object.freeze([...this.#state.planned_turn_order]) : this.#state.planned_turn_order,
+      state_of_play: this.#state.state_of_play,
     });
-    return frozen;
   }
 
   getParticipants() {
@@ -116,6 +142,22 @@ export class StateManager {
     return this.#state.state_of_play ?? "";
   }
 
+  // Contribution-mix steering for next round (audit 01 E3) — transient hint
+  // consumed once by the next prompt phase, not persisted.
+  getNextRoundSteering() {
+    return this.#state._nextRoundSteering ?? "";
+  }
+
+  setNextRoundSteering(hint) {
+    this.#state._nextRoundSteering = hint || "";
+  }
+
+  consumeNextRoundSteering() {
+    const hint = this.#state._nextRoundSteering ?? "";
+    this.#state._nextRoundSteering = "";
+    return hint;
+  }
+
   getNextSpeakerId() {
     return this.#state.next_speaker_id;
   }
@@ -132,23 +174,37 @@ export class StateManager {
     this.#state.planned_turn_order = order ?? [];
   }
 
+  /**
+   * Validated transition table (audit 05 LS3). Modeled explicitly so no caller
+   * needs a bypass API:
+   * - `weaving → weaving` is legal via the extension entry point (re-open mid-deliberation)
+   * - `timeout` reachable from initializing (a stall can fire before round 1 completes)
+   * - terminal states are terminal — restore() refuses them (meeting-restorer LS1)
+   */
+  static TRANSITIONS = {
+    initializing: ["weaving", "cancelled", "aborted", "timeout"],
+    weaving: ["converged", "cancelled", "timeout", "max_rounds_reached", "aborted", "deadlocked"],
+    // Extension entry point: a converged/terminal meeting explicitly re-opened
+    // by extendMeeting() passes through forceTransitionTo, documented below.
+    converged: [],
+    cancelled: [],
+    timeout: [],
+    max_rounds_reached: [],
+    aborted: [],
+    deadlocked: [],
+  };
+
   transitionTo(status) {
-    const validTransitions = {
-      initializing: ["weaving", "cancelled", "aborted"],
-      weaving: ["converged", "cancelled", "timeout", "max_rounds_reached", "aborted", "deadlocked"],
-      converged: [],
-      cancelled: [],
-      timeout: [],
-      max_rounds_reached: [],
-      aborted: [],
-      deadlocked: [],
-    };
     const current = this.#state.status;
+    if (current === status && status === "weaving") {
+      // weaving → weaving self-transition (extension) is legal and a no-op here
+      return;
+    }
     if (current === status) {
       this.#logger.debug("state_transition", `No-op transition (already ${status})`);
       return;
     }
-    const allowed = validTransitions[current];
+    const allowed = StateManager.TRANSITIONS[current];
     if (!allowed || !allowed.includes(status)) {
       this.#logger.error("invalid_transition", `Invalid status transition rejected: ${current} -> ${status}`);
       throw new Error(`Invalid status transition: ${current} -> ${status}`);
@@ -158,15 +214,17 @@ export class StateManager {
   }
 
   /**
-   * Applies a status change without transition validation.
-   * Reserved for explicit escape hatches (e.g. re-opening a terminal meeting).
+   * Applies a status change without transition validation. The ONLY sanctioned use
+   * is MeetingExtender re-opening a meeting for extension (terminal → weaving);
+   * everything else must go through transitionTo(). If you reach for this for any
+   * other path, fix the transition table instead (audit 05 LS3).
    * @param {string} status
    */
   forceTransitionTo(status) {
     const current = this.#state.status;
     if (current === status) return;
     this.#state.status = status;
-    this.#logger.info("state_transition", `${current} -> ${status} (forced)`);
+    this.#logger.info("state_transition", `${current} -> ${status} (forced: extension entry point)`);
   }
 
   incrementRound() {

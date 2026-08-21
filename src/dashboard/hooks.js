@@ -55,8 +55,14 @@ export function useSSEHandlers({ setContributions, setTurnRequests, setState, se
       const newTrs = e.detail;
       if (!newTrs || newTrs.length === 0) return;
       setTurnRequests((prev) => {
-        const seen = new Set(prev.map((tr) => `${tr.participant_id}:${tr.target}`));
-        const fresh = newTrs.filter((tr) => tr && !seen.has(`${tr.participant_id}:${tr.target}`));
+        // Dedup on stable row id when present; fall back to the normalized composite
+        // key (participant_id + target_participant_id + round) — the old key used
+        // `tr.target`, which is always undefined and collapsed every request from
+        // the same participant (audit 11 UF2).
+        const keyOf = (tr) =>
+          tr.id != null ? `id:${tr.id}` : `${tr.participant_id}:${tr.target_participant_id}:${tr.round ?? ""}`;
+        const seen = new Set(prev.map(keyOf));
+        const fresh = newTrs.filter((tr) => tr && !seen.has(keyOf(tr)));
         return fresh.length > 0 ? [...prev, ...fresh] : prev;
       });
     };
@@ -147,7 +153,11 @@ export function useEmbeddingStatus() {
 
   useEffect(() => {
     fetchStatus();
-    const interval = setInterval(fetchStatus, 5000);
+    // Visibility-aware (audit 17 PF3)
+    const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      fetchStatus();
+    }, 5000);
     return () => clearInterval(interval);
   }, [fetchStatus]);
 

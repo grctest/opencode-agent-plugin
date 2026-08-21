@@ -1,17 +1,15 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 const DEFAULT_CONFIG = {
   agentTimeoutMs: 120000,
   synthesisTimeoutMs: 180000,
-  maxTurnRequestWords: 200,
   defaultMaxRounds: 3,
   minRounds: 2,
   fastPathModel: "",
   embeddingModel: "Snowflake/snowflake-arctic-embed-xs",
   embeddingQuant: "onnx/model_int8.onnx",
-  turnRequestThresholds: { autoGrant: 9 },
-  maxTurnRequestsPerRound: 3,
   maxSummonsPerRound: 2,
   maxSummonsPerAgent: 1,
   moderatorTrigger: { minContributions: 3, recentChallenges: 2, lookbackWindow: 4 },
@@ -22,6 +20,8 @@ const DEFAULT_CONFIG = {
   defaultMeetingTimeoutMs: 900000,
   stallTimeoutMs: 300000,
   modelDiversity: true,
+  dashboard: { host: "127.0.0.1" },
+  composition: { maxCosineDistance: 0.85 },
   circuitBreaker: {
     failureThreshold: 3,
     resetTimeoutMs: 300000,
@@ -67,7 +67,6 @@ const DEFAULT_CONFIG = {
 const CONFIG_SCHEMA = {
   agentTimeoutMs: { type: 'number', min: 10000, max: 600000 },
   synthesisTimeoutMs: { type: 'number', min: 10000, max: 600000 },
-  maxTurnRequestWords: { type: 'number', min: 20, max: 1000 },
   defaultMaxRounds: { type: 'number', min: 1, max: 10 },
   minRounds: { type: 'number', min: 1, max: 5 },
   fastPathModel: { type: 'string' },
@@ -78,7 +77,6 @@ const CONFIG_SCHEMA = {
   retryMaxDelayMs: { type: 'number', min: 1000, max: 60000 },
   defaultMeetingTimeoutMs: { type: 'number', min: 60000, max: 3600000 },
   stallTimeoutMs: { type: 'number', min: 30000, max: 1800000 },
-  maxTurnRequestsPerRound: { type: 'number', min: 1, max: 5 },
   maxSummonsPerRound: { type: 'number', min: 0, max: 5 },
   maxSummonsPerAgent: { type: 'number', min: 0, max: 3 },
   modelDiversity: { type: 'boolean' },
@@ -89,7 +87,8 @@ const NESTED_SCHEMA = {
   'moderatorTrigger.minContributions': { type: 'number', min: 1, max: 10 },
   'moderatorTrigger.recentChallenges': { type: 'number', min: 1, max: 10 },
   'moderatorTrigger.lookbackWindow': { type: 'number', min: 2, max: 10 },
-  'turnRequestThresholds.autoGrant': { type: 'number', min: 1, max: 10 },
+  'dashboard.host': { type: 'string' },
+  'composition.maxCosineDistance': { type: 'number', min: 0.1, max: 1.9 },
   'circuitBreaker.failureThreshold': { type: 'number', min: 1, max: 10 },
   'circuitBreaker.resetTimeoutMs': { type: 'number', min: 10000, max: 3600000 },
   'agentTools.enabled': { type: 'boolean' },
@@ -120,6 +119,14 @@ const NESTED_SCHEMA = {
   'modelFallback.maxFallbackAttempts': { type: 'number', min: 0, max: 3 },
 };
 
+/**
+ * Deep-merge `source` over `target` (audit 08 C1). Conflict semantics:
+ * - object + object → recursive merge
+ * - scalar source over object target → if the object has an `enabled` key, promote
+ *   the scalar to `{...target, enabled: scalar}` (bash-style shorthand); otherwise the scalar replaces the object.
+ * - object source over scalar target → object wins (wrap not attempted).
+ * - otherwise → source wins.
+ */
 function deepMerge(target, source) {
   const result = { ...target };
   for (const key of Object.keys(source)) {
@@ -152,6 +159,19 @@ function deepMerge(target, source) {
   return result;
 }
 
+/** Recursively collect leaf-key paths of a plain object ("a.b.c"). */
+function collectLeafPaths(obj, prefix = '', out = []) {
+  for (const [key, value] of Object.entries(obj)) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (value !== null && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length > 0) {
+      collectLeafPaths(value, path, out);
+    } else {
+      out.push(path);
+    }
+  }
+  return out;
+}
+
 function validateConfigKey(key, value) {
   const schema = CONFIG_SCHEMA[key];
   if (!schema) return { valid: true };
@@ -168,9 +188,6 @@ function validateConfigKey(key, value) {
   } else if (schema.type === 'string') {
     if (typeof value !== 'string') {
       return { valid: false, error: `"${key}" must be a string, got ${typeof value}` };
-    }
-    if (schema.enum && !schema.enum.includes(value)) {
-      return { valid: false, error: `"${key}" must be one of ${schema.enum.join(', ')}, got "${value}"` };
     }
   } else if (schema.type === 'boolean') {
     if (typeof value !== 'boolean') {
@@ -278,43 +295,59 @@ export function parseFastPathModel(modelStr) {
   return { providerID, modelID };
 }
 
-function findConfigFile(directory) {
-  if (directory) {
-    const projectConfig = join(directory, '.loomrc.json');
-    if (existsSync(projectConfig)) return projectConfig;
-  }
-  const homeLoomConfig = join(process.env.HOME || '/root', '.config', 'opencode', '.loomrc.json');
-  if (existsSync(homeLoomConfig)) return homeLoomConfig;
-
-  // Backward compat: check opencode.json with "loom" key
-  const candidates = [
-    join(process.env.HOME || '/root', '.config', 'opencode', 'opencode.json'),
-    join(process.env.HOME || '/root', '.config', 'opencode', 'opencode.jsonc'),
-  ];
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) {
-      try {
-        const content = readFileSync(candidate, 'utf-8');
-        let parsed;
-        try {
-          parsed = JSON.parse(content);
-        } catch (e) {
-          // Try jsonc stripping for .jsonc files or files with comments
-          if (candidate.endsWith('.jsonc') || content.includes('//') || content.includes('/*')) {
-            const stripped = stripJsoncComments(content);
-            parsed = JSON.parse(stripped);
-          } else {
-            throw e;
-          }
-        }
-        if (parsed && typeof parsed === 'object' && parsed.loom) {
-          return candidate;
-        }
-      } catch { /* ignore parse errors */ }
+function parseConfigFileContent(filePath) {
+  const content = readFileSync(filePath, 'utf-8');
+  let parsed;
+  try {
+    parsed = JSON.parse(content);
+  } catch (e) {
+    // Try jsonc stripping for .jsonc files or files with comments
+    if (filePath.endsWith('.jsonc') || content.includes('//') || content.includes('/*')) {
+      const stripped = stripJsoncComments(content);
+      parsed = JSON.parse(stripped);
+    } else {
+      throw e;
     }
   }
+  return parsed;
+}
 
-  return null;
+function homeOpenCodeDir() {
+  return join(homedir(), '.config', 'opencode');
+}
+
+/**
+ * Collect config candidates in resolution order (audit 08 C1).
+ * Project files are more specific than home files and win on conflict;
+ * within a location, `.loomrc.json` (loom-native) beats opencode.json's "loom" key.
+ * Returns [{path, config}] in increasing precedence order.
+ */
+function collectConfigCandidates(directory) {
+  const candidates = [];
+  const readCandidate = (path) => {
+    try {
+      if (!existsSync(path)) return;
+      const parsed = parseConfigFileContent(path);
+      if (parsed && typeof parsed === 'object') {
+        // .loomrc.json: top-level keys, no wrapper; opencode.json: "loom" key wrapper
+        const config = parsed.loom && typeof parsed.loom === 'object' ? parsed.loom : parsed;
+        candidates.push({ path, config });
+      }
+    } catch { /* unreadable/malformed candidate — skipped */ }
+  };
+
+  if (directory) {
+    readCandidate(join(directory, 'opencode.json'));
+    readCandidate(join(directory, 'opencode.jsonc'));
+    readCandidate(join(directory, '.loomrc.json'));
+  }
+
+  const homeDir = homeOpenCodeDir();
+  readCandidate(join(homeDir, 'opencode.json'));
+  readCandidate(join(homeDir, 'opencode.jsonc'));
+  readCandidate(join(homeDir, '.loomrc.json'));
+
+  return candidates;
 }
 
 function getNestedValue(obj, path) {
@@ -383,38 +416,93 @@ function validateCrossField(merged, warnings) {
   }
 }
 
+/**
+ * Keys removed from the schema (audit 08 C3): they were never consumed by the
+ * planner. Setting them now produces one clear deprecation warning instead of a nag.
+ */
+const DEPRECATED_KEYS = {
+  maxTurnRequestWords: 'never enforced — turn-request length is governed by prompts; key removed',
+  maxTurnRequestsPerRound: 'never enforced — ordering is planTurnOrder; key removed',
+  'turnRequestThresholds.autoGrant': 'dormant by design — ordering is planTurnOrder, not autoGrant; key removed',
+};
+
+function validateAllowlistEntries(merged, userConfig, warnings) {
+  const raw = getNestedValue(userConfig, 'agentTools.builtIn.bash.allowlist');
+  if (raw === undefined) return;
+  if (!Array.isArray(raw) || raw.some((entry) => typeof entry !== 'string')) {
+    warnings.push('Config "agentTools.builtIn.bash.allowlist" must be an array of strings — ignoring non-conforming value.');
+    setNestedValue(merged, 'agentTools.builtIn.bash.allowlist', [...DEFAULT_CONFIG.agentTools.builtIn.bash.allowlist]);
+  }
+}
+
+/**
+ * Apply LOOM_* environment overrides after file resolution (audit 08 C5).
+ * LOOM_<KEY> for top-level numeric/boolean/string schema keys, e.g. LOOM_AGENT_TIMEOUT_MS.
+ */
+function applyEnvOverrides(merged, warnings) {
+  for (const [key, schema] of Object.entries(CONFIG_SCHEMA)) {
+    const envName = 'LOOM_' + key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase();
+    const raw = process.env[envName];
+    if (raw === undefined || raw === '') continue;
+    if (schema.type === 'number') {
+      const parsed = Number(raw);
+      if (!Number.isFinite(parsed)) {
+        warnings.push(`Env ${envName}="${raw}" is not a number — ignored.`);
+        continue;
+      }
+      merged[key] = parsed;
+    } else if (schema.type === 'boolean') {
+      merged[key] = raw === '1' || raw.toLowerCase() === 'true';
+    } else {
+      merged[key] = raw;
+    }
+  }
+}
+
 function buildConfig(directory) {
   let userConfig = {};
-  const configFile = findConfigFile(directory);
   const warnings = [];
+  /** Per-key source tracking: leaf config path -> winning file path (audit 08 C1). */
+  const keySources = {};
+  let primarySource = null;
 
-  if (configFile) {
-    try {
-      const content = readFileSync(configFile, 'utf-8');
-      let parsed;
-      try {
-        parsed = JSON.parse(content);
-      } catch (e) {
-        if (configFile.endsWith('.jsonc') || content.includes('//') || content.includes('/*')) {
-          const stripped = stripJsoncComments(content);
-          parsed = JSON.parse(stripped);
-        } else {
-          throw e;
-        }
-      }
-      if (parsed && typeof parsed === 'object') {
-        // .loomrc.json: top-level keys, no wrapper
-        // opencode.json (legacy): "loom" key wrapper
-        userConfig = parsed.loom && typeof parsed.loom === 'object' ? parsed.loom : parsed;
-      }
-    } catch (err) {
-      warnings.push(`Failed to read config from ${configFile}: ${err.message}`);
+  const candidates = collectConfigCandidates(directory);
+  for (const { path, config } of candidates) {
+    userConfig = deepMerge(userConfig, config);
+    primarySource = path;
+    for (const leafPath of collectLeafPaths(config)) {
+      keySources[leafPath] = path;
     }
   }
 
   const merged = deepMerge(DEFAULT_CONFIG, userConfig);
 
+  // Deprecation notices for retired keys
+  for (const depKey of Object.keys(DEPRECATED_KEYS)) {
+    if (getNestedValue(userConfig, depKey) !== undefined) {
+      warnings.push(`Config "${depKey}" is deprecated: ${DEPRECATED_KEYS[depKey]}.`);
+    }
+  }
+
   const nestedParentKeys = new Set(Object.keys(NESTED_SCHEMA).map((p) => p.split('.')[0]));
+
+  // Recursive unknown-key detection: walk every leaf path in the user config and check it against
+  // the top-level schema or the nested schema (audit 08 C2).
+  const knownPaths = new Set([
+    ...Object.keys(CONFIG_SCHEMA),
+    ...Object.keys(NESTED_SCHEMA),
+  ]);
+  const validTopLevelKeys = new Set([
+    ...nestedParentKeys,
+    ...Object.keys(CONFIG_SCHEMA),
+  ]);
+  for (const leafPath of collectLeafPaths(userConfig)) {
+    if (knownPaths.has(leafPath)) continue;
+    const topLevel = leafPath.split('.')[0];
+    if (validTopLevelKeys.has(topLevel)) continue;
+    if (DEPRECATED_KEYS[leafPath] || DEPRECATED_KEYS[topLevel]) continue;
+    warnings.push(`Unknown config key "${leafPath}" ignored.`);
+  }
 
   for (const key of Object.keys(userConfig)) {
     if (CONFIG_SCHEMA[key]) {
@@ -423,22 +511,16 @@ function buildConfig(directory) {
         merged[key] = DEFAULT_CONFIG[key];
         warnings.push(`${result.error}. Using default: ${DEFAULT_CONFIG[key]}`);
       }
-    } else if (!nestedParentKeys.has(key)) {
-      warnings.push(`Unknown config key "${key}" ignored.`);
     }
   }
 
   validateNestedConfig(userConfig, merged, warnings);
   validateCrossField(merged, warnings);
+  validateAllowlistEntries(merged, userConfig, warnings);
 
-  // Dormant autoGrant check: turn order is planTurnOrder, not autoGrant
-  const autoGrantVal = getNestedValue(userConfig, 'turnRequestThresholds.autoGrant');
-  if (autoGrantVal !== undefined && autoGrantVal !== 9) {
-    warnings.push('Config "turnRequestThresholds.autoGrant" is dormant — turn order is planTurnOrder, not autoGrant (see docs).');
-  }
+  applyEnvOverrides(merged, warnings);
 
-  // Normalize fastPathModel: split "provider/model" string to object? Keep as string but validate
-  // Normalization is done lazily in orchestrator; here we just warn if malformed non-empty
+  // Normalize fastPathModel: warn if malformed non-empty
   if (merged.fastPathModel && typeof merged.fastPathModel === 'string' && merged.fastPathModel.includes('/') === false && merged.fastPathModel.trim() !== '') {
     warnings.push(`Config "fastPathModel" should be "provider/model" format or empty, got "${merged.fastPathModel}". Ignoring.`);
     merged.fastPathModel = '';
@@ -446,7 +528,7 @@ function buildConfig(directory) {
   // Normalize fastPathModel once at buildConfig
   merged.fastPathModelObj = parseFastPathModel(merged.fastPathModel);
 
-  return { config: merged, warnings, source: configFile ?? null };
+  return { config: merged, warnings, source: primarySource ?? null, keySources };
 }
 
 export class Config {
@@ -454,13 +536,15 @@ export class Config {
   #config;
   #warnings;
   #source;
+  #keySources;
 
   constructor(directory) {
     this.#directory = directory;
-    const { config, warnings, source } = buildConfig(directory);
+    const { config, warnings, source, keySources } = buildConfig(directory);
     this.#config = config;
     this.#warnings = warnings;
     this.#source = source;
+    this.#keySources = keySources ?? {};
   }
 
   get() {
@@ -473,6 +557,13 @@ export class Config {
 
   getSource() {
     return this.#source;
+  }
+
+  /** File that provided a given leaf config value, or null when defaulted (audit 08 C1). */
+  getSourceForKey(key) {
+    if (this.#keySources[key]) return this.#keySources[key];
+    const topLevel = key.split('.')[0];
+    return this.#keySources[topLevel] ?? null;
   }
 
   getValue(key) {

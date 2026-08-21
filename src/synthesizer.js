@@ -143,6 +143,19 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, ob
     finalOutput = supplementMissingSections(finalOutput, missingSections);
   }
 
+  // Grounded synthesis check (audit 18 PV6): every Decision line must cite
+  // at least one [#id] present in the transcript. Ungrounded lines are flagged
+  // rather than silently dropped — cheap hallucination guard.
+  const weaveIds = new Set(weave.map((c) => String(c.id)));
+  const decisions = extractSection(finalOutput, "Decision");
+  const ungrounded = decisions.filter((line) => {
+    const cites = [...line.matchAll(/\[#(\d+)\]/g)].map((m) => m[1]);
+    return cites.length === 0 || cites.every((id) => !weaveIds.has(id));
+  });
+  if (ungrounded.length > 0) {
+    finalOutput += `\n\n## Needs Verification\nThe following Decision lines lack a valid [#id] citation to the transcript and should be verified before acting:\n${ungrounded.map((l) => `- ${l}`).join("\n")}`;
+  }
+
   const parsedConfidence = parseConfidence(finalOutput);
   const activeParticipants = participants.filter((p) => p.status !== "failed").length;
   const heuristicConfidence = deriveConfidence(weave, unresolvedObjections.length, participants.length, activeParticipants);

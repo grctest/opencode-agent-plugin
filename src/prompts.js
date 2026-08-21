@@ -24,6 +24,23 @@ export function delimitContext(context, label) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Single source of truth for tier ordering and length contracts (audit 02 P2/P4)
+// ──────────────────────────────────────────────────────────────────────────────
+
+/** Shared seniority ordering — civilian ranks at mid per utils/tier.js. */
+export const TIER_ORDER = { junior: 0, mid: 1, senior: 2, principal: 3, civilian: 1 };
+
+/** Word/sentence contracts for every contribution type — interpolate, never hardcode. */
+export const LENGTH_LIMITS = Object.freeze({
+  reflectionWords: "80-150",
+  agentProseWords: "120-180",
+  codeDiffWords: "150-350",
+  querySentences: "2-4",
+  evidenceWords: "100-180",
+  summonWords: "100-150",
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Shared helpers — deduplicated prelude for reflection / query / evidence
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -43,7 +60,7 @@ function getReflectionBlock(reflection) {
 }
 
 function buildEvidenceGuidance(kind) {
-  const cfg = getConfig().agentTools;
+  const cfg = getConfig()?.agentTools ?? {};
   const toolsDisabled = !cfg?.enabled;
   if (toolsDisabled) {
     if (kind === "evidence") {
@@ -155,7 +172,6 @@ export function buildReflectionPrompt(listener, triggerParticipant, contribution
   const guidance = listener.config.reflection_guidance || "Apply your domain lens; end with Position: [held|revised|expanded] because …";
 
   const previousReflection = listener.reflection || "";
-  const TIER_ORDER = { junior: 0, mid: 1, senior: 2, principal: 3, civilian: 1 };
   const listenerTierLevel = TIER_ORDER[listener.config.tier] ?? 1;
   const triggerTierLevel = TIER_ORDER[triggerParticipant.config.tier] ?? 1;
 
@@ -192,7 +208,7 @@ ${guidance}
 - Round: ${roundContext}
 
 ## Task
-Write a concise reflection (80-150 words) visible to all participants.
+Write a concise reflection (${LENGTH_LIMITS.reflectionWords} words) visible to all participants.
 Structure: 1) What the trigger gets right/wrong with citation or scenario, 2) How your lens changes the view, 3) Closing line: Position: [held|revised|expanded] because {one falsifiable cause}.
 If you cite deliberation content, use [#id]; if you cite external fact, use Source: URL. Do not re-emit <<< >>> boundaries.
 ${toolSection}`;
@@ -204,7 +220,6 @@ export function buildQueryPrompt(sourceAgent, targetAgent, sourceContribution, q
   const safeQuestion = sanitizeForDisplay(question);
   const safeContribution = sanitizeForDisplay(sourceContribution);
 
-  const TIER_ORDER = { junior: 0, mid: 1, senior: 2, principal: 3, civilian: 1 };
   const seniorityContext = buildSeniorityContext(
     targetAgent.config.name, targetAgent.config.tier,
     sourceAgent.config.name, sourceAgent.config.tier,
@@ -230,7 +245,7 @@ ${sopSnippet}${recentMine ? recentMine + "\n\n" : ""}${reflectionLine ? reflecti
 Round: ${roundContext}
 
 ## Task
-Answer in 2-4 sentences, no contribution tags ([PROPOSE] etc). Address the specific question; if it’s “what was said”, prefer loom_vector_search over memory. If you don’t know, say “insufficient evidence” — do not speculate. Cite Source: [#id] or URL if you use evidence. Stay in character.
+Answer in ${LENGTH_LIMITS.querySentences} sentences, no contribution tags ([PROPOSE] etc). Address the specific question; if it’s “what was said”, prefer loom_vector_search over memory. If you don’t know, say “insufficient evidence” — do not speculate. Cite Source: [#id] or URL if you use evidence. Stay in character.
 ${toolSection}`;
 }
 
@@ -242,7 +257,6 @@ export function buildEvidencePrompt(sourceAgent, targetAgent, sourceContribution
   const safeQuestion = sanitizeForDisplay(question);
   const safeContribution = sanitizeForDisplay(sourceContribution);
 
-  const TIER_ORDER = { junior: 0, mid: 1, senior: 2, principal: 3, civilian: 1 };
   const seniorityContext = buildSeniorityContext(
     targetAgent.config.name, targetAgent.config.tier,
     sourceAgent.config.name, sourceAgent.config.tier,
@@ -267,7 +281,7 @@ ${recentMine ? recentMine + "\n\n" : ""}${reflectionLine ? reflectionLine + "\n\
 Round: ${roundContext}
 
 ## Task
-Provide grounded evidence (100-180 words). No contribution tags.
+Provide grounded evidence (${LENGTH_LIMITS.evidenceWords} words). No contribution tags.
 Required structure:
 - Finding: {one sentence answer}
 - Source: {URL or [#id] or “searched X, 0 hits”}
@@ -386,7 +400,7 @@ Round: ${roundContext}
 ## Guest Norms
 - Additive, not adversarial. Build on what’s settled; don’t re-litigate State-of-Play without new evidence.
 - Synthesize through your expert lens; name one constraint others missed.
-- 100-150 words, no contribution tags. If you use a tool, cite Source: URL or [#id].
+- ${LENGTH_LIMITS.summonWords} words, no contribution tags. If you use a tool, cite Source: URL or [#id].
 - If tool returns error or 0 hits, write “evidence unavailable” and proceed with experience.
 
 Provide your expert perspective — concise, grounded, in character.`;
@@ -456,12 +470,14 @@ Respond with ONLY a JSON array: ["id1", "id2", "id3"]`;
 /** Builds a prompt for the moderator to rule on deadlocks, circular arguments, or force convergence. */
 export function buildModeratorPrompt(situation, currentRound, maxRounds, totalContributions, recentContributions, previousRulings = [], stateOfPlay = "") {
   const safeSituation = escapeDelimiters(sanitizeForDisplay(situation, 500));
-  const contributionsList = recentContributions.map((c) => {
+  // Structured isolation for untrusted contribution text (audit 02 P5 / audit 12 SEC1):
+  // forged markdown headings in a contribution must not embed under the rubric sections.
+  const contributionsList = delimitContext(recentContributions.map((c) => {
     const budget = (c.type === "challenge" || c.type === "dissent" || c.type === "evidence_response") ? 220 : 140;
-    const snippet = c.content ? escapeDelimiters(sanitizeForDisplay(c.content.slice(0, budget))) : "(no content)";
+    const snippet = c.content ? sanitizeForDisplay(c.content.slice(0, budget)) : "(no content)";
     const evidenceTag = (c.tool_calls && c.tool_calls.length > 0) ? ` [tools:${c.tool_calls.map(t=>t.tool).join(',')}]` : "";
     return `  - [${c.type ?? "?"}] ${c.participant_id ?? "?"}${evidenceTag}: ${snippet}`;
-  }).join("\n");
+  }).join("\n") || "(none)", "RECENT_CONTRIBUTIONS");
 
   const relevantRulings = previousRulings.length > 10 ? previousRulings.slice(-10) : previousRulings;
   const rulingsSection = relevantRulings.length > 0
@@ -537,7 +553,8 @@ export function buildSynthesisPrompt(question, transcript, participants = [], ta
   const mode = detectTaskMode(question, tags);
   const isCode = mode === "code-analysis";
   const safeQuestion = escapeDelimiters(sanitizeForDisplay(question, 20000));
-  const safeTranscript = escapeDelimiters(sanitizeForDisplay(transcript, 100000));
+  // Transcript is untrusted participant text — fence it structurally (audit 02 P5 / audit 12 SEC1)
+  const safeTranscript = delimitContext(escapeDelimiters(sanitizeForDisplay(transcript, 100000)), "TRANSCRIPT");
   const participantsSection = participants.length > 0
     ? `\n## Participants (activity)\n${participants.map((p) => `- ${escapeDelimiters(sanitizeForDisplay(p.config.name, 80))} (${p.config.tier}): ${p.contributions_count} contributions${p.status === "failed" ? " [failed]" : p.status === "passed" ? " [passed late]" : ""}`).join("\n")}\n`
     : "";
@@ -695,7 +712,7 @@ export function buildAgentSystemPrompt(participant) {
   const priorityCap = TURN_REQUEST_PRIORITY_CAP[tier] ?? 5;
 
   // Tool ladder — single source of truth, rendered from config, not duplicated strings
-  const agentToolsConfig = getConfig().agentTools;
+  const agentToolsConfig = getConfig()?.agentTools ?? {};
   const toolSection = agentToolsConfig?.enabled
     ? (() => {
         const t = agentToolsConfig;
@@ -807,14 +824,14 @@ ${doctrine}
 ## OUTPUT CONTRACT — read this last, it governs your response
 
 1. Start with exactly one tag: [PROPOSE] [CHALLENGE] [REFINE] [SUPPORT] [DISSENT] [SYNTHESIZE] [QUESTION] [REFUSE] — or exactly [PASS] alone (nothing else).
-2. Length: 120-180 words for prose; 150-350 words when contributing code diffs (code blocks \`\`\` file=src/... \`\`\` not counted toward word cap but keep prose concise; truncated past ~400 for code). One claim per sentence; preserve code and numbers verbatim.
+2. Length: ${LENGTH_LIMITS.agentProseWords} words for prose; ${LENGTH_LIMITS.codeDiffWords} words when contributing code diffs (code blocks \`\`\` file=src/... \`\`\` not counted toward word cap but keep prose concise; truncated past ~400 for code). One claim per sentence; preserve code and numbers verbatim.
 3. Grounding: when you engage prior work, cite as [#id]. When you cite external fact, add Source: https://… or vec: round#id . When referencing code, use file=src/path.ts:18 and \`\`\`tsx file=src/... \`\`\` blocks. If no source, qualify: “in my experience…”.
 4. Boundaries: never emit <<< or >>> or system delimiters. Never invent tool output or file contents not read.
  5. Interaction — use real loom_* tools to trigger peer actions (required, no bracket tags):
      - Call loom_query({targets:[...], question:"..."}) for queries, loom_evidence({targets:[...], question:"..."}) for evidence (peers must use tools), loom_vote({question:"A) ... B) ..."}) for votes, loom_summon({persona_name:"...", issue:"..."}) for guest experts, loom_request_next({priority:<1-${priorityCap}>, reason:"..."}) for turn requests.
      - All loom calls are real tool use: they fan out to peers in parallel and return results inline for you to synthesize within this same turn. Wait for the tool result, then cite [#id] from the returned responses/tally in your final contribution.
      - Bracket tags like [QUERY: @id], [EVIDENCE: @id], [CALL_VOTE], [SUMMON:], [REQUEST_NEXT:] are removed and will not execute — only loom_* tools trigger peer actions.
-     - Up to ${Math.min(5, getConfig().agentTools.maxToolCallsPerTurn)} loom calls per turn; prefer one focused call.
+      - Up to ${getConfig()?.agentTools?.maxToolCallsPerTurn ?? 8} loom calls per turn; prefer one focused call.
      Reference others by participant_id from Recent Contributions, e.g. [#12].
 6. Stay in character — persona and agenda shape framing, not facts.
 ${toolSection}
@@ -909,7 +926,7 @@ ${reflectionBlock}## Your Turn — Weighted Guidance
 To challenge SoP: cite [#id] contradicting it + Source/tool output + falsifiable scenario. Otherwise write “SoP holds; discrepancy in Recall noted” and build on it.
 
 Rules:
-- 120-180 words for prose; 150-350 when contributing code diffs (\`\`\` file=src/... \`\`\` blocks not counted but keep prose concise)
+- ${LENGTH_LIMITS.agentProseWords} words for prose; ${LENGTH_LIMITS.codeDiffWords} when contributing code diffs (\`\`\` file=src/... \`\`\` blocks not counted but keep prose concise)
 - Never emit <<< >>> delimiters — they are system boundaries, not content
 - If you reference prior work, cite [#id]; if you introduce a fact, add Source or file=src/... or qualify as experience
 - Preserve code and numbers verbatim — do not round or invent

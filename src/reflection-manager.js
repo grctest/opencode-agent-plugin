@@ -58,7 +58,7 @@ export async function runMidRoundReflections(round, triggerParticipant, activePa
   if (embedderReady) {
     let challengeEmbedding;
     try {
-      challengeEmbedding = await embedText(challengeText);
+      challengeEmbedding = await embedText(challengeText, { isQuery: true });
     } catch (err) {
       reflectionLogger.warn("challenge_embedding_failed", "Failed to embed challenge text for reflection targeting", extractErrorInfo(err));
     }

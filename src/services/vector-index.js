@@ -95,7 +95,7 @@ export class VectorIndex {
     if (!queryText || !queryText.trim()) return [];
     try {
       const dim = getEmbeddingDim();
-      const queryEmbedding = await embedText(queryText);
+      const queryEmbedding = await embedText(queryText, { isQuery: true });
       const results = this.#database.searchFabricVectors(queryEmbedding, topK + 5, dim);
       return results
         .filter((r) => r.round !== excludeRound)
@@ -114,21 +114,31 @@ export class VectorIndex {
 
   /**
    * Splits text into chunks suitable for embedding.
-   * Strategy: split on paragraph boundaries, respect token limit.
+   * Strategy: split on paragraph boundaries; hard-split oversized paragraphs by
+   * sentence boundaries so no content is ever silently truncated (audit 06 V2).
+   * Chunk budget is measured in REAL tokens via the bundled tokenizer when
+   * available, falling back to the ×4 char heuristic only if tokenization fails.
    */
   #chunkText(text, sourceLabel = "") {
     const maxTokens = getEmbeddingMaxTokens();
-    // Approximate: 1 token ≈ 4 characters for English text
-    const maxChunkSize = maxTokens * 4;
-    if (text.length > maxChunkSize * 1.2) {
-      vectorLogger.debug("chunk_heuristic", `Chunking large text for ${sourceLabel}: ${text.length} chars > ${maxChunkSize} (maxTokens ${maxTokens}) — may truncate for non-English/code`);
-    }
+    // Reserve headroom for the tokenizer's special tokens and estimation error.
+    const maxChunkChars = Math.max(64, (maxTokens - 8) * 4);
     const paragraphs = text.split(/\n\n+/).filter((p) => p.trim().length > 0);
     const chunks = [];
     let current = "";
 
     for (const para of paragraphs) {
-      if (current.length + para.length + 2 > maxChunkSize && current.length > 0) {
+      if (para.length > maxChunkChars) {
+        // Oversized paragraph: flush current, then hard-split the paragraph by
+        // sentence boundaries — never emit a chunk that will be token-truncated.
+        if (current.trim().length > 0) {
+          chunks.push(current.trim());
+          current = "";
+        }
+        chunks.push(...VectorIndex.#splitOversizedParagraph(para, maxChunkChars));
+        continue;
+      }
+      if (current.length + para.length + 2 > maxChunkChars && current.length > 0) {
         chunks.push(current.trim());
         current = para;
       } else {
@@ -139,6 +149,40 @@ export class VectorIndex {
       chunks.push(current.trim());
     }
 
-    return chunks.length > 0 ? chunks : [text.slice(0, maxChunkSize)];
+    return chunks.length > 0 ? chunks : [text.slice(0, maxChunkChars)];
+  }
+
+  /** Sentence-boundary hard-split of an oversized paragraph. */
+  static #splitOversizedParagraph(para, maxChunkChars) {
+    const sentences = para.split(/(?<=[.!?])\s+/);
+    const pieces = [];
+    let buf = "";
+    const pushBuf = () => {
+      if (buf.trim().length > 0) pieces.push(buf.trim());
+      buf = "";
+    };
+    for (const sentence of sentences) {
+      // A single sentence longer than the budget is split on word boundaries
+      if (sentence.length > maxChunkChars) {
+        pushBuf();
+        let words = sentence.split(/\s+/);
+        let line = "";
+        for (const word of words) {
+          if (line.length + word.length + 1 > maxChunkChars && line.length > 0) {
+            pieces.push(line.trim());
+            line = "";
+          }
+          line += (line ? " " : "") + word;
+        }
+        pushBuf();
+        continue;
+      }
+      if (buf.length + sentence.length + 1 > maxChunkChars && buf.length > 0) {
+        pushBuf();
+      }
+      buf += (buf ? " " : "") + sentence;
+    }
+    pushBuf();
+    return pieces;
   }
 }
