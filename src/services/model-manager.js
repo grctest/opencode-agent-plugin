@@ -6,7 +6,8 @@
 import { join } from "path";
 import { homedir } from "os";
 import { createRequire } from "module";
-import { readFile, readdir, access, createReadStream } from "fs/promises";
+import { readFile, readdir, access } from "fs/promises";
+import { createReadStream } from "fs";
 import { createHash } from "crypto";
 import { Logger, extractErrorInfo } from "../logger.js";
 
