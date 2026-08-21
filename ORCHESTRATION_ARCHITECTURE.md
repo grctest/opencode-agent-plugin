@@ -46,7 +46,7 @@ When a user types `/knit` with a question, this is what happens:
 3. **Rounds execute** — A round is a single sequential prompt phase:
    - Each agent speaks in turn via a fresh **ephemeral** LLM session, seeing the state of play, vector-RAG context, recent contributions, and their own prior reflection.
    - After a challenge or dissent, the single **most persona-similar** active participant (excluding the challenger) is selected via embeddings to reflect on it immediately (mid-round reflection).
-   - Agents may also issue `[QUERY]`, `[EVIDENCE]`, `[SUMMON]`, and `[CALL_VOTE]` directives, which are executed immediately after their turn (Section 22).
+   - Agents may invoke **loom_\* interaction tools** (`loom_query`, `loom_evidence`, `loom_summon`, `loom_vote`) to direct peers; when the caller does so the invoker receives the callee responses for same-turn synthesis (Section 22). The bracket forms (`[QUERY: …]` etc.) remain as a deprecated fallback and are not advertised to agents.
 4. **Round summarization** — After all agents speak, the round is summarized (heuristically always; semantically when conflict exists in `moderator_forces` mode).
 5. **State of play update** — The state of play (decisions, agreements, disagreements, open questions, key facts) is regenerated from the full weave.
 6. **Moderator check + turn order planning** — The moderator may rule `converge`, `break`, or `continue`; the moderator then plans the next round's turn order based on `[REQUEST_NEXT]` tags.
@@ -242,21 +242,18 @@ decisions.
 3. If you have nothing to add, respond with exactly: [PASS]
 4. Tag your type: [PROPOSE], [CHALLENGE], [REFINE], [SUPPORT], [DISSENT],
    [SYNTHESIZE], [QUESTION], or [REFUSE]
-5. To request priority for the next round, add:
-   [REQUEST_NEXT: Priority: <1-9>, Reason: "why you must speak next round"]
-   — place this at the end of your response
+5. To request priority for the next round, call the tool:
+   `loom_request_next({priority: <1-9>, reason: "why you must speak next round"})`
+   — the system caps priority by tier.
 6. Stay in character — your persona and agenda shape your contributions
 7. Reference prior contributions using their stable ID from the Recent
    Contributions list, e.g. [#12]
-8. To query a specific participant directly:
-   [QUERY: @participant_id] your question — their response appears as a
-   contribution. Max 2 targets.
-9. To request evidence from a participant:
-   [EVIDENCE: @participant_id] your evidence question — they must use tools
-   to find concrete evidence. Max 2 targets.
-10. To summon an external expert persona:
-    [SUMMON: Persona Name] the issue you want addressed — they contribute a
-    single response using your model. Use sparingly (max 1 per turn).
+8. To query specific peers, call `loom_query({targets: ["<id>", ...], question: "..."})`
+   — 1–2 targets. Their answers return inline for you to synthesize this turn.
+9. To request tool-backed evidence, call `loom_evidence({targets: ["<id>"], question: "..."})`
+   — the callee MUST use a research tool; max 2 targets.
+10. To summon a guest expert, call `loom_summon({persona_name: "…", issue: "…"})`
+    — one additive contribution from the persona pool. Use sparingly (max 1 per turn).
 
 ## Research Tools (when agent tools are enabled)
 ... (see Section 20)
@@ -270,24 +267,23 @@ decisions.
 [REQUEST_NEXT: Priority: 8, Reason: "Need to directly counter the Architect's
 claim about stateful overhead before we move to action items"]
 
-## Example With Query
+## Example With Query (live contract)
 [CHALLENGE] The migration timeline assumes no integration conflicts...
+— plus tool call: `loom_query({targets: ["staff-architect"], question: "Based on the service dependency graph, which migrations are most likely to collide?"})`
+→ callee responses return inline; you must cite [#id] from them.
 
-[QUERY: @staff-architect] Based on the service dependency graph, which
-migrations are most likely to collide?
-
-## Example With Evidence Request
+## Example With Evidence Request (live contract)
 [CHALLENGE] The budget projections assume 30% YoY growth but industry
 benchmarks show 12-15% for this sector.
+— plus tool call: `loom_evidence({targets: ["data-scientist"], question: "Find current industry growth benchmarks for SaaS companies in this vertical."})`
+→ callee is forced (`tool_choice: required`) to use a research tool.
 
-[EVIDENCE: @data-scientist] Find current industry growth benchmarks for SaaS
-companies in this vertical.
-
-## Example With Summons
+## Example With Summons (live contract)
 [PROPOSE] We need to evaluate the security implications of this change...
+— plus tool call: `loom_summon({persona_name: "Security Engineer", issue: "What are the attack surfaces introduced by the new authentication flow?"})`
+→ the summoned persona contributes once with your model.
 
-[SUMMON: Security Engineer] What are the attack surfaces introduced by the
-new authentication flow?
+> Deprecated fallback: the bracket forms `[QUERY: @id]`, `[EVIDENCE: @id]`, `[SUMMON: …]`, `[CALL_VOTE]`, `[REQUEST_NEXT: …]` still parse when present but are no longer advertised — agents are told "Bracket tags … are removed and will not execute."
 ```
 
 ### The User Prompt (Golden Sandwich)
@@ -366,11 +362,11 @@ An agent response is a text string. The system parses it for structured directiv
 - `[PASS]` (alone) — nothing to add
 
 **Optional directives:**
-- `[REQUEST_NEXT: Priority: N, Reason: "..."]` — request priority for the *next round* (priority capped by tier)
-- `[QUERY: @id1, @id2] question` — direct a question at 1–2 participants
-- `[EVIDENCE: @id1, @id2] question` — demand tool-backed evidence from 1–2 participants
-- `[SUMMON: Persona Name] issue` — bring in an external expert persona
-- `[CALL_VOTE] question` — call a poll; every other active participant casts a `[Vote: X]` vote and a tally is produced (Section 22)
+- `loom_request_next({priority, reason})` — request priority for the *next round* (priority capped by tier)
+- `loom_query({targets, question})` — direct a question at 1–2 participants; responses return for same-turn synthesis
+- `loom_evidence({targets, question})` — demand tool-backed evidence from 1–2 participants (callee forced to use a research tool)
+- `loom_summon({persona_name, issue})` — bring in an external expert persona (one additive contribution)
+- `loom_vote({question})` — call a poll; every other active participant casts a `[Vote: X]` vote and a tally is produced (Section 22)
 
 **Content** follows the tag. Example full response:
 
@@ -397,9 +393,9 @@ The system parses this into:
 }
 ```
 
-If the parsed response fails schema validation, the system falls back to type `challenge` so the contribution is still visible. Directive tags (`[REQUEST_NEXT]`, `[QUERY]`, `[EVIDENCE]`, `[SUMMON]`, `[CALL_VOTE]`) and type tags are stripped from the stored content. There is **no hard word-limit enforcement** on contributions (the old `maxContributionWords` setting was removed).
+If the parsed response fails schema validation, the system falls back to type `challenge` so the contribution is still visible. Loom interaction tool calls are recorded in `tool_calls`; any stray bracket directive tags (`[REQUEST_NEXT]`, `[QUERY]`, `[EVIDENCE]`, `[SUMMON]`, `[CALL_VOTE]`) that survive are stripped from the stored content by the fallback parser. There is **no hard word-limit enforcement** on contributions (the old `maxContributionWords` setting was removed).
 
-Note: `[CALL_VOTE]` is recognized and executed by the parser/handler, but it is not advertised in the built-in agent system prompt's rules (Section 4, The System Prompt) — the vote flow is fully wired on the parsing and execution side.
+Note: voting is exposed as `loom_vote({question})` in the agent system prompt (Section 4); the bracket form `[CALL_VOTE]` is deprecated fallback and is fully wired on the parsing and execution side.
 
 ---
 
@@ -413,8 +409,8 @@ For each agent, the system:
 
 1. Sets status to "speaking" (visible in dashboard).
 2. Checks if the assigned model's circuit breaker is healthy (`isModelHealthy`). If the model is unhealthy, a healthy fallback model is selected immediately and used for the turn (Section 16).
-3. Calculates an **adaptive timeout**: base `agentTimeoutMs` (120s), reduced by up to 50% as more agents fail in this round.
-4. Builds vector-RAG context: the query text is the last 2 rounds' contributions (or the question if none yet); `retrieveRelevant(query, 5, currentRound)` returns up to 5 chunks, excluding the current round.
+3. Uses a **fixed timeout**: base `agentTimeoutMs` (120s) per agent — no reduction when agents fail (survivors are not punished; see round-executor).
+4. Builds vector-RAG context: the query text is the last 2 rounds' contributions (or the question if none yet); `retrieveRelevant(query, 10, currentRound)` returns up to 10 chunks (top-K 10 at the call site; default 5 in vector-index), excluding the current round.
 5. Creates a fresh ephemeral LLM session for this single turn.
 6. Registers the ephemeral session → meeting mapping (for tool resolution).
 7. Sends the system prompt + Golden Sandwich user prompt, with a **boolean tool map** when agent tools are enabled (e.g. `{ web_fetch: true, loom_vector_search: true }`).
@@ -423,10 +419,10 @@ For each agent, the system:
 10. Parses type tags and directives with `parseAgentResponse()`; Zod-validates; falls back to type `challenge` on failure.
 11. Stores the contribution plus any `[REQUEST_NEXT]` turn request.
 12. **Executes directives immediately after the contribution is stored:**
-    - `[QUERY]` → `executeQueries()` — target replies (Section 22)
-    - `[EVIDENCE]` → `executeEvidenceRequests()` — target researches (Section 22)
-    - `[SUMMON]` → `executeSummons()` — expert persona joins briefly (Section 22)
-    - `[CALL_VOTE]` → `executeVote()` — all other active participants cast a vote and a tally is produced (Section 22)
+    - `loom_query` → `executeQueries()` — target replies; caller synthesizes within the same turn (Section 22)
+    - `loom_evidence` → `executeEvidenceRequests()` — target researches with forced tool use (Section 22)
+    - `loom_summon` → `executeSummons()` — expert persona joins briefly (Section 22)
+    - `loom_vote` → `executeVote()` — all other active participants cast a vote and a tally is produced (Section 22)
 13. **Mid-round reflection:** if the contribution is a `challenge` or `dissent`, the system selects the single **most persona-similar active participant** (embedding cosine similarity of the challenge text against participant embeddings, excluding the challenger) and triggers an immediate reflection (Section 12).
 14. Restores status, cleans up the session→meeting mapping, and deletes the ephemeral session.
 
@@ -437,7 +433,7 @@ Note: on a failed prompt (`#promptChildSession` returns `null` after retries and
 Agent lineup: [Agent 1, Agent 2, Agent 3, Agent 4]
 
 1. Agent 1 speaks → contribution added to weave
-2. Agent 2 speaks with `[CHALLENGE]` → contribution added to weave; **Agent 2 also emits `[QUERY: @Agent1]`** → Agent 1 is prompted to respond, producing a `query_response` contribution
+2. Agent 2 speaks with `[CHALLENGE]` and calls `loom_query({targets: ["Agent1"], question: "…"})` → contribution added to weave; **Agent 1 is prompted to respond** (answers return inline for Agent 2 to synthesize), producing a `query_response` contribution
 3. **Reflection phase:** the most persona-similar active participant (say Agent 3) reflects on Agent 2's challenge → `reflection` contribution added to weave
 4. Agent 4 speaks → sees Agent 2's challenge, Agent 1's query response, and Agent 3's reflection in its "recent contributions"
 
@@ -1130,7 +1126,7 @@ Retryable errors (`isRetryableError`): `ECONNREFUSED`, `ETIMEDOUT`, `ENOTFOUND`,
 
 Agent turns are now **retried** — the old "run once and fail" behavior is gone. `#promptChildSession` runs a staged recovery ladder before an agent is marked `failed`:
 
-1. **Adaptive timeout:** base `agentTimeoutMs` (120s), reduced by up to 50% as more agents fail in the current round.
+1. **Fixed timeout:** base `agentTimeoutMs` (120s) per agent call — deliberately NOT reduced when agents fail ("previously punished survivors").
 2. **Retry on the assigned model** — up to `modelFallback.maxRetriesPerModel` (default 2) retries *after* the first attempt, with exponential backoff (1000ms · 2^attempt + jitter, capped at 8s). Each failure increments the model's circuit-breaker counter.
 3. **Fallback model** — when the primary model's retries are exhausted (and `modelFallback.enabled`, default true), `selectFallbackModel()` picks a healthy model from the discovered pool that is *not* the failing model (random among the healthy candidates) and the turn is attempted on it (up to `modelFallback.maxFallbackAttempts` retries after the first fallback attempt), with the same backoff. A progress message announces the switch ("⚠️ Model X failed — retrying with Y").
 4. **Failure** — only when the primary and fallback attempts are all exhausted does the agent's status become `failed`, an `agent_errors` row is written with type `model_fallback` (`Model: X, No fallback available` or `Original: X, Fallback: Y — <error>`), and the agent is skipped for the rest of the round.
@@ -1258,7 +1254,7 @@ const recentContribs = weave.filter((c) => c.round >= currentRound - 1);
 const queryText = recentContribs.length > 0
   ? recentContribs.map((c) => c.content).join("\n")
   : stateManager.getQuestion();
-const ragChunks = await vectorIndex.retrieveRelevant(queryText, 5, currentRound);
+const ragChunks = await vectorIndex.retrieveRelevant(queryText, 10, currentRound);
 ```
 
 `retrieveRelevant(queryText, topK, excludeRound)`:
@@ -1463,11 +1459,13 @@ When `fastPathModel` is empty (default), all orchestrator calls use the highest-
 
 ---
 
-## 22. Directed Interactions: Query, Evidence, Summon, Vote
+## 22. Directed Interactions: Query, Evidence, Summon, Vote (loom_\* tools)
 
-Agents can direct the conversation at specific participants without waiting for the round-robin order. All four run immediately after the source agent's contribution is stored, using fresh ephemeral sessions for each target. Targets are resolved from the current participant list, excluding the source and any passed/failed participants.
+> **Live contract:** agents are instructed to use `loom_query` / `loom_evidence` / `loom_summon` / `loom_vote` / `loom_request_next` **tools** (see `docs/tool-interactions-as-tools.md`). The bracket forms below are a deprecated fallback — still parsed, no longer advertised.
 
-### Query (`[QUERY: @target1, @target2] question`)
+Agents can direct the conversation at specific participants without waiting for the round-robin order. When invoked via tools, callee responses return inline so the caller can synthesize them within the same turn. All four run immediately after the source agent's contribution is stored, using fresh ephemeral sessions for each target (reused round-scoped sessions when available for the heaviest fan-out, vote). Targets are resolved from the current participant list, excluding the source and any passed/failed participants.
+
+### Query (`loom_query({targets, question})` — deprecated `[QUERY: @target1, @target2] question`)
 
 - Targets: 1–2 participant IDs (parsed from `@mention`s; extra targets dropped).
 - **Prompt** (`buildQueryPrompt`): source's contribution and their question, the target's recent contributions and prior reflection, seniority + round context. System prompt: *"A fellow participant has directed a question to you. Respond directly and stay in character."* No contribution-type tags allowed — just answer.
@@ -1476,13 +1474,13 @@ Agents can direct the conversation at specific participants without waiting for 
 - While a target is responding, its status is `speaking` and it is listed in `meetings.querying_participants` (dashboard-visible).
 - Failures are logged (`query_failed`) and the target's status is restored.
 
-### Evidence (`[EVIDENCE: @target] question`)
+### Evidence (`loom_evidence({targets, question})` — deprecated `[EVIDENCE: @target] question`)
 
 - Identical mechanics to Query, except the target **must** research: `tool_choice: "required"` and the prompt demands "You MUST use at least one research tool… do not speculate". System prompt: *"A fellow participant has requested evidence from you. You MUST use research tools to find concrete evidence."*
 - **Contribution:** type `evidence_response`, content prefixed `[Evidence from <Target> on <Source>'s <type>]`.
 - Dashboard flag: `meetings.evidence_participants`.
 
-### Summon (`[SUMMON: Persona Name] issue`)
+### Summon (`loom_summon({persona_name, issue})` — deprecated `[SUMMON: Persona Name] issue`)
 
 - Brings in a **guest expert** persona from the persona pool (matched by name across all tiers; unknown personas are ignored). The summoned agent is not part of the registered participant list — it contributes once.
 - **Rate limits:** `maxSummonsPerRound` (2) and `maxSummonsPerAgent` (1) — tracked per round in `round.summons`.
@@ -1492,11 +1490,11 @@ Agents can direct the conversation at specific participants without waiting for 
 - **Contribution:** type `summoned_response`, participant id `summoned_<name slug>`, content prefixed `[Summoned: <Name> (<tier>)]`.
 - Dashboard flag: `meetings.summoning_participants`.
 
-### Vote (`[CALL_VOTE] question`)
+### Vote (`loom_vote({question})` — deprecated `[CALL_VOTE] question`)
 
 A polling mechanism residents can invoke to resolve a contested point quickly. Unlike Query/Evidence/Summon it is **fan-out to everyone**: the source agent plus every other active participant cast a ballot, then a deterministic tally is produced.
 
-- **Trigger:** the parser recognizes `[CALL_VOTE]` followed by the poll question (Section 4). The rights field `call_vote` is granted to mid, senior, and principal in the tier model (Section 3), though the execution path does not programmatically gate on it.
+- **Trigger:** the agent calls `loom_vote({question})` (or the fallback parser recognizes `[CALL_VOTE]` followed by the poll question). The rights field `call_vote` is granted to mid, senior, and principal in the tier model (Section 3). The shared tally builder is `utils/vote-tally.js` — both the tool path and the executor path consume it (audit 16 MA2).
 - **Voters:** the source agent (its ballot is parsed from its own contribution content) plus every participant that is not passed or failed.
 - **Prompt** (`buildVotePrompt`): the poll question, the source's contribution, the voter's last 2 contributions and prior reflection, and round context. System prompt: *"A fellow participant has called a vote. Cast your vote and provide brief reasoning."* No type tags allowed.
 - **Ballot format:** the response must be `[Vote: <letter>]` followed by 1–2 sentences of reasoning. `extractVoteLetter()` accepts the `[Vote: X]` tag or a lone standalone capital letter on its own line.
@@ -1676,7 +1674,7 @@ Loaded from `.loomrc.json` (project or `~/.config/opencode/.loomrc.json`), or th
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `agentTimeoutMs` | 120,000 | Per-agent LLM call timeout (reduced up to 50% as failures accumulate within a round) |
+| `agentTimeoutMs` | 120,000 | Per-agent LLM call timeout (fixed — no failure-based reduction) |
 | `synthesisTimeoutMs` | 180,000 | Synthesis draft/critique call timeout |
 | `maxTurnRequestWords` | 200 | (Reserved — not enforced by current planner) |
 | `defaultMaxRounds` | 3 | Default meeting rounds |

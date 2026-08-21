@@ -17,7 +17,7 @@ const TAG_MAP = {
   "junior/creative-disruptor.json": ["creative thinking", "innovation", "lateral thinking", "cross domain ideas", "disruption"],
   "junior/curious-intern.json": ["eager learning", "fundamental questions", "fresh perspective", "inexperience", "curiosity"],
   "junior/data-metrics-specialist.json": ["data analysis", "metrics tracking", "evidence based", "analytics", "telemetry"],
-  "junior/devil-s-advocate.json": ["critical thinking", "risk identification", "contrarian view", "challenge assumptions", " devil advocacy"],
+  "junior/devil-s-advocate.json": ["critical thinking", "risk identification", "contrarian view", "challenge assumptions", "devils advocacy"],
   "junior/ethics-checker.json": ["ethical review", "fairness", "stewardship", "unintended consequences", "social responsibility"],
   "junior/fresh-eyes.json": ["newcomer perspective", "naive questions", "simplicity", "clarity", "first principles"],
   "junior/market-watcher.json": ["market awareness", "competitive analysis", "industry trends", "customer sentiment", "timing"],

@@ -13,9 +13,10 @@
  */
 
 import { mkdir, writeFile, readFile, access, unlink } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { logInfo, logError } from "./utils.mjs";
+import { logInfo, logError, logWarn } from "./utils.mjs";
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_QUANT } from "../src/services/model-manager.js";
 
 const MODEL_DIR = join(homedir(), ".config", "opencode", "loom", "models");
@@ -80,11 +81,18 @@ async function downloadWithProgress(url, destPath, label) {
   const reader = response.body.getReader();
   const chunks = [];
   let loaded = 0;
+  const hash = createHash("sha256");
+  // Resolved commit SHA for revision pinning (audit 12 SEC4): the redirect chain
+  // lands on a URL containing the commit that served this exact file.
+  const finalUrl = response.url || url;
+  const revMatch = finalUrl.match(/\/resolve\/([0-9a-f]{40})\//i);
+  const revision = revMatch ? revMatch[1] : null;
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
     chunks.push(value);
+    hash.update(value);
     loaded += value.length;
     if (contentLength > 0) {
       printProgress(label, loaded, contentLength);
@@ -103,7 +111,7 @@ async function downloadWithProgress(url, destPath, label) {
   // Write file
   const buffer = Buffer.concat(chunks);
   await writeFile(destPath, buffer);
-  return loaded;
+  return { bytes: loaded, sha256: hash.digest("hex"), revision };
 }
 
 // ─── Download small JSON file ────────────────────────────────────────────────
@@ -117,9 +125,43 @@ async function downloadJson(url) {
   return response.json();
 }
 
+/** Fetch a JSON file that may legitimately not exist (404 → null, no error spam). */
+async function fetchJsonOptional(url) {
+  try {
+    const response = await fetch(url, { redirect: "follow" });
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
 // ─── Extract model metadata from config.json ─────────────────────────────────
 
-function extractMetadata(configJson, tokenizerConfigJson) {
+/**
+ * Known query prefixes per model family (audit 06 V1). Auto-detection reads
+ * 1_Pooling/config.json when present; this table covers families whose prompts
+ * live in model cards rather than machine-readable config.
+ */
+const KNOWN_QUERY_PREFIXES = [
+  { match: /snowflake-arctic-embed-m-v2|arctic.*v2/i, prefix: "query: " },
+  { match: /snowflake-arctic-embed/i, prefix: "Represent this sentence for searching relevant passages: " },
+  { match: /mxbai-embed/i, prefix: "Represent this sentence for searching relevant passages: " },
+  { match: /bge-|bge\b/i, prefix: "Represent this sentence for searching relevant passages: " },
+  { match: /e5[-_]/i, prefix: "query: " },
+  { match: /nomic-embed/i, prefix: "search_query: " },
+];
+
+function detectQueryPrefix(modelName, poolingConfig) {
+  // sentence-transformers ships prompt dicts in some configs; prefer explicit metadata
+  if (typeof poolingConfig?.query_prompt === "string") return poolingConfig.query_prompt;
+  for (const entry of KNOWN_QUERY_PREFIXES) {
+    if (entry.match.test(modelName)) return entry.prefix;
+  }
+  return "";
+}
+
+function extractMetadata(configJson, tokenizerConfigJson, poolingConfig = null, modelName = "") {
   const dims = configJson?.hidden_size;
   let maxTokens = tokenizerConfigJson?.model_max_length;
 
@@ -138,7 +180,46 @@ function extractMetadata(configJson, tokenizerConfigJson) {
     maxTokens = 512;
   }
 
-  return { dims, maxTokens, modelType: configJson?.model_type || "unknown" };
+  const modelType = configJson?.model_type || "unknown";
+
+  // Pooling strategy (audit 06 V1): prefer the shipped sentence-transformers
+  // pooling config; otherwise infer from architecture.
+  let pooling = null;
+  const modes = poolingConfig;
+  if (modes) {
+    if (modes.pooling_mode_cls_token) pooling = "cls";
+    else if (modes.pooling_mode_lasttoken) pooling = "lasttoken";
+    else if (modes.pooling_mode_max_tokens) pooling = "max";
+    else if (modes.pooling_mode_weightedmean_tokens) pooling = "weightedmean";
+    else if (modes.pooling_mode_mean_sqrt_len_tokens) pooling = "mean_sqrt_len";
+    else if (modes.pooling_mode_mean_tokens) pooling = "mean";
+  }
+  if (!pooling) {
+    // Architecture defaults: decoder embedders use lasttoken, everything else mean
+    pooling = /qwen|mistral|llama|gpt2|gemma/i.test(modelType) ? "lasttoken" : "mean";
+  }
+
+  const paddingSide = tokenizerConfigJson?.padding_side === "left" ? "left" : "right";
+  const needsTokenTypeIds = (configJson?.type_vocab_size ?? 0) > 0;
+  const queryPrefix = detectQueryPrefix(modelName, poolingConfig);
+  const documentPrefix = typeof poolingConfig?.document_prompt === "string"
+    ? poolingConfig.document_prompt
+    : (/nomic-embed/i.test(modelName) ? "search_document: " : "");
+
+  return {
+    dims,
+    maxTokens,
+    modelType,
+    pooling,
+    queryPrefix,
+    documentPrefix,
+    inputTensorNames: needsTokenTypeIds
+      ? ["input_ids", "attention_mask", "token_type_ids"]
+      : ["input_ids", "attention_mask"],
+    outputTensorName: "last_hidden_state",
+    paddingSide,
+    normalize: true,
+  };
 }
 
 // ─── Check if model already downloaded ───────────────────────────────────────
@@ -166,11 +247,10 @@ async function cmdDownload(modelName, quant) {
   logInfo(`Model: ${modelName}`);
   logInfo(`Quant: ${quant}`);
 
-  // Check if already downloaded
+  // Check if already downloaded — this is success, not failure (audit 13 SC1)
   if (await isAlreadyDownloaded(modelDir, modelJsonPath, quant)) {
-    logError(`Model ${modelName} (${quant}) already downloaded.`);
-    logError(`Location: ${modelDir}/${quantFile}`);
-    process.exit(1);
+    logInfo(`✓ Model ${modelName} (${quant}) already present at ${modelDir}/${quantFile} — nothing to do.`);
+    process.exit(0);
   }
 
   // Create model directory
@@ -190,42 +270,55 @@ async function cmdDownload(modelName, quant) {
     logInfo("Fetching tokenizer config...");
     const tokenizerConfigJson = await downloadJson(`${baseUrl}/tokenizer_config.json`);
 
+    // Fetch sentence-transformers pooling config when shipped (audit 06 V1)
+    logInfo("Fetching pooling config (if present)...");
+    const poolingConfig = await fetchJsonOptional(`${baseUrl}/1_Pooling/config.json`);
+
     // Extract metadata
-    const { dims, maxTokens, modelType } = extractMetadata(configJson, tokenizerConfigJson);
-    logInfo(`Detected: dims=${dims}, maxTokens=${maxTokens}, modelType=${modelType}`);
+    const encoderMeta = extractMetadata(configJson, tokenizerConfigJson, poolingConfig, modelName);
+    const { dims, maxTokens, modelType } = encoderMeta;
+    logInfo(`Detected: dims=${dims}, maxTokens=${maxTokens}, modelType=${modelType}, pooling=${encoderMeta.pooling}${encoderMeta.queryPrefix ? `, queryPrefix="${encoderMeta.queryPrefix.trim()}"` : ""}`);
 
     // Download tokenizer.json
     logInfo("Downloading tokenizer.json...");
-    const tokenizerSize = await downloadWithProgress(
+    const tokenizerDownload = await downloadWithProgress(
       `${baseUrl}/tokenizer.json`,
       join(modelDir, "tokenizer.json"),
       "tokenizer.json"
     );
 
     // Download ONNX model
-    const modelSize = await downloadWithProgress(
+    const modelDownload = await downloadWithProgress(
       `${baseUrl}/${quant}`,
       join(modelDir, quantFile),
       quantFile
     );
 
-    // Generate model.json
+    // Generate model.json — includes integrity pins + encoder metadata
     const modelJson = {
       name: modelName,
       dims,
       maxTokens,
       modelType,
+      ...encoderMeta,
       quant,
-      size: modelSize,
+      size: modelDownload.bytes,
+      sha256: modelDownload.sha256,
+      tokenizerSha256: tokenizerDownload.sha256,
+      revision: modelDownload.revision ?? tokenizerDownload.revision ?? null,
       downloadedAt: new Date().toISOString(),
     };
 
     await writeFile(modelJsonPath, JSON.stringify(modelJson, null, 2) + "\n");
     logInfo(`Metadata saved to ${modelJsonPath}`);
+    if (!modelJson.revision) {
+      logWarn("Could not resolve HF commit SHA — revision pinning unavailable for this model");
+    }
 
     logInfo(`✓ Model ${modelName} (${quant}) downloaded successfully.`);
     logInfo(`  Location: ${modelDir}`);
-    logInfo(`  Size: ${formatSize(modelSize)}`);
+    logInfo(`  Size: ${formatSize(modelDownload.bytes)}`);
+    logInfo(`  SHA-256: ${modelDownload.sha256.slice(0, 16)}…`);
 
   } catch (err) {
     // Clean up on failure

@@ -1,3 +1,7 @@
 /dist
 /node_modules
-/docs
+/docs/*.bak
+.opencode/loom/
+/loom/
+testing/.opencode/
+.loomrc.json

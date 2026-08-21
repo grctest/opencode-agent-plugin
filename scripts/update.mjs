@@ -1,12 +1,14 @@
 /**
  * The Loom — Plugin Updater for opencode
- * Clears old installation and triggers fresh install.
- * Supports WSL, Linux, and macOS.
+ * Safe update sequence (audit 13 SC2): verify the new bundle BEFORE removing the
+ * old installation, back up what gets removed, and restore the backup if install
+ * fails. The old flow deleted first and installed second with no rollback, which
+ * could brick a working installation on a stale/missing dist.
  *
- * Run with: node scripts/update.mjs
+ * Run with: npm run update:plugin  (bundles first — always ships current code)
  */
 
-import { existsSync, rmSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
+import { existsSync, rmSync, readFileSync, writeFileSync, readdirSync, mkdirSync, cpSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -15,7 +17,69 @@ import { detectOpencodeDir, isLoomCommand, findOpencodeJson, logInfo, logError }
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, "..");
 
-// ─── Clean old installation ───────────────────────────────────────────────────
+// ─── Bundle verification ──────────────────────────────────────────────────────
+
+function verifyBundle() {
+  const distPath = join(PROJECT_ROOT, "dist", "loom.js");
+  if (!existsSync(distPath)) {
+    logError("dist/loom.js is missing — run `npm run bundle` before updating.");
+    process.exit(1);
+  }
+  const stat = statSync(distPath).size;
+  if (!stat || stat === 0) {
+    logError("dist/loom.js is empty — refusing to update to a zero-byte bundle.");
+    process.exit(1);
+  }
+  // Syntax gate: a stale or corrupt bundle must never replace a working install
+  const check = spawnSync(process.execPath, ["--check", distPath], { stdio: "pipe" });
+  if (check.status !== 0) {
+    logError("dist/loom.js failed syntax verification:");
+    console.error(check.stderr?.toString() ?? "(no output)");
+    process.exit(1);
+  }
+  logInfo(`Bundle verified (${(stat / (1024 * 1024)).toFixed(2)} MB, syntax OK)`);
+}
+
+// ─── Backup / rollback ────────────────────────────────────────────────────────
+
+const BACKED_UP = [];
+
+function backupFile(path) {
+  if (!existsSync(path)) return;
+  const bak = `${path}.update-bak`;
+  try {
+    cpSync(path, bak);
+    BACKED_UP.push({ original: path, backup: bak });
+  } catch (err) {
+    logError(`Could not back up ${path}: ${err.message}`);
+  }
+}
+
+function backupDir(path) {
+  if (!existsSync(path)) return;
+  const bak = `${path}.update-bak`;
+  try {
+    cpSync(path, bak, { recursive: true });
+    BACKED_UP.push({ original: path, backup: bak });
+  } catch (err) {
+    logError(`Could not back up ${path}: ${err.message}`);
+  }
+}
+
+function rollback() {
+  logError("Update failed — restoring previous installation from backups...");
+  for (const { original, backup } of BACKED_UP) {
+    try {
+      rmSync(original, { recursive: true, force: true });
+      cpSync(backup, original, { recursive: true });
+      logInfo(`  Restored ${original}`);
+    } catch (err) {
+      logError(`  FAILED to restore ${original} (backup kept at ${backup}): ${err.message}`);
+    }
+  }
+}
+
+// ─── Clean old installation (after backups exist) ─────────────────────────────
 
 function cleanOldInstallation(opencodeDir) {
   let cleaned = false;
@@ -23,6 +87,7 @@ function cleanOldInstallation(opencodeDir) {
   // Remove old plugin/loom/ directory (old format)
   const oldPluginDir = join(opencodeDir, "plugin", "loom");
   if (existsSync(oldPluginDir)) {
+    backupDir(oldPluginDir);
     rmSync(oldPluginDir, { recursive: true });
     logInfo(`  Removed old plugin/loom/ → ${oldPluginDir}`);
     cleaned = true;
@@ -39,6 +104,7 @@ function cleanOldInstallation(opencodeDir) {
   // Remove old skill files
   const skillDir = join(opencodeDir, "skills", "loom");
   if (existsSync(skillDir)) {
+    backupDir(skillDir);
     rmSync(skillDir, { recursive: true });
     logInfo(`  Removed old skill → ${skillDir}`);
     cleaned = true;
@@ -48,6 +114,7 @@ function cleanOldInstallation(opencodeDir) {
   const pluginsDir = join(opencodeDir, "plugins");
   const loomTarget = join(pluginsDir, "loom.js");
   if (existsSync(loomTarget)) {
+    backupFile(loomTarget);
     rmSync(loomTarget);
     logInfo(`  Removed old plugin → ${loomTarget}`);
     cleaned = true;
@@ -60,6 +127,7 @@ function cleanOldInstallation(opencodeDir) {
       (f) => f.endsWith(".md") && isLoomCommand(f)
     );
     for (const file of loomCommands) {
+      backupFile(join(commandDir, file));
       rmSync(join(commandDir, file));
       logInfo(`  Removed old command → ${commandDir}/${file}`);
       cleaned = true;
@@ -75,6 +143,7 @@ function cleanOldInstallation(opencodeDir) {
   // Remove old personas folder
   const personasDir = join(opencodeDir, "personas", "loom");
   if (existsSync(personasDir)) {
+    backupDir(personasDir);
     rmSync(personasDir, { recursive: true });
     logInfo(`  Removed old personas → ${personasDir}`);
     cleaned = true;
@@ -147,6 +216,10 @@ console.log("  The Loom — opencode plugin updater");
 console.log("═══════════════════════════════════════════════════════════════");
 console.log("");
 
+// Step 0: Verify the NEW bundle is present and valid BEFORE touching anything
+logInfo("Verifying new bundle...");
+verifyBundle();
+
 // Check for opencode config
 const opencodeDir = detectOpencodeDir();
 
@@ -172,12 +245,12 @@ if (!opencodeDir) {
 
 logInfo(`Found opencode config: ${opencodeDir}`);
 
-// Step 1: Clean old installation
+// Step 1: Back up + clean old installation
 console.log("");
-logInfo("Cleaning old installation...");
+logInfo("Backing up and cleaning old installation...");
 cleanOldInstallation(opencodeDir);
 
-// Step 2: Run fresh install
+// Step 2: Run fresh install; roll back on failure
 console.log("");
 logInfo("Running fresh install...");
 console.log("");
@@ -190,5 +263,9 @@ const result = spawnSync("node", [installScript], {
 
 if (result.status !== 0) {
   logError("Install script failed");
+  rollback();
   process.exit(1);
 }
+
+console.log("");
+logInfo("Update complete.");

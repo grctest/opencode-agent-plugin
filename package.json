@@ -4,17 +4,35 @@
   "description": "Multi-agent deliberation protocol for opencode — a knitting machine for AI agents",
   "type": "module",
   "main": "dist/loom.js",
+  "license": "MIT",
+  "author": "The Loom Contributors",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/loom-dev/loom.git"
+  },
+  "files": [
+    "dist",
+    "personas",
+    "commands",
+    "scripts",
+    "README.md",
+    "ORCHESTRATION_ARCHITECTURE.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "bundle": "node scripts/build.mjs",
     "dev": "node scripts/build.mjs --watch",
-    "check": "node --check src/index.js && node --check src/orchestrator.js && node --check src/round-executor.js && node --check src/database.js && node --check src/handlers/knit-handler.js && node --check src/config.js && node --check dist/loom.js",
+    "check": "node scripts/check.mjs",
     "install:plugin": "npm run bundle && node scripts/install.mjs",
-    "update:plugin": "node scripts/update.mjs",
-    "model:download": "node scripts/model.mjs download"
+    "update:plugin": "npm run bundle && node scripts/update.mjs",
+    "model:download": "node scripts/model.mjs download",
+    "census": "node scripts/persona-census.mjs"
   },
   "peerDependencies": {
-    "@opencode-ai/plugin": "^1.18.15",
-    "@opencode-ai/sdk": "^1.18.15"
+    "@opencode-ai/plugin": "^1.18.16",
+    "@opencode-ai/sdk": "^1.18.16"
   },
   "devDependencies": {
     "@esbuild/linux-x64": "^0.28.2",

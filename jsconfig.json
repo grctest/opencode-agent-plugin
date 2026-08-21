@@ -3,7 +3,7 @@
     "target": "esnext",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "lib": ["ES2025", "DOM"],
+    "lib": ["ES2025"],
     "checkJs": true,
     "strict": true,
     "noEmit": true,
@@ -14,6 +14,6 @@
     "jsxImportSource": "react",
     "skipLibCheck": true
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "scripts/**/*"],
   "exclude": ["node_modules", "dist"]
 }
