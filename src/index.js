@@ -171,6 +171,70 @@ export const Loom = async (input) => {
         }
       },
     }),
+    loom_query: tool({
+      description:
+        "Ask 1-2 peers a focused question. Their answers will be recorded as query_response contributions and visible to the room. Use for clarifying assumptions or asking 'what was said'.",
+      args: {
+        targets: tool.schema.array(tool.schema.string()).min(1).max(2).describe("Participant IDs to query (max 2, e.g. ['junior_0'])"),
+        question: tool.schema.string().min(1).max(500).describe("Your question (1-500 chars)"),
+      },
+      async execute(args, context) {
+        const cfg = config.getValue("agentTools");
+        if (!cfg?.enabled || !cfg?.loom?.loom_query) return { error: "loom_query not enabled" };
+        if (!args.targets || args.targets.length === 0) return { error: "targets required" };
+        // Validation only — actual fan-out is handled by RoundExecutor post-store (or same-turn synthesis).
+        // Returning here makes the call auditable in tool_calls; the orchestrator will create the query_response rows.
+        return { queued: true, targets: args.targets, question: args.question, note: "Query dispatched — responses will appear as query_response contributions in this round." };
+      },
+    }),
+    loom_evidence: tool({
+      description:
+        "Request evidence from 1-2 peers. They MUST use a research tool (websearch/webfetch/read/loom_vector_search) and report Finding + Source + Strength.",
+      args: {
+        targets: tool.schema.array(tool.schema.string()).min(1).max(2).describe("Participant IDs to request evidence from (max 2)"),
+        question: tool.schema.string().min(1).max(500).describe("Evidence question (1-500 chars)"),
+      },
+      async execute(args, context) {
+        const cfg = config.getValue("agentTools");
+        if (!cfg?.enabled || !cfg?.loom?.loom_evidence) return { error: "loom_evidence not enabled" };
+        return { queued: true, targets: args.targets, question: args.question, note: "Evidence request dispatched — responses will be evidence_response contributions with mandatory tool use." };
+      },
+    }),
+    loom_vote: tool({
+      description: "Call a vote with a lettered question (e.g. 'A) ... B) ...'). All other active participants will vote.",
+      args: {
+        question: tool.schema.string().min(1).max(500).describe("Vote question with lettered options, e.g. 'A) yes B) no'"),
+      },
+      async execute(args, context) {
+        const cfg = config.getValue("agentTools");
+        if (!cfg?.enabled || !cfg?.loom?.loom_vote) return { error: "loom_vote not enabled" };
+        return { queued: true, question: args.question, note: "Vote dispatched — voters will produce vote_response and a tally." };
+      },
+    }),
+    loom_summon: tool({
+      description: "Summon a guest expert persona for one additive contribution.",
+      args: {
+        persona_name: tool.schema.string().min(1).max(100).describe("Persona name to summon (e.g. 'Risk Officer')"),
+        issue: tool.schema.string().min(1).max(500).describe("Issue to address (1-500 chars)"),
+      },
+      async execute(args, context) {
+        const cfg = config.getValue("agentTools");
+        if (!cfg?.enabled || !cfg?.loom?.loom_summon) return { error: "loom_summon not enabled" };
+        return { queued: true, persona_name: args.persona_name, issue: args.issue, note: "Summon dispatched — guest will produce a summoned_response." };
+      },
+    }),
+    loom_request_next: tool({
+      description: "Request to speak next round with priority and reason.",
+      args: {
+        priority: tool.schema.number().int().min(1).max(10).describe("Priority 1-10 (capped by tier)"),
+        reason: tool.schema.string().min(1).max(200).describe("Reason for turn request (quoted)"),
+      },
+      async execute(args, context) {
+        const cfg = config.getValue("agentTools");
+        if (!cfg?.enabled || !cfg?.loom?.loom_request_next) return { error: "loom_request_next not enabled" };
+        return { queued: true, priority: Math.min(10, Math.max(1, args.priority)), reason: args.reason };
+      },
+    }),
   };
 
   const markActiveMeetingsAborted = () => {

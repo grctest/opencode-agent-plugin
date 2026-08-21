@@ -47,14 +47,20 @@ const DEFAULT_CONFIG = {
     },
     loom: {
       loom_vector_search: true,
+      loom_query: true,
+      loom_evidence: true,
+      loom_vote: true,
+      loom_summon: true,
+      loom_request_next: true,
     },
+    sameTurnSynthesis: true,
     reflection: {
       bash: false,
       glob: false,
       grep: false,
     },
-    maxToolCallsPerTurn: 5,
-    maxToolOutputTokens: 4000,
+    maxToolCallsPerTurn: 8,
+    maxToolOutputTokens: 6000,
   },
 };
 
@@ -98,6 +104,12 @@ const NESTED_SCHEMA = {
   'agentTools.builtIn.grep': { type: 'boolean' },
   'agentTools.builtIn.lsp': { type: 'boolean' },
   'agentTools.loom.loom_vector_search': { type: 'boolean' },
+  'agentTools.loom.loom_query': { type: 'boolean' },
+  'agentTools.loom.loom_evidence': { type: 'boolean' },
+  'agentTools.loom.loom_vote': { type: 'boolean' },
+  'agentTools.loom.loom_summon': { type: 'boolean' },
+  'agentTools.loom.loom_request_next': { type: 'boolean' },
+  'agentTools.sameTurnSynthesis': { type: 'boolean' },
   'agentTools.reflection.bash': { type: 'boolean' },
   'agentTools.reflection.glob': { type: 'boolean' },
   'agentTools.reflection.grep': { type: 'boolean' },
@@ -558,5 +570,20 @@ export function resolveBuiltInTools(agentToolsConfig) {
     glob: !!builtIn.glob,
     grep: !!builtIn.grep,
     lsp: !!builtIn.lsp,
+  };
+}
+
+export function resolveLoomTools(agentToolsConfig) {
+  if (!agentToolsConfig?.enabled) return {
+    loom_vector_search: false, loom_query: false, loom_evidence: false, loom_vote: false, loom_summon: false, loom_request_next: false,
+  };
+  const loom = agentToolsConfig.loom ?? {};
+  return {
+    loom_vector_search: !!loom.loom_vector_search,
+    loom_query: !!loom.loom_query,
+    loom_evidence: !!loom.loom_evidence,
+    loom_vote: !!loom.loom_vote,
+    loom_summon: !!loom.loom_summon,
+    loom_request_next: !!loom.loom_request_next,
   };
 }

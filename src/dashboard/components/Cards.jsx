@@ -135,27 +135,47 @@ export const ContributionItem = memo(({ contribution, participantName, onDialogO
   const html = useMemo(() => renderMarkdown(content), [content]);
   const isLong = content.length > 300;
 
-  const openDialog = () => isLong && onDialogOpen?.({ contribution, participantName });
+  const openDialog = () => onDialogOpen?.({ contribution, participantName });
   const onKeyDown = (e) => {
-    if (!isLong) return;
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       openDialog();
     }
   };
 
+  const loomCalls = useMemo(() => {
+    const tcs = contribution.tool_calls ?? [];
+    return tcs.filter(tc => (tc.tool ?? tc.attempted_tool ?? "").startsWith("loom_"));
+  }, [contribution.tool_calls]);
+
+  const formatLoomInput = (tc) => {
+    try {
+      const input = typeof tc.input === "string" ? JSON.parse(tc.input) : tc.input;
+      if (tc.tool === "loom_query" || tc.tool === "loom_evidence") {
+        const t = Array.isArray(input.targets) ? input.targets.join(", ") : "";
+        const q = input.question ?? "";
+        return `${t}: ${q.slice(0,80)}`;
+      }
+      if (tc.tool === "loom_vote") return (input.question ?? "").slice(0,80);
+      if (tc.tool === "loom_summon") return `${input.persona_name ?? input.personaName ?? ""}: ${(input.issue ?? "").slice(0,60)}`;
+      if (tc.tool === "loom_request_next") return `P${input.priority} ${input.reason ?? ""}`.slice(0,80);
+      if (input && typeof input === "object") return JSON.stringify(input).slice(0,80);
+      return String(input).slice(0,80);
+    } catch { return tc.input ? String(tc.input).slice(0,80) : ""; }
+  };
+
   return (
     <div
-      role={isLong ? "button" : undefined}
-      tabIndex={isLong ? 0 : undefined}
-      aria-expanded={isLong ? false : undefined}
-      className={cn("loom-card", "loom-contribution-card", `loom-contrib-type-${contribution.type}`, isLong && "loom-contrib-clickable")}
+      role="button"
+      tabIndex={0}
+      aria-expanded={false}
+      className={cn("loom-card", "loom-contribution-card", `loom-contrib-type-${contribution.type}`, "loom-contrib-clickable")}
       onClick={openDialog}
       onKeyDown={onKeyDown}
     >
       <div>
         <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">
-          <span className={cn("loom-contrib-participant", isLong && "loom-contrib-underline")}>
+          <span className="loom-contrib-participant">
             {participantName}
           </span>
           <TypeBadge type={contribution.type} />
@@ -170,6 +190,18 @@ export const ContributionItem = memo(({ contribution, participantName, onDialogO
             Copy
           </button>
         </div>
+        {loomCalls.length > 0 && (
+          <div className="loom-flex loom-flex-wrap loom-gap-xs loom-mt-xs">
+            {loomCalls.map((tc, i) => {
+              const isError = !!tc.error || tc.status === "error";
+              return (
+                <span key={tc.callID ?? i} className={cn("loom-badge loom-badge-orchestrator", isError && "loom-badge-aborted")} title={`${tc.tool}: ${formatLoomInput(tc)}${tc.error ? ` — ${tc.error}` : ""}`}>
+                  {tc.tool.replace("loom_", "")}: {formatLoomInput(tc)}
+                </span>
+              );
+            })}
+          </div>
+        )}
       </div>
       {isLong ? (
         <p className="loom-text loom-text-muted">{content.slice(0, 300)}...</p>

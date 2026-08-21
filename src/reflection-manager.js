@@ -23,6 +23,7 @@ export async function runMidRoundReflections(round, triggerParticipant, activePa
   db,
   logError,
   callStats,
+  excludedIds = [],
 }) {
   if (activeParticipants.length === 0) return;
 
@@ -63,7 +64,7 @@ export async function runMidRoundReflections(round, triggerParticipant, activePa
     }
     if (challengeEmbedding) {
       const candidates = activeParticipants
-        .filter((p) => p.config.id !== triggerParticipant.config.id && p.embedding)
+        .filter((p) => p.config.id !== triggerParticipant.config.id && p.embedding && !excludedIds.includes(p.config.id))
         .map((p) => ({ id: p.config.id, embedding: p.embedding }));
       best = findMostSimilar(challengeEmbedding, candidates);
       if (best) {
@@ -73,7 +74,7 @@ export async function runMidRoundReflections(round, triggerParticipant, activePa
   }
   // Fallback: keyword similarity when embedding unavailable or no candidate
   if (!listener) {
-    const keywordCandidates = activeParticipants.filter((p) => p.config.id !== triggerParticipant.config.id);
+    const keywordCandidates = activeParticipants.filter((p) => p.config.id !== triggerParticipant.config.id && !excludedIds.includes(p.config.id));
     const kwBest = findMostSimilarByKeyword(challengeText, keywordCandidates);
     if (!kwBest) {
       reflectionLogger.info("no_similar_reflector", "No participant found for reflection targeting (keyword fallback)");

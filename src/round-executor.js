@@ -1,6 +1,6 @@
 import { buildAgentSystemPrompt, buildAgentUserPrompt, buildQueryPrompt, buildEvidencePrompt, buildSummonPrompt, buildVotePrompt } from "./prompts.js";
 import { parseAgentResponse } from "./validation.js";
-import { getConfig, resolveBuiltInTools } from "./config.js";
+import { getConfig, resolveBuiltInTools, resolveLoomTools } from "./config.js";
 import { extractAgentResponse, mapToolResults, truncate } from "./shared.js";
 import { Logger, extractErrorInfo } from "./logger.js";
 import { runMidRoundReflections } from "./reflection-manager.js";
@@ -212,6 +212,174 @@ export class RoundExecutor {
         }
       }
 
+      // Loom tool interactions: handle loom_* tool calls as first-class alternative to bracket tags
+      // This provides auditable, structured triggers that appear in Tool use tab.
+      if (result?.tool_calls && result.content !== "[PASS]") {
+        const sourceContribution = round.contributions[round.contributions.length - 1];
+        if (sourceContribution) {
+          // Helper to parse loom tool input (may be JSON string from mapToolResults)
+          const parseLoomInput = (tc) => {
+            if (!tc.input) return {};
+            if (typeof tc.input === "object") return tc.input;
+            try { return JSON.parse(tc.input); } catch { return {}; }
+          };
+          // Track which bracket-based interactions already handled to avoid double-execution
+          const hasBracketQuery = !!(result?.query && result.query.targets.length > 0);
+          const hasBracketEvidence = !!(result?.evidence && result.evidence.targets.length > 0);
+          const hasBracketVote = !!result?.vote;
+          const hasBracketSummon = !!result?.summon;
+
+          for (const tc of result.tool_calls) {
+            const toolName = tc.tool ?? tc.attempted_tool;
+            if (!toolName || !toolName.startsWith("loom_")) continue;
+            // Skip failed/invalid attempts already surfaced as error; still log
+            if (tc.status === "error" && !tc.input) continue;
+            const input = parseLoomInput(tc);
+            try {
+              if (toolName === "loom_query" && !hasBracketQuery) {
+                const targets = Array.isArray(input.targets) ? input.targets : [];
+                const question = typeof input.question === "string" ? input.question : "";
+                if (targets.length > 0 && question.trim().length > 0) {
+                  p.currentContribution = result.content;
+                  await this.executeQueries(round, p, { targets, question: question.slice(0,500) }, sourceContribution.id, {
+                    sessionManager: this.#sessionManager,
+                    getParticipantModel: this.#getParticipantModel,
+                    stateManager: this.#stateManager,
+                    db: this.#db,
+                    callStats: this.#callStats,
+                  });
+                }
+              } else if (toolName === "loom_evidence" && !hasBracketEvidence) {
+                const targets = Array.isArray(input.targets) ? input.targets : [];
+                const question = typeof input.question === "string" ? input.question : "";
+                if (targets.length > 0 && question.trim().length > 0) {
+                  p.currentContribution = result.content;
+                  await this.executeEvidenceRequests(round, p, { targets, question: question.slice(0,500) }, sourceContribution.id, {
+                    sessionManager: this.#sessionManager,
+                    getParticipantModel: this.#getParticipantModel,
+                    stateManager: this.#stateManager,
+                    db: this.#db,
+                    callStats: this.#callStats,
+                  });
+                }
+              } else if (toolName === "loom_vote" && !hasBracketVote) {
+                const question = typeof input.question === "string" ? input.question : "";
+                if (question.trim().length > 0) {
+                  await this.executeVote(round, p, { question: question.slice(0,500) }, sourceContribution.id, {
+                    sessionManager: this.#sessionManager,
+                    getParticipantModel: this.#getParticipantModel,
+                    stateManager: this.#stateManager,
+                    db: this.#db,
+                    callStats: this.#callStats,
+                  });
+                }
+              } else if (toolName === "loom_summon" && !hasBracketSummon) {
+                const persona_name = input.persona_name || input.personaName || "";
+                const issue = input.issue || "";
+                if (persona_name.trim().length > 0 && issue.trim().length > 0) {
+                  await this.executeSummons(round, p, { persona_name: persona_name.trim(), issue: issue.slice(0,500) }, {
+                    sessionManager: this.#sessionManager,
+                    stateManager: this.#stateManager,
+                    db: this.#db,
+                    callStats: this.#callStats,
+                  });
+                }
+              } else if (toolName === "loom_request_next") {
+                const priority = typeof input.priority === "number" ? input.priority : parseInt(input.priority, 10);
+                const reason = typeof input.reason === "string" ? input.reason : "";
+                if (Number.isFinite(priority) && reason.trim().length > 0 && result.request_next == null) {
+                  // Synthesize a turn request directly
+                  const pr = Math.min(10, Math.max(1, priority));
+                  const turnRequest = {
+                    participant_id: p.config.id,
+                    round: this.#stateManager.getCurrentRound(),
+                    priority: pr,
+                    reason: reason.slice(0,200),
+                  };
+                  if (!round.turn_requests) round.turn_requests = [];
+                  round.turn_requests.push(turnRequest);
+                  this.#db.addContributionWithTurnRequest(this.#stateManager.getMeetingId(), { ...sourceContribution, round: this.#stateManager.getCurrentRound() }, turnRequest);
+                  // Update in-memory result for consistency
+                  result.request_next = { priority: pr, reason: reason.slice(0,200) };
+                }
+              }
+            } catch (err) {
+              this.#logger.warn("loom_tool_failed", `Loom tool ${toolName} failed for ${p.config.name}`, { error: err.message });
+            }
+          }
+        }
+      }
+
+      // Same-turn synthesis: if loom_query/loom_evidence produced peer responses, give caller a chance to synthesize within same turn
+      const sameTurnEnabled = getConfig().agentTools?.sameTurnSynthesis ?? true;
+      if (sameTurnEnabled && result && result.content !== "[PASS]" && result.type !== "refuse") {
+        const hasLoomInteraction = result.tool_calls?.some(tc => tc.tool === "loom_query" || tc.tool === "loom_evidence") ?? false;
+        if (hasLoomInteraction) {
+          const calleeResponses = round.contributions.filter(c => c.batch_id === batchId && (c.type === "query_response" || c.type === "evidence_response"));
+          if (calleeResponses.length > 0) {
+            try {
+              const synthesisSystem = `You are ${p.config.name} (${p.config.tier}) — synthesizing peer responses within your turn.\n\nYou previously issued a ${result.type} with peer queries. Their responses are below. Synthesize a concise follow-up (2-3 sentences) that acknowledges their evidence, cites [#id] where relevant, and refines your stance. Do not repeat your original challenge verbatim. Never emit <<< or >>>.`;
+              const synthesisUser = `Your original ${result.type}:\n${result.content.slice(0,1200)}\n\nPeer responses (cite as [#id]):\n${calleeResponses.map(c => `[#${c.id}] ${c.participant_id}: ${c.content.slice(0,600)}`).join("\n\n")}\n\nNow provide a brief synthesis that incorporates these peer answers. Prefix with [REFINE] or [SUPPORT] as appropriate.`;
+              const model = this.#getParticipantModel(p);
+              let synthSessionId;
+              let isSynthRoundScoped = false;
+              if (this.#roundSessionIds?.has(p.config.id)) {
+                synthSessionId = this.#roundSessionIds.get(p.config.id);
+                isSynthRoundScoped = true;
+              } else {
+                synthSessionId = await this.#sessionManager.createEphemeralSession(p);
+                this.#sessionManager.registerSessionMeeting(synthSessionId, this.#stateManager.getMeetingId());
+              }
+              const synthResult = await this.#sessionManager.getContract().prompt({
+                sessionId: synthSessionId,
+                system: synthesisSystem,
+                model,
+                temperature: p.tier_config.temperature,
+                parts: [{ type: "text", text: synthesisUser }],
+                tools: {}, // no loom tools in synthesis to avoid loop
+                toolChoice: "none",
+                timeoutMs: Math.min(60000, this.#callStats.agent_prompts ? 120000 : 120000),
+              });
+              if (synthResult.ok) {
+                const { text: synthText, toolResults: synthTools } = extractAgentResponse(synthResult.data);
+                const finalText = synthText;
+                if (finalText && finalText.trim().length >= 10) {
+                  const safe = finalText.trim().slice(0,5000);
+                  const parsed = parseAgentResponse(p.config.id, safe);
+                  if (parsed && parsed.content !== "[PASS]") {
+                    const synthToolCalls = mapToolResults(synthTools ?? []);
+                    const synthContribution = {
+                      id: this.#stateManager.nextContributionId(),
+                      round: this.#stateManager.getCurrentRound(),
+                      participant_id: p.config.id,
+                      content: safe,
+                      type: parsed.type || "refine",
+                      targets_which: round.contributions[round.contributions.length - 1]?.id ?? null,
+                      batch_id: batchId,
+                      tool_calls: synthToolCalls && synthToolCalls.length ? synthToolCalls : null,
+                      prompt_context: { type: "synthesis_followup", system_prompt: synthesisSystem, user_prompt: synthesisUser, trigger_batch_id: batchId, peer_response_ids: calleeResponses.map(c=>c.id), round: this.#stateManager.getCurrentRound() },
+                      created_at: new Date().toISOString(),
+                    };
+                    this.#stateManager.addContribution(synthContribution);
+                    round.contributions.push(synthContribution);
+                    p.contributions_count = this.#stateManager.getWeave().filter(c=>c.participant_id===p.config.id).length;
+                    this.#db.addContributionWithTurnRequest(this.#stateManager.getMeetingId(), synthContribution, null);
+                    this.#logger.info("same_turn_synthesis", `${p.config.name} synthesized ${calleeResponses.length} peer response(s) within turn`, { peerIds: calleeResponses.map(c=>c.id) });
+                    this.#options.onProgress?.(`${p.config.name} (${p.config.tier}) — synthesized peer responses`);
+                  }
+                }
+              }
+              if (!isSynthRoundScoped) {
+                this.#sessionManager.unregisterSession(synthSessionId);
+                await this.#sessionManager.deleteEphemeralSession(synthSessionId).catch(()=>{});
+              }
+            } catch (err) {
+              this.#logger.warn("same_turn_synthesis_failed", `Same-turn synthesis failed for ${p.config.name}`, { error: err.message });
+            }
+          }
+        }
+      }
+
       // Mid-round reflections: if this agent challenged/dissented,
       // trigger reflection for the most persona-similar active participant
       if (result && (result.type === "challenge" || result.type === "dissent")) {
@@ -223,6 +391,22 @@ export class RoundExecutor {
           p.currentContributionId = round.contributions[round.contributions.length - 1]?.id;
           p.currentContributionType = result.type;
 
+          // Exclude participants already queried/evidence-requested via bracket or loom tools for this trigger
+          const excludedForReflection = [];
+          if (result?.query?.targets) excludedForReflection.push(...result.query.targets);
+          if (result?.evidence?.targets) excludedForReflection.push(...result.evidence.targets);
+          if (result?.tool_calls) {
+            for (const tc of result.tool_calls) {
+              const tname = tc.tool ?? tc.attempted_tool;
+              if (tname === "loom_query" || tname === "loom_evidence") {
+                try {
+                  const inp = typeof tc.input === "string" ? JSON.parse(tc.input) : tc.input;
+                  if (Array.isArray(inp.targets)) excludedForReflection.push(...inp.targets);
+                } catch {}
+              }
+            }
+          }
+
           await runMidRoundReflections(round, p, allActive, {
             sessionManager: this.#sessionManager,
             getParticipantModel: this.#getParticipantModel,
@@ -230,6 +414,7 @@ export class RoundExecutor {
             db: this.#db,
             logError: this.#logError,
             callStats: this.#callStats,
+            excludedIds: [...new Set(excludedForReflection)],
           });
         }
       }
@@ -1323,7 +1508,13 @@ One sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No
       if (t.glob) toolsMap.glob = true;
       if (t.grep) toolsMap.grep = true;
       if (t.lsp) toolsMap.lsp = true;
-      if (agentToolsConfig.loom?.loom_vector_search) toolsMap.loom_vector_search = true;
+      const loom = resolveLoomTools(agentToolsConfig);
+      if (loom.loom_vector_search) toolsMap.loom_vector_search = true;
+      if (loom.loom_query) toolsMap.loom_query = true;
+      if (loom.loom_evidence) toolsMap.loom_evidence = true;
+      if (loom.loom_vote) toolsMap.loom_vote = true;
+      if (loom.loom_summon) toolsMap.loom_summon = true;
+      if (loom.loom_request_next) toolsMap.loom_request_next = true;
     }
     return toolsMap;
   }

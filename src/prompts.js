@@ -709,9 +709,15 @@ export function buildAgentSystemPrompt(participant) {
         if (builtIn.grep) tools.push('grep');
         if (builtIn.bash?.enabled || builtIn.bash === true) tools.push('bash');
         if (t.loom?.loom_vector_search) tools.push('loom_vector_search');
+        const loom = t.loom ?? {};
+        if (loom.loom_query) tools.push('loom_query');
+        if (loom.loom_evidence) tools.push('loom_evidence');
+        if (loom.loom_vote) tools.push('loom_vote');
+        if (loom.loom_summon) tools.push('loom_summon');
+        if (loom.loom_request_next) tools.push('loom_request_next');
         const toolList = tools.length ? tools.join(', ') : 'none enabled';
         return `
-## Research Tools — Tool Ladder (use at most one per turn unless [EVIDENCE] requests)
+## Research Tools — Tool Ladder (use at most one research tool per turn unless [EVIDENCE] requests)
 
 Available: ${toolList}
 
@@ -722,6 +728,14 @@ For code analysis in this folder (react, bug, file paths, src/, hydration, error
 - **read / grep / glob**: inspect project files referenced in discussion (first for code analysis)
 - **webfetch**: open a URL returned by websearch (don’t guess URLs)
 - **bash**: only allowlisted commands (${Array.isArray(builtIn.bash?.allowlist) ? builtIn.bash.allowlist.join(', ') : 'git, ls, wc, head, tail, grep, find'})
+
+Loom Interaction Tools — structured alternative to trailing tags (preferred, auditable):
+- **loom_query**: ask 1-2 peers a focused question — they answer as query_response. Use instead of [QUERY: @id].
+- **loom_evidence**: request evidence from 1-2 peers — they MUST use a research tool. Use instead of [EVIDENCE: @id].
+- **loom_vote**: call a vote with lettered options. Use instead of [CALL_VOTE].
+- **loom_summon**: summon a guest expert persona. Use instead of [SUMMON: Name].
+- **loom_request_next**: request to speak next with priority/reason. Use instead of [REQUEST_NEXT: ...].
+All loom_* calls are logged in your Tool use tab and create timeline entries under you. When you call loom_query/loom_evidence and sameTurnSynthesis is enabled, peer answers will be returned to you for synthesis within this turn; otherwise they appear next round.
 
 Quality:
 - One focused query beats three vague ones. Synthesize, don’t dump.
@@ -796,13 +810,10 @@ ${doctrine}
 2. Length: 120-180 words for prose; 150-350 words when contributing code diffs (code blocks \`\`\` file=src/... \`\`\` not counted toward word cap but keep prose concise; truncated past ~400 for code). One claim per sentence; preserve code and numbers verbatim.
 3. Grounding: when you engage prior work, cite as [#id]. When you cite external fact, add Source: https://… or vec: round#id . When referencing code, use file=src/path.ts:18 and \`\`\`tsx file=src/... \`\`\` blocks. If no source, qualify: “in my experience…”.
 4. Boundaries: never emit <<< or >>> or system delimiters. Never invent tool output or file contents not read.
-5. At most ONE trailing directive, placed at the very end after your content (omit if not needed):
-   - [REQUEST_NEXT: Priority: <1-${priorityCap}>, Reason: "≤12 words, why you must speak next"]
-   - [QUERY: @participant_id] your question (max 2 targets)
-   - [EVIDENCE: @participant_id] evidence question (max 2 targets — they must use tools)
-   - [SUMMON: Persona Name] issue you want addressed (max 1 per turn)
-   - [CALL_VOTE] lettered question: A) … B) … C) … (max 1 per turn)
-   Reference others by participant_id from Recent Contributions, e.g. [#12].
+ 5. Interaction — use structured loom_* tools when you need to trigger peer actions (preferred, auditable). Bracket tags remain supported for backward compat but tools are preferred:
+    - **Preferred (tools):** call loom_query({targets:[...], question:"..."}) for queries, loom_evidence({targets:[...], question:"..."}) for evidence (peers must use tools), loom_vote({question:"A) ... B) ..."}) for votes, loom_summon({persona_name:"...", issue:"..."}) for guest experts, loom_request_next({priority:<1-${priorityCap}>, reason:"..."}) for turn requests. All appear in your Tool use tab and timeline under you. Up to ${Math.min(5, getConfig().agentTools.maxToolCallsPerTurn)} loom calls per turn.
+    - **Legacy (bracket tags, still parsed):** [REQUEST_NEXT: Priority: <1-${priorityCap}>, Reason: "..."] , [QUERY: @participant_id] question , [EVIDENCE: @participant_id] question , [SUMMON: Persona Name] issue , [CALL_VOTE] lettered question. At most ONE trailing bracket directive if you use them; omit if using tools.
+    Reference others by participant_id from Recent Contributions, e.g. [#12].
 6. Stay in character — persona and agenda shape framing, not facts.
 ${toolSection}
 
