@@ -1,7 +1,8 @@
 import { buildAgentSystemPrompt, buildAgentUserPrompt, buildQueryPrompt, buildEvidencePrompt, buildSummonPrompt, buildVotePrompt } from "./prompts.js";
 import { parseAgentResponse } from "./validation.js";
 import { getConfig, resolveBuiltInTools, resolveLoomTools } from "./config.js";
-import { extractAgentResponse, mapToolResults, truncate, extractFileBlockTools } from "./shared.js";
+import { extractAgentResponse, mapToolResults, truncate, extractFileBlockTools, getPriorityCap } from "./shared.js";
+import { getPersonas } from "./composer.js";
 import { Logger, extractErrorInfo } from "./logger.js";
 import { runMidRoundReflections } from "./reflection-manager.js";
 import { sanitizeForPrompt, sanitizeForDisplay } from "./utils/sanitize.js";
@@ -646,8 +647,7 @@ If inconclusive, state why (0 hits vs contradictory) and what would resolve it. 
     if (agentSummons.length >= (config.maxSummonsPerAgent ?? 1)) return;
 
     // Resolve persona from loaded persona pool
-    const { getPersonas } = await import("./composer.js");
-    const allPersonas = getPersonas();
+        const allPersonas = getPersonas();
     let resolvedPersona = null;
     for (const tier of Object.keys(allPersonas)) {
       const match = allPersonas[tier].find(
@@ -1135,6 +1135,7 @@ One sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No
       currentRound,
       this.#stateManager.getQuestion(),
       this.#stateManager.getTags(),
+      this.#stateManager.getContext?.() ?? "",
     );
     const userPrompt = steeringHint ? `${userPromptBase}\n\n${steeringHint}` : userPromptBase;
 
@@ -1456,8 +1457,7 @@ One sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No
             round: currentRound,
             tools: mappedTools.map(t => ({ tool: t.tool, status: t.status ?? null })),
           });
-          const { getPriorityCap } = await import("./shared.js");
-          const cap = getPriorityCap(participant.config.tier);
+                    const cap = getPriorityCap(participant.config.tier);
           const reqNext = extractRequestNextFromToolResults(finalToolResults);
           this.#recordModelSuccess(model);
           ephemeralSessionIdToDelete = null;
@@ -1497,8 +1497,7 @@ One sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No
       const requestNextFromTools = extractRequestNextFromToolResults(finalToolResults);
       if (requestNextFromTools && !response.request_next) {
         // Apply tier cap
-        const { getPriorityCap } = await import("./shared.js");
-        const cap = getPriorityCap(participant.config.tier);
+                const cap = getPriorityCap(participant.config.tier);
         response.request_next = {
           priority: Math.min(requestNextFromTools.priority, cap),
           reason: requestNextFromTools.reason,

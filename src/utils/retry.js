@@ -3,6 +3,8 @@
  * Provides consistent retry behavior across the application.
  */
 
+import { incrementKeyedCounter } from "../metrics.js";
+
 /**
  * Default retry configuration
  */
@@ -85,8 +87,13 @@ export async function withRetry(fn, options = {}) {
       lastError = err;
       
       if (attempt === maxAttempts - 1 || !retryable(err)) {
+        if (attempt > 0) {
+          // Retry exhaustion is observable (audit 07 EH3)
+          incrementKeyedCounter('retry_events', 'exhausted');
+        }
         throw err;
       }
+      incrementKeyedCounter('retry_events', 'attempted');
       
       const delay = Math.min(
         baseDelayMs * Math.pow(2, attempt) + Math.random() * jitterMs,
@@ -146,6 +153,8 @@ export class CircuitBreaker {
     state.status = state.failures >= this.failureThreshold ? 'open' : 'closed';
     if (state.status === 'open') {
       state.nextAttempt = Date.now() + this.resetTimeoutMs;
+      // Breaker transitions are observable (audit 07 EH3)
+      incrementKeyedCounter('breaker_events', `${key}:open`);
     }
     this.#states.set(key, state);
     return state;

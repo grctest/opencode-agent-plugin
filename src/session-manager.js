@@ -5,6 +5,10 @@ import { SessionContract } from "./session-contract.js";
 
 const MAX_PROGRESS_FAILURES_BEFORE_ALERT = 3;
 
+// Severity prefixes for progress lines (audit 07 EH5): machine-filterable
+// `[info]`/`[warn]`/`[error]` markers ahead of the human-facing emoji.
+const SEVERITY_PREFIXES = { info: "[info]", warn: "[warn]", error: "[error]" };
+
 // Empty-but-OK responses are treated as transient failures: retried with the
 // same backoff as network/provider errors instead of propagating blank text.
 function isEmptyResponseError(err) {
@@ -45,6 +49,29 @@ export class SessionManager {
 
   getParentSessionId() {
     return this.#parentSessionId;
+  }
+
+  /**
+   * Fetches user messages posted to the parent session after `sinceId`
+   * (audit 14 PV2 human-in-the-loop). Best-effort — returns [] on failure.
+   * @param {string|null} sinceId
+   * @returns {Promise<Array<{id: string, role: string, text: string}>>}
+   */
+  async getParentUserMessages(sinceId = null) {
+    if (!this.#parentSessionId) return [];
+    const { ok, messages } = await this.#contract.messages(this.#parentSessionId);
+    if (!ok) return [];
+    let seen = false;
+    return messages.filter((m) => {
+      if (m.role !== "user") return false;
+      if (sinceId == null) return true;
+      if (seen) return true;
+      if (m.id === sinceId) {
+        seen = true;
+        return false;
+      }
+      return false;
+    });
   }
 
   /**
@@ -113,6 +140,33 @@ export class SessionManager {
   async deleteEphemeralSession(sessionId) {
     const { ok } = await this.#contract.delete(sessionId);
     this.unregisterSession(sessionId);
+  }
+
+  /**
+   * Shared interaction-engine primitive (audit 10 MA1): creates an ephemeral
+   * session for `participant`, prompts it, then always deletes/unregisters the
+   * session. The loom_* inline tools previously hand-rolled this create →
+   * register → prompt → unregister → delete dance per call site.
+   * @param {Object} participant - participant-like ({ config: { name, ... } })
+   * @param {Object} promptOpts - passed straight to SessionContract.prompt
+   * @param {string|null} [meetingId=null] - optional meeting registration
+   * @returns {Promise<{ ok: boolean, data: unknown, error: Error | null }>}
+   */
+  async runEphemeralPrompt(participant, promptOpts, meetingId = null) {
+    let sessionId = null;
+    try {
+      sessionId = await this.createEphemeralSession(participant);
+      if (meetingId) this.registerSessionMeeting(sessionId, meetingId);
+      const res = await this.getContract().prompt({ sessionId, ...promptOpts });
+      return res;
+    } catch (err) {
+      return { ok: false, data: null, error: err };
+    } finally {
+      if (sessionId) {
+        this.unregisterSession(sessionId);
+        await this.deleteEphemeralSession(sessionId).catch(() => {});
+      }
+    }
   }
 
   /**
@@ -194,14 +248,22 @@ export class SessionManager {
     }
   }
 
-  postProgress(message) {
+  /**
+   * Posts a progress line to the parent session (audit 07 EH5 severity contract).
+   * @param {string} message
+   * @param {"info"|"warn"|"error"} [severity="info"] — rendered as a `[severity]`
+   *   prefix so downstream consumers can filter without emoji parsing.
+   */
+  postProgress(message, severity = "info") {
     const session = this.#client.session;
     if (typeof session.promptAsync !== "function") return;
+    const prefix = SEVERITY_PREFIXES[severity] ?? "";
+    const text = prefix ? `${prefix} ${message}` : message;
     session.promptAsync({
       path: { id: this.#parentSessionId },
       body: {
         noReply: true,
-        parts: [{ type: "text", text: message }],
+        parts: [{ type: "text", text }],
       },
       query: { directory: this.#directory },
     }).catch((err) => {

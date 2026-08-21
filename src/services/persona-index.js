@@ -5,8 +5,39 @@
 
 import { embedText, getEmbeddingDim } from "./embedding-service.js";
 import { Logger, extractErrorInfo } from "../logger.js";
+import { createHash } from "node:crypto";
 
 const personaIndexLogger = new Logger();
+
+// Cross-meeting persona embedding cache (audit 11 PF6): personas rarely change
+// within a process, so re-embedding all of them per meeting is pure waste.
+// Key = (name | dim | content fingerprint) — a persona edit or model switch
+// invalidates naturally because the key changes.
+const embeddingCache = new Map();
+const EMBEDDING_CACHE_MAX = 512;
+
+function cacheKey(personaName, embeddingText) {
+  const fingerprint = createHash("sha256").update(embeddingText).digest("hex").slice(0, 16);
+  return `${personaName}|${getEmbeddingDim()}|${fingerprint}`;
+}
+
+function cachedEmbeddingFor(key) {
+  const hit = embeddingCache.get(key);
+  if (hit !== undefined) {
+    // LRU-ish refresh
+    embeddingCache.delete(key);
+    embeddingCache.set(key, hit);
+  }
+  return hit;
+}
+
+function storeEmbeddingInCache(key, embedding) {
+  if (embeddingCache.size >= EMBEDDING_CACHE_MAX) {
+    const oldest = embeddingCache.keys().next().value;
+    if (oldest !== undefined) embeddingCache.delete(oldest);
+  }
+  embeddingCache.set(key, embedding);
+}
 
 export class PersonaIndex {
   #database;
@@ -26,6 +57,7 @@ export class PersonaIndex {
 
     let indexed = 0;
     let failed = 0;
+    let cacheHits = 0;
     // Batch with concurrency 4 to avoid sequential 7s stall
     const all = [];
     for (const [tier, tierPersonas] of Object.entries(personas)) {
@@ -39,7 +71,14 @@ export class PersonaIndex {
       const results = await Promise.all(batch.map(async ({ tier, persona }) => {
         try {
           const embeddingText = this.#buildEmbeddingText(persona);
+          const key = cacheKey(persona.name, embeddingText);
+          const cached = cachedEmbeddingFor(key);
+          if (cached) {
+            cacheHits++;
+            return { tier, persona, embeddingText, embedding: cached, err: null };
+          }
           const embedding = await embedText(embeddingText);
+          storeEmbeddingInCache(key, embedding);
           return { tier, persona, embeddingText, embedding, err: null };
         } catch (err) {
           return { tier, persona, err };
@@ -69,7 +108,7 @@ export class PersonaIndex {
       }
     }
 
-    personaIndexLogger.info("personas_indexed", `Indexed ${indexed} personas (${dim}d)${failed > 0 ? ` (${failed} failed)` : ""}`);
+    personaIndexLogger.info("personas_indexed", `Indexed ${indexed} personas (${dim}d)${cacheHits > 0 ? `, ${cacheHits} cache hits` : ""}${failed > 0 ? ` (${failed} failed)` : ""}`);
     return indexed;
   }
 

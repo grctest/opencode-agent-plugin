@@ -238,7 +238,8 @@ Your reflection is public and citeable. Be concise (80-150 words), grounded, in 
     // Add to weave and round contributions
     stateManager.addContribution(contribution);
     round.contributions.push(contribution);
-    listener.contributions_count = stateManager.getWeave().filter((c) => c.participant_id === listener.config.id).length;
+    // O(1) increment instead of an O(N) weave scan (audit 11 PF5)
+    stateManager.incrementParticipantContributions(listener.config.id);
 
     // Update participant's latest reflection (for next-round context, stored WITHOUT header)
     listener.reflection = text.trim();

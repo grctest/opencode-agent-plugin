@@ -68,12 +68,14 @@ export function detectOpencodeDir() {
 }
 
 export function isLoomCommand(filename) {
+  // Known-manifest approach (audit 08 SC3): only files we actually ship (plus
+  // the explicitly-listed legacy name) are eligible for cleanup. A pattern
+  // regex here used to delete unrelated user files whose names merely started
+  // with "knit_"/"loom_".
   const loomCommands = ["knit.md", "list_knit_models.md", "enable_knit_models.md", "disable_knit_models.md", "reset_knit_models.md", "loom_viz.md", "loom_stop.md"];
   if (loomCommands.includes(filename)) return true;
   // Legacy single-file command — must be cleaned up on update/install
   if (filename === "knit_models.md") return true;
-  // Fallback: any loom-related command file that might have been installed by older versions
-  if (/^(knit|loom)_/.test(filename) && filename.endsWith(".md")) return true;
   return false;
 }
 

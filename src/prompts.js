@@ -59,6 +59,15 @@ function getReflectionBlock(reflection) {
   return `Your current position:\n"${sanitizeForDisplay(reflection.slice(0, 500))}"`;
 }
 
+// Shared tool-ladder wording — single source of truth so the system-prompt
+// ladder and the query/evidence/reflection guidance cannot drift apart (audit 01 P7).
+export const TOOL_LADDER_LINE =
+  "loom_vector_search (recall what was said → cheapest) → websearch (verify current fact) → read/grep/glob (verify local file) → webfetch (deep dive ONLY after a search hit)";
+export const TOOL_FAILURE_LINE =
+  'If tool returns error or 0 hits, write “evidence unavailable — searched X, 0 hits” and proceed with experience-qualified claim. Do not retry same query.';
+export const CITATION_LINE =
+  "Cite as Source: [#id] or Source: https://… or file=src/... . Synthesize, don’t dump.";
+
 function buildEvidenceGuidance(kind) {
   const cfg = getConfig()?.agentTools ?? {};
   const toolsDisabled = !cfg?.enabled;
@@ -88,16 +97,16 @@ Tools disabled — reflect from deliberation only. Cite [#id] when referencing p
     return `
 ## Research Tools — Reflection (optional but grounded)
 
-Tool ladder: loom_vector_search (recall what was said) → websearch (verify current fact) → read/grep (verify local file) → webfetch (deep dive ONLY after a search hit). One call max unless evidence request.
+Tool ladder: ${TOOL_LADDER_LINE}. One call max unless evidence request.
 For code analysis in this folder (react, file paths, bug): prioritize read/glob/grep first to inspect the file before revising.
 
 - **loom_vector_search**: recall a prior [#id] you’re citing — prefer this over memory
 - **websearch**: verify a claim before you revise your stance
 - **webfetch**: open a URL returned by websearch
-- **read**: inspect a file referenced in discussion (first for code analysis)
+- **read / grep / glob**: inspect project files referenced in discussion (first for code analysis)
 
-Cite as Source: [#id] or Source: https://… or file=src/... . Synthesize, don’t dump. Reflection is visible — ground it.
-If tool returns error or 0 hits, write “evidence unavailable — searched X, 0 hits” and proceed with experience-qualified claim. Do not retry same query.`;
+${CITATION_LINE} Reflection is visible — ground it.
+${TOOL_FAILURE_LINE}`;
   }
   if (kind === "query") {
     return `
@@ -116,7 +125,7 @@ Tool ladder: websearch → webfetch/read/loom_vector_search. One focused query, 
 
 Report: Finding (1 sentence) + Source (URL or [#id]) + Strength: strong | weak | inconclusive
 If inconclusive: state why — “0 hits” vs “contradictory sources” — and what would resolve it.
-If tool returns error or 0 hits, write “evidence unavailable — searched X, 0 hits” and explain what would resolve it; do not retry same query.`;
+${TOOL_FAILURE_LINE}`;
   }
   return "";
 }
@@ -549,7 +558,7 @@ export function detectTaskMode(question, tags = []) {
 }
 
 /** Builds a prompt for synthesizing the final deliberation artifact from all contributions. */
-export function buildSynthesisPrompt(question, transcript, participants = [], tags = [], stateOfPlay = "", objections = []) {
+export function buildSynthesisPrompt(question, transcript, participants = [], tags = [], stateOfPlay = "", objections = [], userContext = "") {
   const mode = detectTaskMode(question, tags);
   const isCode = mode === "code-analysis";
   const safeQuestion = escapeDelimiters(sanitizeForDisplay(question, 20000));
@@ -577,6 +586,11 @@ export function buildSynthesisPrompt(question, transcript, participants = [], ta
   const modeNote = isCode
     ? `\n## Mode: Code-Analysis (read-only)\nYou are synthesizing a react/project coding analysis. Include concrete Proposed Fix diffs with file= paths. Novel synthesized fixes are allowed when marked “Proposed — synthesized from [#id]”.\n`
     : `\n## Mode: Conversational\n`;
+
+  // User-supplied context (audit 01 P8): the asker's framing must reach synthesis.
+  const userContextSection = userContext
+    ? `\n## Original User Context (from the person who asked)\n${delimitContext(escapeDelimiters(sanitizeForDisplay(userContext, 20000)), "USER_CONTEXT")}\n`
+    : "";
 
   const groundingRule = isCode
     ? `1. **Grounding:** Prefer citing [#id] or State-of-Play. If you synthesize a novel fix/code not present verbatim, mark it “Proposed — synthesized from [#id]” and keep it. Do not invent file contents not read via tool; if no file was read, qualify as “Proposed (unverified — no tool read)”.\n`
@@ -651,7 +665,7 @@ ${modeNote}
 ## Original Question
 ${safeQuestion}
 ${tagContext ? `\n## Tags (topic)\n${tagContext}\n` : ""}
-${stateOfPlaySection}${objectionsSection}${resolvedSection}
+${userContextSection}${stateOfPlaySection}${objectionsSection}${resolvedSection}
 ## Deliberation Transcript (supporting detail — cite [#id] when using it)
 ${safeTranscript}
 ${participantsSection}
@@ -738,7 +752,7 @@ export function buildAgentSystemPrompt(participant) {
 
 Available: ${toolList}
 
-Ladder: loom_vector_search (recall what was said → cheapest) → websearch (verify current fact) → read/grep/glob (verify local file) → webfetch (deep dive ONLY after a search hit)
+Ladder: ${TOOL_LADDER_LINE}
 For code analysis in this folder (react, bug, file paths, src/, hydration, error in this folder): prioritize read/glob/grep first to inspect project files, then recall — file=src/... citations require a read.
 - **loom_vector_search**: “what did [#12] actually say?” — prefer over memory
 - **websearch**: current data, benchmarks, alternatives, precedents
@@ -757,7 +771,7 @@ All loom_* calls are real tool calls logged in your Tool use tab and create time
 Quality:
 - One focused query beats three vague ones. Synthesize, don’t dump.
 - If a tool is rejected as invalid, retry with exact names above — don’t silently fall back to memory.
-- If tool returns error or 0 hits, write “evidence unavailable — searched X, 0 hits” and proceed with experience-qualified claim. Do not retry same query.
+- ${TOOL_FAILURE_LINE}
 - Cite as Source: https://… or vec: round#id or file=src/... when it strengthens your point. Preserve code and numbers verbatim — do not round.`;
       })()
     : "";
@@ -867,7 +881,7 @@ function budgetForType(type) {
  * Builds the user prompt for an agent's turn using the Weighted Golden Sandwich pattern:
  * System Prompt (who) + State of Play (canonical) + Recent (live) + RAG (recall) — explicitly weighted.
  */
-export function buildAgentUserPrompt(participant, stateOfPlay, ragContext, recentContributions, round, question, tags = []) {
+export function buildAgentUserPrompt(participant, stateOfPlay, ragContext, recentContributions, round, question, tags = [], userContext = "") {
   const transcript =
     recentContributions.length === 0
       ? "*(No contributions yet — you are the first to speak)*"
@@ -907,12 +921,21 @@ ${stateOfPlayDelimited}
 `
     : "";
 
+  // User-supplied context (audit 01 P8): the asker's own framing belongs in
+  // every agent prompt, not just the vector index.
+  const contextHeader = userContext
+    ? `## Original User Context — from the person who asked
+
+${delimitContext(sanitizeForDisplay(userContext), "USER_CONTEXT")}
+`
+    : "";
+
   return `## Question (canonical)
 ${safeQuestion}
 ${tagContext ? `\n## Tags: ${tagContext}\n` : ""}
 ## Round ${round}
 
-${sopHeader}${ragHeader}## Live — Recent Contributions (typed budget: challenge/dissent 280, evidence 220, propose 200, code blocks 320 — weight reflects substance)
+${contextHeader}${sopHeader}${ragHeader}## Live — Recent Contributions (typed budget: challenge/dissent 280, evidence 220, propose 200, code blocks 320 — weight reflects substance)
 
 ${transcriptDelimited}
 

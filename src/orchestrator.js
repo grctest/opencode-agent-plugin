@@ -4,6 +4,7 @@ import { getMeetingDbPath } from "./paths.js";
 import { MeetingDatabase } from "./database.js";
 import { SessionManager } from "./session-manager.js";
 import { Logger, LoomError, extractErrorInfo } from "./logger.js";
+import { getMetricsSnapshot } from "./metrics.js";
 import { getHighestTierModel } from "./services/model-service.js";
 import { truncate } from "./shared.js";
 import { restoreStateFromDb } from "./meeting-restorer.js";
@@ -55,6 +56,8 @@ export class MeetingOrchestrator {
   #callStats = { orchestrator: 0, compaction: 0, moderation: 0, summary: 0, synthesis: 0, input_tokens: 0, output_tokens: 0 };
   #personaIndex = null;
   #availableModels = [];
+  #lastSeenParentMessageId = null;
+  #maxTotalTokens = 0;
 
   constructor(options) {
     this.#meetingId = options.meetingId ?? crypto.randomUUID();
@@ -64,6 +67,7 @@ export class MeetingOrchestrator {
     this.#directory = options.directory;
     this.#parentSessionId = options.parentSessionId;
     this.#meetingTimeoutMs = options.meetingTimeoutMs ?? getConfig().defaultMeetingTimeoutMs;
+    this.#maxTotalTokens = options.maxTotalTokens ?? getConfig().maxTotalTokens ?? 0;
     this.#availableModels = options.availableModels ?? [];
 
     this.#logger = new Logger().forMeeting(this.#meetingId);
@@ -103,7 +107,7 @@ export class MeetingOrchestrator {
     this.#stallWatchdog = new StallWatchdog({
       onStall: () => {
         this.#cancelled = true;
-        this.#sessionManager?.postProgress("⏱️ No activity detected for a while — stopping the deliberation.");
+        this.#sessionManager?.postProgress("⏱️ No activity detected for a while — stopping the deliberation.", "warn");
       },
       logger: this.#logger,
     });
@@ -406,6 +410,13 @@ export class MeetingOrchestrator {
   async runMeeting() {
     await this.initialize();
 
+    // Baseline the parent-message marker (audit 14 PV2): only messages the user
+    // sends AFTER meeting start become steering — never the original question.
+    try {
+      const prior = await this.#sessionManager.getParentUserMessages(null);
+      if (prior.length > 0) this.#lastSeenParentMessageId = prior[prior.length - 1].id;
+    } catch { /* best-effort */ }
+
     const participantItems = this.#stateManager.getParticipants()
       .map((p) => `  - ${p.config.name} (${p.config.tier}${p.config.tags?.length ? ", " + p.config.tags.join(", ") : ""})`)
       .join("\n");
@@ -469,13 +480,85 @@ export class MeetingOrchestrator {
 
       if (this.#remainingMs() <= 0) {
         this.#stateManager.transitionTo("timeout");
-        await this.#sessionManager.postProgress("⏱️ Loom timed out — generating output from collected contributions.");
+        await this.#sessionManager.postProgress("⏱️ Loom timed out — generating output from collected contributions.", "warn");
         this.#logger.warn("timeout", "Meeting timed out", { elapsed: Date.now() - this.#startTime, limit: this.#meetingTimeoutMs });
         break;
       }
 
       continueWeaving = await this.runRound();
       this.#notifyUpdate();
+      if (continueWeaving && this.#tokenBudgetExceeded()) {
+        this.#stateManager.transitionTo("timeout");
+        const spent = (this.#callStats.input_tokens ?? 0) + (this.#callStats.output_tokens ?? 0);
+        await this.#sessionManager.postProgress(`💰 Token budget reached (${spent} ≥ ${this.#maxTotalTokens}) — ending deliberation and generating output.`, "warn");
+        break;
+      }
+      if (continueWeaving) {
+        await this.#collectUserSteering();
+      }
+    }
+  }
+
+  /**
+   * Token budget brake (audit 14 PV4): maxTotalTokens > 0 caps total LLM tokens
+   * per meeting so a runaway meeting has a cost ceiling, not just a time one.
+   */
+  #tokenBudgetExceeded() {
+    if (!this.#maxTotalTokens || this.#maxTotalTokens <= 0) return false;
+    const spent = (this.#callStats.input_tokens ?? 0) + (this.#callStats.output_tokens ?? 0);
+    return spent >= this.#maxTotalTokens;
+  }
+
+  /**
+   * Human-in-the-loop checkpoint (audit 14 PV2): between rounds, check the
+   * parent session for new user messages and inject them as next-round
+   * steering. `/mute <name>` and `/release <name>` commands manage
+   * participants mid-meeting (audit 14 PV3). Best-effort — a failed check
+   * never breaks the loop.
+   */
+  async #collectUserSteering() {
+    try {
+      const newMsgs = await this.#sessionManager.getParentUserMessages(this.#lastSeenParentMessageId);
+      if (newMsgs.length === 0) return;
+      this.#lastSeenParentMessageId = newMsgs[newMsgs.length - 1].id;
+      const steeringParts = [];
+      const notes = [];
+      for (const m of newMsgs) {
+        const text = (m.text ?? "").trim();
+        const muteMatch = text.match(/^\/mute\s+(.+)$/i);
+        const releaseMatch = text.match(/^\/release\s+(.+)$/i);
+        if (muteMatch || releaseMatch) {
+          const name = (muteMatch?.[1] ?? releaseMatch?.[1] ?? "").trim().replace(/^["']|["']$/g, "");
+          const p = this.#stateManager.getParticipants().find(
+            (x) => x.config.name.toLowerCase() === name.toLowerCase() || x.config.id.toLowerCase() === name.toLowerCase(),
+          );
+          if (!p) {
+            notes.push(`⚠️ No participant matching "${name}".`);
+            continue;
+          }
+          if (muteMatch) {
+            const ok = this.#stateManager.muteParticipant(p.config.id);
+            notes.push(ok ? `🔇 ${p.config.name} muted for the rest of the meeting.` : `⚠️ Could not mute ${p.config.name}.`);
+          } else {
+            const ok = this.#stateManager.releaseParticipant(p.config.id);
+            notes.push(ok ? `🔊 ${p.config.name} released back into the rotation.` : `⚠️ ${p.config.name} was not muted.`);
+          }
+        } else if (text) {
+          steeringParts.push(text);
+        }
+      }
+      if (steeringParts.length > 0) {
+        const combined = steeringParts.join(" | ").slice(0, 500);
+        this.#stateManager.setNextRoundSteering(
+          `📌 The meeting owner interjected mid-deliberation: "${combined}" — factor this into your next contribution.`,
+        );
+        notes.push(`ℹ️ Owner input received — steering injected: ${combined.slice(0, 120)}${combined.length > 120 ? "…" : ""}`);
+      }
+      for (const note of notes) {
+        await this.#sessionManager.postProgress(note);
+      }
+    } catch (err) {
+      this.#logger.debug("steering_check_failed", "Parent-message steering check failed", extractErrorInfo(err));
     }
   }
 
@@ -510,14 +593,14 @@ export class MeetingOrchestrator {
 
   async runRound() {
     if (this.#checkTimeout()) {
-      await this.#sessionManager.postProgress("⏱️ Loom timed out — generating output from collected contributions.");
+      await this.#sessionManager.postProgress("⏱️ Loom timed out — generating output from collected contributions.", "warn");
       return false;
     }
 
     const remaining = this.#remainingMs();
     if (remaining < 5000) {
       this.#stateManager.transitionTo("timeout");
-      await this.#sessionManager.postProgress("⏱️ Loom timed out — generating output from collected contributions.");
+      await this.#sessionManager.postProgress("⏱️ Loom timed out — generating output from collected contributions.", "warn");
       this.#logger.warn("timeout", "Meeting timed out before round start", { remaining });
       return false;
     }
@@ -697,7 +780,7 @@ export class MeetingOrchestrator {
       try {
         this.#stateManager.transitionTo("aborted");
         await this.#persistState();
-        await this.#sessionManager.postProgress(`❌ Meeting aborted — internal error while finalizing round ${updatedRound.number}: ${err.message}`);
+        await this.#sessionManager.postProgress(`❌ Meeting aborted — internal error while finalizing round ${updatedRound.number}: ${err.message}`, "error");
       } catch (abortErr) {
         this.#logger.error("finalize_round_abort_failed", "Could not persist aborted status during finalize failure", extractErrorInfo(abortErr));
       }
@@ -763,7 +846,7 @@ export class MeetingOrchestrator {
     if (allFailed) {
       const output = `# Deliberation Output\n\n## Decision\nNo output could be generated — all participants failed to respond.\n\n## Reasoning\nAll ${this.#stateManager.getParticipants().length} participants encountered errors during the deliberation.\n\n## Action Items\n- Check model connectivity and retry\n- Verify provider authentication\n\n## Confidence\nLow (no contributions received)`;
       this.#saveArtifact({ content: output, format: "markdown", decisions: [], action_items: [], dissent: [], open_questions: [], confidence: "low" });
-      await this.#sessionManager.postProgress("⚠️ All participants failed — no synthesis possible.");
+      await this.#sessionManager.postProgress("⚠️ All participants failed — no synthesis possible.", "error");
       this.#logger.error("all_failed", "All participants failed — no synthesis possible");
       await this.#persistState();
       return output;
@@ -804,11 +887,12 @@ export class MeetingOrchestrator {
           this.#notifyUpdate();
         },
         this.#stateManager.getStateOfPlay(),
+        // User context reaches synthesis directly (audit 01 P8)
+        this.#stateManager.getContext?.() ?? "",
       );
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+    } catch (err) {      const message = err instanceof Error ? err.message : String(err);
       this.#logger.error("synthesis_failed", `Synthesis failed — persisting degraded artifact: ${message}`);
-      await this.#sessionManager.postProgress(`⚠️ Synthesis failed (${message}) — degraded artifact persisted.`);
+      await this.#sessionManager.postProgress(`⚠️ Synthesis failed (${message}) — degraded artifact persisted.`, "error");
       const degraded = `# Deliberation Output\n\n## Decision\nSynthesis could not be completed (${message}).\n\n## Reasoning\nThe meeting reached its end state but the synthesis step failed. The full transcript is preserved for review.\n\n## Action Items\n- Retry synthesis with the meeting data\n- Review the transcript tab for the full deliberation\n\n## Confidence\nLow (synthesis interrupted)`;
       result = {
         output: degraded,
@@ -821,6 +905,38 @@ export class MeetingOrchestrator {
     this.#saveArtifact(result.artifact ?? { content: result.output, format: "markdown", decisions: [], action_items: [], dissent: [], open_questions: [], confidence: null });
     this.#saveMeetingMetrics();
     return result.output;
+  }
+
+  /**
+   * Deliberation quality telemetry (audit 14 PV5): derived counts over the
+   * final weave — contribution mix, dissent survival, participation, votes.
+   * Persisted inside meeting_metrics.counters.quality for trend analysis.
+   */
+  #computeQualityTelemetry() {
+    try {
+      const weave = this.#stateManager.getWeave();
+      const byType = {};
+      for (const c of weave) {
+        byType[c.type] = (byType[c.type] ?? 0) + 1;
+      }
+      const participants = this.#stateManager.getParticipants();
+      const contributors = new Set(weave.map((c) => c.participant_id));
+      const objections = this.#stateManager.getObjections?.() ?? [];
+      const unresolved = objections.filter((o) => o.unresolved);
+      return {
+        contributions_by_type: byType,
+        challenges: byType.challenge ?? 0,
+        dissents: byType.dissent ?? 0,
+        unresolved_objections: unresolved.length,
+        total_objections: objections.length,
+        participants: participants.length,
+        contributors: contributors.size,
+        participation_ratio: participants.length > 0 ? Math.round((contributors.size / participants.length) * 100) / 100 : 0,
+        votes_held: byType.vote_tally ?? 0,
+      };
+    } catch {
+      return null;
+    }
   }
 
   #saveArtifact(artifact) {
@@ -836,8 +952,20 @@ export class MeetingOrchestrator {
       const stats = this.#getMergedStats();
       const weave = this.#stateManager.getWeave();
       const allTurnRequests = this.#stateManager.getRounds().flatMap((r) => r.turn_requests);
+      // Durable degradation/observability counters (audit 07 EH3): the process-wide
+      // degrade/retry/breaker events are snapshotted into the per-meeting row so
+      // they survive restart and are visible in trend queries.
+      let processCounters = {};
+      try {
+        const snapshot = getMetricsSnapshot();
+        processCounters = {
+          degradation_events: snapshot.counters.degradation_events ?? {},
+          retry_events: snapshot.counters.retry_events ?? {},
+          breaker_events: snapshot.counters.breaker_events ?? {},
+        };
+      } catch { /* metrics unavailable — keep going */ }
       this.#database.saveMeetingMetrics({
-        counters: stats,
+        counters: { ...stats, ...processCounters, quality: this.#computeQualityTelemetry() },
         latencies: {},
          input_tokens: stats.input_tokens ?? 0,
          output_tokens: stats.output_tokens ?? 0,

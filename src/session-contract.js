@@ -152,4 +152,33 @@ export class SessionContract {
       return { ok: false, error };
     }
   }
+
+  /**
+   * Lists messages of a session (audit 14 PV2 human-in-the-loop). Best-effort:
+   * resolves { ok: false } on any failure so callers can skip steering checks
+   * without crashing the meeting loop.
+   * @param {string} sessionId
+   * @returns {Promise<{ ok: boolean, messages: Array<{id: string, role: string, text: string}>, error: Error | null }>}
+   */
+  async messages(sessionId) {
+    try {
+      const result = await this.#client.session.messages({
+        path: { id: sessionId },
+        query: { directory: this.#directory },
+      });
+      if (result.error) {
+        return { ok: false, messages: [], error: new Error(result.error?.message || "messages failed") };
+      }
+      const raw = Array.isArray(result.data) ? result.data : (result.data?.messages ?? []);
+      const messages = [];
+      for (const m of raw) {
+        const text = extractText(m);
+        if (!text) continue;
+        messages.push({ id: m.id ?? `${m.role ?? "?"}:${text.slice(0, 32)}`, role: m.role ?? "user", text });
+      }
+      return { ok: true, messages, error: null };
+    } catch (error) {
+      return { ok: false, messages: [], error };
+    }
+  }
 }

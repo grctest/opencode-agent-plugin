@@ -26,7 +26,7 @@ export class SynthesisCoordinator {
     );
   }
 
-  async run(transcriptData, participants, objections, synthesizer, getParticipantModel, onStart, onComplete, stateOfPlay = "") {
+  async run(transcriptData, participants, objections, synthesizer, getParticipantModel, onStart, onComplete, stateOfPlay = "", userContext = "") {
     if (!synthesizer) {
       return { output: "No participants available for synthesis.", artifact: null };
     }
@@ -39,12 +39,12 @@ export class SynthesisCoordinator {
       const synthSessionId = await this.#sessionManager.createSynthesizerSession(synthesizer);
       const model = getParticipantModel(synthesizer);
       const transcript = formatFinalRoundTranscript(transcriptData, participants);
-      artifactText = await this.#promptWithRetry(synthSessionId, synthesizer, transcriptData, transcript, model, participants, stateOfPlay, objections);
+      artifactText = await this.#promptWithRetry(synthSessionId, synthesizer, transcriptData, transcript, model, participants, stateOfPlay, objections, userContext);
       // Second pass: have the synthesizer audit its own work against the transcript (most-contested slice, not head).
       artifactText = await this.#critique(synthSessionId, artifactText, transcript, transcriptData, model, synthesizer, participants);
     } catch (err) {
       const info = extractErrorInfo(err);
-      await this.#sessionManager.postProgress(`Synthesis session failed: ${info.message}`);
+      await this.#sessionManager.postProgress(`Synthesis session failed: ${info.message}`, "error");
       artifactText = this.fallbackSynthesis(transcriptData, stateOfPlay);
     }
 
@@ -56,13 +56,13 @@ export class SynthesisCoordinator {
     return result;
   }
 
-  async #promptWithRetry(sessionId, synthesizer, transcriptData, transcript, model, allParticipants, stateOfPlay = "", objections = []) {
+  async #promptWithRetry(sessionId, synthesizer, transcriptData, transcript, model, allParticipants, stateOfPlay = "", objections = [], userContext = "") {
     let additionalFeedback = "";
     const maxRetries = getConfig().synthesisMaxRetries;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       const userPrompt =
-        buildSynthesisPrompt(transcriptData.question, transcript, allParticipants, transcriptData.tags ?? [], stateOfPlay, objections) +
+        buildSynthesisPrompt(transcriptData.question, transcript, allParticipants, transcriptData.tags ?? [], stateOfPlay, objections, userContext) +
         additionalFeedback;
 
       const llmStart = Date.now();
@@ -231,7 +231,7 @@ ${draftForPrompt}`;
         critiquePrompt = `${critiquePrompt}\n\nFeedback: ${feedback}`;
       } catch (err) {
         const info = extractErrorInfo(err);
-        await this.#sessionManager.postProgress(`Synthesis critique failed: ${info.message}. Using the original draft.`);
+        await this.#sessionManager.postProgress(`Synthesis critique failed: ${info.message}. Using the original draft.`, "warn");
         return text;
       }
     }

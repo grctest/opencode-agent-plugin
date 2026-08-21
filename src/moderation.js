@@ -3,6 +3,45 @@ import { getConfig } from "./config.js";
 import { LOOKBACK } from "./shared.js";
 import { Logger, extractErrorInfo } from "./logger.js";
 
+/**
+ * Extracts the first balanced JSON array from free-form LLM text (audit 01 P6).
+ * Walks the string respecting string literals and escapes so a ']' inside a
+ * quoted participant ID cannot truncate the scan; returns null if no complete
+ * top-level array is found.
+ */
+export function extractBalancedJsonArray(text) {
+  if (typeof text !== "string") return null;
+  const start = text.indexOf("[");
+  if (start === -1) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === "[") {
+      depth++;
+    } else if (ch === "]") {
+      depth--;
+      if (depth === 0) {
+        return text.slice(start, i + 1);
+      }
+    }
+  }
+  return null;
+}
+
 /** Parses a moderator's XML ruling into structured fields (decision, next_speaker, reason). */
 export function parseModeratorRuling(text) {
   let decision = "";
@@ -152,19 +191,19 @@ export async function planTurnOrder({ stateOfPlay, roundSummary, turnRequests, p
   // If no requests, return default order (active participants)
   if (!turnRequests || turnRequests.length === 0) {
     return participants
-      .filter((p) => p.status !== "failed")
+      .filter((p) => p.status !== "failed" && p.status !== "muted")
       .map((p) => p.config.id);
   }
 
   // Filter to only valid requests (participant must exist and not be failed)
   const validRequests = turnRequests.filter((req) => {
     const p = participants.find((pp) => pp.config.id === req.participant_id);
-    return p && p.status !== "failed";
+    return p && p.status !== "failed" && p.status !== "muted";
   });
 
   if (validRequests.length === 0) {
     return participants
-      .filter((p) => p.status !== "failed")
+      .filter((p) => p.status !== "failed" && p.status !== "muted")
       .map((p) => p.config.id);
   }
 
@@ -172,7 +211,7 @@ export async function planTurnOrder({ stateOfPlay, roundSummary, turnRequests, p
   if (validRequests.length === 1) {
     const requestedId = validRequests[0].participant_id;
     const ordered = participants
-      .filter((p) => p.status !== "failed")
+      .filter((p) => p.status !== "failed" && p.status !== "muted")
       .map((p) => p.config.id);
     const idx = ordered.indexOf(requestedId);
     if (idx > 0) {
@@ -199,14 +238,16 @@ export async function planTurnOrder({ stateOfPlay, roundSummary, turnRequests, p
       prompt,
     );
 
-    // Parse JSON array from response
-    const arrayMatch = result.match(/\[.*?\]/s);
-    if (arrayMatch) {
-      const parsed = JSON.parse(arrayMatch[0]);
+    // Parse JSON array from response (audit 01 P6: balanced-bracket scan —
+    // a lazy /\[.*?\]/ match stops at the first ']' inside a string and
+    // truncates the array, silently discarding the plan).
+    const jsonText = extractBalancedJsonArray(result);
+    if (jsonText) {
+      const parsed = JSON.parse(jsonText);
       if (Array.isArray(parsed) && parsed.length > 0) {
         // Validate all IDs exist
         const validIds = participants
-          .filter((p) => p.status !== "failed")
+          .filter((p) => p.status !== "failed" && p.status !== "muted")
           .map((p) => p.config.id);
         const ordered = parsed.filter((id) => validIds.includes(id));
         // Add any missing participants at the end
@@ -248,7 +289,7 @@ function fallbackTurnOrder(turnRequests, participants) {
   // Build ordered list: requested participants first, then remaining
   const ordered = sorted.map((r) => r.participant_id);
   const remaining = participants
-    .filter((p) => p.status !== "failed" && !ordered.includes(p.config.id))
+    .filter((p) => p.status !== "failed" && p.status !== "muted" && !ordered.includes(p.config.id))
     .map((p) => p.config.id);
   
   return [...ordered, ...remaining];

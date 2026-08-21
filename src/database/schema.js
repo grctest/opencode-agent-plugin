@@ -72,7 +72,7 @@ export function initSchema(db) {
     CREATE TABLE IF NOT EXISTS contributions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
-      participant_id TEXT NOT NULL,
+      participant_id TEXT NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
       round INTEGER NOT NULL,
       type TEXT NOT NULL,
       content TEXT NOT NULL,

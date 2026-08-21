@@ -1,4 +1,4 @@
-import { mkdirSync, existsSync, readdirSync, unlinkSync } from "node:fs";
+import { mkdirSync, existsSync, readdirSync, unlinkSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { createRequire } from "node:module";
@@ -720,6 +720,27 @@ export class MeetingDatabase {
   }
 
   /**
+   * Ensures a participants row exists for synthetic contributors (audit 12 PD9).
+   * New schemas enforce an FK on contributions.participant_id, so summoned
+   * guests must have a participants row before their response is persisted.
+   * @returns {boolean} true if a row was inserted
+   */
+  ensureParticipantRow(participantId, name = participantId, tier = "mid") {
+    try {
+      const result = this.#db
+        .prepare(
+          `INSERT OR IGNORE INTO participants (id, meeting_id, name, persona, agenda, tier, status)
+           VALUES (?, ?, ?, ?, ?, ?, 'summoned')`,
+        )
+        .run(participantId, this.#meetingId, name, "Summoned guest expert", "", tier);
+      return Number(result?.changes ?? 0) > 0;
+    } catch (err) {
+      dbLogger.warn("ensure_participant_row_failed", `Failed to ensure participant row ${participantId}`, extractErrorInfo(err));
+      return false;
+    }
+  }
+
+  /**
    * Atomically adds a contribution and its associated turn request (if present).
    * Ensures both writes succeed or neither does, preventing orphaned records.
    */
@@ -732,6 +753,7 @@ export class MeetingDatabase {
       }
     } catch {}
     this.#db.exec('BEGIN TRANSACTION');
+
     try {
       this.#db
         .prepare(
@@ -1420,38 +1442,46 @@ export { loadSessionIndex, _indexMeeting as indexMeeting, _unindexMeeting as uni
 
 export async function findMeetingBySessionId(directory, sessionId) {
   await ensureDb();
+  // Most-recent-wins (audit 11 PF4 / audit 12 PD6): a session may hold several
+  // meetings (re-knits); resolve by meetings.created_at, not index insertion order.
   const indexed = _getDatabasesBySessionId(sessionId);
-  if (indexed.length > 0) {
-    const { meetingId, dbPath } = indexed[indexed.length - 1];
-    if (existsSync(dbPath)) {
-      let conn = null;
-      try {
-        conn = new DatabaseClass(dbPath, { readonly: true });
-        const row = conn
-          .prepare(
-            `SELECT id, question, status, round, max_rounds FROM meetings
-             WHERE opencode_session_id = ?
-             LIMIT 1`,
-          )
-          .get(sessionId);
-        if (row) {
-          return { meetingId: row.id, question: row.question, status: row.status, round: row.round, max_rounds: row.max_rounds, dbPath };
-        }
-      } catch (err) {
-        const info = extractErrorInfo(err);
-        dbLogger.warn("indexed_db_lookup_failed", `Indexed DB lookup failed for ${dbPath}`, info);
-      } finally {
-        if (conn) conn.close();
-      }
+  const candidates = [];
+  for (const { dbPath } of indexed) {
+    if (!existsSync(dbPath)) continue;
+    let conn = null;
+    try {
+      conn = new DatabaseClass(dbPath, { readonly: true });
+      const row = conn
+        .prepare(
+          `SELECT id, question, status, round, max_rounds, created_at FROM meetings
+           WHERE opencode_session_id = ?
+           ORDER BY created_at DESC
+           LIMIT 1`,
+        )
+        .get(sessionId);
+      if (row) candidates.push({ row, dbPath });
+    } catch (err) {
+      const info = extractErrorInfo(err);
+      dbLogger.warn("indexed_db_lookup_failed", `Indexed DB lookup failed for ${dbPath}`, info);
+    } finally {
+      if (conn) conn.close();
     }
+  }
+  if (candidates.length > 0) {
+    candidates.sort((a, b) => String(b.row.created_at ?? "").localeCompare(String(a.row.created_at ?? "")));
+    const { row, dbPath } = candidates[0];
+    return { meetingId: row.id, question: row.question, status: row.status, round: row.round, max_rounds: row.max_rounds, dbPath };
   }
 
   const meetingsDir = join(resolveLoomBaseDir(directory), "meetings");
   if (!existsSync(meetingsDir)) return null;
   await ensureDb();
-  const files = readdirSync(meetingsDir).filter((f) => f.endsWith(".db"));
-  for (const file of files) {
-    const filePath = join(meetingsDir, file);
+  // Scan most-recently-modified first so re-knit sessions resolve fast.
+  const files = readdirSync(meetingsDir)
+    .filter((f) => f.endsWith(".db"))
+    .map((f) => join(meetingsDir, f))
+    .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
+  for (const filePath of files) {
     let conn = null;
     try {
       conn = new DatabaseClass(filePath, { readonly: true });

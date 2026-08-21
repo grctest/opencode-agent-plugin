@@ -13,6 +13,13 @@ import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_QUANT } from "./services/mod
 import { buildQueryPrompt, buildEvidencePrompt, buildVotePrompt, buildSummonPrompt } from "./prompts.js";
 import * as sharedVoteTally from "./utils/vote-tally.js";
 import { degrade } from "./utils/degrade.js";
+// Static hoists (audit 10 MA4): these were previously `await import()` inside
+// tool handlers on every call — pure overhead for cycle-free modules.
+import { extractAgentResponse, mapToolResults } from "./shared.js";
+import { getPersonas } from "./composer.js";
+import { getHighestTierModel } from "./services/model-service.js";
+import { getMeetingDbPath } from "./paths.js";
+import { DashboardApi } from "./dashboard/api.js";
 
 const PROGRESS_PATTERN =
   /^🎬|^⚠️|^ℹ️|is thinking\.\.\.|— synthesize:|— critique:|Round \d+ (complete|starting)|Synthesizing final output|✅ Completed|❌ Error:/;
@@ -205,7 +212,7 @@ export const Loom = async (input) => {
           // For now, return queued and let RoundExecutor handle post-store creation; the inline result will be the peer answers returned as tool output.
           // We perform the actual peer prompting here to provide inline results.
           const allParticipants = stateManager.getParticipants();
-          const targets = args.targets.map(id => allParticipants.find(p => p.config.id === id)).filter(p => p && p.status !== "failed" && p.status !== "passed");
+          const targets = args.targets.map(id => allParticipants.find(p => p.config.id === id)).filter(p => p && p.status !== "failed" && p.status !== "passed" && p.status !== "muted");
           if (targets.length === 0) return { error: `No eligible targets among [${args.targets.join(", ")}] — all filtered (self/failed/passed).` };
           const caller = allParticipants.find(p => p.session_id === context.sessionID) || allParticipants.find(p => p.config.id && args.targets.includes(p.config.id) === false) || null;
           // Use a lightweight inline prompt for each target (without creating DB rows yet — let RoundExecutor create them post-store, but return preview)
@@ -217,8 +224,7 @@ export const Loom = async (input) => {
                 try { return engine.getParticipantModel ? engine.getParticipantModel(target) : null; } catch { return null; }
               })();
               if (!model) { results.push({ participantId: target.config.id, error: "no model" }); continue; }
-              const sessionId = await sessionManager.createEphemeralSession(target);
-              sessionManager.registerSessionMeeting(sessionId, meetingInfo.meetingId);
+              // Shared ephemeral-prompt primitive (audit 10 MA1)
               const stateOfPlay = stateManager.getStateOfPlay?.() ?? "";
               const roundContribs = stateManager.getWeave ? stateManager.getWeave().filter(c => c.round != null && c.round >= stateManager.getCurrentRound() - 1).slice(-12) : [];
               const prompt = buildQueryPrompt(
@@ -232,8 +238,7 @@ export const Loom = async (input) => {
                 stateOfPlay
               );
               const systemPrompt = `You are ${target.config.name} (${target.config.tier}) — answering a directed query in Loom. Be concise (2-4 sentences), grounded, and in character. Answer the specific question, not the whole deliberation. Cite Source: [#id] or URL if you use evidence. Never emit <<< or >>>.`;
-              const res = await sessionManager.getContract().prompt({
-                sessionId,
+              const res = await sessionManager.runEphemeralPrompt(target, {
                 system: systemPrompt,
                 model,
                 temperature: target.tier_config?.temperature ?? 0.7,
@@ -249,12 +254,9 @@ export const Loom = async (input) => {
                 })(),
                 toolChoice: "auto",
                 timeoutMs: 60000,
-              });
-              sessionManager.unregisterSession(sessionId);
-              await sessionManager.deleteEphemeralSession(sessionId).catch(()=>{});
+              }, meetingInfo.meetingId);
               if (!res.ok) { results.push({ participantId: target.config.id, error: res.error?.message ?? "prompt failed" }); continue; }
-              const { extractAgentResponse, mapToolResults } = await import("./shared.js");
-              const { text, toolResults } = extractAgentResponse(res.data);
+                            const { text, toolResults } = extractAgentResponse(res.data);
               const content = (text ?? "").slice(0,2000);
               // Store as query_response for timeline aesthetic (so it appears as indented row even though inline)
               try {
@@ -312,15 +314,14 @@ export const Loom = async (input) => {
           const stateManager = engine.getStateManager();
           const sessionManager = engine.getSessionManager();
           const allParticipants = stateManager.getParticipants();
-          const targets = args.targets.map(id => allParticipants.find(p => p.config.id === id)).filter(p => p && p.status !== "failed" && p.status !== "passed");
+          const targets = args.targets.map(id => allParticipants.find(p => p.config.id === id)).filter(p => p && p.status !== "failed" && p.status !== "passed" && p.status !== "muted");
           if (targets.length === 0) return { error: `No eligible targets among [${args.targets.join(", ")}]` };
           const results = [];
           for (const target of targets) {
             try {
               const model = (() => { try { return engine.getParticipantModel ? engine.getParticipantModel(target) : null; } catch { return null; } })();
               if (!model) { results.push({ participantId: target.config.id, error: "no model" }); continue; }
-              const sessionId = await sessionManager.createEphemeralSession(target);
-              sessionManager.registerSessionMeeting(sessionId, meetingInfo.meetingId);
+              // Shared ephemeral-prompt primitive (audit 10 MA1)
               const stateOfPlay = stateManager.getStateOfPlay?.() ?? "";
               const roundContribs = stateManager.getWeave ? stateManager.getWeave().filter(c => c.round != null && c.round >= stateManager.getCurrentRound() - 1).slice(-12) : [];
               const prompt = buildEvidencePrompt(
@@ -333,8 +334,7 @@ export const Loom = async (input) => {
                 stateManager.getMaxRounds()
               );
               const systemPrompt = `You are ${target.config.name} (${target.config.tier}) — providing evidence in Loom. You MUST use at least one research tool. No speculation. Structure: Finding (1 sentence) + Source (URL or [#id]) + Strength: strong|weak|inconclusive. If inconclusive, state why and what would resolve it. 100-180 words, in character, never emit <<< or >>>.`;
-              const res = await sessionManager.getContract().prompt({
-                sessionId,
+              const res = await sessionManager.runEphemeralPrompt(target, {
                 system: systemPrompt,
                 model,
                 temperature: target.tier_config?.temperature ?? 0.7,
@@ -350,12 +350,9 @@ export const Loom = async (input) => {
                 })(),
                 toolChoice: "required",
                 timeoutMs: 90000,
-              });
-              sessionManager.unregisterSession(sessionId);
-              await sessionManager.deleteEphemeralSession(sessionId).catch(()=>{});
+              }, meetingInfo.meetingId);
               if (!res.ok) { results.push({ participantId: target.config.id, error: res.error?.message ?? "prompt failed" }); continue; }
-              const { extractAgentResponse, mapToolResults } = await import("./shared.js");
-              const { text, toolResults } = extractAgentResponse(res.data);
+                            const { text, toolResults } = extractAgentResponse(res.data);
               const content = (text ?? "").slice(0,2000);
               try {
                 const allParts = stateManager.getParticipants();
@@ -418,7 +415,7 @@ export const Loom = async (input) => {
           // Source contribution placeholder for vote context — use caller's current contribution or question
           const sourceSnippet = caller?.currentContribution ?? args.question.slice(0,300);
           // Voters = all other active participants excluding caller
-          const voters = allParticipants.filter(p => (!caller || p.config.id !== caller.config.id) && p.status !== "failed" && p.status !== "passed");
+          const voters = allParticipants.filter(p => (!caller || p.config.id !== caller.config.id) && p.status !== "failed" && p.status !== "passed" && p.status !== "muted");
           const extractVoteLetter = (text) => sharedVoteTally.extractVoteLetter(text);
           if (voters.length === 0) {
             const tallyContent = `[Vote Tally] ${args.question}\nSource vote: ${sourceSnippet.slice(0,200)}\nTotal voters: 1 (source only)`;
@@ -449,8 +446,6 @@ export const Loom = async (input) => {
           await Promise.allSettled(voters.map(async (voter) => {
             const model = (() => { try { return engine.getParticipantModel ? engine.getParticipantModel(voter) : null; } catch { return null; }})();
             if (!model) { voterResults.push({ voter: voter.config.name, error: "no model" }); return; }
-            const sessionId = await sessionManager.createEphemeralSession(voter);
-            sessionManager.registerSessionMeeting(sessionId, meetingInfo.meetingId);
             try {
               const previousStatus = voter.status;
               voter.status = "speaking";
@@ -474,8 +469,8 @@ export const Loom = async (input) => {
                 question: args.question,
                 round: currentRound,
               };
-              const res = await sessionManager.getContract().prompt({
-                sessionId,
+              // Shared ephemeral-prompt primitive (audit 10 MA1)
+              const res = await sessionManager.runEphemeralPrompt(voter, {
                 system: systemPrompt,
                 model,
                 temperature: voter.tier_config?.temperature ?? 0.7,
@@ -483,10 +478,9 @@ export const Loom = async (input) => {
                 tools: {},
                 toolChoice: "none",
                 timeoutMs: 60000,
-              });
+              }, meetingInfo.meetingId);
               if (!res.ok) throw res.error;
-              const { extractAgentResponse } = await import("./shared.js");
-              const { text } = extractAgentResponse(res.data);
+                            const { text } = extractAgentResponse(res.data);
               if (!text || text.trim().length < 5) return;
               const contrib = {
                 id: stateManager.nextContributionId(),
@@ -504,7 +498,8 @@ export const Loom = async (input) => {
               if (roundObj) roundObj.contributions.push(contrib);
               voteResponses.push({ voter: voter.config.name, content: text.trim() });
               voterResults.push({ voter: voter.config.id, name: voter.config.name, content: text.trim().slice(0,200) });
-              voter.contributions_count = stateManager.getWeave().filter((c) => c.participant_id === voter.config.id).length;
+              // O(1) increment instead of an O(N) weave scan (audit 11 PF5)
+              stateManager.incrementParticipantContributions(voter.config.id);
               degrade("vote_response_db_failed", "Failed to persist vote_response — visible in memory only this session", () => db.addContributionWithTurnRequest(stateManager.getState().id, contrib, null), null);
               voter.status = previousStatus;
               try { db.setParticipantStatus(voter.config.id, previousStatus); } catch {}
@@ -512,9 +507,6 @@ export const Loom = async (input) => {
               voterResults.push({ voter: voter.config.id, error: err.message });
               voter.status = "listening";
               try { db.setParticipantStatus(voter.config.id, "listening"); } catch {}
-            } finally {
-              try { sessionManager.unregisterSession(sessionId); } catch {}
-              await sessionManager.deleteEphemeralSession(sessionId).catch(()=>{});
             }
           }));
           // Tally generation via shared builder (audit 16 MA2 — mirrors RoundExecutor.executeVote)
@@ -565,8 +557,7 @@ export const Loom = async (input) => {
           if (!meetingInfo) return { queued: true, persona_name: args.persona_name, issue: args.issue, note: "Summon queued — meeting not resolved." };
           const engine = activeLooms.get(meetingInfo.meetingId);
           if (!engine) return { queued: true, persona_name: args.persona_name, issue: args.issue, note: "Summon queued — engine not ready." };
-          const { getPersonas } = await import("./composer.js");
-          const allPersonas = getPersonas();
+                    const allPersonas = getPersonas();
           let found = null;
           for (const tier of Object.keys(allPersonas)) {
             const m = allPersonas[tier].find(p => p.name.toLowerCase() === args.persona_name.toLowerCase());
@@ -576,24 +567,21 @@ export const Loom = async (input) => {
           // For summon, we do inline prompt of the guest and return its content for immediate synthesis.
           const stateManager = engine.getStateManager();
           const sessionManager = engine.getSessionManager();
-          const { buildSummonPrompt } = await import("./prompts.js");
-          const roundContribs = stateManager.getWeave ? stateManager.getWeave().filter(c => c.round != null && c.round >= stateManager.getCurrentRound() - 1).slice(-12) : [];
+                    const roundContribs = stateManager.getWeave ? stateManager.getWeave().filter(c => c.round != null && c.round >= stateManager.getCurrentRound() - 1).slice(-12) : [];
           const stateOfPlay = stateManager.getStateOfPlay?.() ?? "";
           const prompt = buildSummonPrompt(found, { config: { name: "Caller", tier: "mid", id: "caller" } }, args.issue, roundContribs, stateManager.getCurrentRound(), stateManager.getMaxRounds(), stateOfPlay);
           const systemPrompt = `You are ${found.name} (${found.tier}) — guest expert summoned into Loom for one additive contribution. Be concise (100-150 words), grounded, in character. Build on what's settled; don't re-litigate without new evidence. Name one constraint only you would know. Cite Source: URL or [#id] if you use evidence. Never emit <<< or >>>. No contribution tags.`;
           // Use a temporary summoned participant config to create session
           const summonedConfig = { config: { id: `summoned_${found.name.toLowerCase().replace(/[^a-z0-9]/g,'_')}`, name: found.name, tier: found.tier, persona: found.persona, expertise: found.expertise, communication_style: found.communication_style }, tier_config: { temperature: 0.7 } };
-          const sessionId = await sessionManager.createEphemeralSession(summonedConfig);
-          sessionManager.registerSessionMeeting(sessionId, meetingInfo.meetingId);
           // Try to get a model — use caller's model or fallback
           let model = null;
           try { const participants = stateManager.getParticipants(); const caller = participants.find(p => p.session_id === context.sessionID) || participants[0]; model = engine.getParticipantModel ? engine.getParticipantModel(caller) : null; } catch {}
           if (!model) {
-            try { const { getHighestTierModel } = await import("./services/model-service.js"); const ms = stateManager.getParticipants().map(p=>({tier:p.config.tier, model:p.config.model})); model = getHighestTierModel(ms.map(m=>({tier:m.tier, model:m.model}))); } catch {}
+            try { const ms = stateManager.getParticipants().map(p=>({tier:p.config.tier, model:p.config.model})); model = getHighestTierModel(ms.map(m=>({tier:m.tier, model:m.model}))); } catch {}
           }
-          if (!model) { await sessionManager.deleteEphemeralSession(sessionId).catch(()=>{}); return { error: "No model available for summon" }; }
-          const res = await sessionManager.getContract().prompt({
-            sessionId,
+          if (!model) return { error: "No model available for summon" };
+          // Shared ephemeral-prompt primitive (audit 10 MA1)
+          const res = await sessionManager.runEphemeralPrompt(summonedConfig, {
             system: systemPrompt,
             model,
             temperature: 0.7,
@@ -612,12 +600,9 @@ export const Loom = async (input) => {
             })(),
             toolChoice: "auto",
             timeoutMs: 90000,
-          });
-          await sessionManager.deleteEphemeralSession(sessionId).catch(()=>{});
-          sessionManager.unregisterSession(sessionId);
+          }, meetingInfo.meetingId);
           if (!res.ok) return { error: res.error?.message ?? "summon prompt failed" };
-          const { extractAgentResponse, mapToolResults } = await import("./shared.js");
-          const { text, toolResults } = extractAgentResponse(res.data);
+                    const { text, toolResults } = extractAgentResponse(res.data);
           const content = (text ?? "").slice(0,1200);
           // Store as summoned_response for timeline aesthetic (indented row)
           try {
@@ -644,7 +629,12 @@ export const Loom = async (input) => {
             };
             stateManager2.addContribution(contrib2);
             if (roundObj2) roundObj2.contributions.push(contrib2);
-            degrade("summon_db_failed", "Failed to persist summoned_response — visible in memory only this session", () => db2.addContributionWithTurnRequest(stateManager2.getState().id, contrib2, null), null);
+            degrade("summon_db_failed", "Failed to persist summoned_response — visible in memory only this session", () => {
+              // FK on contributions.participant_id (audit 12 PD9): summoned guests
+              // need a participants row before their response can be persisted.
+              db2.ensureParticipantRow?.(contrib2.participant_id, found.name, found.tier);
+              db2.addContributionWithTurnRequest(stateManager2.getState().id, contrib2, null);
+            }, null);
           } catch {}
           return { inline: true, persona_name: args.persona_name, issue: args.issue, guest: found.name, content, note: "Inline summon — guest perspective returned for synthesis and stored as indented summoned_response row." };
         } catch (e) {
@@ -830,11 +820,9 @@ export const Loom = async (input) => {
           }
           // Fallback: completed loom — try DB by meetingId
           try {
-            const { getMeetingDbPath } = await import("./paths.js");
-            const dbPath = getMeetingDbPath(directory, args.loom_id);
+                        const dbPath = getMeetingDbPath(directory, args.loom_id);
             if (dbPath && existsSync(dbPath)) {
-              const { DashboardApi } = await import("./dashboard/api.js");
-              const api = DashboardApi.get(dbPath);
+                            const api = DashboardApi.get(dbPath);
               const state = api.getState();
               if (state) {
                 return `**Loom Status (completed):** ${state.status}\n**Round:** ${state.round}/${state.max_rounds}\n**Meeting ID:** ${args.loom_id} (from DB)`;
@@ -996,11 +984,9 @@ export const Loom = async (input) => {
           }
           // Fallback: completed loom — load from DB via DashboardApi
           try {
-            const { getMeetingDbPath } = await import("./paths.js");
-            const dbPath = getMeetingDbPath(directory, args.loom_id);
+                        const dbPath = getMeetingDbPath(directory, args.loom_id);
             if (dbPath && existsSync(dbPath)) {
-              const { DashboardApi } = await import("./dashboard/api.js");
-              const api = DashboardApi.get(dbPath);
+                            const api = DashboardApi.get(dbPath);
               const state = api.getState();
               const participants = api.getParticipants();
               const contributions = api.getContributions(500, 0);
@@ -1053,8 +1039,7 @@ export const Loom = async (input) => {
               }
               if (include.includes('config')) {
                 try {
-                  const { createConfig } = await import("./config.js");
-                  const cfgInst = createConfig(directory);
+                                    const cfgInst = createConfig(directory);
                   result.config = { values: cfgInst.get(), warnings: cfgInst.getWarnings(), source: cfgInst.getSource(), dormantNote: "maxTurnRequestsPerRound was removed from the schema (never enforced — ordering is planTurnOrder)" };
                 } catch {}
               }

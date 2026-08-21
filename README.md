@@ -85,7 +85,7 @@ Models are stored globally at:
 
 1. **RAG Context Retrieval** — Round summaries and contributions are chunked, embedded, and indexed. When prompting agents, the system retrieves relevant prior context using cosine similarity.
 
-2. **Semantic Drift Detection** — Embeddings are available for computing semantic drift between rounds, but drift is not currently computed or visualized (removed; see `docs/dead-code-review.md`).
+2. **Semantic Drift Detection** — Embeddings are available for computing semantic drift between rounds, but drift is not currently computed or visualized (the feature was removed as dead code; see `ORCHESTRATION_ARCHITECTURE.md` §24 for the revival path).
 
 The embedding model is initialized at plugin startup (`ensureEmbedderInitialized` in `src/index.js:48`), so `/knit` meetings use real embeddings. If the model is unavailable (e.g., ONNX load fails or model not downloaded), semantic features (vector search, reflection targeting, room composition) degrade visibly via a keyword-based fallback and warnings rather than silent placeholder noise — the meeting otherwise proceeds.
 
@@ -250,23 +250,33 @@ Project-level equivalent in `.loomrc.json` (same keys, no `"loom"` wrapper):
 }
 ```
 
-Environment overrides: `LOOM_<KEY>` applies on top of files for scalar schema keys (e.g. `LOOM_AGENT_TIMEOUT_MS=180000`, `LOOM_MODEL_DIVERSITY=false`). The dashboard binds `127.0.0.1` by default for safety; set `dashboard.host` in config to expose it to your LAN deliberately.
+Environment overrides: `LOOM_<KEY>` applies on top of files for scalar schema keys (e.g. `LOOM_AGENT_TIMEOUT_MS=180000`, `LOOM_MODEL_DIVERSITY=false`). Log verbosity is controlled by `LOOM_LOG_LEVEL` (`DEBUG`|`INFO`|`WARN`|`ERROR`|`FATAL`, default `INFO`). The dashboard binds `127.0.0.1` by default for safety; set `dashboard.host` in config to expose it to your LAN deliberately.
 
-Other available options include agent and synthesis timeouts, moderator triggers, retry policy, max tool calls, meeting timeout, stall detection (`stallTimeoutMs`, default 5 min), composition relevance floor (`composition.maxCosineDistance`, default 0.85), and embedding model selection (`embeddingModel`/`embeddingQuant`).
+Other available options include agent and synthesis timeouts, moderator triggers, retry policy, max tool calls, meeting timeout, stall detection (`stallTimeoutMs`, default 5 min), composition relevance floor (`composition.maxCosineDistance`, default 0.85), token budget (`maxTotalTokens`, `0` = unlimited — a runaway meeting ends early and still synthesizes), and embedding model selection (`embeddingModel`/`embeddingQuant`).
+
+## Mid-Meeting Steering
+
+While a deliberation is running, you can type into the parent chat between rounds:
+
+- Any plain message is injected as steering for the next round (participants are told the owner interjected).
+- `/mute <name>` removes a participant from the rotation for the rest of the meeting.
+- `/release <name>` returns a muted participant to the rotation.
+
+The dashboard also exposes recent in-process logs at `GET /api/logs?limit=100&level=WARN` (ring buffer, last 500 lines).
 
 ## Known Limitations
 
 - Desktop-only webapp — not optimized for mobile viewports (responsive floor at 768px single-column, not full mobile)
 - No authentication or authorization on the dashboard API
 - SQLite-based persistence — not suitable for horizontal scaling
-- Per-meeting metrics are persisted to DB; process-wide counters in `metrics.js` are lost on restart and are mostly unpopulated (see `docs/metrics-and-observability.md`)
+- Per-meeting metrics are persisted to DB (including degradation/retry/breaker counters and derived deliberation-quality stats); process-wide latency samples in `metrics.js` are lost on restart (see `ORCHESTRATION_ARCHITECTURE.md` §25)
 - SSE reconnection uses exponential backoff but falls back to polling after 10 attempts
 - State of play is rule-based derived from full weave (no LLM fabric compaction); round summaries use LLM only when conflict exists (`moderator_forces` mode)
 - Dashboard defaults to the most recent meeting (`created_at DESC`); URL deep link `?meeting=<uuid>` / `#<uuid>` preserves selection via history
 - No PDF export capability — Markdown (and JSON) only, now fully paginated (no 500-cap)
 - If the embedding model is unavailable at startup, room composition / vector search degrade to keyword fallback with visible warnings (not silent noise)
 
-**Schema version:** `meetings.status ∈ {initializing,weaving,converged,exhausted,timeout,cancelled,aborted,deadlocked}` — file pattern `.opencode/loom/meetings/<uuid>.db` — last verified `0.1.0`.
+**Schema version:** `meetings.status ∈ {initializing,weaving,converged,exhausted,timeout,cancelled,aborted,deadlocked}` (`exhausted`/`deadlocked` are reserved schema values not produced by current orchestration paths) — file pattern `.opencode/loom/meetings/<uuid>.db` — last verified `0.1.0`.
 
 ## License
 

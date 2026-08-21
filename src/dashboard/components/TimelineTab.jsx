@@ -482,14 +482,57 @@ const TimelineTabBase = ({
     setOrchestratorActiveTab("prompt");
   }, []);
 
-  const flatItems = useMemo(() => {
-    const items = [];
+    // Per-round segment cache (audit 11 PF2)
+  const roundSegmentCacheRef = useRef(new Map());
+const flatItems = useMemo(() => {
+    // Per-round segment cache (audit 11 PF2): an incremental contribution only
+    // recomputes its own round's items — the other rounds come from cache.
+    const out = [];
+    const segCache = roundSegmentCacheRef.current;
+    const liveRounds = new Set(groupedContributions.map(([r]) => r));
+    for (const key of [...segCache.keys()]) {
+      if (!liveRounds.has(key)) segCache.delete(key);
+    }
     for (const [round, contribs] of groupedContributions) {
-      const isCollapsed = collapsedRounds.includes(round);
-      const roundErrors = agentErrors.filter((e) => e.round === round);
-      const showExtensionMarker = extensions.length > 0 && round === (maxRounds ? maxRounds - (extensions.length * 4) : 0) + 1;
+      const isCollapsed0 = collapsedRounds.includes(round);
+      const roundErrors0 = agentErrors.filter((e) => e.round === round);
+      const showExtensionMarker0 = extensions.length > 0 && round === (maxRounds ? maxRounds - (extensions.length * 4) : 0) + 1;
+      const liveSig = [
+        thinkingParticipants.map((p) => p.id).join(","),
+        reflectingParticipants.map((p) => p.id).join(","),
+        queryingParticipants.map((p) => p.id).join(","),
+        evidenceParticipants.map((p) => p.id).join(","),
+        summoningParticipants.map((p) => p.id).join(","),
+      ].join("|");
+      const sig = [
+        round,
+        contribs.length,
+        contribs.length ? contribs[contribs.length - 1]?.id ?? null : null,
+        isCollapsed0,
+        round === activeRound,
+        roundErrors0.map((e) => e.id).join(","),
+        turnRequests.length,
+        turnRequests.length ? turnRequests[turnRequests.length - 1]?.id ?? null : null,
+        showExtensionMarker0,
+        liveSig,
+        orchestratorMessages?.length ?? 0,
+        roundSummaries[round] ?? "",
+      ].join("~");
 
-      items.push({
+      const cachedSeg = segCache.get(round);
+      if (cachedSeg && cachedSeg.sig === sig) {
+        out.push(...cachedSeg.items);
+        continue;
+      }
+
+      const segItems = [];
+      {
+        const items = segItems;
+        const isCollapsed = isCollapsed0;
+        const roundErrors = roundErrors0;
+        const showExtensionMarker = showExtensionMarker0;
+
+        items.push({
         type: "header",
         round,
         isCollapsed,
@@ -882,8 +925,11 @@ const TimelineTabBase = ({
           });
         }
       }
+      }
+      segCache.set(round, { sig, items: segItems });
+      out.push(...segItems);
     }
-    return items;
+    return out;
   }, [groupedContributions, collapsedRounds, activeRound, agentErrors, turnRequests, extensions, maxRounds, isWeaving, thinkingParticipants, reflectingParticipants, queryingParticipants, evidenceParticipants, summoningParticipants, participantName, orchestratorMessages, roundSummaries]);
 
   const rowHeightFn = useCallback((index, cellProps) => {

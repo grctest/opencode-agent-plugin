@@ -7,6 +7,7 @@ import {
 import { join, resolve, sep } from "node:path";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { getMetricsSnapshot } from "../metrics.js";
+import { getRecentLogs } from "../logger.js";
 import { getConfig } from "../config.js";
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_QUANT } from "../services/model-manager.js";
 
@@ -531,6 +532,13 @@ export function startDashboard(directory, port) {
 
         if (url.pathname === "/api/metrics") {
           return Response.json(getMetricsSnapshot());
+        }
+
+        // Recent in-process log lines from the logger ring buffer (audit 07 EH6).
+        if (url.pathname === "/api/logs") {
+          const limit = clampLimit(url.searchParams.get("limit"), 500);
+          const level = url.searchParams.get("level");
+          return Response.json(getRecentLogs(limit, level));
         }
 
         if (url.pathname === "/api/participants") {

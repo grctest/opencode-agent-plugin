@@ -1,6 +1,6 @@
 # The Loom Orchestration Architecture
 
-**Schema version:** `meetings.status ∈ {initializing,weaving,converged,exhausted,timeout,cancelled,aborted,deadlocked}` — file pattern `.opencode/loom/meetings/<uuid>.db` — last verified `0.1.0`.
+**Schema version:** `meetings.status ∈ {initializing,weaving,converged,exhausted,timeout,cancelled,aborted,deadlocked}` (`exhausted`/`deadlocked` are reserved values not produced by current orchestration paths — see §Lifecycle) — file pattern `.opencode/loom/meetings/<uuid>.db` — last verified `0.1.0`.
 
 A complete technical reference for how the Loom multi-agent deliberation system works, from user input to final output. Every LLM prompt, every data structure, every decision point. Written for someone who cannot read the source code.
 
@@ -261,11 +261,10 @@ decisions.
 ## Example Response
 [CHALLENGE] The proposed approach doesn't account for backward compatibility. ...
 
-## Example With Turn Request
+## Example With Turn Request (live contract)
 [PROPOSE] We should adopt a phased migration over Q1 and Q2. ...
-
-[REQUEST_NEXT: Priority: 8, Reason: "Need to directly counter the Architect's
-claim about stateful overhead before we move to action items"]
+— plus tool call: `loom_request_next({priority: 8, reason: "Need to directly counter the Architect's claim about stateful overhead before we move to action items"})`
+→ granted requests place you first in next round's turn order.
 
 ## Example With Query (live contract)
 [CHALLENGE] The migration timeline assumes no integration conflicts...
@@ -644,14 +643,14 @@ IMPORTANT: Respond ONLY with the <ruling> block above. Do not include any other 
 
 ### How Turn Requests Work
 
-During the prompt phase, an agent can embed a `[REQUEST_NEXT]` tag to request speaking priority for the **next round**:
+During the prompt phase, an agent can call the `loom_request_next` tool to request speaking priority for the **next round**:
 
 ```
 [CHALLENGE] The refresh-token approach underestimates token theft risk from
 client-side storage. I need time to lay out the mitigations.
-
-[REQUEST_NEXT: Priority: 8, Reason: "I have concrete mitigations for the
-token theft concern and need to present them before the round closes"]
+— plus tool call: loom_request_next({priority: 8, reason: "I have concrete
+mitigations for the token theft concern and need to present them before the
+round closes"})
 ```
 
 The parser caps the priority at the requesting agent's tier cap (junior 5, mid 7, senior 9, principal 10) via `getPriorityCap`. `[REQUEST_NEXT]` carries only `priority` and `reason` — the "Target" field and intra-round queue-jumping from earlier designs were removed.
@@ -1279,10 +1278,10 @@ When no RAG context is available (early rounds, empty index), this section is om
 ### Semantic Drift Detection (Removed)
 
 `computeSemanticDrift(roundA, roundB)` computed centroid cosine distance between two
-rounds, but it was never wired into any check — it was a legacy utility and is being
-removed (see `docs/dead-code-review.md`). If revived, it should feed the dashboard drift
-visualization (`docs/drift-visualization.md`), which requires the embedder fix in
-`docs/embedder-init-issue.md`.
+rounds, but it was never wired into any check — it was a legacy utility and has been
+removed as dead code. If revived, it should feed a dashboard drift visualization and
+reuse the now-metadata-aware embedder (`services/model-manager.js`), which resolves
+the historical init/pooling issues that motivated its removal.
 
 ---
 
@@ -1461,7 +1460,7 @@ When `fastPathModel` is empty (default), all orchestrator calls use the highest-
 
 ## 22. Directed Interactions: Query, Evidence, Summon, Vote (loom_\* tools)
 
-> **Live contract:** agents are instructed to use `loom_query` / `loom_evidence` / `loom_summon` / `loom_vote` / `loom_request_next` **tools** (see `docs/tool-interactions-as-tools.md`). The bracket forms below are a deprecated fallback — still parsed, no longer advertised.
+> **Live contract:** agents are instructed to use `loom_query` / `loom_evidence` / `loom_summon` / `loom_vote` / `loom_request_next` **tools** (Section 4). The bracket forms below are a deprecated fallback — still parsed, no longer advertised.
 
 Agents can direct the conversation at specific participants without waiting for the round-robin order. When invoked via tools, callee responses return inline so the caller can synthesize them within the same turn. All four run immediately after the source agent's contribution is stored, using fresh ephemeral sessions for each target (reused round-scoped sessions when available for the heaviest fan-out, vote). Targets are resolved from the current participant list, excluding the source and any passed/failed participants.
 
@@ -1615,7 +1614,7 @@ A simple process-wide collector exposed via `/api/metrics` and `getMetricsSnapsh
 - **Counter** — `llm_calls_by_type` (agent/synthesis).
 - **Latencies** — `llm_prompt_ms`, `synthesis_ms` (last 100 samples; aggregated into count/avg/p50/p95/max).
 
-RoundExecution records per-call tokens and `llm_prompt_ms` per agent call; synthesis records its own bucket. Previously defined but never-written counters (turn request grants/denials, reflections, syntheses, meetings, tokens, gauges) were removed — see `docs/metrics-and-observability.md`.
+RoundExecution records per-call tokens and `llm_prompt_ms` per agent call; synthesis records its own bucket. Previously defined but never-written counters (turn request grants/denials, reflections, syntheses, meetings, tokens, gauges) were removed as dead code — the remaining live counters are listed above.
 
 ### Per-Meeting Metrics
 

@@ -2,6 +2,18 @@ const LogLevel = { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3, FATAL: 4 };
 
 const LEVEL_LABELS = ['DEBUG', 'INFO', 'WARN', 'ERROR', 'FATAL'];
 
+// Ring buffer of recent log lines (audit 07 EH6) — bounded memory so the
+// dashboard can tail recent activity without a file or /api/logs backend.
+const RING_BUFFER_SIZE = 500;
+const logRing = [];
+let ringSeq = 0;
+
+export function getRecentLogs(limit = 100, minLevel = null) {
+  const minIdx = minLevel ? LEVEL_LABELS.indexOf(String(minLevel).toUpperCase()) : -1;
+  const rows = logRing.filter((e) => (minIdx < 0 || LEVEL_LABELS.indexOf(e.level) >= minIdx));
+  return rows.slice(-Math.max(1, Math.min(limit, RING_BUFFER_SIZE)));
+}
+
 function resolveMinLevel() {
   const envLevel = process.env.LOOM_LOG_LEVEL;
   if (!envLevel) return LogLevel.INFO;
@@ -83,6 +95,7 @@ export class Logger {
   #log(level, context, message, details) {
     if (level < this.#minLevel) return;
     const entry = {
+      seq: ++ringSeq,
       level: LEVEL_LABELS[level],
       correlationId: this.#correlationId,
       meetingId: this.#meetingId ? this.#meetingId.slice(0, 8) : null,
@@ -92,6 +105,9 @@ export class Logger {
       ...(details !== null ? { details } : {}),
       timestamp: new Date().toISOString(),
     };
+    // Ring buffer push (audit 07 EH6): O(1), bounded at RING_BUFFER_SIZE.
+    logRing.push(entry);
+    if (logRing.length > RING_BUFFER_SIZE) logRing.shift();
     let full;
     try {
       full = JSON.stringify(entry);

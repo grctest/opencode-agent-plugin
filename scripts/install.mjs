@@ -7,6 +7,7 @@
  */
 
 import { existsSync, mkdirSync, cpSync, rmSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
+import { spawnSync, execSync } from "node:child_process";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { detectOpencodeDir, isLoomCommand, findOpencodeJson, logInfo, logWarn, logError } from "./utils.mjs";
@@ -101,6 +102,16 @@ function installFiles(opencodeDir) {
   const personasTargetDir = join(opencodeDir, "personas", "loom");
   if (existsSync(personasSrcDir)) {
     if (existsSync(personasTargetDir)) {
+      // Backup before replace (audit 08 SC4): user persona edits must survive
+      // a re-install. The backup is left in place — never auto-deleted.
+      const bak = `${personasTargetDir}.install-bak`;
+      try {
+        if (existsSync(bak)) rmSync(bak, { recursive: true });
+        cpSync(personasTargetDir, bak, { recursive: true });
+        logInfo(`  Backed up existing personas → ${bak}`);
+      } catch (err) {
+        logWarn(`  Could not back up personas: ${err.message}`);
+      }
       rmSync(personasTargetDir, { recursive: true });
     }
     cpSync(personasSrcDir, personasTargetDir, { recursive: true });
@@ -223,7 +234,6 @@ try {
   // Auto-download default embedding model
   console.log("");
   logInfo("Downloading default embedding model...");
-  const { execSync } = await import("node:child_process");
   try {
     execSync("npm run model:download", { 
       cwd: PROJECT_ROOT, 
@@ -242,16 +252,24 @@ try {
   const runtimeDepsDir = join(opencodeDir, "plugins", "deps");
   console.log("");
   logInfo("Installing runtime deps (onnxruntime-node, @huggingface/tokenizers, sqlite-vec)...");
-  try {
-    execSync("npm install --prefix " + runtimeDepsDir + " onnxruntime-node@^1.27.0 @huggingface/tokenizers@^0.1.3 sqlite-vec", {
-      cwd: PROJECT_ROOT,
-      stdio: "inherit",
-      timeout: 300000 // 5 minute timeout
-    });
-    logInfo("Runtime deps installed successfully.");
-  } catch (err) {
-    logWarn(`Could not install runtime deps: ${err.message}`);
-    logInfo("Run: npm install --prefix " + runtimeDepsDir + " onnxruntime-node@^1.27.0 @huggingface/tokenizers@^0.1.3 sqlite-vec");
+  // Platform guard (audit 08 SC5): verify npm is resolvable before shelling out
+  // so the failure message is actionable instead of a raw ENOENT.
+  const npmCheck = spawnSync(process.platform === "win32" ? "npm.cmd" : "npm", ["--version"], { stdio: "pipe", shell: process.platform === "win32" });
+  if (npmCheck.error || npmCheck.status !== 0) {
+    logWarn("npm not found on PATH — skipping runtime dependency installation.");
+    logInfo("Install them manually: npm install --prefix " + runtimeDepsDir + " onnxruntime-node@^1.27.0 @huggingface/tokenizers@^0.1.3 sqlite-vec@^0.1.9");
+  } else {
+    try {
+      execSync("npm install --prefix " + runtimeDepsDir + " onnxruntime-node@^1.27.0 @huggingface/tokenizers@^0.1.3 sqlite-vec@^0.1.9", {
+        cwd: PROJECT_ROOT,
+        stdio: "inherit",
+        timeout: 300000 // 5 minute timeout
+      });
+      logInfo("Runtime deps installed successfully.");
+    } catch (err) {
+      logWarn(`Could not install runtime deps: ${err.message}`);
+      logInfo("Run: npm install --prefix " + runtimeDepsDir + " onnxruntime-node@^1.27.0 @huggingface/tokenizers@^0.1.3 sqlite-vec@^0.1.9");
+    }
   }
 } catch (err) {
   logError(err.message || "Installation failed");

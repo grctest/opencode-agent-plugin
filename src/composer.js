@@ -37,6 +37,30 @@ function userPersonasPath() {
   return null;
 }
 
+// domains.json domain vocabulary (audit 13 PC4/PC5): loaded once, used to boost
+// persona scores in the keyword composition fallback.
+let domainVocabCache = null;
+function loadDomainVocabulary() {
+  if (domainVocabCache !== null) return domainVocabCache;
+  domainVocabCache = {};
+  try {
+    const base = personasBasePath();
+    const file = join(base, "domains.json");
+    if (existsSync(file)) {
+      const parsed = JSON.parse(readFileSync(file, "utf-8"));
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        domainVocabCache = Object.fromEntries(
+          Object.entries(parsed).map(([k, v]) => [k.toLowerCase(), Array.isArray(v) ? v.map(String) : []]),
+        );
+      }
+    }
+  } catch (err) {
+    composerLogger.warn("domain_vocab_load_failed", "Failed to load domains.json — keyword fallback runs without domain boosts", extractErrorInfo(err));
+    domainVocabCache = {};
+  }
+  return domainVocabCache;
+}
+
 function validatePersona(persona) {
   const errors = [];
   if (!persona.name || typeof persona.name !== "string") errors.push("name required");
@@ -439,7 +463,7 @@ function composeRoomByKeyword(question, personas, roles, complexity, count, used
     const scored = tierPool
       .map((persona) => ({
         persona,
-        score: scorePersonaForQuestion(persona, tokens),
+        score: scorePersonaForQuestion(persona, tokens, question),
       }))
       .sort((a, b) => b.score - a.score || a.persona.name.localeCompare(b.persona.name));
 
@@ -463,16 +487,36 @@ function composeRoomByKeyword(question, personas, roles, complexity, count, used
   };
 }
 
-function scorePersonaForQuestion(persona, tokens) {
+function scorePersonaForQuestion(persona, tokens, questionText = "") {
   const tags = getPersonaTags(persona);
   const expertise = Array.isArray(persona.expertise) ? persona.expertise : [];
   const haystack = [...tags, ...expertise].join(" ").toLowerCase();
   let score = 0;
+  // Word-boundary matching (audit 13 PC5): a raw `includes(token)` matched
+  // inside unrelated words ("art" in "particle"), inflating weak scores.
   for (const token of tokens) {
-    if (haystack.includes(token)) score++;
+    const re = new RegExp(`\\b${token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
+    if (re.test(haystack)) score++;
     // title/agenda matches count double
     const personaText = `${persona.persona ?? ""} ${persona.agenda ?? ""}`.toLowerCase();
-    if (personaText.includes(token)) score += 2;
+    if (re.test(personaText)) score += 2;
+  }
+  // Domain vocabulary boost (audit 13 PC4): domains.json is now wired into the
+  // keyword fallback — personas tagged for a domain whose keywords appear in
+  // the question get a relevance bump instead of the file being dead weight.
+  const vocab = loadDomainVocabulary();
+  if (questionText) {
+    const lowerQ = questionText.toLowerCase();
+    for (const tag of tags) {
+      const keywords = vocab[String(tag).toLowerCase()];
+      if (!Array.isArray(keywords)) continue;
+      let hits = 0;
+      for (const kw of keywords) {
+        if (lowerQ.includes(kw)) hits++;
+        if (hits >= 2) break;
+      }
+      if (hits >= 2) score += 3;
+    }
   }
   return score;
 }

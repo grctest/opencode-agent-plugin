@@ -1,7 +1,8 @@
 /**
  * Simple in-memory metrics collector for the Loom deliberation engine.
- * Tracks LLM call counts and latency buckets. Only live, actively-written
- * fields are kept (see docs/metrics-and-observability.md).
+ * Tracks LLM call counts, latency buckets, degradation events (via utils/degrade.js),
+ * retry exhaustion, and circuit-breaker transitions. Only live, actively-written
+ * fields are kept.
  */
 
 const counters = {
