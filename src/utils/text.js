@@ -74,14 +74,43 @@ export function extractAgentResponse(data) {
         break;
 
       case "file":
-        // FilePart — agent referenced a file (informational)
+        // FilePart — agent referenced or produced a file; surface as a tool so the
+        // dashboard's Tool use tab can show it even when no explicit tool call exists.
+        {
+          const fp = part;
+          toolResults.push({
+            tool: "file",
+            callID: fp.id ?? fp.callID ?? `file-${toolResults.length}`,
+            status: "completed",
+            title: fp.filename || fp.url || fp.mime || "file",
+            input: { url: fp.url, filename: fp.filename, mime: fp.mime, source: fp.source },
+            output: fp.url ? `File: ${fp.url}${fp.filename ? ` (${fp.filename})` : ""}` : (fp.filename || "file reference"),
+            metadata: fp.source ?? null,
+          });
+        }
         break;
 
-      // Step/file/patch/lsp/etc. parts — informational, not actionable
+      case "patch":
+        // PatchPart — VCS patch applied (actual file edits on disk). Previously ignored,
+        // which caused "file exists but no tool calls recorded". Now surface as tool.
+        {
+          const pp = part;
+          toolResults.push({
+            tool: "patch",
+            callID: pp.id ?? `patch-${toolResults.length}`,
+            status: "completed",
+            title: Array.isArray(pp.files) ? pp.files.join(", ") : "patch",
+            input: { files: pp.files, hash: pp.hash },
+            output: Array.isArray(pp.files) && pp.files.length > 0 ? `Patched: ${pp.files.join(", ")}\nHash: ${pp.hash ?? ""}`.trim() : `Patch hash: ${pp.hash ?? ""}`,
+            metadata: null,
+          });
+        }
+        break;
+
+      // Step/snapshot/etc. parts — informational, not actionable
       case "step-start":
       case "step-finish":
       case "snapshot":
-      case "patch":
       case "agent":
       case "retry":
       case "compaction":
@@ -95,11 +124,63 @@ export function extractAgentResponse(data) {
     }
   }
 
+  // Synthesize file-block tools from markdown fences so file writes are auditable
+  // even when the LLM only emitted ```lang file=path``` without a real tool call.
+  // This complements the patch/file Part capture above and makes Tool use tab useful.
+  if (lastText) {
+    const synthetic = extractFileBlockTools(lastText);
+    if (synthetic.length > 0) {
+      const existingTitles = new Set(toolResults.map((t) => t.title).filter(Boolean));
+      const existingInputs = toolResults.map((t) => {
+        try { return typeof t.input === "string" ? t.input : JSON.stringify(t.input ?? ""); } catch { return ""; }
+      }).join(" ");
+      for (const st of synthetic) {
+        if (existingTitles.has(st.title)) continue;
+        if (existingInputs.includes(st.title)) continue;
+        toolResults.push(st);
+      }
+    }
+  }
+
   return {
     text: lastText,
     reasoning: reasoningParts.join("\n").trim(),
     toolResults,
   };
+}
+
+/**
+ * Scans markdown text for fenced code blocks that declare a file target
+ * (```lang file=path) and synthesizes pseudo tool calls so the dashboard's
+ * Tool use tab can surface them even when the LLM only emitted text.
+ * The file on disk may have been created via a PatchPart (now also captured)
+ * or hallucinated; this ensures any file= block is auditable.
+ */
+export function extractFileBlockTools(text) {
+  if (!text || typeof text !== "string") return [];
+  const tools = [];
+  // Matches ```<lang> file=<path>  up to newline, then code until ```
+  // Example: ```js file=src/fizzbuzz-classic.js\nfunction ...``` 
+  const fenceRe = /```[^\n]*\bfile\s*=\s*([^\s`"\n]+)[^\n]*\n([\s\S]*?)```/g;
+  let m;
+  let idx = 0;
+  const seen = new Set();
+  while ((m = fenceRe.exec(text)) !== null) {
+    const filePath = m[1]?.trim();
+    const code = m[2] ?? "";
+    if (!filePath || seen.has(filePath)) continue;
+    seen.add(filePath);
+    tools.push({
+      tool: "write",
+      callID: `synthetic-file-${idx++}-${filePath}`,
+      status: "completed",
+      title: filePath,
+      input: { file: filePath, synthetic: true },
+      output: code.slice(0, 2000),
+      metadata: { synthetic: true, source: "markdown-file-block" },
+    });
+  }
+  return tools;
 }
 
 /** Truncates text to max length, adding ellipsis if needed. */

@@ -27,14 +27,31 @@ export function parseConfidence(text) {
   return null;
 }
 
-/** Validates that all required sections exist in the synthesis output (case-insensitive). Returns warnings for missing ones. */
+/** Validates that all required sections exist in the synthesis output (case-insensitive). Returns warnings for missing ones.
+ * Core 3 (Decision, Reasoning, Confidence) always required. Action Items / Proposed Fix: at least one must be present.
+ * Dissenting Views and Open Questions remain required for both conversational and code-analysis modes (may be "None").
+ */
 export function validateSynthesisSections(text) {
-  const requiredSections = ["Decision", "Reasoning", "Action Items", "Dissenting Views", "Open Questions", "Confidence"];
+  const coreRequired = ["Decision", "Reasoning", "Confidence"];
+  const atLeastOneOf = [["Action Items", "Proposed Fix"]];
+  const alwaysRequired = ["Dissenting Views", "Open Questions"];
   const lower = text.toLowerCase();
   const warnings = [];
-  for (const section of requiredSections) {
+  for (const section of coreRequired) {
     if (!lower.includes(`## ${section.toLowerCase()}`)) {
       warnings.push(section);
+    }
+  }
+  for (const section of alwaysRequired) {
+    if (!lower.includes(`## ${section.toLowerCase()}`)) {
+      warnings.push(section);
+    }
+  }
+  for (const group of atLeastOneOf) {
+    const hasOne = group.some(s => lower.includes(`## ${s.toLowerCase()}`));
+    if (!hasOne) {
+      // Prefer Action Items as canonical, but accept Proposed Fix
+      warnings.push(group[0]);
     }
   }
   return warnings;
@@ -87,11 +104,11 @@ export function extractSection(text, sectionName) {
 const NEUTRAL_SYNTHESIZER_SYSTEM = `You are a synthesis auditor, not a participant. You are neutral to all agendas — including the synthesizer persona you may have borrowed.
 
 Rules:
-1. Every Decision and Action Item must cite a source: [#id] from transcript OR State-of-Play. No citation → omit it.
+1. Prefer citing [#id] or State-of-Play for every Decision and Action Item. If you synthesize a novel fix/code not present verbatim, mark it “Proposed — synthesized from [#id]” and keep it. Do not invent file contents not read via tool; if no file was read, qualify as “Proposed (unverified — no tool read)”.
 2. Every Dissenting View must name holder (name + tier) and [#id]. Unresolved Objections are mandatory dissent.
-3. Do not invent numbers, dates, costs, tool results, or positions not in transcript/State-of-Play. If evidence conflicts, state both and set Confidence accordingly.
+3. Do not invent numbers, dates, costs, tool results, or participant positions not in transcript/State-of-Play. If evidence conflicts, state both and set Confidence accordingly. For code, do not invent file contents not read via tool.
 4. Resolved Concerns must NOT reappear as Dissenting Views.
-5. Never emit <<< or >>> delimiters. Be comprehensive (500-900 words welcome); prefer thoroughness over brevity.`;
+5. Never emit <<< or >>> delimiters. Be comprehensive (500-900 conversational, 700-1200 code-analysis welcome); prefer thoroughness over brevity. Preserve code and numbers verbatim.`;
 
 /** Post-processes raw synthesis text into the final artifact: objections, missing-section notes, confidence, structured fields. */
 export function finalizeSynthesis(artifactText, transcriptData, participants, objections) {
@@ -136,6 +153,8 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, ob
     format: "markdown",
     decisions: extractSection(finalOutput, "Decision"),
     action_items: extractSection(finalOutput, "Action Items"),
+    proposed_fix: extractSection(finalOutput, "Proposed Fix"),
+    files_involved: extractSection(finalOutput, "Files Involved"),
     dissent: unresolvedObjections,
     refusals: refusals.map(r => ({
       participant_id: r.participant_id,

@@ -359,17 +359,75 @@ const TimelineTabBase = ({
   maxRounds,
   orchestratorMessages,
   roundSummaries = {},
+  selectedMeeting,
 }) => {
   const listRef = useRef(null);
   const [dialogContribution, setDialogContribution] = useState(null);
   const [dialogOrchestratorGroup, setDialogOrchestratorGroup] = useState(null);
   const [activeTab, setActiveTab] = useState("response");
   const [orchestratorActiveTab, setOrchestratorActiveTab] = useState("prompt");
+  const [fetchedContext, setFetchedContext] = useState(null);
+  const [contextLoading, setContextLoading] = useState(false);
+  const [contextError, setContextError] = useState(null);
 
   const handleDialogOpen = useCallback((data) => {
     setDialogContribution(data);
     setActiveTab("response");
+    setFetchedContext(null);
+    setContextError(null);
+    setContextLoading(false);
   }, []);
+
+  const meetingIdForContext = selectedMeeting ?? (() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const m = params.get("meeting");
+      if (m) return m;
+      const hash = window.location.hash.slice(1);
+      if (hash) return hash;
+    } catch {}
+    return null;
+  })();
+
+  useEffect(() => {
+    if (activeTab !== "context" || !dialogContribution || dialogContribution.contribution.prompt_context || fetchedContext || contextLoading) return;
+    const cid = dialogContribution.contribution.id;
+    const mid = meetingIdForContext || dialogContribution.contribution.meeting_id;
+    if (!cid || !mid) return;
+    let cancelled = false;
+    setContextLoading(true);
+    setContextError(null);
+    fetch(`/api/contribution_context?meeting=${mid}&contribution_id=${cid}`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        return data.prompt_context ?? data;
+      })
+      .then((ctx) => {
+        if (!cancelled) {
+          if (ctx && typeof ctx === "object" && Object.keys(ctx).length > 0) {
+            setFetchedContext(ctx);
+          } else {
+            setContextError("No prompt context captured for this contribution.");
+          }
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) setContextError(err.message || "Failed to load context");
+      })
+      .finally(() => {
+        if (!cancelled) setContextLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [activeTab, dialogContribution, fetchedContext, contextLoading, meetingIdForContext]);
+
+  useEffect(() => {
+    if (!dialogContribution) {
+      setFetchedContext(null);
+      setContextError(null);
+      setContextLoading(false);
+    }
+  }, [dialogContribution]);
 
   const handleOrchestratorDialogOpen = useCallback((data) => {
     setDialogOrchestratorGroup(data.orchestratorGroup);
@@ -947,11 +1005,19 @@ const TimelineTabBase = ({
               )}
               {activeTab === "context" && (
                 <div className="loom-context-panel">
-                  {dialogContribution.contribution.prompt_context ? (
-                    (() => {
-                      const ctx = dialogContribution.contribution.prompt_context;
-                      return (
-                        <>
+                  {(() => {
+                    const ctx = dialogContribution.contribution.prompt_context ?? fetchedContext;
+                    if (contextLoading) {
+                      return <p className="loom-text loom-text-muted loom-context-empty">Loading prompt context...</p>;
+                    }
+                    if (contextError) {
+                      return <p className="loom-text loom-text-muted loom-context-empty">{contextError}</p>;
+                    }
+                    if (!ctx) {
+                      return <p className="loom-text loom-text-muted loom-context-empty">No prompt context captured for this contribution.</p>;
+                    }
+                    return (
+                      <>
                           {ctx.system_prompt && (
                             <div className="loom-context-section">
                               <h4 className="loom-context-heading">System Prompt</h4>
@@ -1032,13 +1098,8 @@ const TimelineTabBase = ({
                             </div>
                           )}
                         </>
-                      );
-                    })()
-                  ) : (
-                    <p className="loom-text loom-text-muted loom-context-empty">
-                      No prompt context captured for this contribution.
-                    </p>
-                  )}
+                    );
+                  })()}
                 </div>
               )}
             </div>

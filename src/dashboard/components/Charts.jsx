@@ -49,9 +49,9 @@ export const ParticipationMatrix = memo(function ParticipationMatrix({ participa
       for (const p of participants) {
         const key = `${p.id}:${r}`;
         const reflectionCount = reflectionMap.get(key) || 0;
-        const isSpeaking = speakingParticipants.has(p.id);
+        const isSpeaking = r === activeRound && speakingParticipants.has(p.id) && !contribMap.has(key);
         if (contribMap.has(key)) {
-          row[p.id] = { status: isSpeaking ? "speaking" : "contributed", order: orderMap.get(key) || null, reflectionCount };
+          row[p.id] = { status: "contributed", order: orderMap.get(key) || null, reflectionCount };
         } else if (errorMap.has(key)) {
           row[p.id] = { status: "error", order: null, reflectionCount };
         } else if (p.status === "passed") {
@@ -169,7 +169,7 @@ export const ParticipationMatrix = memo(function ParticipationMatrix({ participa
                     {taskTypes.map((type) => {
                       const task = tasks.get(type);
                       if (!task) {
-                        return <span key={type} className="loom-matrix-dot loom-matrix-none" title={`${type}: pending`} />;
+                        return null;
                       }
                       if (task.completed) {
                         return <span key={type} className="loom-matrix-dot loom-matrix-contributed" title={`${type}: completed`} />;

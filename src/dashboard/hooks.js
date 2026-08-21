@@ -151,7 +151,7 @@ export function useSSE(meetingId, onEvent) {
         if (cancelled || !fallbackPoll) return;
         try {
           const timestamp = new Date().toISOString();
-          const cRes = await fetch(`/api/contributions?meeting=${meetingId}&since=${lastPollIdRef.current}&include_context=0`);
+          const cRes = await fetch(`/api/contributions?meeting=${meetingId}&since=${lastPollIdRef.current}&include_context=1`);
           if (cRes.ok) {
             const contribs = await cRes.json();
             const arr = Array.isArray(contribs) ? contribs : (contribs.contributions ?? []);
@@ -192,7 +192,7 @@ export function useSSE(meetingId, onEvent) {
       esRef.current = es;
       es.onopen = () => {
         if (cancelled) return;
-        fetch(`/api/contributions?meeting=${meetingId}&since=${lastPollIdRef.current}&include_context=0`).then(async (r) => {
+        fetch(`/api/contributions?meeting=${meetingId}&since=${lastPollIdRef.current}&include_context=1`).then(async (r) => {
           if (r.ok) {
             const data = await r.json().catch(() => null);
             const arr = Array.isArray(data) ? data : (data?.contributions ?? []);
@@ -318,7 +318,7 @@ export function useMeetingApi(meetingId, resetKey) {
     }
     setLoading(true);
     try {
-      const res = await fetch(`/api/meeting?meeting=${id}&include_context=0&limit=100`);
+      const res = await fetch(`/api/meeting?meeting=${id}&include_context=1&limit=100`);
       if (!res.ok) {
         if (res.status === 404) {
           throw new Error("Meeting not found. It may have been deleted or is still initializing.");
@@ -344,7 +344,7 @@ export function useMeetingApi(meetingId, resetKey) {
         let nextOffset = (offset ?? 0) + (limit ?? all.length);
         while (all.length < total && nextOffset < total) {
           try {
-            const pres = await fetch(`/api/contributions?meeting=${id}&limit=${limit ?? 500}&offset=${nextOffset}&include_context=0`);
+            const pres = await fetch(`/api/contributions?meeting=${id}&limit=${limit ?? 500}&offset=${nextOffset}&include_context=1`);
             if (!pres.ok) break;
             const pdata = await pres.json();
             const batch = pdata.contributions ?? [];

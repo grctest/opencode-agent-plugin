@@ -24,6 +24,10 @@ function cleanContent(content) {
  * Classification uses the parsed contribution type tag (c.type) as the primary
  * signal. Falls back to keyword matching only when c.type is missing or unknown.
  */
+function hasFileMention(content) {
+  return /(?:file\s*=\s*[^\s]+\.\w+|src\/[^\s]+\.\w+|\b\w+\.(?:tsx|ts|js|jsx|py|rs|go)\b|```.*file=)/i.test(content);
+}
+
 export function updateStateOfPlay(weave, question, tags) {
   if (!weave || weave.length === 0) return "";
 
@@ -32,6 +36,7 @@ export function updateStateOfPlay(weave, question, tags) {
   const disagreements = [];
   const openQuestions = [];
   const keyFacts = [];
+  const filesInvolved = [];
 
   for (const c of weave) {
     if (c.type === "pass") continue;
@@ -44,6 +49,14 @@ export function updateStateOfPlay(weave, question, tags) {
       content = `[Reflected: ${content.slice(0, 280)}]`;
     }
 
+    // Code-aware: collect file mentions into dedicated bucket (also keep in original bucket for context)
+    if (hasFileMention(content)) {
+      // Extract file= or src/ snippets for files list
+      const fileMatch = content.match(/(?:file\s*=\s*)([^\s`'"]+\.\w+)/i) || content.match(/(src\/[^\s`'"]+\.\w+)/i) || content.match(/(\b\w+\.(?:tsx|ts|js|jsx))\b/i);
+      const fileSnippet = fileMatch ? fileMatch[1].slice(0, 80) : content.slice(0, 120);
+      filesInvolved.push(fileSnippet);
+    }
+
     const bucket = classifyContribution(c.type, content);
     switch (bucket) {
       case "decisions": decisions.push(content); break;
@@ -54,7 +67,17 @@ export function updateStateOfPlay(weave, question, tags) {
     }
   }
 
-  return formatStateOfPlay({ decisions, agreements, disagreements, openQuestions, keyFacts }, question, tags);
+  // Deduplicate filesInvolved preserving order, keep most recent 5
+  const seenFiles = new Set();
+  const dedupedFiles = [];
+  for (const f of filesInvolved) {
+    if (!seenFiles.has(f.toLowerCase())) {
+      seenFiles.add(f.toLowerCase());
+      dedupedFiles.push(f);
+    }
+  }
+
+  return formatStateOfPlay({ decisions, agreements, disagreements, openQuestions, keyFacts, filesInvolved: dedupedFiles.slice(-5) }, question, tags);
 }
 
 /**
@@ -127,6 +150,9 @@ export function formatStateOfPlay(sections, question, tags) {
   }
   if (sections.keyFacts.length > 0) {
     lines.push(`## Key Facts\n${sections.keyFacts.slice(-5).map((f) => `- ${f.slice(0, 300)}`).join("\n")}`);
+  }
+  if (sections.filesInvolved && sections.filesInvolved.length > 0) {
+    lines.push(`## Files Involved\n${sections.filesInvolved.slice(-5).map((f) => `- ${f.slice(0, 120)}`).join("\n")}`);
   }
 
   return lines.join("\n\n");

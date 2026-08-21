@@ -44,19 +44,42 @@ function getReflectionBlock(reflection) {
 
 function buildEvidenceGuidance(kind) {
   const cfg = getConfig().agentTools;
-  if (!cfg?.enabled) return "";
+  const toolsDisabled = !cfg?.enabled;
+  if (toolsDisabled) {
+    if (kind === "evidence") {
+      return `
+## Research Tools — Evidence (tools disabled)
+
+Tools are currently disabled in config. Do NOT claim tool use.
+Ground your answer with “in my experience…” + what vec recall or prior [#id] would verify if tools were available. State “evidence unavailable — tools disabled” and proceed with a falsifiable claim.`;
+    }
+    if (kind === "query") {
+      return `
+## Research Tools — Query (tools disabled)
+
+Tools disabled — answer from deliberation context only. If you don’t know, say “insufficient evidence — tools disabled”. Cite [#id] if you use prior contributions.`;
+    }
+    if (kind === "reflection") {
+      return `
+## Research Tools — Reflection (tools disabled)
+
+Tools disabled — reflect from deliberation only. Cite [#id] when referencing prior contributions. Reflection is visible — ground it in what was said.`;
+    }
+    return "";
+  }
   if (kind === "reflection") {
     return `
 ## Research Tools — Reflection (optional but grounded)
 
 Tool ladder: loom_vector_search (recall what was said) → websearch (verify current fact) → read/grep (verify local file) → webfetch (deep dive ONLY after a search hit). One call max unless evidence request.
+For code analysis in this folder (react, file paths, bug): prioritize read/glob/grep first to inspect the file before revising.
 
 - **loom_vector_search**: recall a prior [#id] you’re citing — prefer this over memory
 - **websearch**: verify a claim before you revise your stance
 - **webfetch**: open a URL returned by websearch
-- **read**: inspect a file referenced in discussion
+- **read**: inspect a file referenced in discussion (first for code analysis)
 
-Cite as Source: [#id] or Source: https://… . Synthesize, don’t dump. Reflection is visible — ground it.
+Cite as Source: [#id] or Source: https://… or file=src/... . Synthesize, don’t dump. Reflection is visible — ground it.
 If tool returns error or 0 hits, write “evidence unavailable — searched X, 0 hits” and proceed with experience-qualified claim. Do not retry same query.`;
   }
   if (kind === "query") {
@@ -82,13 +105,13 @@ If tool returns error or 0 hits, write “evidence unavailable — searched X, 0
 }
 
 function buildSeniorityContext(listenerName, listenerTier, triggerName, triggerTier, listenerLevel, triggerLevel) {
-  // Evidence-weighted, not rank-weighted. Longer deliberation = weigh evidence, not title.
+  // Evidence-weighted, not rank-weighted. All levels judged by citation strength.
   if (triggerLevel > listenerLevel) {
-    return `${triggerName} (${triggerTier}) is senior to you (${listenerTier}). Weigh their evidence, not their rank. If they cited a source/tool output, address that evidence directly. If they didn’t, you may demand it. Hold your ground if the evidence is weak.`;
+    return `${triggerName} (${triggerTier}) is senior to you (${listenerTier}). Assess by evidence strength: cited Source or [#id] > uncited claim. If they cited, address the citation; if not, you may request it. Hold your ground if evidence is weak.`;
   } else if (triggerLevel < listenerLevel) {
-    return `${triggerName} (${triggerTier}) is junior to you (${listenerTier}). Junior challenges are often right because they ignore unwritten constraints — engage the argument, not the seniority. If they surfaced a blind spot, name it.`;
+    return `${triggerName} (${triggerTier}) is junior to you (${listenerTier}). Assess by evidence strength, not seniority. Engage the claim’s falsifiable implication; if they surfaced a constraint, name it.`;
   } else {
-    return `${triggerName} (${triggerTier}) is your peer. Engage point-for-point. If you disagree, do so with a counter-citation or a falsifiable scenario.`;
+    return `${triggerName} (${triggerTier}) is your peer (same tier). Assess by evidence strength; engage point-for-point with a counter-citation or falsifiable scenario if you disagree.`;
   }
 }
 
@@ -269,9 +292,19 @@ export function buildVotePrompt(sourceAgent, targetAgent, sourceContribution, qu
   const reflectionLine = targetAgent.reflection ? `Your current position: "${sanitizeForDisplay(targetAgent.reflection.slice(0, 200))}"` : "";
   const recentMine = getRecentContributionsBlock(roundContributions, targetAgent.config.id);
   const roundContext = buildRoundContext(currentRound, maxRounds);
-  const sopSnippet = stateOfPlay
-    ? `State of Play — Decisions & Disagreements (your vote is on these):\n${sanitizeForDisplay(stateOfPlay, 700)}\n\n`
-    : "";
+  // Parse SoP Decisions into numbered options for deterministic voting
+  let sopOptions = "";
+  let sopFallbackNote = "";
+  if (stateOfPlay) {
+    const decisions = stateOfPlay.split("## Decisions")[1]?.split("##")[0] || "";
+    const decisionLines = decisions.split("\n").filter(l => l.trim().startsWith("-")).slice(0, 4).map((l,i) => `${i+1}. ${sanitizeForDisplay(l.slice(2).trim().slice(0, 120))}`).join("\n");
+    if (decisionLines) {
+      sopOptions = `SoP Decisions (vote by number if question not lettered):\n${decisionLines}\n`;
+      sopFallbackNote = `If vote question lists A) B) C), vote by letter: [Vote: A]. If not lettered, vote by SoP number: [Vote: 2]. Both formats accepted: [Vote: A] or [Vote: 2].\n`;
+    }
+    sopOptions = `State of Play — Decisions & Disagreements (your vote is on these):\n${sanitizeForDisplay(stateOfPlay, 650)}\n\n${sopOptions}${sopFallbackNote}`;
+  }
+  const sopSnippet = sopOptions;
 
   return `## Vote Requested — to ${sanitizeForDisplay(targetAgent.config.name)} (${targetAgent.config.tier}) from ${safeSourceName} (${sourceAgent.config.tier})
 
@@ -285,11 +318,11 @@ ${sopSnippet}${recentMine ? recentMine + "\n" : ""}${reflectionLine ? reflection
 
 ## Task — Cast Your Vote
 
-Choose one option letter (A, B, C, …) as listed in the vote question. If options aren’t lettered, treat distinct proposals in SoP Decisions as A/B/C in order.
+Choose one option. If the vote question lists A) B) C) … vote by letter. If it lists 1) 2) 3) or is unlettered, vote by SoP number.
 
-Format exactly:
-[Vote: X]
-One sentence criterion (cost / risk / time / reversibility) for your choice.
+Format exactly (both accepted for backward compat):
+[Vote: A]  or  [Vote: 2]
+One sentence criterion (cost / risk / time / reversibility) for your choice, citing [#id] that motivated your vote if possible.
 
 No contribution tags. Stay in character — your criterion should reflect your agenda.`;
 }
@@ -302,15 +335,25 @@ export function buildSummonPrompt(summonedPersona, requester, issue, roundContri
   const safeIssue = sanitizeForDisplay(issue);
   const safePersonaName = sanitizeForDisplay(summonedPersona.name);
 
-  const recentContributions = (roundContributions || [])
-    .slice(-4)
+  // Relevance-based recent contributions: score by keyword overlap with issue, not recency
+  const issueTokens = safeIssue.toLowerCase().split(/\W+/).filter(t => t.length > 3);
+  const scored = (roundContributions || []).map((c) => {
+    const hay = `${c.content || ""} ${c.participant_id || ""} ${c.type || ""}`.toLowerCase();
+    let score = 0;
+    for (const tok of issueTokens) if (hay.includes(tok)) score += 1;
+    // Boost evidence-backed and recent within round
+    if (c.tool_calls && c.tool_calls.length > 0) score += 0.5;
+    return { c, score };
+  }).sort((a,b) => b.score - a.score || (b.c.id||0) - (a.c.id||0));
+  const selected = scored.length > 0 ? scored.slice(0, 4).map(s=>s.c).sort((a,b)=>(a.id||0)-(b.id||0)) : [];
+  const recentContributions = selected
     .map((c) => {
       const id = c.id != null ? `[#${c.id}]` : "";
       return `- ${id} [${c.participant_id}] (${c.type}): ${sanitizeForDisplay(c.content).slice(0, 280)}`;
     })
     .join("\n");
   const recentBlock = recentContributions.length > 0
-    ? `### Recent Relevant Contributions (last 4)\n${recentContributions}`
+    ? `### Recent Relevant Contributions (relevance-scored, top 4)\n${recentContributions}`
     : "*(No prior contributions yet)*";
 
   const roundContext = buildRoundContext(currentRound, maxRounds);
@@ -355,8 +398,8 @@ Provide your expert perspective — concise, grounded, in character.`;
 
 /** Builds a prompt for the moderator to plan turn order for the next round. */
 export function buildTurnOrderPrompt(stateOfPlay, roundSummary, turnRequests, participants) {
-  const safeStateOfPlay = sanitizeForDisplay(stateOfPlay, 2000);
-  const safeRoundSummary = sanitizeForDisplay(roundSummary, 1000);
+  const safeStateOfPlay = escapeDelimiters(sanitizeForDisplay(stateOfPlay, 2000));
+  const safeRoundSummary = escapeDelimiters(sanitizeForDisplay(roundSummary, 1000));
 
   const requestsList = turnRequests.map((r) => {
     const p = participants.find((pp) => pp.config.id === r.participant_id);
@@ -396,9 +439,9 @@ ${participantsList}
 Return a JSON array of participant IDs ordered by who should speak first to push deliberation forward thoroughly.
 
 Ranking doctrine (in order):
-1. Evidence-backed challenges/requests first (tool output or [#id] citation signals substance over heat)
-2. Higher priority requests next
-3. Proposals introducing a new option before refinements/supports of an existing one
+1. Strong evidence-backed challenges/requests first — tool output with Strength: strong or [#id] citation signals substance; weak/inconclusive does not outrank a substantive propose
+2. Higher priority requests next (intrinsic urgency)
+3. Proposals introducing a new distinct option before refinements/supports of an existing one
 4. Anti-starvation: anyone who spoke last without new reflection/evidence is demoted one rank
 5. Tie-break: (a) who spoke least recently, then (b) seniority principal > senior > mid > junior > civilian
 
@@ -412,18 +455,21 @@ Respond with ONLY a JSON array: ["id1", "id2", "id3"]`;
 
 /** Builds a prompt for the moderator to rule on deadlocks, circular arguments, or force convergence. */
 export function buildModeratorPrompt(situation, currentRound, maxRounds, totalContributions, recentContributions, previousRulings = [], stateOfPlay = "") {
-  const safeSituation = sanitizeForDisplay(situation);
-  const contributionsList = recentContributions.map((c) =>
-    `  - [${c.type ?? "?"}] ${c.participant_id ?? "?"}: ${c.content ? sanitizeForDisplay(c.content.slice(0, 140)) : "(no content)"}`
-  ).join("\n");
+  const safeSituation = escapeDelimiters(sanitizeForDisplay(situation, 500));
+  const contributionsList = recentContributions.map((c) => {
+    const budget = (c.type === "challenge" || c.type === "dissent" || c.type === "evidence_response") ? 220 : 140;
+    const snippet = c.content ? escapeDelimiters(sanitizeForDisplay(c.content.slice(0, budget))) : "(no content)";
+    const evidenceTag = (c.tool_calls && c.tool_calls.length > 0) ? ` [tools:${c.tool_calls.map(t=>t.tool).join(',')}]` : "";
+    return `  - [${c.type ?? "?"}] ${c.participant_id ?? "?"}${evidenceTag}: ${snippet}`;
+  }).join("\n");
 
   const relevantRulings = previousRulings.length > 10 ? previousRulings.slice(-10) : previousRulings;
   const rulingsSection = relevantRulings.length > 0
-    ? `\n## Your Previous Rulings (for consistency — don’t contradict without new evidence)\n${relevantRulings.map((r, i) => `  ${i + 1}. Round ${r.round}: ${r.decision} → ${r.next_speaker}${r.reason ? ` — ${sanitizeForDisplay(r.reason, 120)}` : ""}`).join("\n")}\n`
+    ? `\n## Your Previous Rulings (for consistency — don’t contradict without new evidence)\n${relevantRulings.map((r, i) => `  ${i + 1}. Round ${r.round}: ${escapeDelimiters(sanitizeForDisplay(r.decision, 120))} → ${escapeDelimiters(sanitizeForDisplay(r.next_speaker, 60))}${r.reason ? ` — ${escapeDelimiters(sanitizeForDisplay(r.reason, 120))}` : ""}`).join("\n")}\n`
     : "";
 
   const stateOfPlaySection = stateOfPlay
-    ? `\n## Current State of Play\n${sanitizeForDisplay(stateOfPlay, 2000)}\n\nUse this to score NEW_INFO: if last round’s points already appear in Agreements/Decisions with no new evidence, NEW_INFO=0. A legitimate dispute has unresolved Disagreements/Open Questions that need more voices.\n`
+    ? `\n## Current State of Play\n${escapeDelimiters(sanitizeForDisplay(stateOfPlay, 2000))}\n\nUse this to score NEW_INFO: if last round’s points already appear in Agreements/Decisions with no new evidence, NEW_INFO=0. A legitimate dispute has unresolved Disagreements/Open Questions that need more voices.\n`
     : "";
 
   return `You are the MODERATOR — process governor, not participant. You do not contribute domain opinions. You govern flow. Default bias: KEEP DELIBERATING. Only converge when deliberation is genuinely exhausted — this group prefers thorough over terse.
@@ -465,52 +511,72 @@ IMPORTANT: Respond ONLY with the <ruling> block. No other text. next_speaker mus
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Synthesis
+// Synthesis — mode-aware (conversational vs code-analysis, read-only)
 // ──────────────────────────────────────────────────────────────────────────────
+
+export function detectTaskMode(question, tags = []) {
+  const q = (question || "").toLowerCase();
+  const tagStr = (tags || []).join(" ").toLowerCase();
+  const combined = q + " " + tagStr;
+  // Code signals: file paths, react, bug/stack, src/, .tsx/.ts/.js, "in this folder", "how would you fix"
+  const codeSignals = [
+    /\breact\b/, /\bnext\.js\b/, /\btsx\b/, /\btypescript\b/,
+    /\bsrc\//, /\.tsx\b/, /\.ts\b/, /\.js\b/, /\.jsx\b/,
+    /in this folder/, /in my project/, /how would you.*fix/, /propose.*fix/,
+    /\bbug\b/, /\berror\b/, /\bstack\b/, /\brepro\b/, /\brefactor\b/, /\bhook\b/, /\bhydration\b/
+  ];
+  const hits = codeSignals.filter(rx => rx.test(combined)).length;
+  if (hits >= 1) return "code-analysis";
+  // Engineering tag + folder context also counts
+  if (tagStr.includes("engineering") && (q.includes("file") || q.includes("code") || q.includes("project"))) return "code-analysis";
+  return "conversational";
+}
 
 /** Builds a prompt for synthesizing the final deliberation artifact from all contributions. */
 export function buildSynthesisPrompt(question, transcript, participants = [], tags = [], stateOfPlay = "", objections = []) {
-  const safeQuestion = sanitizeForDisplay(question, 20000);
-  const safeTranscript = sanitizeForDisplay(transcript, 100000);
+  const mode = detectTaskMode(question, tags);
+  const isCode = mode === "code-analysis";
+  const safeQuestion = escapeDelimiters(sanitizeForDisplay(question, 20000));
+  const safeTranscript = escapeDelimiters(sanitizeForDisplay(transcript, 100000));
   const participantsSection = participants.length > 0
-    ? `\n## Participants (activity)\n${participants.map((p) => `- ${sanitizeForDisplay(p.config.name, 80)} (${p.config.tier}): ${p.contributions_count} contributions${p.status === "failed" ? " [failed]" : p.status === "passed" ? " [passed late]" : ""}`).join("\n")}\n`
+    ? `\n## Participants (activity)\n${participants.map((p) => `- ${escapeDelimiters(sanitizeForDisplay(p.config.name, 80))} (${p.config.tier}): ${p.contributions_count} contributions${p.status === "failed" ? " [failed]" : p.status === "passed" ? " [passed late]" : ""}`).join("\n")}\n`
     : "";
 
-  const tagContext = tags?.length > 0 ? tags.join(", ") : null;
+  const tagContext = tags?.length > 0 ? escapeDelimiters(tags.join(", ")) : null;
 
   const stateOfPlaySection = stateOfPlay
-    ? `\n## State of Play (Final — PRIMARY source)\n${sanitizeForDisplay(stateOfPlay, 20000)}\n`
+    ? `\n## State of Play (Final — PRIMARY source)\n${escapeDelimiters(sanitizeForDisplay(stateOfPlay, 20000))}\n`
     : "";
 
   const unresolvedObjections = (objections ?? []).filter((o) => o.unresolved);
   const resolvedObjections = (objections ?? []).filter((o) => !o.unresolved);
   const objectionsSection = unresolvedObjections.length > 0
-    ? `\n## Unresolved Dissent (must appear in Dissenting Views with holder + [#id])\n${unresolvedObjections.map((o) => `- ${sanitizeForDisplay(o.content, 600)} (holder: ${sanitizeForDisplay(o.participant_id ?? "unknown", 80)})`).join("\n")}\n`
+    ? `\n## Unresolved Dissent (must appear in Dissenting Views with holder + [#id])\n${unresolvedObjections.map((o) => `- ${escapeDelimiters(sanitizeForDisplay(o.content, 600))} (holder: ${escapeDelimiters(sanitizeForDisplay(o.participant_id ?? "unknown", 80))})`).join("\n")}\n`
     : "";
   const resolvedSection = resolvedObjections.length > 0
-    ? `\n## Resolved Concerns (do NOT re-list as dissent)\n${resolvedObjections.map((o) => `- ${sanitizeForDisplay(o.content, 600)} (resolved)`).join("\n")}\n`
+    ? `\n## Resolved Concerns (do NOT re-list as dissent)\n${resolvedObjections.map((o) => `- ${escapeDelimiters(sanitizeForDisplay(o.content, 600))} (resolved)`).join("\n")}\n`
     : "";
 
-  return `You are the synthesis auditor. The deliberation is complete. Produce the final artifact — comprehensive, citation-grounded, non-inventive.
+  const modeNote = isCode
+    ? `\n## Mode: Code-Analysis (read-only)\nYou are synthesizing a react/project coding analysis. Include concrete Proposed Fix diffs with file= paths. Novel synthesized fixes are allowed when marked “Proposed — synthesized from [#id]”.\n`
+    : `\n## Mode: Conversational\n`;
 
-## Original Question
-${safeQuestion}
-${tagContext ? `\n## Tags (topic)\n${tagContext}\n` : ""}
-${stateOfPlaySection}${objectionsSection}${resolvedSection}
-## Deliberation Transcript (supporting detail — cite [#id] when using it)
-${safeTranscript}
-${participantsSection}
-## Synthesis Doctrine
+  const groundingRule = isCode
+    ? `1. **Grounding:** Prefer citing [#id] or State-of-Play. If you synthesize a novel fix/code not present verbatim, mark it “Proposed — synthesized from [#id]” and keep it. Do not invent file contents not read via tool; if no file was read, qualify as “Proposed (unverified — no tool read)”.\n`
+    : `1. **Grounding:** Prefer citing [#id] or State-of-Play. If you synthesize a novel conclusion, mark it “Proposed — synthesized from [#id]” and keep it. Do not invent numbers/dates unsupported by transcript/State-of-Play.\n`;
 
-You are not a participant. You are an auditor. Every claim you make must be traceable.
+  const lengthSection = isCode
+    ? `## Length — per-section budget (code-analysis, allow diffs)
 
-1. **Grounding:** Every Decision and Action Item must cite at least one source: [#id] from transcript OR State-of-Play. No citation → do not include it.
-2. **Attribution:** Every Dissenting View must name holder + [#id]. Unresolved Objections above are mandatory dissent — include them.
-3. **No invention:** Do not invent numbers, dates, costs, tool results, or participant positions not in transcript/State-of-Play. If evidence conflicts, state both and set Confidence accordingly.
-4. **Resolved ≠ dissent:** Items in Resolved Concerns must NOT reappear as Dissenting Views.
-5. **Actionability:** Action Items are verbs with owners or “proposed owner: …” if unattributed.
-
-## Length — per-section budget (stay within, prefer thoroughness within budget)
+- Decision: 80-120 words — one paragraph, cites [#id]s
+- Reasoning: 150-250 words — 3-7 bullets, who argued what + evidence + tradeoff, cite [#id] or State-of-Play
+- Proposed Fix: 150-350 words — Files: \`path\` + diffs \`\`\`tsx file=src/...\`\`\` + why, mark Proposed if synthesized
+- Action Items: 80-120 words — verbs with owners or “proposed: X” + cites (may be “None — see Proposed Fix”)
+- Dissenting Views: 80-120 words — each holder + [#id] (Unresolved Objections mandatory)
+- Open Questions: 60-90 words — why remains (missing evidence / tradeoff)
+- Confidence: 20-40 words — one word + rubric justification
+Total 700-1200 words welcome; preserve numbers and code verbatim — do not round or invent figures not in transcript/SoP.\n`
+    : `## Length — per-section budget (stay within, prefer thoroughness within budget)
 
 - Decision: 80-120 words — one paragraph, cites [#id]s
 - Reasoning: 150-250 words — 3-7 bullets, each who argued what + evidence + tradeoff, cite [#id] or State-of-Play
@@ -518,9 +584,32 @@ You are not a participant. You are an auditor. Every claim you make must be trac
 - Dissenting Views: 80-120 words — each holder + [#id] (Unresolved Objections mandatory)
 - Open Questions: 60-90 words — why remains (missing evidence / tradeoff)
 - Confidence: 20-40 words — one word + rubric justification
-Total 500-900 words welcome; preserve numbers verbatim — do not round or invent figures not in transcript/SoP.
+Total 500-900 words welcome; preserve numbers verbatim — do not round or invent figures not in transcript/SoP.\n`;
 
-## Required Sections — output these exact headings in this order, even if empty (write “None”)
+  const requiredSections = isCode
+    ? `## Required Sections — output these exact headings in this order, even if empty (write “None”)
+
+## Decision
+One-paragraph direct answer to the Original Question, citing key [#id]s. Preserve numbers verbatim.
+
+## Reasoning
+3-7 bullets or short paragraphs. Each bullet should reference who argued what and on what evidence. Show tradeoffs considered. Cite [#id] or State-of-Play. Preserve numbers verbatim.
+
+## Proposed Fix
+Files involved + diffs with \`\`\`tsx file=src/...\`\`\` blocks. Mark any novel synthesized snippet “Proposed — synthesized from [#id]”. Preserve code verbatim; do not invent file contents not read.
+
+## Action Items
+- {verb} {what} — owner: {name or “proposed: X”} — cites [#id]
+(Empty → “None — see Proposed Fix.”)
+
+## Dissenting Views
+Each dissent on its own line: **{Holder}** ({tier}): {view} — [#id]
+If none, write “None — all active participants converged or passed.”
+Unresolved Objections above must appear here.
+
+## Open Questions
+- {question that remains} — why it remains (missing evidence / unresolved tradeoff)`
+    : `## Required Sections — output these exact headings in this order, even if empty (write “None”)
 
 ## Decision
 One-paragraph direct answer to the Original Question, citing key [#id]s. Preserve numbers verbatim.
@@ -538,7 +627,28 @@ If none, write “None — all active participants converged or passed.”
 Unresolved Objections above must appear here.
 
 ## Open Questions
-- {question that remains} — why it remains (missing evidence / unresolved tradeoff)
+- {question that remains} — why it remains (missing evidence / unresolved tradeoff)`;
+
+  return `You are the synthesis auditor. The deliberation is complete. Produce the final artifact — comprehensive, citation-grounded, open-ended for both conversational and code-analysis tasks.
+${modeNote}
+## Original Question
+${safeQuestion}
+${tagContext ? `\n## Tags (topic)\n${tagContext}\n` : ""}
+${stateOfPlaySection}${objectionsSection}${resolvedSection}
+## Deliberation Transcript (supporting detail — cite [#id] when using it)
+${safeTranscript}
+${participantsSection}
+## Synthesis Doctrine
+
+You are not a participant. You are an auditor. Every claim you make must be traceable.
+
+${groundingRule}2. **Attribution:** Every Dissenting View must name holder + [#id]. Unresolved Objections above are mandatory dissent — include them.
+3. **No invention:** Do not invent numbers, dates, costs, tool results, or participant positions not in transcript/State-of-Play. If evidence conflicts, state both and set Confidence accordingly. For code, do not invent file contents not read via tool.
+4. **Resolved ≠ dissent:** Items in Resolved Concerns must NOT reappear as Dissenting Views.
+5. **Actionability:** Action Items are verbs with owners or “proposed owner: …” if unattributed.
+
+${lengthSection}
+${requiredSections}
 
 ## Confidence
 One word: High | Medium | Low — then 1 sentence justification referencing the rubric:
@@ -554,12 +664,14 @@ Cite rubric condition you met.
 We should migrate to JWT because everyone agreed.  ← BAD: no citations, vague consensus claim
 ## Dissenting Views
 None  ← BAD when transcript has [CHALLENGE] entries
+${isCode ? "\n## Negative Example (code) — do NOT do this\n## Proposed Fix\nFix hydration by editing layout.tsx.  ← BAD: no file=, no ``` block, no Proposed marking\n" : ""}
 
 ## Good Fragment (abstract, domain-free)
 ## Decision
 Adopt option B (incremental rollout of X) — [#4][#7] converged on risk/reversibility over speed. [#9]’s cost analysis (Source: https://… ) supports Q1 pilot.
 ## Reasoning
 - **Staff Lead (senior, [#4])** proposed B citing maintainability; **Security Engineer (mid, [#5])** challenged revocation, then reflected [#14] accepting short-lived tokens with rotation.
+${isCode ? "\n## Good Fragment (code-analysis)\n## Proposed Fix\n- Files: `src/app/layout.tsx:18` — hydration mismatch from client-only hook\n- Diff: ```tsx file=src/app/layout.tsx\n  // Proposed — synthesized from [#4][#7]\n  'use client';\n  import { useEffect, useState } from 'react';\n  // guard hydration: only render after mount\n  ```\n  Why: [#4] read src/app/layout.tsx via read tool; [#7] challenge on useEffect stale closure. [#9] evidence via grep.\n" : ""}
 `;
 }
 
@@ -604,9 +716,10 @@ export function buildAgentSystemPrompt(participant) {
 Available: ${toolList}
 
 Ladder: loom_vector_search (recall what was said → cheapest) → websearch (verify current fact) → read/grep/glob (verify local file) → webfetch (deep dive ONLY after a search hit)
+For code analysis in this folder (react, bug, file paths, src/, hydration, error in this folder): prioritize read/glob/grep first to inspect project files, then recall — file=src/... citations require a read.
 - **loom_vector_search**: “what did [#12] actually say?” — prefer over memory
 - **websearch**: current data, benchmarks, alternatives, precedents
-- **read / grep / glob**: inspect project files referenced in discussion
+- **read / grep / glob**: inspect project files referenced in discussion (first for code analysis)
 - **webfetch**: open a URL returned by websearch (don’t guess URLs)
 - **bash**: only allowlisted commands (${Array.isArray(builtIn.bash?.allowlist) ? builtIn.bash.allowlist.join(', ') : 'git, ls, wc, head, tail, grep, find'})
 
@@ -614,25 +727,25 @@ Quality:
 - One focused query beats three vague ones. Synthesize, don’t dump.
 - If a tool is rejected as invalid, retry with exact names above — don’t silently fall back to memory.
 - If tool returns error or 0 hits, write “evidence unavailable — searched X, 0 hits” and proceed with experience-qualified claim. Do not retry same query.
-- Cite as Source: https://… or vec: round#id when it strengthens your point. Preserve numbers verbatim — do not round.`;
+- Cite as Source: https://… or vec: round#id or file=src/... when it strengthens your point. Preserve code and numbers verbatim — do not round.`;
       })()
     : "";
 
-  // Bias check — render ALL biases (rotated per round to avoid silent drop)
-  // Previously slice(0,2) silently dropped the 3rd bias; now we surface all with light rotation
+  // Bias check — render ALL biases (rotated) with concrete per-bias example
   const allBiases = Array.isArray(cfg.known_biases) && cfg.known_biases.length > 0
     ? cfg.known_biases.map((b) => escapeDelimiters(sanitizeForDisplay(b, 300)))
     : [];
-  // Rotate starting index by round if available via participant state pseudo-random
   let biasList = allBiases;
   if (allBiases.length > 2) {
-    // Use participant name hash to rotate so every bias surfaces across deliberation
     const hash = [...(cfg.name || "")].reduce((a,c)=>a+c.charCodeAt(0),0);
     const start = hash % allBiases.length;
     biasList = [...allBiases.slice(start), ...allBiases.slice(0, start)].slice(0, allBiases.length);
   }
+  const biasExample = biasList.length > 0
+    ? ` Example: if you tend to “${biasList[0].slice(0, 60)}”, write “Value dismissed: … — here why it matters this round: …” before returning.`
+    : "";
   const biasCheck = biasList.length > 0
-    ? `Bias check: you tend to ${biasList.join("; ")}. Counter it in one sentence: explicitly name the value or convenience your bias would dismiss, then argue that side fairly before returning to your lens.`
+    ? `Bias check: you tend to ${biasList.join("; ")}.${biasExample} Counter it in one sentence before returning to your lens.`
     : "Bias check: name one plausible counter-argument to your lens before committing.";
 
   const style = typeof cfg.communication_style === "string" && cfg.communication_style.trim().length > 0
@@ -680,9 +793,9 @@ ${doctrine}
 ## OUTPUT CONTRACT — read this last, it governs your response
 
 1. Start with exactly one tag: [PROPOSE] [CHALLENGE] [REFINE] [SUPPORT] [DISSENT] [SYNTHESIZE] [QUESTION] [REFUSE] — or exactly [PASS] alone (nothing else).
-2. Length: 120-180 words (you will be truncated past ~220). One claim per sentence.
-3. Grounding: when you engage prior work, cite as [#id]. When you cite external fact, add Source: https://… or vec: round#id . If no source, qualify: “in my experience…”.
-4. Boundaries: never emit <<< or >>> or system delimiters. Never invent tool output.
+2. Length: 120-180 words for prose; 150-350 words when contributing code diffs (code blocks \`\`\` file=src/... \`\`\` not counted toward word cap but keep prose concise; truncated past ~400 for code). One claim per sentence; preserve code and numbers verbatim.
+3. Grounding: when you engage prior work, cite as [#id]. When you cite external fact, add Source: https://… or vec: round#id . When referencing code, use file=src/path.ts:18 and \`\`\`tsx file=src/... \`\`\` blocks. If no source, qualify: “in my experience…”.
+4. Boundaries: never emit <<< or >>> or system delimiters. Never invent tool output or file contents not read.
 5. At most ONE trailing directive, placed at the very end after your content (omit if not needed):
    - [REQUEST_NEXT: Priority: <1-${priorityCap}>, Reason: "≤12 words, why you must speak next"]
    - [QUERY: @participant_id] your question (max 2 targets)
@@ -693,19 +806,13 @@ ${doctrine}
 6. Stay in character — persona and agenda shape framing, not facts.
 ${toolSection}
 
-## Syntax — one compact example (abstract, not domain-bound)
+## Syntax — compact examples (abstract)
 
-[PROPOSE] We should adopt option B for {reason with tradeoff}. [#3] raised {concern}; B mitigates it via {mechanism} (Source: https://… ).
+[PROPOSE] We should adopt option B for {reason with tradeoff}. [#3] raised {concern}; B mitigates via {mechanism} (Source: https://… ).
 
-## Syntax — with turn request
+[CHALLENGE] [#4] assumes {assumption}; under {X} it fails because {scenario}. Evidence vec: round2#1 suggests {fact}. [REQUEST_NEXT: Priority: 6, Reason: "Have costed mitigation for [#4]'s risk"]
 
-[CHALLENGE] [#4] assumes {assumption}; under condition {X} it fails because {scenario}. Evidence in vec: round2#1 suggests {fact}.
-
-[REQUEST_NEXT: Priority: 6, Reason: "Have costed mitigation for [#4]'s risk"]
-
-## Syntax — refusal
-
-[REFUSE: Missing budget approval — cannot evaluate cost tradeoff] This presupposes {resource} not yet allocated.
+[REFUSE: Missing budget approval — cannot evaluate cost] This presupposes {resource} not allocated. [PASS] alone if nothing to add.
 `;
 }
 
@@ -737,7 +844,9 @@ export function buildAgentUserPrompt(participant, stateOfPlay, ragContext, recen
       : recentContributions
           .map((c) => {
             const id = c.id != null ? `[#${c.id}]` : "";
-            const budget = budgetForType(c.type);
+            let budget = budgetForType(c.type);
+            // Code blocks need more room — preserve diffs
+            if ((c.content || "").includes("```") || (c.content || "").includes("file=")) budget = Math.max(budget, 320);
             const safeContent = sanitizeForDisplay(c.content).slice(0, budget);
             return `- ${id} [${c.participant_id}] (${c.type}): ${safeContent}`;
           })
@@ -773,7 +882,7 @@ ${safeQuestion}
 ${tagContext ? `\n## Tags: ${tagContext}\n` : ""}
 ## Round ${round}
 
-${sopHeader}${ragHeader}## Live — Recent Contributions (typed budget: challenge/dissent 280, evidence 220, propose 200 — weight reflects substance)
+${sopHeader}${ragHeader}## Live — Recent Contributions (typed budget: challenge/dissent 280, evidence 220, propose 200, code blocks 320 — weight reflects substance)
 
 ${transcriptDelimited}
 
@@ -782,14 +891,15 @@ ${reflectionBlock}## Your Turn — Weighted Guidance
 - **State of Play is truth** unless you explicitly challenge it with new evidence or a falsifiable scenario.
 - **Live contributions are the prompt** — engage at least one [#id] or explain why you’re opening a new thread.
 - **Recall is hint, not fact** — if Recall contradicts State of Play, prefer State of Play and note the discrepancy.
+- **Files Involved** (if SoP has them) is file list for code analysis — build on those paths with file=src/... citations.
 
 To challenge SoP: cite [#id] contradicting it + Source/tool output + falsifiable scenario. Otherwise write “SoP holds; discrepancy in Recall noted” and build on it.
 
 Rules:
-- 120-180 words, one tag at start or exactly [PASS]
+- 120-180 words for prose; 150-350 when contributing code diffs (\`\`\` file=src/... \`\`\` blocks not counted but keep prose concise)
 - Never emit <<< >>> delimiters — they are system boundaries, not content
-- If you reference prior work, cite [#id]; if you introduce a fact, add Source or qualify as experience
-- Preserve numbers verbatim — do not round or invent
+- If you reference prior work, cite [#id]; if you introduce a fact, add Source or file=src/... or qualify as experience
+- Preserve code and numbers verbatim — do not round or invent
 
 Make your contribution or pass.`;
 }

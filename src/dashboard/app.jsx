@@ -38,7 +38,7 @@ function useSSE(meetingId, onEvent) {
         if (cancelled || !fallbackPoll) return;
         try {
           const timestamp = new Date().toISOString();
-          const cRes = await fetch(`/api/contributions?meeting=${meetingId}&since=${lastPollIdRef.current}&include_context=0`);
+          const cRes = await fetch(`/api/contributions?meeting=${meetingId}&since=${lastPollIdRef.current}&include_context=1`);
           if (cRes.ok) {
             const contribs = await cRes.json();
             const arr = Array.isArray(contribs) ? contribs : (contribs.contributions ?? []);
@@ -91,7 +91,7 @@ function useSSE(meetingId, onEvent) {
         if (cancelled) return;
         // Gap-fill: fetch any contributions missed during disconnect via incremental API
         // Use a short timeout so reconnect feels immediate; fallback poll already tracks lastPollId
-        fetch(`/api/contributions?meeting=${meetingId}&since=${lastPollIdRef.current}&include_context=0`).then(async (r) => {
+        fetch(`/api/contributions?meeting=${meetingId}&since=${lastPollIdRef.current}&include_context=1`).then(async (r) => {
           if (r.ok) {
             const data = await r.json().catch(() => null);
             const arr = Array.isArray(data) ? data : (data?.contributions ?? []);
@@ -605,6 +605,7 @@ export function App() {
                    maxRounds={state?.max_rounds}
                    orchestratorMessages={orchestratorMessages}
                    roundSummaries={roundSummaries}
+                   selectedMeeting={selectedMeeting}
                  />
               </div>
             )}

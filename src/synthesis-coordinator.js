@@ -6,7 +6,9 @@ import { extractErrorInfo } from "./logger.js";
 import { incrementKeyedCounter, recordLatency } from "./metrics.js";
 
 const MAX_CRITIQUE_RETRIES = 2;
-const REQUIRED_SECTIONS = ["Decision", "Reasoning", "Action Items", "Dissenting Views", "Open Questions", "Confidence"];
+// Core required for both modes; Action Items / Proposed Fix group — at least one must be present (see synthesizer.validateSynthesisSections)
+const REQUIRED_SECTIONS = ["Decision", "Reasoning", "Confidence", "Dissenting Views", "Open Questions"];
+const REQUIRED_ACTION_GROUP = ["Action Items", "Proposed Fix"];
 
 export class SynthesisCoordinator {
   #sessionManager;
@@ -90,7 +92,11 @@ export class SynthesisCoordinator {
         return text;
       }
 
-      additionalFeedback = `\n\nYour previous response was missing these required sections: ${missing.join(", ")}. Please include ALL of the following sections in your response: ${REQUIRED_SECTIONS.join(", ")}.`;
+      const missingNote = missing.includes("Action Items")
+        ? `${missing.join(", ")} (for code-analysis, Proposed Fix may satisfy Action Items)`
+        : missing.join(", ");
+      const requiredNote = `${REQUIRED_SECTIONS.join(", ")} plus at least one of ${REQUIRED_ACTION_GROUP.join(" / ")}`;
+      additionalFeedback = `\n\nYour previous response was missing these required sections: ${missingNote}. Please include ALL of the following sections in your response: ${requiredNote}.`;
     }
   }
 
@@ -127,7 +133,7 @@ export class SynthesisCoordinator {
     const draftForPrompt = draftChunks.length === 1
       ? draftChunks[0]
       : draftChunks.map((c,i)=>`--- Draft chunk ${i+1}/${draftChunks.length} ---\n${c}`).join("\n\n");
-    // Build most-contested transcript snippet: last 2 rounds verbatim + top 2 challenge/dissent from earlier rounds
+    // Build most-contested transcript snippet: last 2 rounds verbatim + top 2 challenge/dissent + top 2 file mentions (code-aware)
     let transcriptSnippet = "";
     try {
       if (transcriptData && Array.isArray(transcriptData.rounds) && transcriptData.rounds.length > 0) {
@@ -135,16 +141,22 @@ export class SynthesisCoordinator {
         const lastTwo = rounds.slice(-2);
         const earlier = rounds.slice(0, -2);
         const contested = [];
+        const fileMentions = [];
         for (const r of earlier) {
           for (const c of (r.contributions || [])) {
             if (c.type === "challenge" || c.type === "dissent") contested.push(c);
+            if (/(?:file\s*=\s*[^\s]+\.\w+|src\/[^\s]+\.\w+|\b\w+\.(?:tsx|ts|js|jsx)\b|```)/i.test(String(c.content))) fileMentions.push(c);
           }
         }
-        // Most recent contested first, take 2
+        // Most recent contested first, take 2; file mentions also 2 (code boost)
         const topContested = contested.slice(-2);
+        const topFiles = fileMentions.slice(-2);
         const parts = [];
         if (topContested.length > 0) {
           parts.push(`### Most contested earlier (top 2 challenge/dissent)\n` + topContested.map(c => `- [#${c.id}] ${c.participant_id} [${c.type}]: ${String(c.content).slice(0, 220)}`).join("\n"));
+        }
+        if (topFiles.length > 0) {
+          parts.push(`### File mentions earlier (top 2)\n` + topFiles.map(c => `- [#${c.id}] ${c.participant_id} [${c.type}]: ${String(c.content).slice(0, 220)}`).join("\n"));
         }
         // Last two rounds full via formatter fallback if transcript empty
         const lastTwoText = lastTwo.map(r => {
@@ -163,24 +175,23 @@ export class SynthesisCoordinator {
       transcriptSnippet = transcript.slice(0, 4000);
     }
 
-    let critiquePrompt = `You are a synthesis auditor reviewing your own synthesis for grounding. You prefer longer, thorough deliberation — do not suppress dissent to fake consensus.
+    let critiquePrompt = `You are a synthesis auditor reviewing your own synthesis for grounding. You prefer longer, thorough deliberation — do not suppress dissent to fake consensus. Support both conversational and code-analysis (read-only) tasks.
 
 Audit checklist (be strict):
-1. Grounding: list any Decision/Action Item sentence without [#id] or State-of-Play citation — those must be removed or cited.
+1. Grounding: list any Decision/Action Item/Proposed Fix sentence that is neither cited with [#id]/State-of-Play nor explicitly marked “Proposed — synthesized from [#id]” — those must be marked or cited. For code, novel diffs marked Proposed are allowed; unmarked invented file contents are not.
 2. Attribution: is every Dissenting View credited to correct holder + [#id]? Any omitted significant dissent from transcript?
-3. Invention: any number, date, cost, or tool result not in transcript/State-of-Play?
-4. Support: any Decision/Action Item not supported by at least one contribution?
+3. Invention: any number, date, cost, tool result, or file content not in transcript/State-of-Play nor marked Proposed?
+4. Support: any Decision/Action Item/Proposed Fix not supported by at least one contribution or Proposed marking?
 5. Resolved vs Dissent: if Resolved Concerns exists, ensure none reappear as dissent.
 6. Confidence: does the Confidence justification match the rubric? (High≥70% active + 0 unresolved + ≥1 grounded claim)
 
-Transcript excerpt for grounding check:
+Transcript excerpt for grounding check (most-contested slice — last 2 rounds + top 2 challenge/dissent):
 ${transcriptSnippet}
 
 If corrections are needed, output the FULL revised synthesis with ALL required sections in order:
 ## Decision
 ## Reasoning
-## Action Items
-## Dissenting Views
+${text.toLowerCase().includes("proposed fix") || (transcriptData && String(transcriptData.question||"").toLowerCase().match(/react|src\/|\.tsx|\.ts|bug|in this folder|code/)) ? "## Proposed Fix\n## Action Items\n" : "## Action Items\n"}## Dissenting Views
 ## Open Questions
 ## Confidence
 
@@ -212,8 +223,11 @@ ${draftForPrompt}`;
         if (missing.length === 0) {
           return text2;
         }
-        // If the revision dropped sections, re-prompt the SAME draft with feedback
-        const feedback = `\n\nYour revised synthesis was missing these required sections: ${missing.join(", ")}. Output the FULL revised synthesis with ALL sections: ${REQUIRED_SECTIONS.join(", ")}.`;
+        // If the revision dropped sections, re-prompt the SAME draft with feedback (group-aware)
+        const missingNote2 = missing.includes("Action Items")
+          ? `${missing.join(", ")} (Proposed Fix may satisfy Action Items for code-analysis)`
+          : missing.join(", ");
+        const feedback = `\n\nYour revised synthesis was missing these required sections: ${missingNote2}. Output the FULL revised synthesis with ALL sections: ${REQUIRED_SECTIONS.join(", ")} plus ${REQUIRED_ACTION_GROUP.join(" / ")}.`;
         critiquePrompt = `${critiquePrompt}\n\nFeedback: ${feedback}`;
       } catch (err) {
         const info = extractErrorInfo(err);

@@ -128,10 +128,9 @@ export async function runMidRoundReflections(round, triggerParticipant, activePa
 
     const systemPrompt = `You are ${listener.config.name} (${listener.config.tier}) — reflecting in Loom.
 
-Your reflection is public and citeable. Be concise (80-150 words), grounded, and in character.
+Your reflection is public and citeable. Be concise (80-150 words), grounded, in character.
 - Engage the trigger’s evidence if they cited Source or [#id]; demand it if they didn’t.
-- Close with: Position: [held|revised|expanded] because {one falsifiable cause}.
-- Never emit <<< or >>> boundaries. Cite as Source: URL or [#id] when you use evidence.`;
+- Cite as Source: URL or [#id] when you use evidence. Never emit <<< or >>>.`;
     const promptContext = {
       type: "reflection",
       system_prompt: systemPrompt,

@@ -10,19 +10,19 @@ import { selectFallbackModel } from "./services/model-service.js";
 import { incrementKeyedCounter, recordLatency } from "./metrics.js";
 
 /**
- * Extracts a vote letter (A, B, C, etc.) from a vote response string.
- * Looks for "[Vote: X]" pattern or falls back to first standalone capital letter.
+ * Extracts a vote choice (A, B, C, etc. or 1,2,3) from a vote response string.
+ * Supports both lettered [Vote: A] and numbered [Vote: 2] formats for backward compat.
  */
 function extractVoteLetter(text) {
   if (!text) return null;
-  // Look for [Vote: X] pattern
-  const tagMatch = text.match(/\[Vote:\s*([A-Za-z])\]/i);
+  // Look for [Vote: X] where X is letter or number (1-2 chars)
+  const tagMatch = text.match(/\[Vote:\s*([A-Za-z0-9]+)\]/i);
   if (tagMatch) return tagMatch[1].toUpperCase();
-  // Fallback: first standalone capital letter on its own line
+  // Fallback: first standalone capital letter or number on its own line
   const lines = text.split("\n");
   for (const line of lines) {
     const trimmed = line.trim();
-    if (/^[A-Za-z]$/.test(trimmed)) return trimmed.toUpperCase();
+    if (/^[A-Za-z0-9]$/.test(trimmed) || /^[A-Za-z0-9]{1,2}$/.test(trimmed)) return trimmed.toUpperCase();
   }
   return null;
 }

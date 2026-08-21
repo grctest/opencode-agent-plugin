@@ -31,13 +31,22 @@ export function sanitizeForPrompt(text, maxLen = 10000) {
 }
 
 /**
- * Sanitizes text for safe display in UI/logs.
- * Truncates to max length without stripping brackets (preserves directive visibility).
+ * Sanitizes text for safe display in UI/logs and for prompt display (preserves citations).
+ * Strips HTML/XML tags but preserves directive patterns like [#12], [PROPOSE], etc.
+ * Unlike sanitizeForPrompt, it keeps brackets for citation visibility.
  * @param {string} text - Input text to sanitize
  * @param {number} [maxLen=5000] - Maximum allowed length
  * @returns {string} Sanitized text
  */
 export function sanitizeForDisplay(text, maxLen = 5000) {
   if (!text || typeof text !== 'string') return '';
-  return text.slice(0, maxLen).trim();
+  const directives = [];
+  let sanitized = text.replace(DIRECTIVE_PATTERN, (match) => {
+    directives.push(match);
+    return `\x00${directives.length - 1}\x00`;
+  });
+  // Strip HTML/XML tags but keep brackets for citations
+  sanitized = sanitized.replace(/<[^>]*>/g, '');
+  sanitized = sanitized.replace(/\x00(\d+)\x00/g, (_, idx) => directives[parseInt(idx)]);
+  return sanitized.slice(0, maxLen).trim();
 }

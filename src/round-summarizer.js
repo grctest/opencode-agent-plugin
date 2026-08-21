@@ -5,7 +5,8 @@ import { Logger, extractErrorInfo } from "./logger.js";
 const summarizerLogger = new Logger();
 
 // Only include contributions that represent actual positions in the deliberation
-const SUMMARY_TYPES = new Set(["propose", "challenge", "refine", "support", "dissent", "synthesize", "question", "vote_tally"]);
+// evidence_response included when tool-backed; reflections / query_response handled via hint
+const SUMMARY_TYPES = new Set(["propose", "challenge", "refine", "support", "dissent", "synthesize", "question", "vote_tally", "evidence_response"]);
 
 // Strip the reflection header: "[Reflection on #N [TYPE] by Name (Round M)]\n\n"
 const REFLECTION_HEADER_RE = /^\[Reflection on #\d+ \[[\w]+\] by .+?\]\s*/m;
@@ -63,8 +64,12 @@ export async function summarizeRound(round, state, promptOrchestrator, getHighes
   const model = getHighestTierModel() ?? (getFallbackModel ? getFallbackModel() : null);
   if (!model) throw new Error("No model available for semantic summary — check model assignment");
 
-  // Filter to only substantive contributions (no reflections, query responses, etc.)
-  const summaryContributions = round.contributions.filter((c) => SUMMARY_TYPES.has(c.type));
+  // Filter to only substantive contributions; keep evidence_response only when tool-backed
+  const summaryContributions = round.contributions.filter((c) => {
+    if (!SUMMARY_TYPES.has(c.type)) return false;
+    if (c.type === "evidence_response" && !(c.tool_calls && c.tool_calls.length > 0)) return false;
+    return true;
+  });
 
   // Build reflection outcome map and format contributions
   const reflectionMap = buildReflectionMap(round.contributions);
@@ -75,10 +80,21 @@ export async function summarizeRound(round, state, promptOrchestrator, getHighes
   // Adapt prompt based on whether we have substantive contributions
   const hasSubstantiveContent = formattedContributions.trim().length > 0;
 
-  // Collect evidence signals for richer summary
-  const evidenceContribs = round.contributions.filter(c => c.type === "evidence_response" || c.type === "query_response" || (c.tool_calls && c.tool_calls.length > 0));
+  // Collect evidence signals for richer summary — ordered by tool strength, max 4
+  const evidenceContribs = round.contributions
+    .filter(c => c.type === "evidence_response" || c.type === "query_response" || (c.tool_calls && c.tool_calls.length > 0))
+    .sort((a, b) => {
+      const strengthScore = (c) => {
+        const s = String(c.content).toLowerCase();
+        if (s.includes("strength: strong")) return 3;
+        if (s.includes("strength: weak")) return 2;
+        if (s.includes("inconclusive")) return 1;
+        return c.tool_calls ? 2 : 1;
+      };
+      return strengthScore(b) - strengthScore(a);
+    });
   const evidenceHint = evidenceContribs.length > 0
-    ? `\n## Evidence / Tool Signals (do not invent — use only if cited)\n${evidenceContribs.slice(0, 3).map(c => `- [#${c.id}] ${c.participant_id}: ${c.content.slice(0, 180)}${c.tool_calls ? ` [tools: ${c.tool_calls.map(t=>t.tool).join(',')}]` : ""}`).join("\n")}`
+    ? `\n## Evidence / Tool Signals (do not invent — use only if cited)\n${evidenceContribs.slice(0, 4).map(c => `- [#${c.id}] ${c.participant_id}: ${c.content.slice(0, 180)}${c.tool_calls ? ` [tools: ${c.tool_calls.map(t=>t.tool).join(',')}]` : ""}`).join("\n")}`
     : "";
 
   const prompt = hasSubstantiveContent
