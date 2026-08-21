@@ -1,7 +1,7 @@
 import { buildAgentSystemPrompt, buildAgentUserPrompt, buildQueryPrompt, buildEvidencePrompt, buildSummonPrompt, buildVotePrompt } from "./prompts.js";
 import { parseAgentResponse } from "./validation.js";
 import { getConfig, resolveBuiltInTools, resolveLoomTools } from "./config.js";
-import { extractAgentResponse, mapToolResults, truncate } from "./shared.js";
+import { extractAgentResponse, mapToolResults, truncate, extractFileBlockTools } from "./shared.js";
 import { Logger, extractErrorInfo } from "./logger.js";
 import { runMidRoundReflections } from "./reflection-manager.js";
 import { sanitizeForPrompt, sanitizeForDisplay } from "./utils/sanitize.js";
@@ -70,6 +70,7 @@ export class RoundExecutor {
   #failedInCurrentRound = 0;
   #deadline = null;
   #roundSessionIds = null;
+  #dbFailedThisMeeting = null;
 
   setDeadline(deadline) {
     this.#deadline = deadline;
@@ -158,228 +159,6 @@ export class RoundExecutor {
       const result = await this.#promptChildSession(p);
       await this.#handlePromptResult(p, result, round);
 
-      // Directed queries: if this agent queried specific participants, execute now
-      if (result?.query && result.query.targets.length > 0 && result.content !== "[PASS]") {
-        const sourceContribution = round.contributions[round.contributions.length - 1];
-        if (sourceContribution) {
-          p.currentContribution = result.content;
-          await this.executeQueries(round, p, result.query, sourceContribution.id, {
-            sessionManager: this.#sessionManager,
-            getParticipantModel: this.#getParticipantModel,
-            stateManager: this.#stateManager,
-            db: this.#db,
-            callStats: this.#callStats,
-          });
-        }
-      }
-
-      // Evidence requests: if this agent requested evidence from specific participants
-      if (result?.evidence && result.evidence.targets.length > 0 && result.content !== "[PASS]") {
-        const sourceContribution = round.contributions[round.contributions.length - 1];
-        if (sourceContribution) {
-          p.currentContribution = result.content;
-          await this.executeEvidenceRequests(round, p, result.evidence, sourceContribution.id, {
-            sessionManager: this.#sessionManager,
-            getParticipantModel: this.#getParticipantModel,
-            stateManager: this.#stateManager,
-            db: this.#db,
-            callStats: this.#callStats,
-          });
-        }
-      }
-
-      // Persona summons: if this agent summoned an external expert
-      if (result?.summon && result.content !== "[PASS]") {
-        await this.executeSummons(round, p, result.summon, {
-          sessionManager: this.#sessionManager,
-          stateManager: this.#stateManager,
-          db: this.#db,
-          callStats: this.#callStats,
-        });
-      }
-
-      // Vote: if this agent called a vote
-      if (result?.vote && result.content !== "[PASS]") {
-        const sourceContribution = round.contributions[round.contributions.length - 1];
-        if (sourceContribution) {
-          await this.executeVote(round, p, result.vote, sourceContribution.id, {
-            sessionManager: this.#sessionManager,
-            getParticipantModel: this.#getParticipantModel,
-            stateManager: this.#stateManager,
-            db: this.#db,
-            callStats: this.#callStats,
-          });
-        }
-      }
-
-      // Loom tool interactions: handle loom_* tool calls as first-class alternative to bracket tags
-      // This provides auditable, structured triggers that appear in Tool use tab.
-      if (result?.tool_calls && result.content !== "[PASS]") {
-        const sourceContribution = round.contributions[round.contributions.length - 1];
-        if (sourceContribution) {
-          // Helper to parse loom tool input (may be JSON string from mapToolResults)
-          const parseLoomInput = (tc) => {
-            if (!tc.input) return {};
-            if (typeof tc.input === "object") return tc.input;
-            try { return JSON.parse(tc.input); } catch { return {}; }
-          };
-          // Track which bracket-based interactions already handled to avoid double-execution
-          const hasBracketQuery = !!(result?.query && result.query.targets.length > 0);
-          const hasBracketEvidence = !!(result?.evidence && result.evidence.targets.length > 0);
-          const hasBracketVote = !!result?.vote;
-          const hasBracketSummon = !!result?.summon;
-
-          for (const tc of result.tool_calls) {
-            const toolName = tc.tool ?? tc.attempted_tool;
-            if (!toolName || !toolName.startsWith("loom_")) continue;
-            // Skip failed/invalid attempts already surfaced as error; still log
-            if (tc.status === "error" && !tc.input) continue;
-            const input = parseLoomInput(tc);
-            try {
-              if (toolName === "loom_query" && !hasBracketQuery) {
-                const targets = Array.isArray(input.targets) ? input.targets : [];
-                const question = typeof input.question === "string" ? input.question : "";
-                if (targets.length > 0 && question.trim().length > 0) {
-                  p.currentContribution = result.content;
-                  await this.executeQueries(round, p, { targets, question: question.slice(0,500) }, sourceContribution.id, {
-                    sessionManager: this.#sessionManager,
-                    getParticipantModel: this.#getParticipantModel,
-                    stateManager: this.#stateManager,
-                    db: this.#db,
-                    callStats: this.#callStats,
-                  });
-                }
-              } else if (toolName === "loom_evidence" && !hasBracketEvidence) {
-                const targets = Array.isArray(input.targets) ? input.targets : [];
-                const question = typeof input.question === "string" ? input.question : "";
-                if (targets.length > 0 && question.trim().length > 0) {
-                  p.currentContribution = result.content;
-                  await this.executeEvidenceRequests(round, p, { targets, question: question.slice(0,500) }, sourceContribution.id, {
-                    sessionManager: this.#sessionManager,
-                    getParticipantModel: this.#getParticipantModel,
-                    stateManager: this.#stateManager,
-                    db: this.#db,
-                    callStats: this.#callStats,
-                  });
-                }
-              } else if (toolName === "loom_vote" && !hasBracketVote) {
-                const question = typeof input.question === "string" ? input.question : "";
-                if (question.trim().length > 0) {
-                  await this.executeVote(round, p, { question: question.slice(0,500) }, sourceContribution.id, {
-                    sessionManager: this.#sessionManager,
-                    getParticipantModel: this.#getParticipantModel,
-                    stateManager: this.#stateManager,
-                    db: this.#db,
-                    callStats: this.#callStats,
-                  });
-                }
-              } else if (toolName === "loom_summon" && !hasBracketSummon) {
-                const persona_name = input.persona_name || input.personaName || "";
-                const issue = input.issue || "";
-                if (persona_name.trim().length > 0 && issue.trim().length > 0) {
-                  await this.executeSummons(round, p, { persona_name: persona_name.trim(), issue: issue.slice(0,500) }, {
-                    sessionManager: this.#sessionManager,
-                    stateManager: this.#stateManager,
-                    db: this.#db,
-                    callStats: this.#callStats,
-                  });
-                }
-              } else if (toolName === "loom_request_next") {
-                const priority = typeof input.priority === "number" ? input.priority : parseInt(input.priority, 10);
-                const reason = typeof input.reason === "string" ? input.reason : "";
-                if (Number.isFinite(priority) && reason.trim().length > 0 && result.request_next == null) {
-                  // Synthesize a turn request directly
-                  const pr = Math.min(10, Math.max(1, priority));
-                  const turnRequest = {
-                    participant_id: p.config.id,
-                    round: this.#stateManager.getCurrentRound(),
-                    priority: pr,
-                    reason: reason.slice(0,200),
-                  };
-                  if (!round.turn_requests) round.turn_requests = [];
-                  round.turn_requests.push(turnRequest);
-                  this.#db.addContributionWithTurnRequest(this.#stateManager.getMeetingId(), { ...sourceContribution, round: this.#stateManager.getCurrentRound() }, turnRequest);
-                  // Update in-memory result for consistency
-                  result.request_next = { priority: pr, reason: reason.slice(0,200) };
-                }
-              }
-            } catch (err) {
-              this.#logger.warn("loom_tool_failed", `Loom tool ${toolName} failed for ${p.config.name}`, { error: err.message });
-            }
-          }
-        }
-      }
-
-      // Same-turn synthesis: if loom_query/loom_evidence produced peer responses, give caller a chance to synthesize within same turn
-      const sameTurnEnabled = getConfig().agentTools?.sameTurnSynthesis ?? true;
-      if (sameTurnEnabled && result && result.content !== "[PASS]" && result.type !== "refuse") {
-        const hasLoomInteraction = result.tool_calls?.some(tc => tc.tool === "loom_query" || tc.tool === "loom_evidence") ?? false;
-        if (hasLoomInteraction) {
-          const calleeResponses = round.contributions.filter(c => c.batch_id === batchId && (c.type === "query_response" || c.type === "evidence_response"));
-          if (calleeResponses.length > 0) {
-            try {
-              const synthesisSystem = `You are ${p.config.name} (${p.config.tier}) — synthesizing peer responses within your turn.\n\nYou previously issued a ${result.type} with peer queries. Their responses are below. Synthesize a concise follow-up (2-3 sentences) that acknowledges their evidence, cites [#id] where relevant, and refines your stance. Do not repeat your original challenge verbatim. Never emit <<< or >>>.`;
-              const synthesisUser = `Your original ${result.type}:\n${result.content.slice(0,1200)}\n\nPeer responses (cite as [#id]):\n${calleeResponses.map(c => `[#${c.id}] ${c.participant_id}: ${c.content.slice(0,600)}`).join("\n\n")}\n\nNow provide a brief synthesis that incorporates these peer answers. Prefix with [REFINE] or [SUPPORT] as appropriate.`;
-              const model = this.#getParticipantModel(p);
-              let synthSessionId;
-              let isSynthRoundScoped = false;
-              if (this.#roundSessionIds?.has(p.config.id)) {
-                synthSessionId = this.#roundSessionIds.get(p.config.id);
-                isSynthRoundScoped = true;
-              } else {
-                synthSessionId = await this.#sessionManager.createEphemeralSession(p);
-                this.#sessionManager.registerSessionMeeting(synthSessionId, this.#stateManager.getMeetingId());
-              }
-              const synthResult = await this.#sessionManager.getContract().prompt({
-                sessionId: synthSessionId,
-                system: synthesisSystem,
-                model,
-                temperature: p.tier_config.temperature,
-                parts: [{ type: "text", text: synthesisUser }],
-                tools: {}, // no loom tools in synthesis to avoid loop
-                toolChoice: "none",
-                timeoutMs: Math.min(60000, this.#callStats.agent_prompts ? 120000 : 120000),
-              });
-              if (synthResult.ok) {
-                const { text: synthText, toolResults: synthTools } = extractAgentResponse(synthResult.data);
-                const finalText = synthText;
-                if (finalText && finalText.trim().length >= 10) {
-                  const safe = finalText.trim().slice(0,5000);
-                  const parsed = parseAgentResponse(p.config.id, safe);
-                  if (parsed && parsed.content !== "[PASS]") {
-                    const synthToolCalls = mapToolResults(synthTools ?? []);
-                    const synthContribution = {
-                      id: this.#stateManager.nextContributionId(),
-                      round: this.#stateManager.getCurrentRound(),
-                      participant_id: p.config.id,
-                      content: safe,
-                      type: parsed.type || "refine",
-                      targets_which: round.contributions[round.contributions.length - 1]?.id ?? null,
-                      batch_id: batchId,
-                      tool_calls: synthToolCalls && synthToolCalls.length ? synthToolCalls : null,
-                      prompt_context: { type: "synthesis_followup", system_prompt: synthesisSystem, user_prompt: synthesisUser, trigger_batch_id: batchId, peer_response_ids: calleeResponses.map(c=>c.id), round: this.#stateManager.getCurrentRound() },
-                      created_at: new Date().toISOString(),
-                    };
-                    this.#stateManager.addContribution(synthContribution);
-                    round.contributions.push(synthContribution);
-                    p.contributions_count = this.#stateManager.getWeave().filter(c=>c.participant_id===p.config.id).length;
-                    this.#db.addContributionWithTurnRequest(this.#stateManager.getMeetingId(), synthContribution, null);
-                    this.#logger.info("same_turn_synthesis", `${p.config.name} synthesized ${calleeResponses.length} peer response(s) within turn`, { peerIds: calleeResponses.map(c=>c.id) });
-                    this.#options.onProgress?.(`${p.config.name} (${p.config.tier}) — synthesized peer responses`);
-                  }
-                }
-              }
-              if (!isSynthRoundScoped) {
-                this.#sessionManager.unregisterSession(synthSessionId);
-                await this.#sessionManager.deleteEphemeralSession(synthSessionId).catch(()=>{});
-              }
-            } catch (err) {
-              this.#logger.warn("same_turn_synthesis_failed", `Same-turn synthesis failed for ${p.config.name}`, { error: err.message });
-            }
-          }
-        }
-      }
-
       // Mid-round reflections: if this agent challenged/dissented,
       // trigger reflection for the most persona-similar active participant
       if (result && (result.type === "challenge" || result.type === "dissent")) {
@@ -391,10 +170,8 @@ export class RoundExecutor {
           p.currentContributionId = round.contributions[round.contributions.length - 1]?.id;
           p.currentContributionType = result.type;
 
-          // Exclude participants already queried/evidence-requested via bracket or loom tools for this trigger
+          // Exclude participants already queried/evidence-requested via loom tools for this trigger
           const excludedForReflection = [];
-          if (result?.query?.targets) excludedForReflection.push(...result.query.targets);
-          if (result?.evidence?.targets) excludedForReflection.push(...result.evidence.targets);
           if (result?.tool_calls) {
             for (const tc of result.tool_calls) {
               const tname = tc.tool ?? tc.attempted_tool;
@@ -449,7 +226,33 @@ export class RoundExecutor {
       p.status = "passed";
       this.#db.setParticipantStatus(p.config.id, "passed");
       round.token_path.push(p.config.id);
-      this.#options.onProgress?.(`${p.config.name} (${p.config.tier}) — chose to pass`);
+      // Audit-first: a pass that executed tools still persists its tool_calls
+      // so the research evidence is visible in Tool use.
+      if (result.tool_calls && result.tool_calls.length > 0) {
+        const passId = this.#stateManager.nextContributionId();
+        const passContribution = {
+          id: passId,
+          round: this.#stateManager.getCurrentRound(),
+          participant_id: result.participant_id,
+          content: "[PASS]",
+          type: "propose",
+          targets_which: null,
+          batch_id: p.currentBatchId ?? crypto.randomUUID(),
+          tool_calls: result.tool_calls,
+          prompt_context: result.prompt_context ?? null,
+          created_at: new Date().toISOString(),
+        };
+        this.#stateManager.addContribution(passContribution);
+        round.contributions.push(passContribution);
+        try {
+          this.#db.addContributionWithTurnRequest(this.#stateManager.getMeetingId(), { ...passContribution, round: this.#stateManager.getCurrentRound() }, null);
+        } catch (err) {
+          this.#logger.warn("pass_contribution_db_failed", `Failed to persist [PASS] tool evidence for ${p.config.name}`, extractErrorInfo(err));
+        }
+        this.#options.onProgress?.(`${p.config.name} (${p.config.tier}) — passed (${result.tool_calls.length} tool call(s) preserved)`);
+      } else {
+        this.#options.onProgress?.(`${p.config.name} (${p.config.tier}) — chose to pass`);
+      }
       this.#options.onContribution?.(p.config.name, this.#stateManager.getCurrentRound(), "pass");
       return;
     }
@@ -582,11 +385,38 @@ Be concise (2-4 sentences), grounded, and in character. Answer the specific ques
 
           const { text, toolResults } = extractAgentResponse(result.data);
 
-          if (!text || text.trim().length < 10) return;
+          // Audit-first: even if the answer text is short/empty, any executed tool
+          // calls MUST be persisted — never silently discard research evidence.
+          if (!text || text.trim().length < 10) {
+            if (toolResults.length > 0) {
+              this.#logger.warn("query_short_text_with_tools", `${target.config.name} produced short/empty query answer but executed ${toolResults.length} tool(s) — storing tool-evidence-only contribution`, {
+                participant: target.config.id,
+                round: stateManager.getCurrentRound(),
+                tools: toolResults.map(t => ({ tool: t.tool, status: t.status ?? null })),
+              });
+              const evidenceOnly = {
+                id: stateManager.nextContributionId(),
+                round: stateManager.getCurrentRound(),
+                participant_id: target.config.id,
+                content: `[Response to query from ${sourceName}]\n\n(insufficient response text — tool evidence preserved)`,
+                type: "query_response",
+                targets_which: sourceContributionId,
+                batch_id: sourceParticipant.currentBatchId ?? crypto.randomUUID(),
+                tool_calls: mapToolResults(toolResults),
+                prompt_context: promptContext,
+                created_at: new Date().toISOString(),
+              };
+              stateManager.addContribution(evidenceOnly);
+              round.contributions.push(evidenceOnly);
+              db.addContributionWithTurnRequest(stateManager.getMeetingId(), evidenceOnly, null);
+            }
+            return;
+          }
 
           const contributionTools = mapToolResults(toolResults);
 
           // Create query response contribution — shares batch_id with source turn
+          // Preserve [] (tools offered but not used) vs null (unknown) for audit — do not coerce empty to null
           const contribution = {
             id: stateManager.nextContributionId(),
             round: stateManager.getCurrentRound(),
@@ -595,7 +425,7 @@ Be concise (2-4 sentences), grounded, and in character. Answer the specific ques
             type: "query_response",
             targets_which: sourceContributionId,
             batch_id: sourceParticipant.currentBatchId ?? crypto.randomUUID(),
-            tool_calls: contributionTools && contributionTools.length ? contributionTools : null,
+            tool_calls: contributionTools ?? [],
             prompt_context: promptContext,
             created_at: new Date().toISOString(),
           };
@@ -740,7 +570,33 @@ If inconclusive, state why (0 hits vs contradictory) and what would resolve it. 
 
           const { text, toolResults } = extractAgentResponse(result.data);
 
-          if (!text || text.trim().length < 10) return;
+          // Audit-first: evidence uses toolChoice:"required" so a tool call was
+          // FORCED — never silently discard it even when the answer text is short.
+          if (!text || text.trim().length < 10) {
+            if (toolResults.length > 0) {
+              this.#logger.warn("evidence_short_text_with_tools", `${target.config.name} produced short/empty evidence answer but executed ${toolResults.length} tool(s) — storing tool-evidence-only contribution`, {
+                participant: target.config.id,
+                round: stateManager.getCurrentRound(),
+                tools: toolResults.map(t => ({ tool: t.tool, status: t.status ?? null })),
+              });
+              const evidenceOnly = {
+                id: stateManager.nextContributionId(),
+                round: stateManager.getCurrentRound(),
+                participant_id: target.config.id,
+                content: `[Evidence from ${target.config.name} on ${sourceName}'s ${round.contributions[round.contributions.length - 1]?.type ?? "contribution"}]\n\n(insufficient response text — tool evidence preserved)`,
+                type: "evidence_response",
+                targets_which: sourceContributionId,
+                batch_id: sourceParticipant.currentBatchId ?? crypto.randomUUID(),
+                tool_calls: mapToolResults(toolResults),
+                prompt_context: promptContext,
+                created_at: new Date().toISOString(),
+              };
+              stateManager.addContribution(evidenceOnly);
+              round.contributions.push(evidenceOnly);
+              db.addContributionWithTurnRequest(stateManager.getMeetingId(), evidenceOnly, null);
+            }
+            return;
+          }
 
           const contributionTools = mapToolResults(toolResults);
 
@@ -752,7 +608,7 @@ If inconclusive, state why (0 hits vs contradictory) and what would resolve it. 
             type: "evidence_response",
             targets_which: sourceContributionId,
             batch_id: sourceParticipant.currentBatchId ?? crypto.randomUUID(),
-            tool_calls: contributionTools && contributionTools.length ? contributionTools : null,
+            tool_calls: contributionTools ?? [],
             prompt_context: promptContext,
             created_at: new Date().toISOString(),
           };
@@ -922,7 +778,33 @@ Be concise (100-150 words), grounded, in character. Build on what’s settled; d
 
       const { text, toolResults } = extractAgentResponse(result.data);
 
-      if (!text || text.trim().length < 10) return;
+      // Audit-first: even if the guest's answer text is short/empty, any executed
+      // tool calls MUST be persisted — never silently discard research evidence.
+      if (!text || text.trim().length < 10) {
+        if (toolResults.length > 0) {
+          this.#logger.warn("summon_short_text_with_tools", `${resolvedPersona.name} produced short/empty summoned answer but executed ${toolResults.length} tool(s) — storing tool-evidence-only contribution`, {
+            participant: summonedId,
+            round: stateManager.getCurrentRound(),
+            tools: toolResults.map(t => ({ tool: t.tool, status: t.status ?? null })),
+          });
+          const evidenceOnly = {
+            id: stateManager.nextContributionId(),
+            round: stateManager.getCurrentRound(),
+            participant_id: summonedId,
+            content: `[Summoned: ${resolvedPersona.name} (${resolvedPersona.tier})]\n\n(insufficient response text — tool evidence preserved)`,
+            type: "summoned_response",
+            targets_which: null,
+            batch_id: sourceParticipant.currentBatchId ?? crypto.randomUUID(),
+            tool_calls: mapToolResults(toolResults),
+            prompt_context: promptContext,
+            created_at: new Date().toISOString(),
+          };
+          stateManager.addContribution(evidenceOnly);
+          round.contributions.push(evidenceOnly);
+          db.addContributionWithTurnRequest(stateManager.getMeetingId(), evidenceOnly, null);
+        }
+        return;
+      }
 
       const contributionTools = mapToolResults(toolResults);
 
@@ -934,7 +816,7 @@ Be concise (100-150 words), grounded, in character. Build on what’s settled; d
         type: "summoned_response",
         targets_which: null,
         batch_id: sourceParticipant.currentBatchId ?? crypto.randomUUID(),
-        tool_calls: contributionTools && contributionTools.length ? contributionTools : null,
+        tool_calls: contributionTools ?? [],
         prompt_context: promptContext,
         created_at: new Date().toISOString(),
       };
@@ -1204,10 +1086,25 @@ One sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No
       round.turn_requests.push(turnRequest);
     }
 
-    this.#db.addContributionWithTurnRequest(this.#stateManager.getMeetingId(), {
-      ...contribution,
-      round: this.#stateManager.getCurrentRound(),
-    }, turnRequest);
+    // Main-turn DB insert: a failure must NOT abort the entire meeting — the
+    // contribution already exists in memory. Record an agent error instead.
+    try {
+      this.#db.addContributionWithTurnRequest(this.#stateManager.getMeetingId(), {
+        ...contribution,
+        round: this.#stateManager.getCurrentRound(),
+      }, turnRequest);
+    } catch (err) {
+      const info = extractErrorInfo(err);
+      this.#logger.error("contribution_db_failed", `Failed to persist ${result.type} for ${participant.config.name} — visible in memory only this session; meeting continues`, info);
+      try {
+        this.#db.recordAgentError(
+          this.#stateManager.getMeetingId(), participant.config.id, this.#stateManager.getCurrentRound(),
+          "contribution_persist_failed", `${err.message} — tool_calls and content not durable`, 1,
+        );
+      } catch {}
+      if (!this.#dbFailedThisMeeting) this.#dbFailedThisMeeting = new Set();
+      this.#dbFailedThisMeeting.add(participant.config.id);
+    }
 
     this.#options.onContribution?.(participant.config.name, this.#stateManager.getCurrentRound(), result.type);
   }
@@ -1392,6 +1289,49 @@ One sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No
     }
     let ephemeralSessionIdToDelete = isRoundScoped ? null : ephemeralSessionId;
 
+    const isSynthesisLoom = (name) => ["loom_query","loom_evidence","loom_vote","loom_summon"].includes(name);
+    const isLoomTool = (name) => name?.startsWith("loom_") && name !== "loom_vector_search";
+
+    // LOSSLESS audit: never drop executed tool calls for storage — caps only affect prompt context, not DB.
+    // We keep all invocations so the Tool use tab can show every webfetch/websearch that occurred.
+    const truncateToolResults = (trs, agentToolsConfig) => {
+      const maxToolCalls = agentToolsConfig?.maxToolCallsPerTurn ?? 8;
+      const maxOutputTokens = agentToolsConfig?.maxToolOutputTokens ?? 6000;
+      if (trs.length > maxToolCalls) {
+        this.#logger.warn("tool_call_limit", `${participant.config.name} executed ${trs.length} tool calls (limit ${maxToolCalls}) — storing all for audit, synthesis prompt will be bounded`);
+      }
+      const totalTokens = trs.reduce((sum, r) => sum + Math.ceil(((r.output ? String(r.output).length : 0) / 4)), 0);
+      if (totalTokens > maxOutputTokens) {
+        this.#logger.warn("tool_output_limit", `${participant.config.name} tool outputs ${totalTokens} tokens exceed ${maxOutputTokens} — storing full outputs for audit, synthesis context will be truncated`);
+      }
+      return trs;
+    };
+
+    const extractRequestNextFromToolResults = (trs) => {
+      for (const t of trs) {
+        const name = t.tool ?? t.attempted_tool;
+        if (name === "loom_request_next" && t.status !== "error") {
+          try {
+            const inp = typeof t.input === "object" ? t.input : (t.input ? JSON.parse(t.input) : {});
+            const priority = typeof inp.priority === "number" ? inp.priority : parseInt(inp.priority, 10);
+            const reason = typeof inp.reason === "string" ? inp.reason : "";
+            if (Number.isFinite(priority) && reason.trim().length > 0) {
+              const pr = Math.min(10, Math.max(1, priority));
+              return { priority: pr, reason: reason.slice(0,200) };
+            }
+          } catch {}
+          // Fallback: try parsing output if input missing (some tools embed priority in output)
+          try {
+            const out = typeof t.output === "string" ? JSON.parse(t.output) : t.output;
+            if (out && Number.isFinite(out.priority) && typeof out.reason === "string") {
+              return { priority: Math.min(10, Math.max(1, out.priority)), reason: out.reason.slice(0,200) };
+            }
+          } catch {}
+        }
+      }
+      return null;
+    };
+
     try {
       this.#callStats.agent_prompts++;
       const llmStart = Date.now();
@@ -1399,8 +1339,6 @@ One sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No
       const toolsMap = this.#buildToolsMap(config);
       const agentToolsConfig = config.agentTools;
 
-      // Observability: surface the exact tool set offered to this session so
-      // "no tools offered" vs "tools offered but unused" is distinguishable.
       const offeredTools = Object.keys(toolsMap);
       this.#logger.info("agent_tools_offered", `${participant.config.name} offered ${offeredTools.length} tool(s)`, {
         participant: participant.config.id,
@@ -1409,7 +1347,7 @@ One sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No
         tool_choice: offeredTools.length > 0 ? "auto" : "none",
       });
 
-      const result = await this.#sessionManager.getContract().prompt({
+      const result1 = await this.#sessionManager.getContract().prompt({
         sessionId: ephemeralSessionId,
         system: promptContext.system_prompt,
         model,
@@ -1423,16 +1361,14 @@ One sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No
       incrementKeyedCounter("llm_calls_by_type", "agent");
       recordLatency("llm_prompt_ms", llmMs);
 
-      this.#recordTokens(result);
+      this.#recordTokens(result1);
 
-      if (!result.ok) {
-        throw result.error;
-      }
+      if (!result1.ok) throw result1.error;
 
-      const { text: agentText, toolResults } = extractAgentResponse(result.data);
+      const { text: agentText1, toolResults: toolResults1 } = extractAgentResponse(result1.data);
 
-      if (toolResults.length > 0) {
-        const tools = toolResults.map((t) => ({
+      if (toolResults1.length > 0) {
+        const tools = toolResults1.map((t) => ({
           tool: t.tool,
           callID: t.callID,
           status: t.status ?? null,
@@ -1441,45 +1377,155 @@ One sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No
           hasError: !!t.error,
         }));
         const attempts = tools.filter((t) => t.status === "error" || t.attempted_tool).length;
-        this.#logger.info("tool_results", `${participant.config.name} used ${toolResults.length} tool(s)${attempts > 0 ? ` (${attempts} failed/attempted)` : ""}`, { tools });
+        this.#logger.info("tool_results", `${participant.config.name} used ${toolResults1.length} tool(s)${attempts > 0 ? ` (${attempts} failed/attempted)` : ""}`, { tools });
       }
 
-      let effectiveToolResults = toolResults;
-      const maxToolCalls = agentToolsConfig?.maxToolCallsPerTurn ?? 5;
-      if (effectiveToolResults.length > maxToolCalls) {
-        this.#logger.warn("tool_call_limit", `${participant.config.name} exceeded max tool calls (${effectiveToolResults.length}/${maxToolCalls}) — truncating to ${maxToolCalls}`);
-        effectiveToolResults = effectiveToolResults.slice(0, maxToolCalls);
-      }
-      const maxOutputTokens = agentToolsConfig?.maxToolOutputTokens ?? 4000;
-      let totalTokens = effectiveToolResults.reduce((sum, r) => sum + Math.ceil(((r.output ? String(r.output).length : 0) / 4)), 0);
-      if (totalTokens > maxOutputTokens) {
-        this.#logger.warn("tool_output_limit", `${participant.config.name} exceeded max tool output tokens (${totalTokens}/${maxOutputTokens}) — truncating outputs`);
-        // Truncate outputs from earliest to keep most recent
-        let remaining = maxOutputTokens;
-        const truncated = [];
-        for (let i = effectiveToolResults.length - 1; i >= 0; i--) {
-          const r = effectiveToolResults[i];
-          const tok = Math.ceil(((r.output ? String(r.output).length : 0) / 4));
-          if (tok <= remaining) {
-            truncated.unshift(r);
-            remaining -= tok;
-          } else if (remaining > 0 && r.output) {
-            const keepChars = remaining * 4;
-            truncated.unshift({ ...r, output: String(r.output).slice(0, keepChars) + "...[truncated]" });
-            break;
+      let effective1 = truncateToolResults(toolResults1, agentToolsConfig);
+
+      // Determine if same-turn synthesis needed (any loom_query/evidence/vote/summon with successful output)
+      const loomSynthesisCalls = effective1.filter(t => isSynthesisLoom(t.tool) && t.status === "completed" && t.output);
+      const sameTurnEnabled = !!agentToolsConfig?.sameTurnSynthesis;
+      const needsSynthesis = sameTurnEnabled && loomSynthesisCalls.length > 0 && agentText1 && agentText1.trim() !== "[PASS]";
+
+      let finalText = agentText1;
+      let finalToolResults = effective1;
+
+      if (needsSynthesis) {
+        // Check deadline for second turn
+        let remainingMs = timeoutMs;
+        let synthRan = false;
+        if (this.#deadline) {
+          const remaining = this.#deadline - Date.now();
+          remainingMs = Math.max(5000, Math.min(timeoutMs, remaining - 1000));
+          if (remainingMs < 5000) {
+            this.#logger.warn("synthesis_deadline_skipped", `Skipping same-turn synthesis for ${participant.config.name} — deadline ${remainingMs}ms remaining`);
+          } else {
+            // Build loom-free tools map for synthesis (research only, no loom re-trigger)
+            const synthesisToolsMap = this.#buildToolsMapWithoutLoom(config);
+            const loomOutputs = loomSynthesisCalls.map(tc => {
+              const out = typeof tc.output === "string" ? tc.output : JSON.stringify(tc.output);
+              return `Tool ${tc.tool} (${tc.callID}) returned:\n${out.slice(0, 3500)}`;
+            }).join("\n\n");
+            const synthesisInstruction = `Loom tool results:\n${loomOutputs}\n\nNow synthesize your final contribution incorporating these responses. Cite [#id] when referencing peer answers. Do not re-call loom_query/loom_evidence/loom_vote/loom_summon — you have the results. Stay in character and follow OUTPUT CONTRACT.`;
+            this.#logger.info("synthesis_prompt", `Same-turn synthesis for ${participant.config.name} with ${loomSynthesisCalls.length} loom result(s)`, { tools: loomSynthesisCalls.map(t=>t.tool), remainingMs });
+            const synthStart = Date.now();
+            synthRan = true;
+            const result2 = await this.#sessionManager.getContract().prompt({
+              sessionId: ephemeralSessionId,
+              system: promptContext.system_prompt,
+              model,
+              temperature: participant.tier_config.temperature,
+              parts: [
+                { type: "text", text: promptContext.user_prompt },
+                ...(result1.data.parts ?? []).filter(p => p.type === "text" && p.text).slice(-1).map(p => ({ type: "text", text: p.text })),
+                { type: "text", text: synthesisInstruction },
+              ],
+              tools: synthesisToolsMap,
+              toolChoice: Object.keys(synthesisToolsMap).length > 0 ? "auto" : undefined,
+              timeoutMs: remainingMs,
+            });
+            const synthMs = Date.now() - synthStart;
+            recordLatency("llm_synthesis_ms", synthMs);
+            if (result2.ok) {
+              this.#recordTokens(result2);
+              const { text: agentText2, toolResults: toolResults2 } = extractAgentResponse(result2.data);
+              if (toolResults2.length > 0) {
+                const tools2 = toolResults2.map((t) => ({
+                  tool: t.tool,
+                  callID: t.callID,
+                  status: t.status ?? null,
+                  hasOutput: !!t.output,
+                }));
+                this.#logger.info("synthesis_tool_results", `${participant.config.name} synthesis used ${toolResults2.length} tool(s)`, { tools: tools2 });
+              }
+              const effective2 = truncateToolResults(toolResults2, agentToolsConfig);
+              // Keep all synthesis tool results for audit (including any attempted loom calls — they will show as attempted/failed, not dropped)
+              finalToolResults = [...effective1, ...effective2, ...extractFileBlockTools(agentText2 ?? "")];
+              // Re-apply token caps across merged
+              finalToolResults = truncateToolResults(finalToolResults, agentToolsConfig);
+              if (agentText2 && agentText2.trim().length >= 10) {
+                finalText = agentText2;
+              } else {
+                // Fallback to first text if synthesis produced empty
+                this.#logger.warn("synthesis_empty", `Synthesis for ${participant.config.name} returned empty — using first turn text`);
+              }
+            } else {
+              this.#logger.warn("synthesis_failed", `Synthesis prompt failed for ${participant.config.name}: ${result2.error?.message ?? "unknown"}`);
+              // Keep first turn results
+              finalToolResults = [...effective1, ...extractFileBlockTools(agentText1 ?? "")];
+            }
           }
         }
-        effectiveToolResults = truncated;
+        // Synthesis was requested but skipped (deadline) — still include turn-1 file blocks.
+        if (!synthRan && !finalToolResults.some(t => t.metadata?.synthetic || t.tool === "write")) {
+          finalToolResults = [...effective1, ...extractFileBlockTools(agentText1 ?? "")];
+          finalToolResults = truncateToolResults(finalToolResults, agentToolsConfig);
+        }
+      } else {
+        // No synthesis needed — still include file blocks
+        finalToolResults = [...effective1, ...extractFileBlockTools(agentText1 ?? "")];
+        finalToolResults = truncateToolResults(finalToolResults, agentToolsConfig);
       }
 
-      if (!agentText) throw new Error("Empty agent response");
+      // Audit-first: if the model produced no text but DID execute tools,
+      // do NOT throw away the turn — return a tool-evidence stub so the
+      // tools are persisted and visible in Tool use.
+      if (!finalText) {
+        const mappedTools = mapToolResults(finalToolResults);
+        if (mappedTools.length > 0) {
+          this.#logger.warn("tool_only_turn", `${participant.config.name} produced no text but executed ${mappedTools.length} tool(s) — returning tool-evidence stub contribution`, {
+            participant: participant.config.id,
+            round: currentRound,
+            tools: mappedTools.map(t => ({ tool: t.tool, status: t.status ?? null })),
+          });
+          const { getPriorityCap } = await import("./shared.js");
+          const cap = getPriorityCap(participant.config.tier);
+          const reqNext = extractRequestNextFromToolResults(finalToolResults);
+          this.#recordModelSuccess(model);
+          ephemeralSessionIdToDelete = null;
+          return {
+            participant_id: participant.config.id,
+            content: "[TOOL-ONLY TURN — no text produced; tool evidence preserved]",
+            type: "question",
+            request_next: reqNext ? { priority: Math.min(reqNext.priority, cap), reason: reqNext.reason } : null,
+            query: null,
+            evidence: null,
+            summon: null,
+            vote: null,
+            tool_calls: mappedTools,
+            prompt_context: promptContext,
+          };
+        }
+        throw new Error("Empty agent response");
+      }
 
-      const safeContent = sanitizeForPrompt(agentText);
-      const response = parseAgentResponse(participant.config.id, safeContent);
+      // Audit-first: [PASS] with executed tools must still persist the tool calls
+      if (finalText.trim() === "[PASS]" && finalToolResults.length > 0) {
+        this.#logger.info("pass_with_tools", `${participant.config.name} passed but executed ${finalToolResults.length} tool(s) — attaching tool_calls to pass`, {
+          participant: participant.config.id,
+          round: currentRound,
+        });
+      }
+
+      const safeContent = sanitizeForPrompt(finalText);
+      const response = parseAgentResponse(participant.config.id, safeContent, participant.config.tier);
       if (!response) throw new Error("Failed to parse agent response");
 
-      response.tool_calls = mapToolResults(effectiveToolResults);
-      if (response.tool_calls && response.tool_calls.length === 0) response.tool_calls = null;
+      response.tool_calls = mapToolResults(finalToolResults);
+      // Preserve [] for "tools offered but not used" vs null for "unknown" — do not coerce to null (fixes empty→null flaw)
+      if (!response.tool_calls) response.tool_calls = [];
+
+      // Handle loom_request_next → turn request (fire-and-forget, no synthesis needed)
+      const requestNextFromTools = extractRequestNextFromToolResults(finalToolResults);
+      if (requestNextFromTools && !response.request_next) {
+        // Apply tier cap
+        const { getPriorityCap } = await import("./shared.js");
+        const cap = getPriorityCap(participant.config.tier);
+        response.request_next = {
+          priority: Math.min(requestNextFromTools.priority, cap),
+          reason: requestNextFromTools.reason,
+        };
+      }
 
       this.#recordModelSuccess(model);
       response.prompt_context = promptContext;
@@ -1514,6 +1560,27 @@ One sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No
       if (loom.loom_evidence) toolsMap.loom_evidence = true;
       if (loom.loom_vote) toolsMap.loom_vote = true;
       if (loom.loom_summon) toolsMap.loom_summon = true;
+      if (loom.loom_request_next) toolsMap.loom_request_next = true;
+    }
+    return toolsMap;
+  }
+
+  #buildToolsMapWithoutLoom(config) {
+    const agentToolsConfig = config.agentTools;
+    const toolsMap = {};
+    if (agentToolsConfig?.enabled) {
+      const t = resolveBuiltInTools(agentToolsConfig);
+      if (t.webfetch) toolsMap.webfetch = true;
+      if (t.websearch) toolsMap.websearch = true;
+      if (t.read) toolsMap.read = true;
+      if (t.bash) toolsMap.bash = true;
+      if (t.glob) toolsMap.glob = true;
+      if (t.grep) toolsMap.grep = true;
+      if (t.lsp) toolsMap.lsp = true;
+      const loom = resolveLoomTools(agentToolsConfig);
+      if (loom.loom_vector_search) toolsMap.loom_vector_search = true;
+      // Intentionally omit loom_query/loom_evidence/loom_vote/loom_summon to avoid recursion in synthesis turn
+      // Keep loom_request_next as it is fire-and-forget and can be re-used in synthesis if needed
       if (loom.loom_request_next) toolsMap.loom_request_next = true;
     }
     return toolsMap;

@@ -358,7 +358,7 @@ export class DashboardApi {
   getContributionContext(contributionId) {
     const contribution = this.#db
       .prepare(
-        `SELECT id, participant_id, round, type, prompt_context, created_at
+        `SELECT id, participant_id, round, type, tool_calls, prompt_context, created_at
          FROM contributions WHERE id = ?`,
       )
       .get(contributionId);
@@ -380,6 +380,7 @@ export class DashboardApi {
       participant_reflection: participant?.reflection ?? "",
       round: contribution.round,
       type: contribution.type,
+      tool_calls: contribution.tool_calls ? JSON.parse(contribution.tool_calls) : null,
       prompt_context: contribution.prompt_context ? JSON.parse(contribution.prompt_context) : null,
       created_at: contribution.created_at,
     };
@@ -522,6 +523,8 @@ export class DashboardApi {
         type: c.type,
         content: c.content,
         targetsWhich: c.targets_which,
+        batchId: c.batch_id ?? null,
+        toolCalls: c.tool_calls ?? null,
         createdAt: c.created_at,
       })),
       turn_requests: turnRequests.map(tr => ({

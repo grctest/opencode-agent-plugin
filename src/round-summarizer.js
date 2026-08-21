@@ -54,7 +54,9 @@ function formatContribution(c, reflectionMap) {
 
 /**
  * Generates a summary for a completed round using LLM-based summarization.
- * Always attempts LLM summarization; throws on failure instead of falling back to placeholder.
+ * The orchestrator path retries empty responses; if the LLM still yields no
+ * text, degrades to a deterministic contributions digest instead of throwing —
+ * one flaky response must not kill the whole deliberation.
  */
 export async function summarizeRound(round, state, promptOrchestrator, getHighestTierModel, getFallbackModel) {
   const contribCount = round.contributions.length;
@@ -134,6 +136,22 @@ Provide 60-90 word summary with 4 bullets (Established / Contested / Evidence / 
     return semanticSummary.trim();
   }
 
-  // If LLM returned empty response, throw to make the failure visible
-  throw new Error("LLM returned empty summary response");
+  // Degrade gracefully: keep the round auditable with a deterministic digest
+  // rather than failing the meeting over a transient empty LLM response.
+  const turnRequestCount = Array.isArray(round.turn_requests) ? round.turn_requests.length : 0;
+  const digestBullets = summaryContributions.slice(0, 8).map((c) =>
+    `- [#${c.id}] ${c.participant_id} [${String(c.type).toUpperCase()}]: ${truncate(c.content ?? "", 140)}`
+  );
+  if (digestBullets.length === 0) {
+    digestBullets.push(`- No substantive positions staked (${contribCount} contribution(s): ${round.contributions.map((c) => c.type).join(", ")})`);
+  }
+  digestBullets.push(`- Turn requests: ${turnRequestCount}`);
+
+  summarizerLogger.warn(
+    "summary_degraded",
+    `Round ${round.number || "?"} LLM summary empty after retries — using deterministic digest`,
+    { round: round.number, contribCount, turnRequests: turnRequestCount },
+  );
+
+  return ["(Degraded summary — LLM returned empty response)", ...digestBullets].join("\n");
 }

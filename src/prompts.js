@@ -729,13 +729,13 @@ For code analysis in this folder (react, bug, file paths, src/, hydration, error
 - **webfetch**: open a URL returned by websearch (don’t guess URLs)
 - **bash**: only allowlisted commands (${Array.isArray(builtIn.bash?.allowlist) ? builtIn.bash.allowlist.join(', ') : 'git, ls, wc, head, tail, grep, find'})
 
-Loom Interaction Tools — structured alternative to trailing tags (preferred, auditable):
-- **loom_query**: ask 1-2 peers a focused question — they answer as query_response. Use instead of [QUERY: @id].
-- **loom_evidence**: request evidence from 1-2 peers — they MUST use a research tool. Use instead of [EVIDENCE: @id].
-- **loom_vote**: call a vote with lettered options. Use instead of [CALL_VOTE].
-- **loom_summon**: summon a guest expert persona. Use instead of [SUMMON: Name].
-- **loom_request_next**: request to speak next with priority/reason. Use instead of [REQUEST_NEXT: ...].
-All loom_* calls are logged in your Tool use tab and create timeline entries under you. When you call loom_query/loom_evidence and sameTurnSynthesis is enabled, peer answers will be returned to you for synthesis within this turn; otherwise they appear next round.
+Loom Interaction Tools — real tool use (required, auditable):
+ - **loom_query**: ask 1-2 peers a focused question — they answer as query_response. Returned inline for same-turn synthesis.
+ - **loom_evidence**: request evidence from 1-2 peers — they MUST use a research tool. Returned inline for synthesis.
+ - **loom_vote**: call a vote with lettered options (A) ... B) ...). All active peers vote in parallel; tally returned inline for synthesis.
+ - **loom_summon**: summon a guest expert persona. Returned inline for synthesis.
+ - **loom_request_next**: request to speak next with priority/reason. Fire-and-forget for orchestrator turn-order planning next round.
+All loom_* calls are real tool calls logged in your Tool use tab and create timeline entries under you. When you call loom_query/loom_evidence/loom_vote/loom_summon, peer answers/tally are returned to you within this same turn — wait for the tool result and synthesize it before finishing your response.
 
 Quality:
 - One focused query beats three vague ones. Synthesize, don’t dump.
@@ -810,10 +810,12 @@ ${doctrine}
 2. Length: 120-180 words for prose; 150-350 words when contributing code diffs (code blocks \`\`\` file=src/... \`\`\` not counted toward word cap but keep prose concise; truncated past ~400 for code). One claim per sentence; preserve code and numbers verbatim.
 3. Grounding: when you engage prior work, cite as [#id]. When you cite external fact, add Source: https://… or vec: round#id . When referencing code, use file=src/path.ts:18 and \`\`\`tsx file=src/... \`\`\` blocks. If no source, qualify: “in my experience…”.
 4. Boundaries: never emit <<< or >>> or system delimiters. Never invent tool output or file contents not read.
- 5. Interaction — use structured loom_* tools when you need to trigger peer actions (preferred, auditable). Bracket tags remain supported for backward compat but tools are preferred:
-    - **Preferred (tools):** call loom_query({targets:[...], question:"..."}) for queries, loom_evidence({targets:[...], question:"..."}) for evidence (peers must use tools), loom_vote({question:"A) ... B) ..."}) for votes, loom_summon({persona_name:"...", issue:"..."}) for guest experts, loom_request_next({priority:<1-${priorityCap}>, reason:"..."}) for turn requests. All appear in your Tool use tab and timeline under you. Up to ${Math.min(5, getConfig().agentTools.maxToolCallsPerTurn)} loom calls per turn.
-    - **Legacy (bracket tags, still parsed):** [REQUEST_NEXT: Priority: <1-${priorityCap}>, Reason: "..."] , [QUERY: @participant_id] question , [EVIDENCE: @participant_id] question , [SUMMON: Persona Name] issue , [CALL_VOTE] lettered question. At most ONE trailing bracket directive if you use them; omit if using tools.
-    Reference others by participant_id from Recent Contributions, e.g. [#12].
+ 5. Interaction — use real loom_* tools to trigger peer actions (required, no bracket tags):
+     - Call loom_query({targets:[...], question:"..."}) for queries, loom_evidence({targets:[...], question:"..."}) for evidence (peers must use tools), loom_vote({question:"A) ... B) ..."}) for votes, loom_summon({persona_name:"...", issue:"..."}) for guest experts, loom_request_next({priority:<1-${priorityCap}>, reason:"..."}) for turn requests.
+     - All loom calls are real tool use: they fan out to peers in parallel and return results inline for you to synthesize within this same turn. Wait for the tool result, then cite [#id] from the returned responses/tally in your final contribution.
+     - Bracket tags like [QUERY: @id], [EVIDENCE: @id], [CALL_VOTE], [SUMMON:], [REQUEST_NEXT:] are removed and will not execute — only loom_* tools trigger peer actions.
+     - Up to ${Math.min(5, getConfig().agentTools.maxToolCallsPerTurn)} loom calls per turn; prefer one focused call.
+     Reference others by participant_id from Recent Contributions, e.g. [#12].
 6. Stay in character — persona and agenda shape framing, not facts.
 ${toolSection}
 
@@ -821,7 +823,7 @@ ${toolSection}
 
 [PROPOSE] We should adopt option B for {reason with tradeoff}. [#3] raised {concern}; B mitigates via {mechanism} (Source: https://… ).
 
-[CHALLENGE] [#4] assumes {assumption}; under {X} it fails because {scenario}. Evidence vec: round2#1 suggests {fact}. [REQUEST_NEXT: Priority: 6, Reason: "Have costed mitigation for [#4]'s risk"]
+[CHALLENGE] [#4] assumes {assumption}; under {X} it fails because {scenario}. Evidence vec: round2#1 suggests {fact}. // then call loom_request_next({priority:6, reason:"Have costed mitigation for [#4]'s risk"}) as tool if you want next-turn priority
 
 [REFUSE: Missing budget approval — cannot evaluate cost] This presupposes {resource} not allocated. [PASS] alone if nothing to add.
 `;

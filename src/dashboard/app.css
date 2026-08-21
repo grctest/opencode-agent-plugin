@@ -1875,6 +1875,15 @@ input {
   gap: 0.5rem;
 }
 
+/* Peer tool calls section inside the Tool use tab (batch-linked callee evidence) */
+.loom-batch-peer-tools {
+  color: var(--color-fg, inherit);
+}
+
+.loom-batch-peer-tools .loom-tool-call-item {
+  background: color-mix(in oklch, #6366f1 6%, var(--color-card));
+}
+
 .loom-tool-calls-empty {
   padding: 1rem 0;
   text-align: center;

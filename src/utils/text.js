@@ -8,27 +8,25 @@ export function extractText(data) {
 
 /**
  * Extracts the agent's response from prompt data, handling all Part types.
- * Returns the last text segment (post-tool-execution) plus any tool results.
- * When tools are enabled, the LLM may call tools mid-response; this function
- * returns the final text after all tool calls have been resolved.
- * 
- * Key design: Returns only the LAST TextPart (not concatenated).
- * Pre-tool text ("Let me look that up...") is noise — the agent's actual
- * response is the final text after tool execution.
+ * Returns text plus any tool results. For audit completeness we preserve
+ * ALL non-ignored TextParts (joined) so citations in pre-tool chatter
+ * (e.g., "Source: https://…") are not silently lost — the dashboard can
+ * then show the full evidence trail. The final segment is still primary,
+ * but pre-tool text is retained for debugging (stored in allTexts).
  */
 export function extractAgentResponse(data) {
-  if (!data?.parts) return { text: null, toolResults: [], reasoning: null };
+  if (!data?.parts) return { text: null, toolResults: [], reasoning: null, allTexts: [] };
 
   let lastText = null;
+  const allTexts = [];
   const toolResults = [];
   const reasoningParts = [];
 
   for (const part of data.parts) {
     switch (part.type) {
       case "text":
-        // Track the LAST text part — this is the agent's actual response.
-        // Pre-tool text ("Let me look that up...") is noise and should be ignored.
         if (!part.ignored && part.text) {
+          allTexts.push(part.text);
           lastText = part.text;
         }
         break;
@@ -48,7 +46,21 @@ export function extractAgentResponse(data) {
         {
           const tool = part;
           const status = tool.state?.status ?? null;
-          if (!status) break;
+          if (!status) {
+            // Audit-first: never silently drop a ToolPart. Record it as "pending"
+            // so the dashboard can show an attempted call even when the stream
+            // ended before terminal state.
+            toolResults.push({
+              tool: tool.tool,
+              callID: tool.callID,
+              status: "pending",
+              title: tool.state?.title,
+              input: tool.state?.input ?? {},
+              metadata: tool.state?.metadata ?? null,
+              error: "ToolPart captured without terminal state (pending/unknown)",
+            });
+            break;
+          }
           const callInput = tool.state?.input ?? {};
           const result = {
             tool: tool.tool,
@@ -119,25 +131,45 @@ export function extractAgentResponse(data) {
 
       case "subtask":
         // Subtask result — capture text if available
-        if (part.text) lastText = part.text;
+        if (part.text) {
+          allTexts.push(part.text);
+          lastText = part.text;
+        }
+        break;
+
+      default:
+        // Audit-first: unknown part types are logged once so a renamed/future
+        // part type (e.g. "tool_use") never silently zeroes the Tool use tab.
+        if (!extractAgentResponse._warnedTypes) extractAgentResponse._warnedTypes = new Set();
+        if (!extractAgentResponse._warnedTypes.has(part.type)) {
+          console.warn(`[loom] extractAgentResponse encountered unknown part type "${part.type}" — not captured as tool or text`);
+          extractAgentResponse._warnedTypes.add(part.type);
+        }
         break;
     }
   }
 
   // Synthesize file-block tools from markdown fences so file writes are auditable
   // even when the LLM only emitted ```lang file=path``` without a real tool call.
-  // This complements the patch/file Part capture above and makes Tool use tab useful.
-  if (lastText) {
-    const synthetic = extractFileBlockTools(lastText);
+  // Scan ALL text parts (not just last) so pre-tool file= blocks are also captured.
+  const textForSynthetic = allTexts.join("\n");
+  if (textForSynthetic) {
+    const synthetic = extractFileBlockTools(textForSynthetic);
     if (synthetic.length > 0) {
-      const existingTitles = new Set(toolResults.map((t) => t.title).filter(Boolean));
-      const existingInputs = toolResults.map((t) => {
-        try { return typeof t.input === "string" ? t.input : JSON.stringify(t.input ?? ""); } catch { return ""; }
-      }).join(" ");
+      // Dedup only against exact file-path matches in real tool inputs — a loose
+      // substring test over all inputs suppressed legitimate synthetic entries.
+      const existingFilePaths = new Set();
+      for (const t of toolResults) {
+        let inp = t.input;
+        try { inp = typeof inp === "string" ? JSON.parse(inp) : inp; } catch {}
+        if (inp && typeof inp === "object") {
+          for (const key of ["file", "filePath", "path"]) {
+            if (typeof inp[key] === "string") existingFilePaths.add(inp[key]);
+          }
+        }
+      }
       for (const st of synthetic) {
-        if (existingTitles.has(st.title)) continue;
-        if (existingInputs.includes(st.title)) continue;
-        toolResults.push(st);
+        if (!existingFilePaths.has(st.title)) toolResults.push(st);
       }
     }
   }
@@ -146,6 +178,7 @@ export function extractAgentResponse(data) {
     text: lastText,
     reasoning: reasoningParts.join("\n").trim(),
     toolResults,
+    allTexts,
   };
 }
 
@@ -176,7 +209,7 @@ export function extractFileBlockTools(text) {
       status: "completed",
       title: filePath,
       input: { file: filePath, synthetic: true },
-      output: code.slice(0, 2000),
+      output: code,
       metadata: { synthetic: true, source: "markdown-file-block" },
     });
   }
@@ -190,25 +223,47 @@ export function truncate(text, max) {
   return cleaned.slice(0, max - 3) + "...";
 }
 
+/** Safe JSON.stringify — never throws; falls back to inspected string on circular/BigInt. */
+function safeStringify(value) {
+  if (value == null) return null;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    try {
+      return String(value);
+    } catch {
+      return "[unserializable]";
+    }
+  }
+}
+
 /**
  * Normalizes raw extractAgentResponse tool results into the stored tool_calls
  * shape. Preserves attempt metadata (status, attempted_tool, input) so the
  * timeline can surface calls that were attempted but failed/invalid.
+ * LOSSLESS: stores full input/output/error (no truncation) so every executed
+ * tool is auditable. UI may show preview slices but storage is complete.
  */
 export function mapToolResults(toolResults) {
   return (toolResults ?? []).map((t) => {
-    const error = t.error
-      ? (typeof t.error === "string" ? t.error : JSON.stringify(t.error))
+    const error = t.error != null
+      ? (typeof t.error === "string" ? t.error : safeStringify(t.error))
       : null;
+    // Preserve full fidelity — no slicing. The dashboard can truncate for display,
+    // but the DB must retain the complete evidence for audit (per bug-fix requirement).
     return {
       tool: t.tool,
       callID: t.callID,
       status: t.status ?? null,
       attempted_tool: t.attempted_tool ?? null,
       title: t.title ?? null,
-      output: t.output ? String(t.output).slice(0, 2000) : null,
-      error: error ? error.slice(0, 500) : null,
-      input: t.input && typeof t.input === "object" && Object.keys(t.input).length ? JSON.stringify(t.input).slice(0, 500) : null,
+      output: t.output != null ? (typeof t.output === "string" ? t.output : safeStringify(t.output)) : null,
+      error: error ?? null,
+      input: safeStringify(
+        typeof t.input === "object" && t.input !== null && Object.keys(t.input).length
+          ? t.input
+          : (t.input ?? null)
+      ),
       metadata: t.metadata ?? null,
     };
   });

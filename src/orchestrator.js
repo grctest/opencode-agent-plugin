@@ -121,8 +121,28 @@ export class MeetingOrchestrator {
     return this.#stateManager.getState();
   }
 
-  getOrchestratorMessages() {
+   getOrchestratorMessages() {
     return [...this.#orchestratorMessages];
+  }
+
+  getStateManager() {
+    return this.#stateManager;
+  }
+
+  getSessionManager() {
+    return this.#sessionManager;
+  }
+
+  getDatabase() {
+    return this.#database;
+  }
+
+  getRoundExecutor() {
+    return this.#roundExecutor;
+  }
+
+  getVectorIndex() {
+    return this.#vectorIndex;
   }
 
   cancel() {

@@ -925,7 +925,7 @@ export class MeetingDatabase {
 
     const contributions = this.#db
       .prepare(
-        `SELECT id, participant_id, round, type, content, target_which, batch_id, created_at
+        `SELECT id, participant_id, round, type, content, target_which, batch_id, tool_calls, created_at
          FROM contributions WHERE meeting_id = ? ORDER BY round ASC, id ASC`,
       )
       .all(meetingId);
@@ -952,6 +952,7 @@ export class MeetingDatabase {
         round: c.round,
         targets_which: c.target_which != null ? Number(c.target_which) : null,
         batch_id: c.batch_id ?? null,
+        tool_calls: c.tool_calls ? JSON.parse(c.tool_calls) : null,
         created_at: c.created_at,
       });
     }

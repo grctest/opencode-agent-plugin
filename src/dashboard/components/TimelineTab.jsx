@@ -24,6 +24,8 @@ const ORCHESTRATOR_ITEM_HEIGHT = 80;
 
 const ROUND_SUMMARY_HEIGHT = 88;
 
+const LOOM_INVOCATION_HEIGHT = 72;
+
 const ModelFallbackItem = memo(({ error, participantName }) => {
   const [expanded, setExpanded] = useState(false);
   const name = participantName(error.participant_id);
@@ -106,6 +108,7 @@ function getRowHeight(item) {
   if (item.type === "summoned_response") return SUMMONED_RESPONSE_HEIGHT;
   if (item.type === "vote_response") return VOTE_RESPONSE_HEIGHT;
   if (item.type === "vote_tally") return VOTE_TALLY_HEIGHT;
+  if (item.type === "loom_invocation") return LOOM_INVOCATION_HEIGHT;
   if (item.type === "orchestrator") return ORCHESTRATOR_ITEM_HEIGHT;
   if (item.type === "thinking_turn") return THINKING_TURN_HEIGHT;
   if (item.type === "thinking_reflection") return THINKING_REFLECTION_HEIGHT;
@@ -151,6 +154,51 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
           {item.contributions.map((c) => (
             <ContributionItem key={c.id} contribution={c} participantName={participantName(item.agentId)} onDialogOpen={onDialogOpen} />
           ))}
+        </div>
+      </div>
+    );
+  }
+  if (item.type === "loom_invocation") {
+    const { invocation } = item;
+    const toolName = invocation.tool ?? invocation.attempted_tool ?? "loom";
+    const isError = !!invocation.error || invocation.status === "error";
+    let detail = "";
+    try {
+      const input = typeof invocation.input === "string" ? JSON.parse(invocation.input) : invocation.input;
+      if (toolName === "loom_query" || toolName === "loom_evidence") {
+        detail = `${Array.isArray(input.targets) ? input.targets.join(", ") : ""}: ${(input.question ?? "").slice(0,80)}`;
+      } else if (toolName === "loom_vote") {
+        detail = (input.question ?? "").slice(0,80);
+      } else if (toolName === "loom_summon") {
+        detail = `${input.persona_name ?? input.personaName ?? ""}: ${(input.issue ?? "").slice(0,60)}`;
+      } else if (toolName === "loom_request_next") {
+        detail = `P${input.priority} ${input.reason ?? ""}`.slice(0,80);
+      } else if (input && typeof input === "object") detail = JSON.stringify(input).slice(0,80);
+    } catch { detail = invocation.input ? String(invocation.input).slice(0,80) : ""; }
+    // Clicking the invocation row opens the invoker's dialog (Tool use tab shows full evidence)
+    const openInvokerDialog = (e) => {
+      e.stopPropagation();
+      const source = (contributions ?? []).find(c => c.id === item.sourceContributionId);
+      if (source && onDialogOpen) {
+        onDialogOpen({ contribution: source, participantName: participantName(item.sourceParticipantId), isLoomInvocation: true });
+      }
+    };
+    return (
+      <div style={style} className="loom-vrow loom-vrow-loom-invocation" title={`${detail} — click to open invoker's Tool use`}>
+        <div
+          className="loom-card loom-contribution-card loom-loom-invocation-row loom-contrib-clickable"
+          style={{ borderLeft: "3px solid #6366f1", paddingLeft: "1rem", marginLeft: "2rem", opacity: 0.95, cursor: "pointer" }}
+          onClick={openInvokerDialog}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openInvokerDialog(e); } }}
+        >
+          <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">
+            <span className="loom-badge loom-badge-orchestrator" style={{ background: isError ? "#dc2626" : "#6366f1" }}>{toolName.replace("loom_", "")}</span>
+            <span className="loom-text-xs loom-text-muted">{detail}</span>
+            <span className={cn("loom-tool-call-status", isError ? "loom-tool-call-error" : "loom-tool-call-success")} style={{ marginLeft: "auto", fontSize: "0.65rem", padding: "2px 6px", borderRadius: "4px", background: isError ? "#fee2e2" : "#dcfce7", color: isError ? "#dc2626" : "#16a34a" }}>{isError ? "error" : "invoked"}</span>
+          </div>
+          {invocation.output && <pre className="loom-tool-call-output" style={{ marginTop: "0.5rem", fontSize: "0.7rem", maxHeight: "60px", overflowY: "auto", whiteSpace: "pre-wrap" }}>{typeof invocation.output === "string" ? invocation.output.slice(0,300) : JSON.stringify(invocation.output).slice(0,300)}</pre>}
         </div>
       </div>
     );
@@ -472,6 +520,11 @@ const TimelineTabBase = ({
         const consumedVoteIds = new Set();
         const voteTallies = [];
         const consumedTallyIds = new Set();
+        // Batch grouping for inline real tool use where targets_which is null but batch_id links to invoker
+        const queryByBatch = new Map();
+        const evidenceByBatch = new Map();
+        const votesByBatch = new Map();
+        const talliesByBatch = new Map();
 
         for (const c of contribs) {
           if (c.type === "reflection") {
@@ -485,12 +538,18 @@ const TimelineTabBase = ({
             if (targetId != null) {
               if (!queryResponsesByTarget.has(targetId)) queryResponsesByTarget.set(targetId, []);
               queryResponsesByTarget.get(targetId).push(c);
+            } else if (c.batch_id) {
+              if (!queryByBatch.has(c.batch_id)) queryByBatch.set(c.batch_id, []);
+              queryByBatch.get(c.batch_id).push(c);
             }
           } else if (c.type === "evidence_response") {
             const targetId = c.targets_which;
             if (targetId != null) {
               if (!evidenceResponsesByTarget.has(targetId)) evidenceResponsesByTarget.set(targetId, []);
               evidenceResponsesByTarget.get(targetId).push(c);
+            } else if (c.batch_id) {
+              if (!evidenceByBatch.has(c.batch_id)) evidenceByBatch.set(c.batch_id, []);
+              evidenceByBatch.get(c.batch_id).push(c);
             }
           } else if (c.type === "summoned_response") {
             summonedResponses.push(c);
@@ -499,8 +558,15 @@ const TimelineTabBase = ({
             if (targetId != null) {
               if (!votesByTarget.has(targetId)) votesByTarget.set(targetId, []);
               votesByTarget.get(targetId).push(c);
+            } else if (c.batch_id) {
+              if (!votesByBatch.has(c.batch_id)) votesByBatch.set(c.batch_id, []);
+              votesByBatch.get(c.batch_id).push(c);
             }
           } else if (c.type === "vote_tally") {
+            if (c.batch_id) {
+              if (!talliesByBatch.has(c.batch_id)) talliesByBatch.set(c.batch_id, []);
+              talliesByBatch.get(c.batch_id).push(c);
+            }
             voteTallies.push(c);
           } else {
             const key = c.participant_id;
@@ -516,6 +582,21 @@ const TimelineTabBase = ({
             round,
             contributions: agentContribs,
           });
+
+          // Loom invocations — aesthetic indented rows under the invoker, mirroring reflections
+          // These are not separate LLM calls for vote tally (which is code), but show the tool dispatch that was interpreted inline.
+          for (const c of agentContribs) {
+            const loomCalls = (c.tool_calls ?? []).filter(tc => (tc.tool ?? tc.attempted_tool ?? "").startsWith("loom_"));
+            for (const tc of loomCalls) {
+              items.push({
+                type: "loom_invocation",
+                invocation: tc,
+                sourceContributionId: c.id,
+                sourceParticipantId: c.participant_id,
+                round,
+              });
+            }
+          }
 
           for (const c of agentContribs) {
             if (reflectionsByTarget.has(c.id)) {
@@ -556,6 +637,41 @@ const TimelineTabBase = ({
                   voteResponse: v,
                   round,
                 });
+              }
+            }
+            // Batch-linked inline responses (real tool use): batch_id groups when targets_which is null
+            if (c.batch_id) {
+              if (queryByBatch.has(c.batch_id)) {
+                for (const qr of queryByBatch.get(c.batch_id)) {
+                  if (!consumedQueryIds.has(qr.id)) {
+                    consumedQueryIds.add(qr.id);
+                    items.push({ type: "query_response", queryResponse: qr, round });
+                  }
+                }
+              }
+              if (evidenceByBatch.has(c.batch_id)) {
+                for (const er of evidenceByBatch.get(c.batch_id)) {
+                  if (!consumedEvidenceIds.has(er.id)) {
+                    consumedEvidenceIds.add(er.id);
+                    items.push({ type: "evidence_response", evidenceResponse: er, round });
+                  }
+                }
+              }
+              if (votesByBatch.has(c.batch_id)) {
+                for (const v of votesByBatch.get(c.batch_id)) {
+                  if (!consumedVoteIds.has(v.id)) {
+                    consumedVoteIds.add(v.id);
+                    items.push({ type: "vote_response", voteResponse: v, round });
+                  }
+                }
+              }
+              if (talliesByBatch.has(c.batch_id)) {
+                for (const t of talliesByBatch.get(c.batch_id)) {
+                  if (!consumedTallyIds.has(t.id)) {
+                    consumedTallyIds.add(t.id);
+                    items.push({ type: "vote_tally", tally: t, round });
+                  }
+                }
               }
             }
           }
@@ -613,6 +729,31 @@ const TimelineTabBase = ({
                 voteResponse: v,
                 round,
               });
+            }
+          }
+        }
+        // Orphan batch-linked votes (if invoker had no regular contribution but vote still exists — fallback)
+        for (const [, votes] of votesByBatch) {
+          for (const v of votes) {
+            if (!consumedVoteIds.has(v.id)) {
+              items.push({ type: "vote_response", voteResponse: v, round });
+              consumedVoteIds.add(v.id);
+            }
+          }
+        }
+        for (const [, qrs] of queryByBatch) {
+          for (const qr of qrs) {
+            if (!consumedQueryIds.has(qr.id)) {
+              items.push({ type: "query_response", queryResponse: qr, round });
+              consumedQueryIds.add(qr.id);
+            }
+          }
+        }
+        for (const [, ers] of evidenceByBatch) {
+          for (const er of ers) {
+            if (!consumedEvidenceIds.has(er.id)) {
+              items.push({ type: "evidence_response", evidenceResponse: er, round });
+              consumedEvidenceIds.add(er.id);
             }
           }
         }
@@ -902,10 +1043,10 @@ const TimelineTabBase = ({
                               )}
                             </div>
                             {tc.input && (
-                              <pre className="loom-tool-call-input">{tc.input}</pre>
+                              <pre className="loom-tool-call-input">{typeof tc.input === "string" ? tc.input : JSON.stringify(tc.input, null, 2)}</pre>
                             )}
                             {tc.output && (
-                              <pre className="loom-tool-call-output">{tc.output}</pre>
+                              <pre className="loom-tool-call-output">{typeof tc.output === "string" ? tc.output : JSON.stringify(tc.output, null, 2)}</pre>
                             )}
                             {tc.error && (
                               <pre className="loom-tool-call-error-output">{typeof tc.error === "string" ? tc.error : JSON.stringify(tc.error)}</pre>
@@ -914,9 +1055,45 @@ const TimelineTabBase = ({
                         );
                       })}
                     </div>
+                  ) : dialogContribution.contribution.tool_calls && Array.isArray(dialogContribution.contribution.tool_calls) && dialogContribution.contribution.tool_calls.length === 0 ? (
+                    <p className="loom-text loom-text-muted loom-tool-calls-empty">Tools were offered but no calls were made — model answered from memory/training data (no webfetch/websearch/read executed).</p>
                   ) : (
-                    <p className="loom-text loom-text-muted loom-tool-calls-empty">No tool calls were recorded for this contribution.</p>
+                    <p className="loom-text loom-text-muted loom-tool-calls-empty">No tool call data recorded (tools may not have been offered for this turn).</p>
                   )}
+                  {(() => {
+                    const batchId = dialogContribution.contribution.batch_id;
+                    if (!batchId || !contributions) return null;
+                    const peers = contributions.filter(c => c.batch_id === batchId && c.id !== dialogContribution.contribution.id && c.tool_calls && c.tool_calls.length > 0);
+                    if (peers.length === 0) return null;
+                    return (
+                      <div className="loom-batch-peer-tools" style={{ marginTop: "1rem", borderTop: "1px solid var(--color-border)", paddingTop: "0.75rem" }}>
+                        <h4 className="loom-text loom-text-sm" style={{ fontWeight: 600, marginBottom: "0.5rem" }}>Peer tool calls in same batch ({peers.length} response{peers.length!==1?"s":""} via {batchId.slice(0,8)}…)</h4>
+                        <p className="loom-text-xs loom-text-muted" style={{ marginBottom: "0.5rem" }}>This contribution triggered peer actions (loom_query/evidence/vote/summon). Their research tool calls are stored on the peer responses, not on this invoker row — shown here for audit:</p>
+                        {peers.map(pc => {
+                          const peerName = participantName ? participantName(pc.participant_id) : pc.participant_id;
+                          return (
+                            <div key={pc.id} style={{ marginBottom: "0.75rem", paddingLeft: "0.5rem", borderLeft: "2px solid #6366f1" }}>
+                              <div className="loom-text-xs" style={{ fontWeight: 600 }}>{peerName} — {pc.type} #{pc.id} {pc.tool_calls.length} tool{pc.tool_calls.length!==1?"s":""}</div>
+                              <div className="loom-tool-calls-list">
+                                {pc.tool_calls.map((tc, j) => (
+                                  <div key={tc.callID ?? j} className="loom-tool-call-item">
+                                    <div className="loom-tool-call-header">
+                                      <span className="loom-tool-call-name">{tc.attempted_tool ? `attempted ${tc.attempted_tool}` : tc.tool}</span>
+                                      {tc.title && <span className="loom-tool-call-title">{tc.title}</span>}
+                                      <span className={tc.error || tc.status==="error" ? "loom-tool-call-status loom-tool-call-error" : "loom-tool-call-status loom-tool-call-success"}>{tc.error || tc.status==="error" ? "error" : "ok"}</span>
+                                    </div>
+                                    {tc.input && <pre className="loom-tool-call-input">{tc.input}</pre>}
+                                    {tc.output && <pre className="loom-tool-call-output">{tc.output}</pre>}
+                                    {tc.error && <pre className="loom-tool-call-error-output">{typeof tc.error==="string"?tc.error:JSON.stringify(tc.error)}</pre>}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
               {activeTab === "details" && (

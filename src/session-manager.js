@@ -5,6 +5,12 @@ import { SessionContract } from "./session-contract.js";
 
 const MAX_PROGRESS_FAILURES_BEFORE_ALERT = 3;
 
+// Empty-but-OK responses are treated as transient failures: retried with the
+// same backoff as network/provider errors instead of propagating blank text.
+function isEmptyResponseError(err) {
+  return err?.name === "EmptyResponseError";
+}
+
 export class SessionManager {
   #client;
   #directory;
@@ -134,12 +140,17 @@ export class SessionManager {
               parts: [{ type: "text", text: message }],
             });
             if (!res.ok) throw res.error;
+            if (!String(res.text ?? "").trim()) {
+              const err = new Error("Empty response from orchestrator LLM");
+              err.name = "EmptyResponseError";
+              throw err;
+            }
             return res;
           }, {
             maxAttempts: getConfig().maxRetryAttempts,
             baseDelayMs: getConfig().retryBaseDelayMs,
             maxDelayMs: getConfig().retryMaxDelayMs,
-            retryable: isRetryableError,
+            retryable: (err) => isRetryableError(err) || isEmptyResponseError(err),
           });
           return { text: result.text, tokens: result.tokens };
         } finally {
@@ -157,12 +168,17 @@ export class SessionManager {
         parts: [{ type: "text", text: message }],
       });
       if (!res.ok) throw res.error;
+      if (!String(res.text ?? "").trim()) {
+        const err = new Error("Empty response from orchestrator LLM");
+        err.name = "EmptyResponseError";
+        throw err;
+      }
       return res;
     }, {
       maxAttempts: getConfig().maxRetryAttempts,
       baseDelayMs: getConfig().retryBaseDelayMs,
       maxDelayMs: getConfig().retryMaxDelayMs,
-      retryable: isRetryableError,
+      retryable: (err) => isRetryableError(err) || isEmptyResponseError(err),
     });
     return { text: result.text, tokens: result.tokens };
   }

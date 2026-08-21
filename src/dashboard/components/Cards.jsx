@@ -268,17 +268,21 @@ export const ReflectionRow = memo(({ reflection, contributions, participantName,
     return content.replace(/^\[Reflection on #\d+ \[[\w]+\] by .+?\]\s*/m, "");
   }, [content]);
   const isLong = stripped.length > 300;
+  // Audit-first: always make rows with recorded tool calls clickable so their
+  // Tool use tab is reachable even when the text is short.
+  const hasTools = (reflection.tool_calls ?? []).length > 0;
+  const clickable = isLong || hasTools;
   const html = useMemo(() => renderMarkdown(stripped), [stripped]);
 
   const openDialog = () => onDialogOpen?.({ contribution: reflection, participantName: reflectionAgentName, isReflection: true, triggerAgentName, triggerType });
 
   return (
     <div
-      className={cn("loom-card", "loom-contribution-card", "loom-contrib-type-reflection", "loom-reflection-row", isLong && "loom-contrib-clickable")}
+      className={cn("loom-card", "loom-contribution-card", "loom-contrib-type-reflection", "loom-reflection-row", clickable && "loom-contrib-clickable")}
       onClick={openDialog}
-      role={isLong ? "button" : undefined}
-      tabIndex={isLong ? 0 : undefined}
-      onKeyDown={isLong ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDialog(); } } : undefined}
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onKeyDown={clickable ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDialog(); } } : undefined}
     >
       <div>
         <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">
@@ -310,17 +314,19 @@ export const QueryResponseRow = memo(({ queryResponse, contributions, participan
     return content.replace(/^\[Response to query from .+?\]\s*/m, "");
   }, [content]);
   const isLong = stripped.length > 300;
+  const hasTools = (queryResponse.tool_calls ?? []).length > 0;
+  const clickable = isLong || hasTools;
   const html = useMemo(() => renderMarkdown(stripped), [stripped]);
 
   const openDialog = () => onDialogOpen?.({ contribution: queryResponse, participantName: responderName, isQueryResponse: true, sourceAgentName });
 
   return (
     <div
-      className={cn("loom-card", "loom-contribution-card", "loom-contrib-type-query_response", "loom-query-response-row", isLong && "loom-contrib-clickable")}
+      className={cn("loom-card", "loom-contribution-card", "loom-contrib-type-query_response", "loom-query-response-row", clickable && "loom-contrib-clickable")}
       onClick={openDialog}
-      role={isLong ? "button" : undefined}
-      tabIndex={isLong ? 0 : undefined}
-      onKeyDown={isLong ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDialog(); } } : undefined}
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onKeyDown={clickable ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDialog(); } } : undefined}
     >
       <div>
         <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">
@@ -353,17 +359,19 @@ export const EvidenceResponseRow = memo(({ evidenceResponse, contributions, part
     return content.replace(/^\[Evidence from .+? on .+?\]\s*/m, "");
   }, [content]);
   const isLong = stripped.length > 300;
+  const hasTools = (evidenceResponse.tool_calls ?? []).length > 0;
+  const clickable = isLong || hasTools;
   const html = useMemo(() => renderMarkdown(stripped), [stripped]);
 
   const openDialog = () => onDialogOpen?.({ contribution: evidenceResponse, participantName: responderName, isEvidenceResponse: true, sourceAgentName, sourceType });
 
   return (
     <div
-      className={cn("loom-card", "loom-contribution-card", "loom-contrib-type-evidence_response", "loom-evidence-response-row", isLong && "loom-contrib-clickable")}
+      className={cn("loom-card", "loom-contribution-card", "loom-contrib-type-evidence_response", "loom-evidence-response-row", clickable && "loom-contrib-clickable")}
       onClick={openDialog}
-      role={isLong ? "button" : undefined}
-      tabIndex={isLong ? 0 : undefined}
-      onKeyDown={isLong ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDialog(); } } : undefined}
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onKeyDown={clickable ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDialog(); } } : undefined}
     >
       <div>
         <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">
@@ -393,6 +401,8 @@ export const SummonedResponseRow = memo(({ summonedResponse, participantName, on
     return content.replace(/^\[Summoned: .+?\]\s*/m, "");
   }, [content]);
   const isLong = stripped.length > 300;
+  const hasTools = (summonedResponse.tool_calls ?? []).length > 0;
+
   const html = useMemo(() => renderMarkdown(stripped), [stripped]);
 
   // Extract persona name and tier from the content prefix
@@ -403,13 +413,14 @@ export const SummonedResponseRow = memo(({ summonedResponse, participantName, on
 
   const openDialog = () => onDialogOpen?.({ contribution: summonedResponse, participantName: personaInfo.name, isSummonedResponse: true, personaName: personaInfo.name, personaTier: personaInfo.tier });
 
+  const clickable = isLong || hasTools;
   return (
     <div
-      className={cn("loom-card", "loom-contribution-card", "loom-contrib-type-summoned_response", "loom-summoned-response-row", isLong && "loom-contrib-clickable")}
+      className={cn("loom-card", "loom-contribution-card", "loom-contrib-type-summoned_response", "loom-summoned-response-row", clickable && "loom-contrib-clickable")}
       onClick={openDialog}
-      role={isLong ? "button" : undefined}
-      tabIndex={isLong ? 0 : undefined}
-      onKeyDown={isLong ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDialog(); } } : undefined}
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onKeyDown={clickable ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDialog(); } } : undefined}
     >
       <div>
         <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">
@@ -441,17 +452,19 @@ export const VoteResponseRow = memo(({ voteResponse, contributions, participantN
     return content.replace(/^\[Vote from .+?\]\s*/m, "");
   }, [content]);
   const isLong = stripped.length > 300;
+  const hasTools = (voteResponse.tool_calls ?? []).length > 0;
+  const clickable = isLong || hasTools;
   const html = useMemo(() => renderMarkdown(stripped), [stripped]);
 
   const openDialog = () => onDialogOpen?.({ contribution: voteResponse, participantName: voterName, isVoteResponse: true, sourceAgentName });
 
   return (
     <div
-      className={cn("loom-card", "loom-contribution-card", "loom-contrib-type-vote_response", "loom-vote-response-row", isLong && "loom-contrib-clickable")}
+      className={cn("loom-card", "loom-contribution-card", "loom-contrib-type-vote_response", "loom-vote-response-row", clickable && "loom-contrib-clickable")}
       onClick={openDialog}
-      role={isLong ? "button" : undefined}
-      tabIndex={isLong ? 0 : undefined}
-      onKeyDown={isLong ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDialog(); } } : undefined}
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onKeyDown={clickable ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDialog(); } } : undefined}
     >
       <div>
         <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">
@@ -477,17 +490,19 @@ export const VoteTallyRow = memo(({ tally, participantName, onDialogOpen }) => {
     return content.replace(/^\[Vote Tally\]\s*/m, "");
   }, [content]);
   const isLong = stripped.length > 300;
+  const hasTools = (tally.tool_calls ?? []).length > 0;
+  const clickable = isLong || hasTools;
   const html = useMemo(() => renderMarkdown(stripped), [stripped]);
 
   const openDialog = () => onDialogOpen?.({ contribution: tally, participantName: orchestratorName, isVoteTally: true });
 
   return (
     <div
-      className={cn("loom-card", "loom-contribution-card", "loom-contrib-type-vote_tally", "loom-vote-tally-row", isLong && "loom-contrib-clickable")}
+      className={cn("loom-card", "loom-contribution-card", "loom-contrib-type-vote_tally", "loom-vote-tally-row", clickable && "loom-contrib-clickable")}
       onClick={openDialog}
-      role={isLong ? "button" : undefined}
-      tabIndex={isLong ? 0 : undefined}
-      onKeyDown={isLong ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDialog(); } } : undefined}
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onKeyDown={clickable ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDialog(); } } : undefined}
     >
       <div>
         <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">

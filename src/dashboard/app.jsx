@@ -328,54 +328,11 @@ export function App() {
 
   const { connected, reconnectAttempt, lastError } = useSSE(selectedMeeting, handleSSEEvent);
 
-  const isValidMeetingId = useCallback((id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id), []);
-  const getMeetingIdFromUrl = useCallback(() => {
-    try {
-      const fromSearch = new URLSearchParams(location.search).get("meeting");
-      if (fromSearch && isValidMeetingId(fromSearch)) return fromSearch;
-      const fromHash = location.hash.slice(1);
-      if (fromHash && isValidMeetingId(fromHash)) return fromHash;
-    } catch {}
-    return null;
-  }, [isValidMeetingId]);
-
   useEffect(() => {
-    if (meetings.length === 0) return;
-    const urlId = getMeetingIdFromUrl();
-    if (urlId && meetings.some((m) => m.meeting_id === urlId)) {
-      if (selectedMeeting !== urlId) setSelectedMeeting(urlId);
-      return;
-    }
-    if (!selectedMeeting && meetings.length > 0) {
+    if (meetings.length > 0 && !selectedMeeting) {
       setSelectedMeeting(meetings[0].meeting_id);
     }
-  }, [meetings, selectedMeeting, getMeetingIdFromUrl]);
-
-  useEffect(() => {
-    if (!selectedMeeting || !isValidMeetingId(selectedMeeting)) return;
-    try {
-      const url = new URL(window.location.href);
-      if (url.searchParams.get("meeting") !== selectedMeeting) {
-        url.searchParams.set("meeting", selectedMeeting);
-        window.history.replaceState(null, "", `?meeting=${selectedMeeting}${url.hash}`);
-      }
-    } catch {
-      if (location.hash.slice(1) !== selectedMeeting) {
-        window.history.replaceState(null, "", `#${selectedMeeting}`);
-      }
-    }
-  }, [selectedMeeting, isValidMeetingId]);
-
-  useEffect(() => {
-    const onPopState = () => {
-      const urlId = getMeetingIdFromUrl();
-      if (urlId && meetings.some((m) => m.meeting_id === urlId)) {
-        setSelectedMeeting(urlId);
-      }
-    };
-    window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
-  }, [meetings, getMeetingIdFromUrl]);
+  }, [meetings, selectedMeeting]);
 
   // Sync lastPollIdRef for SSE fallback from initial contributions
   useEffect(() => {

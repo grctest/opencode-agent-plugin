@@ -185,7 +185,35 @@ Your reflection is public and citeable. Be concise (80-150 words), grounded, in 
       });
     }
 
-    if (!text || text.trim().length < 10) return;
+    // Audit-first: even if the reflection text is short/empty, any executed tool
+    // calls MUST be persisted — never silently discard research evidence.
+    if (!text || text.trim().length < 10) {
+      if (toolResults.length > 0) {
+        reflectionLogger.warn("reflection_short_text_with_tools", `${listener.config.name} produced short/empty reflection but executed ${toolResults.length} tool(s) — storing tool-evidence-only contribution`, {
+          participant: listener.config.id,
+          round: stateManager.getCurrentRound(),
+          tools: toolResults.map(t => ({ tool: t.tool, status: t.status ?? null })),
+        });
+        const headerShort = `[Reflection on #${triggerParticipant.currentContributionId} [${triggerParticipant.currentContributionType.toUpperCase()}] by ${triggerParticipant.config.name} (Round ${stateManager.getCurrentRound()})]`;
+        const batchIdShort = triggerParticipant.currentBatchId ?? crypto.randomUUID();
+        const evidenceOnly = {
+          id: stateManager.nextContributionId(),
+          round: stateManager.getCurrentRound(),
+          participant_id: listener.config.id,
+          content: `${headerShort}\n\n(insufficient response text — tool evidence preserved)`,
+          type: "reflection",
+          targets_which: triggerParticipant.currentContributionId,
+          batch_id: batchIdShort,
+          tool_calls: mapToolResults(toolResults),
+          prompt_context: promptContext,
+          created_at: new Date().toISOString(),
+        };
+        stateManager.addContribution(evidenceOnly);
+        round.contributions.push(evidenceOnly);
+        db.addContributionWithTurnRequest(stateManager.getMeetingId(), evidenceOnly, null);
+      }
+      return;
+    }
 
     const contributionTools = mapToolResults(toolResults);
 

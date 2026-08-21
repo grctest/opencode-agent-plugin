@@ -98,6 +98,20 @@ export class SessionContract {
         throw new Error(result.error.message || JSON.stringify(result.error));
       }
 
+      // The opencode SDK returns HTTP 200 {info, parts} even when the provider
+      // fails mid-generation — the real cause lands in AssistantMessage.error.
+      // Surface it as a thrown error (with .status set) so retry/model-fallback
+      // machinery engages instead of the failure being masked as empty text.
+      const assistantError = result.data?.info?.error;
+      if (assistantError) {
+        const d = assistantError.data ?? {};
+        const err = new Error(`${assistantError.name}: ${d.message || JSON.stringify(d)}`);
+        if (d.statusCode) err.status = d.statusCode;
+        // Preserve partial response (may contain already-executed ToolParts)
+        err.partialData = result.data ?? null;
+        throw err;
+      }
+
       return {
         ok: true,
         data: result.data,
@@ -106,7 +120,11 @@ export class SessionContract {
         error: null,
       };
     } catch (error) {
-      return { ok: false, data: null, text: "", tokens: null, error };
+      // Audit-first: preserve whatever partial data the server returned so
+      // already-executed tool calls are not silently lost on failure.
+      // Callers treat falsy data as "nothing", so this is backward-compatible;
+      // salvage-capable callers can extract ToolParts from partial data.
+      return { ok: false, data: error?.partialData ?? null, text: "", tokens: null, error };
     }
   }
 
