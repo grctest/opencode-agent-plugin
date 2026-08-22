@@ -1,7 +1,7 @@
 import { useRef, useMemo, useCallback, useState, useEffect, memo } from "react";
 import { cn, relativeTime } from "../utils.js";
 import { ContributionItem, TurnRequestItem, ThinkingCard, ReflectionRow, QueryResponseRow, EvidenceResponseRow, SummonedResponseRow, VoteResponseRow, VoteTallyRow, OrchestratorItem, ORCHESTRATOR_TYPE_META, ContentDialog, renderMarkdown } from "./Cards.jsx";
-import { LoadingSkeleton } from "./Skeleton.jsx";
+
 import { List } from "react-window";
 
 const THINKING_TURN_HEIGHT = 56;
@@ -965,9 +965,6 @@ const flatItems = useMemo(() => {
           <p className="loom-text loom-text-muted">Waiting for agents to respond...</p>
           <p className="loom-text-xs loom-text-muted">Contributions will appear here in real-time</p>
         </div>
-      )}
-      {groupedContributions.length === 0 && contributions.length === 0 && isWeaving && (
-        <LoadingSkeleton rounds={2} />
       )}
       {flatItems.length > 0 && (
         <div className="loom-timeline-list">
