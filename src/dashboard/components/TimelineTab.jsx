@@ -1047,6 +1047,14 @@ const flatItems = useMemo(() => {
               >
                 Context
               </button>
+              <button
+                role="tab"
+                aria-selected={activeTab === "errors"}
+                className={cn("loom-dialog-tab", activeTab === "errors" && "loom-dialog-tab-active")}
+                onClick={() => setActiveTab("errors")}
+              >
+                Errors
+              </button>
             </div>
             <div className="loom-dialog-tab-panel" role="tabpanel">
               {activeTab === "response" && (
@@ -1325,6 +1333,39 @@ const flatItems = useMemo(() => {
                   })()}
                 </div>
               )}
+              {activeTab === "errors" && (() => {
+                const toolCalls = dialogContribution.contribution.tool_calls ?? [];
+                const errors = toolCalls.filter(tc => tc.status === "error" || tc.error);
+                if (errors.length === 0) {
+                  return <p className="loom-text loom-text-muted loom-tool-calls-empty">No errors recorded for this contribution.</p>;
+                }
+                return (
+                  <div className="loom-tool-calls-panel">
+                    <div className="loom-tool-calls-list">
+                      {errors.map((tc, i) => (
+                        <div key={tc.callID ?? i} className="loom-tool-call-item">
+                          <div className="loom-tool-call-header">
+                            <span className="loom-tool-call-name">{tc.attempted_tool ? `attempted ${tc.attempted_tool}` : tc.tool}</span>
+                            {tc.title && <span className="loom-tool-call-title">{tc.title}</span>}
+                            <span className="loom-tool-call-status loom-tool-call-error">
+                              {tc.status === "error" ? "error" : tc.status ?? "unknown"}
+                            </span>
+                          </div>
+                          {tc.input && (
+                            <pre className="loom-tool-call-input">{typeof tc.input === "string" ? tc.input : JSON.stringify(tc.input, null, 2)}</pre>
+                          )}
+                          {tc.error && (
+                            <pre className="loom-tool-call-error-output">{typeof tc.error === "string" ? tc.error : JSON.stringify(tc.error, null, 2)}</pre>
+                          )}
+                          {tc.output && !tc.error && (
+                            <pre className="loom-tool-call-output">{typeof tc.output === "string" ? tc.output : JSON.stringify(tc.output, null, 2)}</pre>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           </div>
         )}

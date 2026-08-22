@@ -155,6 +155,7 @@ export const Loom = async (input) => {
         if (!agentToolsConfig?.enabled || !agentToolsConfig?.loom?.loom_vector_search) {
           return { error: "Vector search is not enabled in configuration" };
         }
+        if (!context?.sessionID) return { error: "loom_vector_search: session context unavailable" };
 
         // 1. Resolve session → meeting
         const meetingInfo = await resolveMeeting(context.sessionID);
@@ -197,6 +198,7 @@ export const Loom = async (input) => {
         const cfg = config.getValue("agentTools");
         if (!cfg?.enabled || !cfg?.loom?.loom_query) return { error: "loom_query not enabled" };
         if (!args.targets || args.targets.length === 0) return { error: "targets required" };
+        if (!context?.sessionID) return { error: "loom_query: session context unavailable" };
         try {
           const meetingInfo = await resolveMeeting(context.sessionID);
           if (!meetingInfo) return { queued: true, note: "Query queued — meeting not yet resolved, will be handled post-store." , targets: args.targets, question: args.question };
@@ -212,9 +214,10 @@ export const Loom = async (input) => {
           // For now, return queued and let RoundExecutor handle post-store creation; the inline result will be the peer answers returned as tool output.
           // We perform the actual peer prompting here to provide inline results.
           const allParticipants = stateManager.getParticipants();
-          const targets = args.targets.map(id => allParticipants.find(p => p.config.id === id)).filter(p => p && p.status !== "failed" && p.status !== "passed" && p.status !== "muted");
+          if (!Array.isArray(allParticipants)) return { error: "loom_query: participant list unavailable" };
+          const targets = args.targets.map(id => allParticipants.find(p => p?.config?.id === id)).filter(p => p && p.status !== "failed" && p.status !== "passed" && p.status !== "muted");
           if (targets.length === 0) return { error: `No eligible targets among [${args.targets.join(", ")}] — all filtered (self/failed/passed).` };
-          const caller = allParticipants.find(p => p.session_id === context.sessionID) || allParticipants.find(p => p.config.id && args.targets.includes(p.config.id) === false) || null;
+          const caller = allParticipants.find(p => p.session_id === context.sessionID) || allParticipants.find(p => p?.config?.id && args.targets.includes(p.config.id) === false) || null;
           // Use a lightweight inline prompt for each target (without creating DB rows yet — let RoundExecutor create them post-store, but return preview)
           // For true inline, we prompt here and return the answers directly.
           const results = [];
@@ -255,7 +258,7 @@ export const Loom = async (input) => {
                 toolChoice: "auto",
                 timeoutMs: 60000,
               }, meetingInfo.meetingId);
-              if (!res.ok) { results.push({ participantId: target.config.id, error: res.error?.message ?? "prompt failed" }); continue; }
+              if (!res || !res.ok) { results.push({ participantId: target.config.id, error: res?.error?.message ?? "prompt failed" }); continue; }
                             const { text, toolResults } = extractAgentResponse(res.data);
               const content = (text ?? "").slice(0,2000);
               // Store as query_response for timeline aesthetic (so it appears as indented row even though inline)
@@ -306,6 +309,7 @@ export const Loom = async (input) => {
       async execute(args, context) {
         const cfg = config.getValue("agentTools");
         if (!cfg?.enabled || !cfg?.loom?.loom_evidence) return { error: "loom_evidence not enabled" };
+        if (!context?.sessionID) return { error: "loom_evidence: session context unavailable" };
         try {
           const meetingInfo = await resolveMeeting(context.sessionID);
           if (!meetingInfo) return { queued: true, targets: args.targets, question: args.question, note: "Evidence queued — meeting not resolved." };
@@ -314,7 +318,8 @@ export const Loom = async (input) => {
           const stateManager = engine.getStateManager();
           const sessionManager = engine.getSessionManager();
           const allParticipants = stateManager.getParticipants();
-          const targets = args.targets.map(id => allParticipants.find(p => p.config.id === id)).filter(p => p && p.status !== "failed" && p.status !== "passed" && p.status !== "muted");
+          if (!Array.isArray(allParticipants)) return { error: "loom_evidence: participant list unavailable" };
+          const targets = args.targets.map(id => allParticipants.find(p => p?.config?.id === id)).filter(p => p && p.status !== "failed" && p.status !== "passed" && p.status !== "muted");
           if (targets.length === 0) return { error: `No eligible targets among [${args.targets.join(", ")}]` };
           const results = [];
           for (const target of targets) {
@@ -351,7 +356,7 @@ export const Loom = async (input) => {
                 toolChoice: "required",
                 timeoutMs: 90000,
               }, meetingInfo.meetingId);
-              if (!res.ok) { results.push({ participantId: target.config.id, error: res.error?.message ?? "prompt failed" }); continue; }
+              if (!res || !res.ok) { results.push({ participantId: target.config.id, error: res?.error?.message ?? "prompt failed" }); continue; }
                             const { text, toolResults } = extractAgentResponse(res.data);
               const content = (text ?? "").slice(0,2000);
               try {
@@ -397,6 +402,7 @@ export const Loom = async (input) => {
       async execute(args, context) {
         const cfg = config.getValue("agentTools");
         if (!cfg?.enabled || !cfg?.loom?.loom_vote) return { error: "loom_vote not enabled" };
+        if (!context?.sessionID) return { error: "loom_vote: session context unavailable" };
         try {
           const meetingInfo = await resolveMeeting(context.sessionID);
           if (!meetingInfo) return { queued: true, question: args.question, note: "Vote queued — meeting not resolved." };
@@ -407,7 +413,8 @@ export const Loom = async (input) => {
           const db = engine.getDatabase();
           if (!stateManager || !sessionManager || !db) return { queued: true, question: args.question, note: "Vote queued — state not ready." };
           const allParticipants = stateManager.getParticipants();
-          const caller = allParticipants.find(p => p.session_id === context.sessionID) || null;
+          if (!Array.isArray(allParticipants)) return { error: "loom_vote: participant list unavailable" };
+          const caller = allParticipants.find(p => p?.session_id === context.sessionID) || null;
           const callerBatchId = caller?.currentBatchId ?? `inline-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
           const currentRound = stateManager.getCurrentRound();
           let roundObj = null;
@@ -552,6 +559,7 @@ export const Loom = async (input) => {
       async execute(args, context) {
         const cfg = config.getValue("agentTools");
         if (!cfg?.enabled || !cfg?.loom?.loom_summon) return { error: "loom_summon not enabled" };
+        if (!context?.sessionID) return { error: "loom_summon: session context unavailable" };
         try {
           const meetingInfo = await resolveMeeting(context.sessionID);
           if (!meetingInfo) return { queued: true, persona_name: args.persona_name, issue: args.issue, note: "Summon queued — meeting not resolved." };

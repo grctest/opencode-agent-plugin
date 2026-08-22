@@ -839,7 +839,7 @@ ${doctrine}
 
 ## OUTPUT CONTRACT — read this last, it governs your response
 
-1. Declare your type FIRST: call loom_type({type: "propose"|"challenge"|"refine"|"support"|"dissent"|"synthesize"|"question"|"refuse", reason?: string}) exactly once per turn. This is fire-and-forget — call the tool and immediately write your contribution text in the same turn; you do not need to wait for a tool result. Do NOT start your text with [PROPOSE]/[CHALLENGE] etc. — the tool declares the type, not a bracket prefix. If you have nothing to add, output exactly "[PASS]" alone (no loom_type needed, no other text).
+1. **MANDATORY**: Call loom_type({type: "propose"|"challenge"|"refine"|"support"|"dissent"|"synthesize"|"question"|"refuse", reason?: string}) **exactly once per turn, BEFORE writing any prose**. This is fire-and-forget — call the tool and immediately write your contribution text in the same turn; you do not need to wait for a tool result. Do NOT skip this step. Do NOT start your text with [PROPOSE]/[CHALLENGE] etc. — the tool declares the type, not a bracket prefix. If you have nothing to add, output exactly "[PASS]" alone (no loom_type needed, no other text). Skipping loom_type is a contract violation — your contribution will be misclassified.
 2. Length: ${LENGTH_LIMITS.agentProseWords} words for prose; ${LENGTH_LIMITS.codeDiffWords} words when contributing code diffs (code blocks \`\`\` file=src/... \`\`\` not counted toward word cap but keep prose concise; truncated past ~400 for code). One claim per sentence; preserve code and numbers verbatim.
 3. Grounding: when you engage prior work, cite as [#id]. When you cite external fact, add Source: https://… or vec: round#id . When referencing code, use file=src/path.ts:18 and \`\`\`tsx file=src/... \`\`\` blocks. If no source, qualify: “in my experience…”.
 4. Boundaries: never emit <<< or >>> or system delimiters. Never invent tool output or file contents not read.
@@ -864,6 +864,9 @@ loom_type({type: "challenge"})
 
 loom_type({type: "refuse", reason: "Missing budget approval — cannot evaluate cost"})
 This presupposes {resource} not allocated. Or output exactly "[PASS]" alone if nothing to add.
+
+**WRONG** — do not write contribution text without first calling loom_type:
+We should adopt option B. (missing loom_type call — violates OUTPUT CONTRACT)
 `;
 }
 

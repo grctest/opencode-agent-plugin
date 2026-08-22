@@ -1358,6 +1358,12 @@ One sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No
         }));
         const attempts = tools.filter((t) => t.status === "error" || t.attempted_tool).length;
         this.#logger.info("tool_results", `${participant.config.name} used ${toolResults1.length} tool(s)${attempts > 0 ? ` (${attempts} failed/attempted)` : ""}`, { tools });
+      } else {
+        this.#logger.info("tool_results_none", `${participant.config.name} made 0 tool calls (LLM responded with text only)`, {
+          participant: participant.config.id,
+          round: currentRound,
+          offeredTools: Object.keys(toolsMap),
+        });
       }
 
       let effective1 = truncateToolResults(toolResults1, agentToolsConfig);
@@ -1526,6 +1532,13 @@ One sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No
       response.tool_calls = mapToolResults(finalToolResults);
       // Preserve [] for "tools offered but not used" vs null for "unknown" — do not coerce to null (fixes empty→null flaw)
       if (!response.tool_calls) response.tool_calls = [];
+
+      this.#logger.info("tool_calls_stored", `${participant.config.name} storing ${response.tool_calls.length} tool call(s) for contribution`, {
+        participant: participant.config.id,
+        round: currentRound,
+        toolCount: response.tool_calls.length,
+        tools: response.tool_calls.map(t => ({ tool: t.tool, status: t.status ?? null, hasError: !!t.error })),
+      });
 
       // Handle loom_request_next → turn request (fire-and-forget, no synthesis needed)
       const requestNextFromTools = extractRequestNextFromToolResults(finalToolResults);
