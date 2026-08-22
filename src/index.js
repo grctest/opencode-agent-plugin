@@ -750,6 +750,7 @@ export const Loom = async (input) => {
 
   return {
     tool: {
+      ...agentTools,
       knit: tool({
         description:
           "Start a multi-agent deliberation session (a 'Loom'). " +
