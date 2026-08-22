@@ -654,6 +654,32 @@ export const Loom = async (input) => {
         return { queued: true, priority: Math.min(10, Math.max(1, args.priority)), reason: args.reason, note: "Turn request queued — will be considered for next round order." };
       },
     }),
+    loom_type: tool({
+      description:
+        "Declare the type of your primary contribution for this turn. " +
+        "You MUST call this exactly once per turn to indicate whether your contribution is a proposal, challenge, question, etc. " +
+        "This is fire-and-forget — call it and then write your contribution text; you don't need to wait for anything.",
+      args: {
+        type: tool.schema
+          .enum(["propose", "challenge", "refine", "support", "dissent", "synthesize", "question", "refuse"])
+          .describe("Contribution type for this turn"),
+        reason: tool.schema
+          .string()
+          .max(300)
+          .optional()
+          .describe("If type is refuse, brief reason (e.g. 'Missing budget approval')"),
+      },
+      async execute(args, context) {
+        const cfg = config.getValue("agentTools");
+        if (!cfg?.enabled || !cfg?.loom?.loom_type) return { error: "loom_type not enabled" };
+        // Fire-and-forget: just acknowledge. The authoritative type is read from toolResults
+        // by RoundExecutor, so no meeting lookup is needed here.
+        const valid = new Set(["propose","challenge","refine","support","dissent","synthesize","question","refuse"]);
+        const t = String(args.type ?? "").toLowerCase();
+        if (!valid.has(t)) return { error: `Invalid type "${args.type}" — must be one of ${[...valid].join(", ")}` };
+        return { ok: true, type: t, reason: args.reason ?? null, note: `Type "${t}" recorded for this turn.` };
+      },
+    }),
   };
 
   const markActiveMeetingsAborted = () => {

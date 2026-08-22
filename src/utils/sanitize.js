@@ -65,6 +65,22 @@ export function sanitizeForPrompt(text, maxLen = 10000) {
 }
 
 /**
+ * Sanitizes TRUSTED agent output for storage/display.
+ * Preserves all brackets/braces (including leading [CHALLENGE] etc.) and
+ * does NOT insert zero-width joiners. Only strips control chars and HTML tags.
+ * Use this for agent contributions where the [TAG] protocol is handled via
+ * tools (loom_type) and must not be mangled.
+ * @param {string} text
+ * @param {number} [maxLen=10000]
+ * @returns {string}
+ */
+export function sanitizeAgentOutput(text, maxLen = 10000) {
+  if (!text || typeof text !== "string") return "";
+  const bounded = text.length > maxLen ? text.slice(0, maxLen) : text;
+  return stripUnsafeChars(bounded).trim();
+}
+
+/**
  * Sanitizes text for safe display in UI/logs and prompt display (preserves citations
  * and whitelisted protocol tags via a hardened, unforgeable sentinel scheme).
  * Unlike sanitizeForPrompt, it keeps brackets for citation visibility.

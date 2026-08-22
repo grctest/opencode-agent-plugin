@@ -62,8 +62,9 @@ export const AgentResponseSchema = z.object({
   vote: VoteSchema,
 });
 
-// Raw parsing — bracket directives removed. Only contribution type prefix is parsed.
-// All peer interactions now use real loom_* tools; this parser no longer extracts QUERY/EVIDENCE/SUMMON/VOTE/REQUEST_NEXT.
+// Raw parsing — contribution type is now declared via loom_type tool, not a text prefix.
+// This parser only normalizes content: it handles [PASS] and strips any stray
+// legacy [TAG] prefix for display cleanliness, but does NOT infer type from text.
 export function parseAgentResponseRaw(response, tier) {
   const text = response.trim();
 
@@ -75,53 +76,46 @@ export function parseAgentResponseRaw(response, tier) {
     return { content: '[PASS]', type: 'propose', request_next: null, query: null, evidence: null, summon: null, vote: null };
   }
 
-  const TYPE_PREFIXES = {
-    '[PROPOSE]': 'propose',
-    '[CHALLENGE]': 'challenge',
-    '[REFINE]': 'refine',
-    '[SUPPORT]': 'support',
-    '[DISSENT]': 'dissent',
-    '[SYNTHESIZE]': 'synthesize',
-    '[QUESTION]': 'question',
-    '[REFUSE]': 'refuse',
-  };
-
-  let type = 'propose';
-  let contentStart = 0;
-  let refuseReason = null;
-
-  for (const [prefix, t] of Object.entries(TYPE_PREFIXES)) {
-    if (prefix === '[REFUSE]') {
-      if (text.startsWith('[REFUSE]')) {
-        type = t;
-        contentStart = 8;
-        break;
-      }
-      const refuseMatch = text.match(/^\[REFUSE:\s*([^\]]*?)\]\s*/i);
-      if (refuseMatch) {
-        type = t;
-        refuseReason = refuseMatch[1].trim();
-        contentStart = refuseMatch[0].length;
-        break;
-      }
-      continue;
-    }
-    if (text.startsWith(prefix)) {
-      type = t;
-      contentStart = prefix.length;
-      break;
-    }
-  }
-
-  const rawContent = text.slice(contentStart).trim();
+  // Strip a single leading legacy tag if the model still emits one (e.g. "[CHALLENGE] ...").
+  // This is display hygiene only — the authoritative type comes from the loom_type tool.
+  const cleaned = text.replace(/^\[(?:PROPOSE|CHALLENGE|REFINE|SUPPORT|DISSENT|SYNTHESIZE|QUESTION|REFUSE(?::[^\]]*)?)\]\s*/i, '').trim();
+  const content = cleaned.length > 0 ? cleaned : text;
 
   return {
-    content: refuseReason ? `${refuseReason}. ${rawContent}`.trim() : rawContent,
-    type,
+    content,
+    type: 'propose', // placeholder — RoundExecutor overwrites with loom_type tool result
     request_next: null,
     query: null,
     evidence: null,
     summon: null,
     vote: null,
   };
+}
+
+/**
+ * Extracts the declared contribution type from loom_type tool results.
+ * The agent is expected to call loom_type({type}) exactly once per turn;
+ * we take the last such call as authoritative. Returns null if not called.
+ * @param {Array} toolResults - mapped tool results (from mapToolResults)
+ * @returns {string|null}
+ */
+export function extractDeclaredType(toolResults) {
+  if (!Array.isArray(toolResults) || toolResults.length === 0) return null;
+  const VALID = new Set(['propose','challenge','refine','support','dissent','synthesize','question','refuse']);
+  let found = null;
+  for (const tr of toolResults) {
+    const name = tr.tool ?? tr.attempted_tool;
+    if (name !== 'loom_type') continue;
+    if (tr.status === 'error') continue;
+    // Input may be stringified JSON or object
+    let input = tr.input;
+    if (typeof input === 'string') {
+      try { input = JSON.parse(input); } catch { continue; }
+    }
+    const candidate = typeof input?.type === 'string' ? input.type.toLowerCase().trim() : null;
+    if (candidate && VALID.has(candidate)) {
+      found = candidate;
+    }
+  }
+  return found;
 }

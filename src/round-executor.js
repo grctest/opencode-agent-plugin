@@ -5,7 +5,8 @@ import { extractAgentResponse, mapToolResults, truncate, extractFileBlockTools, 
 import { getPersonas } from "./composer.js";
 import { Logger, extractErrorInfo } from "./logger.js";
 import { runMidRoundReflections } from "./reflection-manager.js";
-import { sanitizeForPrompt, sanitizeForDisplay } from "./utils/sanitize.js";
+import { sanitizeForPrompt, sanitizeForDisplay, sanitizeAgentOutput } from "./utils/sanitize.js";
+import { extractDeclaredType } from "./schemas.js";
 import { withRetry, isRetryableError, CircuitBreaker } from "./utils/retry.js";
 import { selectFallbackModel } from "./services/model-service.js";
 import { incrementKeyedCounter, recordLatency } from "./metrics.js";
@@ -1019,7 +1020,7 @@ One sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No
 
   #storeContribution(participant, result, round) {
     const id = this.#stateManager.nextContributionId();
-    const safeContent = sanitizeForPrompt(result.content);
+    const safeContent = sanitizeAgentOutput(result.content);
     const batchId = participant.currentBatchId ?? crypto.randomUUID();
     const contribution = {
       id,
@@ -1459,12 +1460,13 @@ One sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No
           });
                     const cap = getPriorityCap(participant.config.tier);
           const reqNext = extractRequestNextFromToolResults(finalToolResults);
+          const declaredForStub = extractDeclaredType(finalToolResults);
           this.#recordModelSuccess(model);
           ephemeralSessionIdToDelete = null;
           return {
             participant_id: participant.config.id,
             content: "[TOOL-ONLY TURN — no text produced; tool evidence preserved]",
-            type: "question",
+            type: declaredForStub ?? "question",
             request_next: reqNext ? { priority: Math.min(reqNext.priority, cap), reason: reqNext.reason } : null,
             query: null,
             evidence: null,
@@ -1485,9 +1487,41 @@ One sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No
         });
       }
 
-      const safeContent = sanitizeForPrompt(finalText);
+      // Tool-based type is authoritative — no bracket parsing (replaces [TAG] prefix).
+      // Parse content without type inference, then overwrite type from loom_type tool.
+      const safeContent = sanitizeAgentOutput(finalText);
       const response = parseAgentResponse(participant.config.id, safeContent, participant.config.tier);
       if (!response) throw new Error("Failed to parse agent response");
+
+      // Extract declared type from loom_type tool (fire-and-forget, last call wins)
+      const declaredType = extractDeclaredType(finalToolResults);
+      if (declaredType) {
+        response.type = declaredType;
+        // For refuse, blend the tool's reason into content if provided
+        if (declaredType === 'refuse') {
+          const lastRefuse = [...finalToolResults].reverse().find(tr => {
+            const n = tr.tool ?? tr.attempted_tool;
+            if (n !== 'loom_type' || tr.status === 'error') return false;
+            let inp = tr.input;
+            if (typeof inp === 'string') { try { inp = JSON.parse(inp); } catch { return false; } }
+            return typeof inp?.type === 'string' && inp.type.toLowerCase().trim() === 'refuse';
+          });
+          let reason = null;
+          if (lastRefuse) {
+            let inp = lastRefuse.input;
+            if (typeof inp === 'string') { try { inp = JSON.parse(inp); } catch {} }
+            reason = typeof inp?.reason === 'string' ? inp.reason.trim() : null;
+          }
+          if (reason) {
+            response.content = `${reason}. ${response.content}`.trim();
+          }
+        }
+      } else if (safeContent !== '[PASS]') {
+        this.#logger.warn("missing_loom_type", `${participant.config.name} did not call loom_type — defaulting to propose (no bracket fallback)`, {
+          participant: participant.config.id,
+          round: currentRound,
+        });
+      }
 
       response.tool_calls = mapToolResults(finalToolResults);
       // Preserve [] for "tools offered but not used" vs null for "unknown" — do not coerce to null (fixes empty→null flaw)
@@ -1538,6 +1572,7 @@ One sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No
       if (loom.loom_vote) toolsMap.loom_vote = true;
       if (loom.loom_summon) toolsMap.loom_summon = true;
       if (loom.loom_request_next) toolsMap.loom_request_next = true;
+      if (loom.loom_type) toolsMap.loom_type = true;
     }
     return toolsMap;
   }
@@ -1557,8 +1592,9 @@ One sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No
       const loom = resolveLoomTools(agentToolsConfig);
       if (loom.loom_vector_search) toolsMap.loom_vector_search = true;
       // Intentionally omit loom_query/loom_evidence/loom_vote/loom_summon to avoid recursion in synthesis turn
-      // Keep loom_request_next as it is fire-and-forget and can be re-used in synthesis if needed
+      // Keep loom_request_next and loom_type as they are fire-and-forget and needed for final type declaration
       if (loom.loom_request_next) toolsMap.loom_request_next = true;
+      if (loom.loom_type) toolsMap.loom_type = true;
     }
     return toolsMap;
   }

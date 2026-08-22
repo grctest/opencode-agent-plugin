@@ -53,6 +53,7 @@ const DEFAULT_CONFIG = {
       loom_vote: true,
       loom_summon: true,
       loom_request_next: true,
+      loom_type: true,
     },
     sameTurnSynthesis: true,
     reflection: {
@@ -110,6 +111,7 @@ const NESTED_SCHEMA = {
   'agentTools.loom.loom_vote': { type: 'boolean' },
   'agentTools.loom.loom_summon': { type: 'boolean' },
   'agentTools.loom.loom_request_next': { type: 'boolean' },
+  'agentTools.loom.loom_type': { type: 'boolean' },
   'agentTools.sameTurnSynthesis': { type: 'boolean' },
   'agentTools.reflection.bash': { type: 'boolean' },
   'agentTools.reflection.glob': { type: 'boolean' },
@@ -668,7 +670,7 @@ export function resolveBuiltInTools(agentToolsConfig) {
 
 export function resolveLoomTools(agentToolsConfig) {
   if (!agentToolsConfig?.enabled) return {
-    loom_vector_search: false, loom_query: false, loom_evidence: false, loom_vote: false, loom_summon: false, loom_request_next: false,
+    loom_vector_search: false, loom_query: false, loom_evidence: false, loom_vote: false, loom_summon: false, loom_request_next: false, loom_type: false,
   };
   const loom = agentToolsConfig.loom ?? {};
   return {
@@ -678,5 +680,6 @@ export function resolveLoomTools(agentToolsConfig) {
     loom_vote: !!loom.loom_vote,
     loom_summon: !!loom.loom_summon,
     loom_request_next: !!loom.loom_request_next,
+    loom_type: !!loom.loom_type,
   };
 }

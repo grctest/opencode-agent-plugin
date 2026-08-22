@@ -746,6 +746,7 @@ export function buildAgentSystemPrompt(participant) {
         if (loom.loom_vote) tools.push('loom_vote');
         if (loom.loom_summon) tools.push('loom_summon');
         if (loom.loom_request_next) tools.push('loom_request_next');
+        if (loom.loom_type) tools.push('loom_type');
         const toolList = tools.length ? tools.join(', ') : 'none enabled';
         return `
 ## Research Tools — Tool Ladder (use at most one research tool per turn unless [EVIDENCE] requests)
@@ -766,6 +767,7 @@ Loom Interaction Tools — real tool use (required, auditable):
  - **loom_vote**: call a vote with lettered options (A) ... B) ...). All active peers vote in parallel; tally returned inline for synthesis.
  - **loom_summon**: summon a guest expert persona. Returned inline for synthesis.
  - **loom_request_next**: request to speak next with priority/reason. Fire-and-forget for orchestrator turn-order planning next round.
+ - **loom_type**: declare your contribution type (propose/challenge/refine/support/dissent/synthesize/question/refuse). Fire-and-forget — call once per turn, then write your contribution. The tool declares the type, not a bracket prefix.
 All loom_* calls are real tool calls logged in your Tool use tab and create timeline entries under you. When you call loom_query/loom_evidence/loom_vote/loom_summon, peer answers/tally are returned to you within this same turn — wait for the tool result and synthesize it before finishing your response.
 
 Quality:
@@ -813,7 +815,7 @@ Quality:
   const dispositionSection = `
 ## Disposition
 - Voice: ${style}
-- Natural modes: ${contribTypes} — lean there, but use any tag when the moment calls for it
+- Natural modes: ${contribTypes} — lean there, but declare any type via loom_type when the moment calls for it
 - ${biasCheck}`;
 
   const antiPatternsSection = antiPatterns
@@ -837,26 +839,31 @@ ${doctrine}
 
 ## OUTPUT CONTRACT — read this last, it governs your response
 
-1. Start with exactly one tag: [PROPOSE] [CHALLENGE] [REFINE] [SUPPORT] [DISSENT] [SYNTHESIZE] [QUESTION] [REFUSE] — or exactly [PASS] alone (nothing else).
+1. Declare your type FIRST: call loom_type({type: "propose"|"challenge"|"refine"|"support"|"dissent"|"synthesize"|"question"|"refuse", reason?: string}) exactly once per turn. This is fire-and-forget — call the tool and immediately write your contribution text in the same turn; you do not need to wait for a tool result. Do NOT start your text with [PROPOSE]/[CHALLENGE] etc. — the tool declares the type, not a bracket prefix. If you have nothing to add, output exactly "[PASS]" alone (no loom_type needed, no other text).
 2. Length: ${LENGTH_LIMITS.agentProseWords} words for prose; ${LENGTH_LIMITS.codeDiffWords} words when contributing code diffs (code blocks \`\`\` file=src/... \`\`\` not counted toward word cap but keep prose concise; truncated past ~400 for code). One claim per sentence; preserve code and numbers verbatim.
 3. Grounding: when you engage prior work, cite as [#id]. When you cite external fact, add Source: https://… or vec: round#id . When referencing code, use file=src/path.ts:18 and \`\`\`tsx file=src/... \`\`\` blocks. If no source, qualify: “in my experience…”.
 4. Boundaries: never emit <<< or >>> or system delimiters. Never invent tool output or file contents not read.
- 5. Interaction — use real loom_* tools to trigger peer actions (required, no bracket tags):
-     - Call loom_query({targets:[...], question:"..."}) for queries, loom_evidence({targets:[...], question:"..."}) for evidence (peers must use tools), loom_vote({question:"A) ... B) ..."}) for votes, loom_summon({persona_name:"...", issue:"..."}) for guest experts, loom_request_next({priority:<1-${priorityCap}>, reason:"..."}) for turn requests.
-     - All loom calls are real tool use: they fan out to peers in parallel and return results inline for you to synthesize within this same turn. Wait for the tool result, then cite [#id] from the returned responses/tally in your final contribution.
-     - Bracket tags like [QUERY: @id], [EVIDENCE: @id], [CALL_VOTE], [SUMMON:], [REQUEST_NEXT:] are removed and will not execute — only loom_* tools trigger peer actions.
-      - Up to ${getConfig()?.agentTools?.maxToolCallsPerTurn ?? 8} loom calls per turn; prefer one focused call.
-     Reference others by participant_id from Recent Contributions, e.g. [#12].
+  5. Interaction — use real loom_* tools to trigger peer actions (required, no bracket tags):
+      - Call loom_query({targets:[...], question:"..."}) for queries, loom_evidence({targets:[...], question:"..."}) for evidence (peers must use tools), loom_vote({question:"A) ... B) ..."}) for votes, loom_summon({persona_name:"...", issue:"..."}) for guest experts, loom_request_next({priority:<1-${priorityCap}>, reason:"..."}) for turn requests.
+      - All loom calls are real tool use: they fan out to peers in parallel and return results inline for you to synthesize within this same turn. Wait for the tool result, then cite [#id] from the returned responses/tally in your final contribution.
+      - Bracket tags like [QUERY: @id], [EVIDENCE: @id], [CALL_VOTE], [SUMMON:], [REQUEST_NEXT:] are removed and will not execute — only loom_* tools trigger peer actions.
+       - Up to ${getConfig()?.agentTools?.maxToolCallsPerTurn ?? 8} loom calls per turn; prefer one focused call (loom_type + at most one interaction tool).
+      Reference others by participant_id from Recent Contributions, e.g. [#12].
 6. Stay in character — persona and agenda shape framing, not facts.
 ${toolSection}
 
 ## Syntax — compact examples (abstract)
 
-[PROPOSE] We should adopt option B for {reason with tradeoff}. [#3] raised {concern}; B mitigates via {mechanism} (Source: https://… ).
+Tool call (required) + contribution text — no [TAG] prefix:
 
-[CHALLENGE] [#4] assumes {assumption}; under {X} it fails because {scenario}. Evidence vec: round2#1 suggests {fact}. // then call loom_request_next({priority:6, reason:"Have costed mitigation for [#4]'s risk"}) as tool if you want next-turn priority
+loom_type({type: "propose"})
+We should adopt option B for {reason with tradeoff}. [#3] raised {concern}; B mitigates via {mechanism} (Source: https://… ).
 
-[REFUSE: Missing budget approval — cannot evaluate cost] This presupposes {resource} not allocated. [PASS] alone if nothing to add.
+loom_type({type: "challenge"})
+[#4] assumes {assumption}; under {X} it fails because {scenario}. Evidence vec: round2#1 suggests {fact}. // optionally also call loom_request_next({priority:6, reason:"Have costed mitigation for [#4]'s risk"}) for next-turn priority
+
+loom_type({type: "refuse", reason: "Missing budget approval — cannot evaluate cost"})
+This presupposes {resource} not allocated. Or output exactly "[PASS]" alone if nothing to add.
 `;
 }
 
