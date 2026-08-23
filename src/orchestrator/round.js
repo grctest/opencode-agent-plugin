@@ -1,7 +1,8 @@
 import { getConfig } from "../config.js";
-import { extractErrorInfo } from "../logger.js";
+import { LoomError, extractErrorInfo } from "../logger.js";
 import { updateStateOfPlay } from "../fabric-manager.js";
 import { truncate } from "../shared.js";
+import { SUMMARY_TRUNCATE_LEN } from "./constants.js";
 
 export async function runRound() {
     if (this._checkTimeout()) {

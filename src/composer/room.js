@@ -1,8 +1,8 @@
-import { getPersonas, getPersonaTags } from "./persona-loader.js";
+import { getPersonas, getPersonaTags, loadDomainVocabulary } from "./persona-loader.js";
 import { PersonaIndex } from "../services/persona-index.js";
 import { getConfig } from "../config.js";
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_QUANT } from "../services/model-manager.js";
-import { Logger } from "../logger.js";
+import { Logger, extractErrorInfo } from "../logger.js";
 
 const composerLogger = new Logger();
 

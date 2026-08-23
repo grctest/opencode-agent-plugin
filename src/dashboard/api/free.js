@@ -4,6 +4,11 @@ import { existsSync, readdirSync, statSync, readFileSync } from "node:fs";
 import { resolveLoomBaseDir } from "../../paths.js";
 import { Database } from "bun:sqlite";
 
+const listMeetingsCache = new Map(); // directory -> { at, data }
+const LIST_MEETINGS_TTL_MS = 2000;
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export function listDownloadedModels() {
   const modelDir = join(homedir(), ".config", "opencode", "loom", "models");
 

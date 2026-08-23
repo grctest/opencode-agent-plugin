@@ -1,4 +1,4 @@
-import { parseReflections } from "../../utils/db-parsing.js";
+import { parseReflections, safeParseJson } from "../../utils/db-parsing.js";
 
 export function getState() {
     const row = this._db

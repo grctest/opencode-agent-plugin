@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { existsSync, readdirSync, statSync, readFileSync } from "node:fs";
 import { resolveLoomBaseDir } from "../paths.js";
-import { parseReflections } from "../utils/db-parsing.js";
+import { parseReflections, safeParseJson } from "../utils/db-parsing.js";
 import * as queriesHelpers from "./api/queries.js";
 import * as exportsHelpers from "./api/exports.js";
 
@@ -12,18 +12,6 @@ const DB_CACHE_MAX = 10;
 const DB_REFRESH_INTERVAL_MS = 2000;
 
 const DB_TTL_MS = 5 * 60 * 1000;
-
-/**
- * Safe JSON column parse — malformed rows must not 500 the endpoints that read them (audit 10 S4).
- */
-function safeParseJson(value, fallback = null) {
-  if (!value) return fallback;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return fallback;
-  }
-}
 
 /**
  * Single mapper so fetch and SSE emit identically-shaped turn-request rows (audit 11 UF2/UF3).
@@ -326,17 +314,5 @@ export class DashboardApi {
     return meeting ?? null;
   }
 }
-
-/**
- * List all downloaded embedding models.
- */
-
-
-const listMeetingsCache = new Map(); // directory -> { at, data }
-const LIST_MEETINGS_TTL_MS = 2000;
-
-
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export { listDownloadedModels, listMeetings, isValidMeetingId, getMeetingDbPath } from "./api/free.js";

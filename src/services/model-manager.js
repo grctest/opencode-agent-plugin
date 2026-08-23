@@ -18,29 +18,50 @@ function getConfigDir() {
 }
 
 const MODEL_DIR = join(getConfigDir(), "loom", "models");
-const DEPS_DIR = join(getConfigDir(), "loom", "deps");
-const DEP_REQS = createRequire(join(DEPS_DIR, ".pkg.js"));
+
+function getDepsDirs() {
+  const base = getConfigDir();
+  return [
+    join(base, "plugins", "deps"),
+    join(base, "loom", "deps"),
+  ];
+}
 
 let cachedOrt = null;
 let cachedTokenizer = null;
 
 /**
  * Resolve an optional native dependency (onnxruntime-node, @huggingface/tokenizers)
- * from the runtime deps dir installed by scripts/install.mjs, falling back to a
- * bare import so local/dev resolution from project node_modules keeps working.
+ * from the runtime deps dir installed by scripts/install.mjs, probing both
+ * `plugins/deps` and `loom/deps` for compatibility (mirrors database/connection.js
+ * vec probing). Falls back to a bare import so local/dev resolution from project
+ * node_modules keeps working.
  */
 async function resolveDep(dep) {
   const spec = `"${dep}"`;
-  try {
-    return DEP_REQS(dep);
-  } catch (depErr) {
+  for (const dir of getDepsDirs()) {
     try {
-      return await import(dep);
-    } catch (importErr) {
-      throw new Error(
-        `Cannot load native dependency ${spec}. Install the Loom runtime deps with: npm run install:plugin (details: ${(depErr || importErr).message})`
-      );
+      const req = createRequire(join(dir, ".pkg.js"));
+      return req(dep);
+    } catch {}
+    try {
+      const req2 = createRequire(join(dir, "package.json"));
+      return req2(dep);
+    } catch {}
+  }
+  try {
+    return await import(dep);
+  } catch (importErr) {
+    // Try explicit node_modules fallback for the two known layouts
+    for (const dir of getDepsDirs()) {
+      try {
+        const abs = join(dir, "node_modules", dep);
+        return await import(abs);
+      } catch {}
     }
+    throw new Error(
+      `Cannot load native dependency ${spec}. Install the Loom runtime deps with: npm run install:plugin (details: ${importErr.message})`
+    );
   }
 }
 

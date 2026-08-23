@@ -66,7 +66,7 @@ export async function initialize() {
       // once at plugin startup; this is a backstop for resumed/standalone meetings
       // and surfaces degraded semantic features loudly rather than silently.
       try {
-        const { ensureEmbedderInitialized, getEmbeddingDim } = await import("./services/embedding-service.js");
+        const { ensureEmbedderInitialized, getEmbeddingDim } = await import("../services/embedding-service.js");
         const modelName = this._options.embedding_model ?? getConfig().embeddingModel ?? null;
         await ensureEmbedderInitialized(modelName, getConfig().embeddingQuant);
         if (modelName) {
@@ -78,7 +78,7 @@ export async function initialize() {
 
       // Index personas into the meeting database for vector similarity search.
       // Skip if already indexed (e.g., by knit-handler during participant selection).
-      const { isEmbedderInitialized } = await import("./services/embedding-service.js");
+      const { isEmbedderInitialized } = await import("../services/embedding-service.js");
       if (isEmbedderInitialized()) {
         try {
           this._personaIndex = new PersonaIndex(db);
@@ -111,14 +111,19 @@ export async function initialize() {
       await this._persistState();
 
       if (!this._resume && this._options.context) {
-        try {
-          await this._raceWithGuardTimer(
-            this._vectorIndex.indexContext(this._options.context),
-            10000,
-            "indexContext",
-          );
-        } catch (err) {
-          this._logger.warn("vector_index_context_failed", "Failed to index context for vector search", extractErrorInfo(err));
+        const { isEmbedderInitialized: isInit } = await import("../services/embedding-service.js");
+        if (!isInit()) {
+          this._logger.debug("vector_index_skipped", "Skipping context vector indexing — embedding service not initialized");
+        } else {
+          try {
+            await this._raceWithGuardTimer(
+              this._vectorIndex.indexContext(this._options.context),
+              10000,
+              "indexContext",
+            );
+          } catch (err) {
+            this._logger.warn("vector_index_context_failed", "Failed to index context for vector search", extractErrorInfo(err));
+          }
         }
       }
 

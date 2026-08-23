@@ -50,7 +50,7 @@ export async function initializeEmbedder(modelName, quant = "onnx/model_int8.onn
  * @returns {Promise<void>}
  */
 export async function ensureEmbedderInitialized(modelName, quant = "onnx/model_int8.onnx", projectRoot) {
-  if (initInFlight) return initInFlight;
+  if (initInFlight) return initInFlight.promise;
   // Key-aware init (audit 06 V3): a mismatched already-loaded model must be
   // reloaded loudly rather than silently no-op'd.
   if (currentModel) {

@@ -30,9 +30,8 @@ import * as synthesisHelpers from "./orchestrator/synthesis.js";
 import * as modelsHelpers from "./orchestrator/models.js";
 import * as initHelpers from "./orchestrator/init.js";
 
-// Named constants for magic numbers
-const SUMMARY_TRUNCATE_LEN = 200;
-const MAX_ORCHESTRATOR_MESSAGES = 200;
+// Re-exported for backward compat — single source is ./orchestrator/constants.js
+export { SUMMARY_TRUNCATE_LEN, MAX_ORCHESTRATOR_MESSAGES } from "./orchestrator/constants.js";
 
 export class MeetingOrchestrator {
   _meetingId;

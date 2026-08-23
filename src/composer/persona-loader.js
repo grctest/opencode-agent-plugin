@@ -12,6 +12,8 @@ const composerLogger = new Logger();
 
 function personasBasePath() {
   const candidates = [
+    join(__dirname, "../..", "personas", "loom"),
+    join(__dirname, "../..", "personas"),
     join(__dirname, "..", "personas", "loom"),
     join(__dirname, "..", "personas"),
     join(__dirname, "personas", "loom"),
@@ -40,7 +42,7 @@ function userPersonasPath() {
 // domains.json domain vocabulary (audit 13 PC4/PC5): loaded once, used to boost
 // persona scores in the keyword composition fallback.
 let domainVocabCache = null;
-function loadDomainVocabulary() {
+export function loadDomainVocabulary() {
   if (domainVocabCache !== null) return domainVocabCache;
   domainVocabCache = {};
   try {

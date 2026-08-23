@@ -249,7 +249,10 @@ function useMeetingsList() {
 
   const fetchMeetings = useCallback(async () => {
     try {
-      const res = await fetch("/api/meetings");
+      const params = new URLSearchParams(window.location.search);
+      const session = params.get("session");
+      const url = session ? `/api/meetings?session=${encodeURIComponent(session)}` : "/api/meetings";
+      const res = await fetch(url);
       if (res.ok) {
         const newMeetings = await res.json();
         setMeetings((prev) => {
@@ -341,9 +344,36 @@ export function App() {
 
   useEffect(() => {
     if (meetings.length > 0 && !selectedMeeting) {
+      const params = new URLSearchParams(window.location.search);
+      const urlMeeting = params.get("meeting");
+      const urlSession = params.get("session");
+      if (urlMeeting && meetings.some((m) => m.meeting_id === urlMeeting)) {
+        setSelectedMeeting(urlMeeting);
+        return;
+      }
+      if (urlSession) {
+        // Session-aware: if URL has ?session but no ?meeting, only auto-select if that session has a meeting
+        // Otherwise show empty state for this session instead of jumping to a different session's meeting
+        if (meetings.length > 0) {
+          setSelectedMeeting(meetings[0].meeting_id);
+        }
+        // If session has no meetings, leave selectedMeeting empty to show empty state
+        return;
+      }
       setSelectedMeeting(meetings[0].meeting_id);
     }
   }, [meetings, selectedMeeting]);
+
+  // Keep URL in sync when user selects a meeting (so refresh preserves it)
+  useEffect(() => {
+    if (!selectedMeeting) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("meeting") !== selectedMeeting) {
+      params.set("meeting", selectedMeeting);
+      const newUrl = `${window.location.pathname}?${params.toString()}`;
+      window.history.replaceState(null, "", newUrl);
+    }
+  }, [selectedMeeting]);
 
   // Sync lastPollIdRef for SSE fallback from initial contributions
   useEffect(() => {

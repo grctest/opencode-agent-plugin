@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getMeetingDbPath } from "../paths.js";
 import { DashboardApi } from "../dashboard/api.js";
-import { getDatabasesBySessionId, deleteMeetingFiles, deleteMeetingsBySessionId } from "../database.js";
+import { getDatabasesBySessionId, deleteMeetingFiles, deleteMeetingsBySessionId, findMeetingBySessionId } from "../database.js";
 import { resolveLoomBaseDir } from "../paths.js";
 import { createConfig } from "../config.js";
 import { startDashboard } from "../dashboard/server.js";
@@ -158,10 +158,28 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
         execute: async (args, context) => {
           const port = args.port ?? 3210;
 
+          // Resolve current session's meeting so the dashboard opens to the right place
+          let initialMeetingId = null;
+          const sessionId = context?.sessionID;
+          if (sessionId) {
+            try {
+              const current = await findMeetingBySessionId(directory, sessionId);
+              if (current) initialMeetingId = current.meetingId;
+            } catch {}
+          }
+
+          const buildUrl = (base) => {
+            if (initialMeetingId) return `${base}?meeting=${initialMeetingId}`;
+            if (sessionId) return `${base}?session=${sessionId}`;
+            return base;
+          };
+
           if (activeDashboardRef.current) {
+            const base = `http://localhost:${activeDashboardRef.current.port}`;
+            const url = buildUrl(base);
             return [
               "Dashboard already running!",
-              `Open: http://localhost:${activeDashboardRef.current.port}`,
+              `Open: ${url}`,
               "Run /loom_stop to stop the current dashboard first.",
             ].join("\n");
           }
@@ -169,13 +187,19 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
           try {
             const dashboard = startDashboard(directory, port);
             activeDashboardRef.current = dashboard;
+            const base = `http://localhost:${dashboard.port}`;
+            const url = buildUrl(base);
             return [
               "Dashboard started!",
               "",
               "Open in browser:",
-              `http://localhost:${dashboard.port}`,
+              url,
               "",
-              "The dashboard auto-detects new meetings and refreshes in real-time.",
+              initialMeetingId
+                ? "Showing your current session's deliberation."
+                : sessionId
+                  ? "No deliberation yet for this session — run /knit to start one."
+                  : "Dashboard will show the most recent meeting if available.",
               "Run /loom_stop when done to free the port.",
             ].join("\n");
           } catch (err) {

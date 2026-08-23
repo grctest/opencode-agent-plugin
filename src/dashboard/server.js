@@ -25,8 +25,22 @@ import {
 } from "./server/helpers.js";
 import { createPollSystem } from "./server/poll.js";
 import { getMeetingDbPath, isValidMeetingId } from "./api/free.js";
+import { getDatabasesBySessionId } from "../database/session-index.js";
+import { findMeetingBySessionId } from "../database/lookup.js";
 
 const ASSETS_DIR = findAssetsDir();
+
+function getMeetingApi(url, directory) {
+  const meetingId = url.searchParams.get("meeting");
+  if (!meetingId || !isValidMeetingId(meetingId)) {
+    return { error: Response.json({ error: "valid meeting id required" }, { status: 400 }) };
+  }
+  const dbPath = getMeetingDbPath(directory, meetingId);
+  if (!dbPath) {
+    return { error: Response.json({ error: "not found" }, { status: 404 }) };
+  }
+  return { api: DashboardApi.get(dbPath), meetingId };
+}
 
 export function startDashboard(directory, port) {
   initEmbeddingModel();
@@ -68,8 +82,47 @@ export function startDashboard(directory, port) {
         }
 
         if (url.pathname === "/api/meetings") {
+          const sessionId = url.searchParams.get("session");
+          if (sessionId) {
+            // Session-filtered: only meetings for this session
+            const dbs = getDatabasesBySessionId(sessionId);
+            const meetings = [];
+            for (const { dbPath, meetingId } of dbs) {
+              try {
+                const api = DashboardApi.get(dbPath);
+                const state = api.getState();
+                if (state) {
+                  const participantCount = api.getParticipants().length;
+                  meetings.push({
+                    meeting_id: meetingId,
+                    question: state.question,
+                    status: state.status,
+                    round: state.round,
+                    max_rounds: state.max_rounds,
+                    convergence: state.convergence,
+                    created_at: state.created_at,
+                    participant_count: participantCount,
+                  });
+                }
+              } catch {}
+            }
+            meetings.sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""));
+            return Response.json(meetings);
+          }
           const meetings = listMeetings(directory);
           return Response.json(meetings);
+        }
+
+        if (url.pathname === "/api/session") {
+          const sessionId = url.searchParams.get("session");
+          if (!sessionId) {
+            return Response.json({ error: "session id required" }, { status: 400 });
+          }
+          const meeting = await findMeetingBySessionId(directory, sessionId);
+          if (!meeting) {
+            return Response.json({ meeting: null });
+          }
+          return Response.json({ meeting });
         }
 
         if (url.pathname === "/api/meeting") {

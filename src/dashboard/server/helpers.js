@@ -47,21 +47,20 @@ export function getPackageVersion() {
 
 export function findAssetsDir() {
   const candidates = [
-    resolve(import.meta.dir, "../.."),
-    resolve(import.meta.dir, "..", "loom", "dashboard"),
-    resolve(import.meta.dir, "..", "dashboard"),
+    // Standalone server bundle (dist/dashboard/server.js or the copy deployed
+    // to plugins/loom/dashboard/server.js) — assets sit next to the running file.
+    resolve(import.meta.dir, "."),
+    // Bundled into dist/loom.js and installed as plugins/loom.js —
+    // import.meta.dir is ~/.config/opencode/plugins and install.mjs deploys
+    // dashboard assets to plugins/loom/dashboard.
+    resolve(import.meta.dir, "loom", "dashboard"),
+    // Dev: running from src/dashboard/server/ — resolve to the repo's build output.
+    resolve(import.meta.dir, "../../dist/dashboard"),
   ];
-  // Actually need to handle new location: this file is in src/dashboard/server/helpers.js, so import.meta.dir is src/dashboard/server
-  // For dev, assets are in src/dashboard, for built, in dist/dashboard
-  const adjusted = [
-    resolve(import.meta.dir, ".."),
-    resolve(import.meta.dir, "../..", "dashboard"),
-    resolve(import.meta.dir, "..", "dashboard"),
-  ];
-  for (const dir of candidates.concat(adjusted)) {
+  for (const dir of candidates) {
     if (existsSync(join(dir, "app.js"))) return dir;
   }
-  return resolve(import.meta.dir, "..");
+  return candidates[0];
 }
 
 export const MIME_TYPES = {
