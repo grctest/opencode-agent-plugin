@@ -28,7 +28,7 @@
     "install:plugin": "npm run bundle && node scripts/install.mjs",
     "update:plugin": "npm run bundle && node scripts/update.mjs",
     "model:download": "node scripts/model.mjs download",
-    "census": "node scripts/persona-census.mjs"
+    "uninstall:plugin": "node scripts/uninstall.mjs"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": "^1.18.16",

@@ -15,13 +15,30 @@ export const LATEST_SCHEMA_VERSION = 1;
  */
 export const MIGRATIONS = [
   // v0 → v1: degradation flags on the meeting row (audit 07 EH2)
+  // Guarded with column-existence checks because initSchema() creates fresh
+  // tables that already include these columns — a plain ALTER TABLE would
+  // fail with "duplicate column name" on any DB it touches.
   (db) => {
-    db.exec(`ALTER TABLE meetings ADD COLUMN semantic_degraded INTEGER NOT NULL DEFAULT 0`);
-    db.exec(`ALTER TABLE meetings ADD COLUMN persistence_degraded INTEGER NOT NULL DEFAULT 0`);
+    const cols = new Set(
+      db.prepare("PRAGMA table_info(meetings)").all().map((c) => c.name),
+    );
+    if (!cols.has("semantic_degraded")) {
+      db.exec(`ALTER TABLE meetings ADD COLUMN semantic_degraded INTEGER NOT NULL DEFAULT 0`);
+    }
+    if (!cols.has("persistence_degraded")) {
+      db.exec(`ALTER TABLE meetings ADD COLUMN persistence_degraded INTEGER NOT NULL DEFAULT 0`);
+    }
   },
 ];
 
 export function initSchema(db) {
+  // Only a brand-new DB (no meetings table yet) is born at the latest version.
+  // Pre-existing tables keep their user_version so pending migrations still run
+  // against them in runMigrations().
+  const isNewDb = !db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='meetings'",
+  ).get();
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS meetings (
       id TEXT PRIMARY KEY,
@@ -195,6 +212,12 @@ export function initSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_persona_embeddings_meeting ON persona_embeddings(meeting_id);
     CREATE INDEX IF NOT EXISTS idx_persona_embeddings_tier ON persona_embeddings(meeting_id, tier);
   `);
+
+  if (isNewDb) {
+    // Fresh deployments are born at the latest version — otherwise runMigrations
+    // would re-apply v0→v1 against tables that already contain those columns.
+    db.exec(`PRAGMA user_version = ${LATEST_SCHEMA_VERSION}`);
+  }
 }
 
 /**

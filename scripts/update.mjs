@@ -40,6 +40,27 @@ function verifyBundle() {
   logInfo(`Bundle verified (${(stat / (1024 * 1024)).toFixed(2)} MB, syntax OK)`);
 }
 
+function verifyToolRegistration() {
+  const distPath = join(PROJECT_ROOT, "dist", "loom.js");
+  const content = readFileSync(distPath, "utf-8");
+  const required = [
+    "loom_vector_search",
+    "loom_query",
+    "loom_evidence",
+    "loom_vote",
+    "loom_summon",
+    "loom_request_next",
+    "loom_type",
+  ];
+  const missing = required.filter((name) => !content.includes(`"${name}"`));
+  if (missing.length > 0) {
+    logError(`Bundle is missing ${missing.length} agent tool(s): ${missing.join(", ")}`);
+    logError("The bundle must register all loom agent tools. Run 'npm run bundle' and try again.");
+    process.exit(1);
+  }
+  logInfo(`All ${required.length} agent tools verified in bundle`);
+}
+
 // ─── Backup / rollback ────────────────────────────────────────────────────────
 
 const BACKED_UP = [];
@@ -219,6 +240,7 @@ console.log("");
 // Step 0: Verify the NEW bundle is present and valid BEFORE touching anything
 logInfo("Verifying new bundle...");
 verifyBundle();
+verifyToolRegistration();
 
 // Check for opencode config
 const opencodeDir = detectOpencodeDir();

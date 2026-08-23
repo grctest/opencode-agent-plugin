@@ -232,6 +232,7 @@ function getPersonaTags(persona) {
 }
 
 function analyzeQuestionComplexity(question) {
+  if (typeof question !== 'string' || question.trim().length === 0) return { score: 0, level: 'simple' };
   const wordCount = question.trim().split(/\s+/).filter(Boolean).length;
   const questionMarks = (question.match(/\?/g) || []).length;
   const hasMultipleDimensions = /\b(and|or|vs|versus|compare|tradeoff|pros\.?cons|advantages\.?disadvantages)\b/i.test(question);
@@ -456,6 +457,7 @@ export async function composeRoomWithSimilarity(question, database) {
  * composition still works without the embedder (degraded but functional).
  */
 function composeRoomByKeyword(question, personas, roles, complexity, count, used, participants) {
+  if (typeof question !== 'string' || question.length === 0) return participants;
   const tokens = question.toLowerCase().split(/\W+/).filter((t) => t.length > 3);
 
   for (const tier of roles) {

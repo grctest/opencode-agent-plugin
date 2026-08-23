@@ -355,6 +355,7 @@ function collectConfigCandidates(directory) {
 }
 
 function getNestedValue(obj, path) {
+  if (typeof path !== 'string' || path.length === 0) return undefined;
   let current = obj;
   for (const part of path.split('.')) {
     if (current == null || typeof current !== 'object') return undefined;
@@ -364,6 +365,7 @@ function getNestedValue(obj, path) {
 }
 
 function setNestedValue(obj, path, value) {
+  if (typeof path !== 'string' || path.length === 0) return;
   const parts = path.split('.');
   let current = obj;
   for (let i = 0; i < parts.length - 1; i++) {
