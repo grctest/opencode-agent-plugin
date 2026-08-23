@@ -1,0 +1,175 @@
+import { buildAgentSystemPrompt, buildAgentUserPrompt } from "../../prompts/agent.js";
+import { getConfig, resolveBuiltInTools, resolveLoomTools } from "../../config.js";
+import { extractAgentResponse, mapToolResults, extractFileBlockTools, getPriorityCap } from "../../shared.js";
+import { parseAgentResponse } from "../../validation.js";
+import { sanitizeAgentOutput } from "../../utils/sanitize.js";
+import { extractDeclaredType } from "../../schemas.js";
+import { isRetryableError } from "../../utils/retry.js";
+import { selectFallbackModel } from "../../services/model-service.js";
+import { incrementKeyedCounter, recordLatency } from "../../metrics.js";
+import { extractErrorInfo } from "../../logger.js";
+import { buildToolsMap, buildToolsMapWithoutLoom } from "../tools.js";
+
+export async function promptChildSession(participant) {
+  participant.status = "speaking";
+
+  const model = this._getParticipantModel(participant);
+  const config = getConfig();
+  const fallbackConfig = config.modelFallback;
+
+  const baseTimeoutMs = config.agentTimeoutMs;
+  const timeoutMsBase = baseTimeoutMs;
+  let timeoutMs = timeoutMsBase;
+  if (this._deadline) {
+    const remaining = this._deadline - Date.now();
+    if (remaining < 10000) {
+      timeoutMs = Math.max(5000, Math.min(timeoutMsBase, remaining - 1000));
+    } else {
+      timeoutMs = Math.min(timeoutMsBase, remaining - 1000);
+    }
+  }
+
+  const currentRound = this._stateManager.getCurrentRound();
+
+  const recentContribs = this._stateManager.getWeave().filter((c) => c.round != null && c.round >= currentRound - 1);
+  const queryText = recentContribs.length > 0
+    ? recentContribs.map((c) => c.content).join("\n")
+    : this._stateManager.getQuestion();
+  const ragChunks = this._vectorIndex
+    ? await this._vectorIndex.retrieveRelevant(queryText, 10, currentRound)
+    : [];
+  const ragContext = ragChunks.length > 0
+    ? ragChunks.map((c) => `[Round ${c.round}] ${c.content}`).join("\n\n")
+    : "";
+
+  const recentForPrompt = this._stateManager.getWeave().filter(
+    (c) => c.round != null && c.round >= currentRound - 1 && c.type !== "vote_response",
+  ).slice(-12);
+
+  const systemPrompt = buildAgentSystemPrompt(participant);
+  let steeringHint = "";
+  try {
+    const plannedFirst = this._stateManager.getPlannedTurnOrder?.()?.[0] ?? this._stateManager.getNextSpeakerId?.();
+    const isFirstSpeaker = !plannedFirst || plannedFirst === participant.config.id;
+    if (isFirstSpeaker) steeringHint = this._stateManager.consumeNextRoundSteering();
+  } catch {}
+  const userPromptBase = buildAgentUserPrompt(
+    participant,
+    this._stateManager.getStateOfPlay(),
+    ragContext,
+    recentForPrompt,
+    currentRound,
+    this._stateManager.getQuestion(),
+    this._stateManager.getTags(),
+    this._stateManager.getContext?.() ?? "",
+  );
+  const userPrompt = steeringHint ? `${userPromptBase}\n\n${steeringHint}` : userPromptBase;
+
+  const promptContext = {
+    type: "agent_turn",
+    system_prompt: systemPrompt,
+    user_prompt: userPrompt,
+    state_of_play: this._stateManager.getStateOfPlay(),
+    rag_query_text: queryText,
+    rag_chunks_used: ragChunks.map((c) => `[Round ${c.round}] ${c.content}`),
+    recent_contributions: recentForPrompt.map((c) => ({
+      id: c.id, participant_id: c.participant_id, type: c.type,
+      content: c.content, targets_which: c.targets_which,
+    })),
+    reflection: participant.reflection || null,
+    question: this._stateManager.getQuestion(),
+    tags: this._stateManager.getTags(),
+    round: currentRound,
+  };
+
+  let activeModel = model;
+  if (!this._circuitBreaker.isHealthy(model)) {
+    this._logger.warn("model_unhealthy", `${participant.config.name} — model ${this._modelKey(model)} unhealthy, attempting fallback`);
+    const fallback = selectFallbackModel(model, this._availableModels, this._circuitBreaker);
+    if (!fallback) {
+      this._logError(`model ${this._modelKey(model)} unhealthy and no fallback available`, new Error("circuit breaker open, no fallback"));
+      return null;
+    }
+    activeModel = fallback;
+  }
+
+  const maxRetries = fallbackConfig.enabled ? fallbackConfig.maxRetriesPerModel : 0;
+  const lastError = { value: null };
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await this._executeAgentTurn(participant, activeModel, timeoutMs, promptContext);
+      return response;
+    } catch (err) {
+      lastError.value = err;
+      const info = extractErrorInfo(err);
+      this._recordModelFailure(activeModel);
+
+      if (attempt < maxRetries) {
+        const delay = Math.min(1000 * Math.pow(2, attempt) + Math.random() * 500, 8000);
+        this._logger.warn("prompt_retry", `${participant.config.name} — attempt ${attempt + 1}/${maxRetries + 1} failed on ${this._modelKey(activeModel)}, retrying in ${Math.round(delay)}ms`, info);
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+  }
+
+  if (!fallbackConfig.enabled) {
+    this._recordFallbackFailure(participant, activeModel, null, lastError.value);
+    return null;
+  }
+
+  const fallbackModel = selectFallbackModel(activeModel, this._availableModels, this._circuitBreaker);
+  if (!fallbackModel) {
+    this._recordFallbackFailure(participant, activeModel, null, lastError.value);
+    return null;
+  }
+
+  this._logger.info("model_fallback", `${participant.config.name} — falling back from ${this._modelKey(activeModel)} to ${this._modelKey(fallbackModel)}`);
+  this._options.onProgress?.(`⚠️ ${participant.config.name}'s model (${this._modelKey(activeModel)}) failed — retrying with ${this._modelKey(fallbackModel)}`);
+
+  const fallbackAttempts = fallbackConfig.maxFallbackAttempts;
+  for (let attempt = 0; attempt < fallbackAttempts; attempt++) {
+    try {
+      const response = await this._executeAgentTurn(participant, fallbackModel, timeoutMs, promptContext);
+      response._fallback = {
+        from: this._modelKey(activeModel),
+        to: this._modelKey(fallbackModel),
+        error: lastError.value ? extractErrorInfo(lastError.value).message : "unknown",
+      };
+      if (lastError.value && isRetryableError(lastError.value)) {
+        this._circuitBreaker.recordSuccess(activeModel);
+      }
+      return response;
+    } catch (err) {
+      lastError.value = err;
+      const info = extractErrorInfo(err);
+      this._recordModelFailure(fallbackModel);
+
+      if (attempt + 1 < fallbackAttempts) {
+        const delay = Math.min(1000 * Math.pow(2, attempt) + Math.random() * 500, 8000);
+        this._logger.warn("fallback_retry", `${participant.config.name} — fallback attempt ${attempt + 1}/${fallbackAttempts} failed on ${this._modelKey(fallbackModel)}, retrying in ${Math.round(delay)}ms`, info);
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+  }
+
+  this._recordFallbackFailure(participant, activeModel, fallbackModel, lastError.value);
+  return null;
+}
+
+export function recordFallbackFailure(participant, originalModel, fallbackModel, error) {
+  const info = error ? extractErrorInfo(error) : { message: "unknown error" };
+  const fallbackMsg = fallbackModel
+    ? `Original: ${this._modelKey(originalModel)}, Fallback: ${this._modelKey(fallbackModel)}`
+    : `Model: ${this._modelKey(originalModel)}, No fallback available`;
+  this._db.recordAgentError(
+    this._stateManager.getMeetingId(), participant.config.id, this._stateManager.getCurrentRound(),
+    "model_fallback", `${fallbackMsg} — ${info.message}`, 1,
+  );
+  this._logger.error("model_fallback_failed", `${participant.config.name} failed on all models`, {
+    original: this._modelKey(originalModel),
+    fallback: fallbackModel ? this._modelKey(fallbackModel) : null,
+    ...info,
+  });
+}
+

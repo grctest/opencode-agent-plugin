@@ -1,4 +1,4 @@
-import { buildSynthesisPrompt } from "./prompts.js";
+import { buildSynthesisPrompt } from "./prompts/synthesis.js";
 import { formatFinalRoundTranscript } from "./fabric-manager.js";
 import { finalizeSynthesis, validateSynthesisSections, NEUTRAL_SYNTHESIZER_SYSTEM } from "./synthesizer.js";
 import { getConfig } from "./config.js";

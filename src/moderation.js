@@ -1,4 +1,4 @@
-import { buildModeratorPrompt, buildTurnOrderPrompt } from "./prompts.js";
+import { buildModeratorPrompt, buildTurnOrderPrompt } from "./prompts/moderator-prompts.js";
 import { getConfig } from "./config.js";
 import { LOOKBACK } from "./shared.js";
 import { Logger, extractErrorInfo } from "./logger.js";

@@ -1,0 +1,251 @@
+import { getConfig } from "../config.js";
+import { extractErrorInfo } from "../logger.js";
+import { updateStateOfPlay } from "../fabric-manager.js";
+import { truncate } from "../shared.js";
+
+export async function runRound() {
+    if (this._checkTimeout()) {
+      await this._sessionManager.postProgress("⏱️ Loom timed out — generating output from collected contributions.", "warn");
+      return false;
+    }
+
+    const remaining = this._remainingMs();
+    if (remaining < 5000) {
+      this._stateManager.transitionTo("timeout");
+      await this._sessionManager.postProgress("⏱️ Loom timed out — generating output from collected contributions.", "warn");
+      this._logger.warn("timeout", "Meeting timed out before round start", { remaining });
+      return false;
+    }
+
+    const deadline = this._startTime + this._meetingTimeoutMs;
+
+    const round = this._roundInitializer.initializeRound(this._stateManager, this._database, () => this._notifyUpdate());
+    const { activeParticipants, skipped } = this._roundInitializer.filterActiveParticipants(this._stateManager, round);
+
+    if (skipped.length > 0) {
+      await this._sessionManager.postProgress(`⏭️ Skipped: ${skipped.join(", ")} (inactive, no new reflections)`);
+    }
+
+    if (activeParticipants.length === 0) {
+      this._stateManager.transitionTo("converged");
+      return false;
+    }
+
+    if (!this._roundExecutor) {
+      throw new LoomError("RoundExecutor not initialized — call initialize() first", { phase: "round_execution", recoverable: false });
+    }
+
+    const { round: updatedRound } = await this._roundService.runRound({
+      round,
+      activeParticipants,
+      promptOrchestrator: async (system, model, message, type) => this._promptOrchestrator(system, model, message, type, round.number),
+      getHighestTierModel: () => this._getHighestTierModel(),
+      getFallbackModel: () => this._getAllowedFallbackModel(),
+      state: this._stateManager.getState(),
+      deadline,
+    });
+
+    return this._finalizeRound(updatedRound);
+  }
+
+export async function _finalizeRound(updatedRound) {
+    try {
+      this._database.setRoundSummary(updatedRound.number, updatedRound.summary);
+
+      const newStateOfPlay = updateStateOfPlay(
+        this._stateManager.getWeave(),
+        this._stateManager.getQuestion(),
+        this._stateManager.getTags(),
+      );
+      this._stateManager.setStateOfPlay(newStateOfPlay);
+      this._database.setStateOfPlay(newStateOfPlay);
+
+      try {
+        await this._raceWithGuardTimer(
+          this._vectorIndex.indexRound(
+            updatedRound.number,
+            updatedRound.summary,
+            updatedRound.contributions,
+          ),
+          5000,
+          "indexRound",
+        );
+      } catch (err) {
+        this._logger.warn("vector_index_round_failed", `Failed to index round ${updatedRound.number} for vector search`, extractErrorInfo(err));
+        try {
+          this._database.addOrchestratorMessage("vector_index_timeout", "assistant", `⚠️ Vector indexing timed out for round ${updatedRound.number} — keyword fallback for that round.`, updatedRound.number);
+        } catch {}
+      }
+
+      const contribCount = updatedRound.contributions.length;
+      const turnRequestCount = (updatedRound.turn_requests || []).length;
+      const summaryText = updatedRound.summary ? ` | ${truncate(updatedRound.summary, SUMMARY_TRUNCATE_LEN)}` : "";
+      await this._sessionManager.postProgress(
+        `📋 Round ${this._stateManager.getCurrentRound()} complete — ${contribCount} contribution${contribCount !== 1 ? "s" : ""}, ${turnRequestCount} turn request${turnRequestCount !== 1 ? "s" : ""}${summaryText}`
+      );
+
+      if (this._options.onRoundComplete) {
+        this._options.onRoundComplete(this._stateManager.getCurrentRound(), updatedRound.summary);
+      }
+      this._notifyUpdate();
+
+      // Moderator check (convergence/deadlock)
+      const modResult = await this._moderatorService.checkAndProcess({
+        round: updatedRound,
+        participants: this._stateManager.getParticipants(),
+        weave: this._stateManager.getWeave(),
+        currentRound: this._stateManager.getCurrentRound(),
+        maxRounds: this._stateManager.getMaxRounds(),
+        promptOrchestrator: async (system, model, message) => this._promptOrchestrator(system, model, message, "moderation", updatedRound.number),
+        getHighestTierModel: () => this._getHighestTierModel(),
+        postProgress: async (message) => this._sessionManager.postProgress(message),
+        stateOfPlay: this._stateManager.getStateOfPlay(),
+      });
+
+      if (modResult.action === "converge") {
+        this._stateManager.transitionTo("converged");
+        await this._persistState();
+        return false;
+      }
+
+      if (modResult.action === "break") {
+        this._stateManager.setNextSpeakerId(this._stateManager.getParticipants()[modResult.nextSpeakerIdx]?.config.id ?? null);
+      }
+
+      // Plan turn order for next round (unless moderator forced a break)
+      if (modResult.action !== "break") {
+        const turnRequests = updatedRound.turn_requests || [];
+        const orderedParticipants = await this._moderatorService.planTurnOrder({
+          stateOfPlay: this._stateManager.getStateOfPlay(),
+          roundSummary: updatedRound.summary || "",
+          turnRequests,
+          participants: this._stateManager.getParticipants(),
+          promptOrchestrator: async (system, model, message) => this._promptOrchestrator(system, model, message, "turn_order", updatedRound.number),
+          getHighestTierModel: () => this._getHighestTierModel(),
+        });
+        
+        // Store planned order for next round
+        if (orderedParticipants.length > 0) {
+          this._stateManager.setNextSpeakerId(orderedParticipants[0]);
+          this._stateManager.setPlannedTurnOrder(orderedParticipants);
+        }
+      }
+
+      const participants = this._stateManager.getParticipants();
+      const passed = participants.filter((p) => p.status === "passed").length;
+      const failed = participants.filter((p) => p.status === "failed").length;
+      const active = participants.length - passed - failed;
+      const allPassed = active === 0 && passed > 0 && failed === 0;
+      const allFailed = active === 0 && failed > 0 && passed === 0;
+      const mixedDone = active === 0 && passed > 0 && failed > 0;
+      const exhausted = this._stateManager.getCurrentRound() >= this._stateManager.getMaxRounds() && active > 0;
+      if (allPassed) {
+        this._stateManager.transitionTo("converged");
+        await this._persistState();
+        return false;
+      }
+      if (allFailed || mixedDone) {
+        this._stateManager.transitionTo("aborted");
+        await this._persistState();
+        return false;
+      }
+      if (exhausted) {
+        this._stateManager.transitionTo("max_rounds_reached");
+        await this._persistState();
+        return false;
+      }
+
+      // Contribution-mix steering (audit 01 E3): if last round was pure
+      // conflict with no consolidation, nudge the next round toward synthesis.
+      // Cheap, prompt-level, no new LLM calls — measured by PV5 telemetry.
+      const typeCounts = {};
+      for (const c of (updatedRound.contributions || [])) {
+        typeCounts[c.type] = (typeCounts[c.type] || 0) + 1;
+      }
+      if ((typeCounts.challenge || 0) + (typeCounts.dissent || 0) >= 3 && !typeCounts.synthesize) {
+        this._stateManager.setNextRoundSteering(
+          "Steering note for the next speaker: last round had multiple challenges/dissents with no synthesis. Please consolidate positions above — cite [_id] — before opening a new challenge."
+        );
+      }
+
+      await this._persistState();
+      return true;
+    } catch (err) {
+      const info = extractErrorInfo(err);
+      // Error taxonomy (audit 01 E2): distinguish "degrade and continue" from
+      // "the finalization logic itself is broken". Never silently return false —
+      // that is indistinguishable from a clean convergence.
+      const persistenceFailure = this._isPersistenceError(err);
+      if (persistenceFailure) {
+        // Degrade: state stays in memory; the meeting can proceed to the next round.
+        this._logger.warn("finalize_round_degraded", `Round ${updatedRound.number} finalization degraded by persistence failure`, info);
+        try {
+          await this._persistState();
+        } catch (persistErr) {
+          this._logger.error("finalize_round_persist_failed", `Could not persist state after degradation for round ${updatedRound.number}`, extractErrorInfo(persistErr));
+        }
+        return true;
+      }
+      // State-machine or logic error: abort honestly, persist the aborted status
+      // BEFORE rethrowing so the terminal status survives the unwinding (audit 05 note).
+      this._logger.error("finalize_round_failed", `Failed to finalize round ${updatedRound.number}`, info);
+      try {
+        this._stateManager.transitionTo("aborted");
+        await this._persistState();
+        await this._sessionManager.postProgress(`❌ Meeting aborted — internal error while finalizing round ${updatedRound.number}: ${err.message}`, "error");
+      } catch (abortErr) {
+        this._logger.error("finalize_round_abort_failed", "Could not persist aborted status during finalize failure", extractErrorInfo(abortErr));
+      }
+      throw err;
+    }
+  }
+
+export function _isPersistenceError(err) {
+    if (!(err instanceof Error)) return false;
+    const msg = String(err.message || "").toLowerCase();
+    return (
+      msg.includes("sqlite") ||
+      msg.includes("database") ||
+      msg.includes("disk i/o") ||
+      msg.includes("readonly") ||
+      err.code === "SQLITE_BUSY" ||
+      err.code === "SQLITE_READONLY" ||
+      err.code === "EACCES"
+    );
+  }
+
+export async function _persistState() {
+    const sharedState = this._stateManager.buildSharedState();
+    const stats = this._getMergedStats();
+    try {
+      await this._persistenceService.persistState(sharedState, this._stateManager.getNextSpeakerId(), stats, this._stateManager.getMaxRounds());
+    } catch (err) {
+      const info = extractErrorInfo(err);
+      this._logger.error("persist_state_failed", "Failed to persist meeting state to database", info);
+    }
+   }
+
+export function _getMergedStats() {
+    const roundStats = this._roundExecutor?.getCallStats() ?? {};
+    return { ...this._callStats, ...roundStats };
+  }
+
+export function _logError(context, error) {
+    try {
+      const info = extractErrorInfo(error);
+      this._logger.error(context, info.message, { stack: info.stack });
+      if (this._database) {
+        this._database.logError(context, info.message, { stack: info.stack });
+      }
+    } catch {
+      // Last-resort: do not let error logging failures propagate
+    }
+  }
+
+export function _notifyUpdate() {
+    this._stallWatchdog.touch();
+    if (this._options.onUpdate) {
+      this._options.onUpdate(this._stateManager.getState());
+    }
+  }
+

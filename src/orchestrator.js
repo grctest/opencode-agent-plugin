@@ -24,56 +24,61 @@ import { MeetingExtender } from "./services/meeting-extender.js";
 import { VectorIndex } from "./services/vector-index.js";
 import { PersonaIndex } from "./services/persona-index.js";
 import { getPersonas } from "./composer.js";
+import * as weavingHelpers from "./orchestrator/weaving.js";
+import * as roundHelpers from "./orchestrator/round.js";
+import * as synthesisHelpers from "./orchestrator/synthesis.js";
+import * as modelsHelpers from "./orchestrator/models.js";
+import * as initHelpers from "./orchestrator/init.js";
 
 // Named constants for magic numbers
 const SUMMARY_TRUNCATE_LEN = 200;
 const MAX_ORCHESTRATOR_MESSAGES = 200;
 
 export class MeetingOrchestrator {
-  #meetingId;
-  #stateManager;
-  #persistenceService;
-  #moderatorService;
-  #synthesisCoordinator;
-  #roundService;
-  #roundInitializer;
-  #meetingExtender;
-  #stallWatchdog;
-  #vectorIndex;
-  #options;
-  #client;
-  #directory;
-  #parentSessionId;
-  #database = null;
-  #roundExecutor = null;
-  #cancelled = false;
-  #startTime = 0;
-  #meetingTimeoutMs;
-  #sessionManager = null;
-  #logger = null;
-  #orchestratorMessages = [];
-  #resume = false;
-  #callStats = { orchestrator: 0, compaction: 0, moderation: 0, summary: 0, synthesis: 0, input_tokens: 0, output_tokens: 0 };
-  #personaIndex = null;
-  #availableModels = [];
-  #lastSeenParentMessageId = null;
-  #maxTotalTokens = 0;
+  _meetingId;
+  _stateManager;
+  _persistenceService;
+  _moderatorService;
+  _synthesisCoordinator;
+  _roundService;
+  _roundInitializer;
+  _meetingExtender;
+  _stallWatchdog;
+  _vectorIndex;
+  _options;
+  _client;
+  _directory;
+  _parentSessionId;
+  _database = null;
+  _roundExecutor = null;
+  _cancelled = false;
+  _startTime = 0;
+  _meetingTimeoutMs;
+  _sessionManager = null;
+  _logger = null;
+  _orchestratorMessages = [];
+  _resume = false;
+  _callStats = { orchestrator: 0, compaction: 0, moderation: 0, summary: 0, synthesis: 0, input_tokens: 0, output_tokens: 0 };
+  _personaIndex = null;
+  _availableModels = [];
+  _lastSeenParentMessageId = null;
+  _maxTotalTokens = 0;
 
   constructor(options) {
-    this.#meetingId = options.meetingId ?? crypto.randomUUID();
-    this.#resume = options.resume === true;
-    this.#options = options;
-    this.#client = options.client;
-    this.#directory = options.directory;
-    this.#parentSessionId = options.parentSessionId;
-    this.#meetingTimeoutMs = options.meetingTimeoutMs ?? getConfig().defaultMeetingTimeoutMs;
-    this.#maxTotalTokens = options.maxTotalTokens ?? getConfig().maxTotalTokens ?? 0;
-    this.#availableModels = options.availableModels ?? [];
+    this._meetingId = options.meetingId ?? crypto.randomUUID();
+    this._resume = options.resume === true;
+    this._options = options;
+    this._client = options.client;
+    this._directory = options.directory;
+    this._parentSessionId = options.parentSessionId;
+    this._meetingTimeoutMs = options.meetingTimeoutMs ?? getConfig().defaultMeetingTimeoutMs;
+    this._maxTotalTokens = options.maxTotalTokens ?? getConfig().maxTotalTokens ?? 0;
+    this._availableModels = options.availableModels ?? [];
 
-    this.#logger = new Logger().forMeeting(this.#meetingId);
+    this._logger = new Logger().forMeeting(this._meetingId);
 
     const initialState = {
-      id: this.#meetingId,
+      id: this._meetingId,
       parent_session_id: options.parentSessionId,
       question: options.question,
       context: options.context,
@@ -100,413 +105,107 @@ export class MeetingOrchestrator {
       state_of_play: "",
     };
 
-    this.#stateManager = new StateManager(initialState);
-    this.#moderatorService = new ModeratorService();
-    this.#roundInitializer = new RoundInitializer();
-    this.#meetingExtender = new MeetingExtender();
-    this.#stallWatchdog = new StallWatchdog({
+    this._stateManager = new StateManager(initialState);
+    this._moderatorService = new ModeratorService();
+    this._roundInitializer = new RoundInitializer();
+    this._meetingExtender = new MeetingExtender();
+    this._stallWatchdog = new StallWatchdog({
       onStall: () => {
-        this.#cancelled = true;
-        this.#sessionManager?.postProgress("⏱️ No activity detected for a while — stopping the deliberation.", "warn");
+        this._cancelled = true;
+        this._sessionManager?.postProgress("⏱️ No activity detected for a while — stopping the deliberation.", "warn");
       },
-      logger: this.#logger,
+      logger: this._logger,
     });
   }
 
    getDbPath() {
-    return getMeetingDbPath(this.#directory, this.#meetingId);
+    return getMeetingDbPath(this._directory, this._meetingId);
   }
 
   getMeetingId() {
-    return this.#meetingId;
+    return this._meetingId;
   }
 
   getState() {
-    return this.#stateManager.getState();
+    return this._stateManager.getState();
   }
 
    getOrchestratorMessages() {
-    return [...this.#orchestratorMessages];
+    return [...this._orchestratorMessages];
   }
 
   getStateManager() {
-    return this.#stateManager;
+    return this._stateManager;
   }
 
   getSessionManager() {
-    return this.#sessionManager;
+    return this._sessionManager;
   }
 
   getDatabase() {
-    return this.#database;
+    return this._database;
   }
 
   getRoundExecutor() {
-    return this.#roundExecutor;
+    return this._roundExecutor;
   }
 
   getVectorIndex() {
-    return this.#vectorIndex;
+    return this._vectorIndex;
   }
 
   cancel() {
-    this.#cancelled = true;
-    this.#logger.info("cancellation", "Loom cancelled by user");
+    this._cancelled = true;
+    this._logger.info("cancellation", "Loom cancelled by user");
   }
 
    async close() {
     try {
-      if (this.#sessionManager) {
-        try { await this.#sessionManager.deleteOrchestratorSession(); } catch {}
+      if (this._sessionManager) {
+        try { await this._sessionManager.deleteOrchestratorSession(); } catch {}
       }
-      if (this.#database) {
-        this.#logger.info("close", "Closing meeting database");
-        this.#database.close();
+      if (this._database) {
+        this._logger.info("close", "Closing meeting database");
+        this._database.close();
       }
     } catch (err) {
-      this.#logger.warn("close_failed", "Failed to close database", extractErrorInfo(err));
+      this._logger.warn("close_failed", "Failed to close database", extractErrorInfo(err));
     }
   }
-
-  #modelList() {
-    return this.#stateManager.getParticipants().map((p) => ({ tier: p.config.tier, model: p.config.model }));
+  _modelList(...args) {
+    return modelsHelpers._modelList.apply(this, args);
   }
-
-  #getHighestTierModel() {
-    return getHighestTierModel(this.#modelList());
+  _getHighestTierModel(...args) {
+    return modelsHelpers._getHighestTierModel.apply(this, args);
   }
-
-  #getAllowedFallbackModel() {
-    if (!this.#availableModels || this.#availableModels.length === 0) return null;
-    // Capability-fit scoring: active(20) + context/10000 + reasoning(15). Cost is display-only.
-    // Tie-breaker: recent latency metrics if available, else deterministic provider/model key.
-    // Session model is scored like any other model; only preferred if it lands in top 3 by quality
-    // (achieved by scoring it in the sorted list rather than blindly preferring it).
-    const sorted = [...this.#availableModels].sort((a, b) => {
-      const score = (m) => {
-        let s = 0;
-        if (m.status === "active") s += 20;
-        s += (m.limit?.context ?? 128000) / 10000;
-        if (m.reasoning) s += 15;
-        return s;
-      };
-      const diff = score(b) - score(a);
-      if (diff !== 0) return diff;
-      // Tie-breaker: if getRecentMeetingMetrics were available, use latency (lower wins).
-      // For now use deterministic key to keep sorting stable.
-      const aKey = `${a.providerID}/${a.modelID}`;
-      const bKey = `${b.providerID}/${b.modelID}`;
-      return aKey < bKey ? -1 : aKey > bKey ? 1 : 0;
-    });
-    const best = sorted[0];
-    return { providerID: best.providerID, modelID: best.modelID };
+  _getAllowedFallbackModel(...args) {
+    return modelsHelpers._getAllowedFallbackModel.apply(this, args);
   }
-
-  #getParticipantModel(participant, fallbackOnError = false) {
-    if (participant.config.model) {
-      const model = { providerID: participant.config.model.providerID, modelID: participant.config.model.modelID };
-      if (fallbackOnError) {
-        if (this.#roundExecutor && this.#roundExecutor.isModelHealthy(model)) {
-          return model;
-        }
-        const fallback = this.#getAllowedFallbackModel();
-        if (fallback) return fallback;
-      }
-      return model;
-    }
-    const fallback = this.#getAllowedFallbackModel() ?? this.#getHighestTierModel();
-    if (fallback) return fallback;
-    throw new LoomError(
-      `No model assigned for participant ${participant.config.name} (${participant.config.tier})`,
-      { phase: "model_assignment", participantId: participant.config.id, recoverable: false }
-    );
+  _getParticipantModel(...args) {
+    return modelsHelpers._getParticipantModel.apply(this, args);
   }
-
-  async #promptOrchestrator(system, model, message, type = "orchestrator", round = null) {
-    const cfg = getConfig();
-    const fastPathModel = cfg.fastPathModelObj ?? (cfg.fastPathModel ? (() => {
-      const s = cfg.fastPathModel;
-      if (typeof s === 'string' && s.includes('/')) {
-        const idx = s.indexOf('/');
-        const providerID = s.slice(0, idx).trim();
-        const modelID = s.slice(idx + 1).trim();
-        if (providerID && modelID) return { providerID, modelID };
-      }
-      return null;
-    })() : null);
-    const useModel = (fastPathModel && (type === "moderation" || type === "compaction" || type === "summary"))
-      ? fastPathModel
-      : model;
-
-    this.#callStats[type] = (this.#callStats[type] ?? 0) + 1;
-    if (this.#orchestratorMessages.length >= MAX_ORCHESTRATOR_MESSAGES) {
-      this.#orchestratorMessages.shift();
-    }
-    const safeMessage = (message ?? "").toString();
-    this.#orchestratorMessages.push({ type, role: "user", content: safeMessage, round, timestamp: Date.now() });
-    if (this.#database) {
-      this.#database.addOrchestratorMessage(type, "user", safeMessage, round);
-    }
-    const { text: response, tokens } = await this.#sessionManager.promptOrchestrator(system, useModel, message);
-    if (tokens) {
-      this.#callStats.input_tokens += tokens.input ?? 0;
-      this.#callStats.output_tokens += tokens.output ?? 0;
-    }
-    const safeResponse = (response ?? "").toString();
-    if (!safeResponse.trim()) {
-      this.#logger.warn("orchestrator_empty_response", `Orchestrator returned empty text for type=${type} round=${round}`, { type, round });
-    }
-    if (this.#orchestratorMessages.length >= MAX_ORCHESTRATOR_MESSAGES) {
-      this.#orchestratorMessages.shift();
-    }
-    this.#orchestratorMessages.push({ type, role: "assistant", content: safeResponse, round, timestamp: Date.now() });
-    if (this.#database) {
-      this.#database.addOrchestratorMessage(type, "assistant", safeResponse, round);
-    }
-    return safeResponse;
+  async _promptOrchestrator(...args) {
+    return modelsHelpers._promptOrchestrator.apply(this, args);
   }
-
-  async initialize() {
-    if (this.#stateManager.getStatus() !== "initializing") {
-      return;
-    }
-
-    this.#startTime = Date.now();
-
-    try {
-      const dbPath = this.getDbPath();
-      const db = await MeetingDatabase.create(dbPath, this.#meetingId);
-      this.#database = db;
-      this.#persistenceService = new PersistenceService(db, this.#meetingId);
-      this.#vectorIndex = new VectorIndex(db);
-
-      this.#sessionManager = new SessionManager(this.#client, this.#directory, this.#parentSessionId, this.#logger);
-      this.#sessionManager.setDatabase(db);
-      this.#synthesisCoordinator = new SynthesisCoordinator(this.#sessionManager);
-
-      // Ensure the meeting row exists BEFORE indexing personas.
-      // The persona_embeddings table has a FK to meetings(id), so the meeting
-      // must be inserted first.  Use upsertMeeting (UPDATE when already present
-      // from the knit-handler composition phase) to avoid cascade-deleting the
-      // persona embeddings that were just stored.
-      if (this.#resume) {
-        const restored = restoreStateFromDb({
-          db,
-          stateManager: this.#stateManager,
-          meetingId: this.#meetingId,
-          options: this.#options,
-        });
-        this.#stateManager.setNextSpeakerId(restored.nextSpeakerId);
-        this.#callStats = { ...this.#callStats, ...restored.callStats };
-      } else {
-        const meetingInput = {
-          question: this.#options.question,
-          context: this.#options.context,
-          maxRounds: this.#options.maxRounds,
-          convergence: "moderator_forces", // display-only; termination is deterministic
-          tags: this.#options.tags ?? [],
-          parentSessionId: this.#options.parentSessionId,
-          opencodeSessionId: this.#options.opencodeSessionId ?? this.#options.parentSessionId,
-          embedding_model: this.#options.embedding_model ?? null,
-          embedding_dim: this.#options.embedding_dim ?? null,
-          participants: this.#stateManager.getParticipants().map((p) => p.config),
-        };
-        db.upsertMeeting(meetingInput);
-        this.#logger.info("meeting_upserted", "Meeting row ensured in database");
-      }
-
-      // Ensure a real embedder is loaded in this process. Init normally happens
-      // once at plugin startup; this is a backstop for resumed/standalone meetings
-      // and surfaces degraded semantic features loudly rather than silently.
-      try {
-        const { ensureEmbedderInitialized, getEmbeddingDim } = await import("./services/embedding-service.js");
-        const modelName = this.#options.embedding_model ?? getConfig().embeddingModel ?? null;
-        await ensureEmbedderInitialized(modelName, getConfig().embeddingQuant);
-        if (modelName) {
-          this.#logger.info("embedder_initialized", `Embedding model loaded: ${modelName} (${getEmbeddingDim()}d)`);
-        }
-      } catch (err) {
-        this.#logger.warn("embedder_init_failed", `Failed to initialize embedding model: ${err.message}`, extractErrorInfo(err));
-      }
-
-      // Index personas into the meeting database for vector similarity search.
-      // Skip if already indexed (e.g., by knit-handler during participant selection).
-      const { isEmbedderInitialized } = await import("./services/embedding-service.js");
-      if (isEmbedderInitialized()) {
-        try {
-          this.#personaIndex = new PersonaIndex(db);
-          if (db.countPersonaVecEmbeddings() === 0) {
-            const personas = getPersonas();
-            await this.#personaIndex.indexAll(personas);
-          } else {
-            this.#logger.info("personas_already_indexed", "Persona embeddings already present in database");
-          }
-        } catch (err) {
-          this.#logger.warn("persona_index_failed", "Failed to index personas for vector search", extractErrorInfo(err));
-        }
-
-        // Load persona embeddings onto participant objects for reflection targeting
-        try {
-          const participants = this.#stateManager.getParticipants();
-          const names = participants.map((p) => p.config.name);
-          const embeddingMap = db.getPersonaEmbeddingsByNames(names);
-          for (const p of participants) {
-            this.#stateManager.setParticipantEmbedding(p.config.id, embeddingMap.get(p.config.name) ?? null);
-          }
-        } catch (err) {
-          this.#logger.warn("embedding_load_failed", "Failed to load embeddings onto participants", extractErrorInfo(err));
-        }
-      }
-
-      // Transition first, then persist — the DB must never lag the in-memory status
-      // for the entire first round (audit 01 E1). transitionTo performs no I/O.
-      this.#stateManager.transitionTo("weaving");
-      await this.#persistState();
-
-      if (!this.#resume && this.#options.context) {
-        try {
-          await this.#raceWithGuardTimer(
-            this.#vectorIndex.indexContext(this.#options.context),
-            10000,
-            "indexContext",
-          );
-        } catch (err) {
-          this.#logger.warn("vector_index_context_failed", "Failed to index context for vector search", extractErrorInfo(err));
-        }
-      }
-
-      this.#roundExecutor = new RoundExecutor({
-        db,
-        stateManager: this.#stateManager,
-        vectorIndex: this.#vectorIndex,
-        options: {
-          onAgentComplete: this.#options.onAgentComplete,
-          onContribution: (...args) => {
-            this.#stallWatchdog.touch();
-            this.#options.onContribution?.(...args);
-          },
-          onProgress: async (message) => this.#sessionManager.postProgress(message),
-          createEphemeralSession: async (participant) => this.#sessionManager.createEphemeralSession(participant),
-          deleteEphemeralSession: async (sessionId) => this.#sessionManager.deleteEphemeralSession(sessionId),
-        },
-        sessionManager: this.#sessionManager,
-        promptParent: async (system, model, message) => this.#promptOrchestrator(system, model, message),
-        getParticipantModel: (participant) => this.#getParticipantModel(participant, true),
-        logError: (context, error) => this.#logError(context, error),
-        tools: this.#options.agentTools ?? null,
-        availableModels: this.#availableModels,
-      });
-
-      this.#roundService = new RoundService({ roundExecutor: this.#roundExecutor });
-
-      this.#logger.info("initialized", `Meeting ${this.#resume ? "resumed" : "initialized"}`, { participants: this.#stateManager.getParticipants().length, resumed: this.#resume });
-    } catch (err) {
-      const info = extractErrorInfo(err);
-      this.#logger.error("init_failed", "Failed to initialize meeting", info);
-      throw err;
-    }
+  async initialize(...args) {
+    return initHelpers.initialize.apply(this, args);
   }
-
-  async runMeeting() {
-    await this.initialize();
-
-    // Baseline the parent-message marker (audit 14 PV2): only messages the user
-    // sends AFTER meeting start become steering — never the original question.
-    try {
-      const prior = await this.#sessionManager.getParentUserMessages(null);
-      if (prior.length > 0) this.#lastSeenParentMessageId = prior[prior.length - 1].id;
-    } catch { /* best-effort */ }
-
-    const participantItems = this.#stateManager.getParticipants()
-      .map((p) => `  - ${p.config.name} (${p.config.tier}${p.config.tags?.length ? ", " + p.config.tags.join(", ") : ""})`)
-      .join("\n");
-    await this.#sessionManager.postProgress(
-      `🎬 Loom started — ${this.#stateManager.getParticipants().length} participants:\n${participantItems}`
-    );
-
-    this.#stallWatchdog.start(
-      () => this.#stateManager.getStatus(),
-      () => this.#cancelled,
-    );
-    try {
-      await this.#runWeavingLoop();
-    } finally {
-      this.#stallWatchdog.stop();
-    }
-
-    const output = await this.#synthesize();
-    return output;
+  async runMeeting(...args) {
+    return weavingHelpers.runMeeting.apply(this, args);
   }
-
-  async extendMeeting(newPrompt) {
-    this.#startTime = Date.now();
-    this.#cancelled = false;
-    this.#stallWatchdog.reset();
-
-    await this.#meetingExtender.extend({
-      database: this.#database,
-      stateManager: this.#stateManager,
-      sessionManager: this.#sessionManager,
-      newPrompt,
-    });
-
-    this.#stallWatchdog.start(
-      () => this.#stateManager.getStatus(),
-      () => this.#cancelled,
-    );
-    try {
-      await this.#runWeavingLoop();
-    } finally {
-      this.#stallWatchdog.stop();
-    }
-    const output = await this.#synthesize();
-    return output;
+  async extendMeeting(...args) {
+    return weavingHelpers.extendMeeting.apply(this, args);
   }
-
-  async #runWeavingLoop() {
-    let continueWeaving = true;
-    while (continueWeaving) {
-      if (this.#cancelled) {
-        const terminal = this.#stallWatchdog.stallCancelled ? "timeout" : "cancelled";
-        this.#stateManager.transitionTo(terminal);
-        await this.#sessionManager.postProgress(
-          this.#stallWatchdog.stallCancelled
-            ? "⏱️ Loom stopped due to no activity — generating output from collected contributions."
-            : "🛑 Loom cancelled by user."
-        );
-        this.#logger.info(this.#stallWatchdog.stallCancelled ? "stall_timeout" : "cancelled", "Meeting stopped before weaving loop completed");
-        break;
-      }
-
-      if (this.#remainingMs() <= 0) {
-        this.#stateManager.transitionTo("timeout");
-        await this.#sessionManager.postProgress("⏱️ Loom timed out — generating output from collected contributions.", "warn");
-        this.#logger.warn("timeout", "Meeting timed out", { elapsed: Date.now() - this.#startTime, limit: this.#meetingTimeoutMs });
-        break;
-      }
-
-      continueWeaving = await this.runRound();
-      this.#notifyUpdate();
-      if (continueWeaving && this.#tokenBudgetExceeded()) {
-        this.#stateManager.transitionTo("timeout");
-        const spent = (this.#callStats.input_tokens ?? 0) + (this.#callStats.output_tokens ?? 0);
-        await this.#sessionManager.postProgress(`💰 Token budget reached (${spent} ≥ ${this.#maxTotalTokens}) — ending deliberation and generating output.`, "warn");
-        break;
-      }
-      if (continueWeaving) {
-        await this.#collectUserSteering();
-      }
-    }
+  async _runWeavingLoop(...args) {
+    return weavingHelpers._runWeavingLoop.apply(this, args);
   }
 
   /**
    * Token budget brake (audit 14 PV4): maxTotalTokens > 0 caps total LLM tokens
    * per meeting so a runaway meeting has a cost ceiling, not just a time one.
    */
-  #tokenBudgetExceeded() {
-    if (!this.#maxTotalTokens || this.#maxTotalTokens <= 0) return false;
-    const spent = (this.#callStats.input_tokens ?? 0) + (this.#callStats.output_tokens ?? 0);
-    return spent >= this.#maxTotalTokens;
+  _tokenBudgetExceeded(...args) {
+    return weavingHelpers._tokenBudgetExceeded.apply(this, args);
   }
 
   /**
@@ -516,395 +215,55 @@ export class MeetingOrchestrator {
    * participants mid-meeting (audit 14 PV3). Best-effort — a failed check
    * never breaks the loop.
    */
-  async #collectUserSteering() {
-    try {
-      const newMsgs = await this.#sessionManager.getParentUserMessages(this.#lastSeenParentMessageId);
-      if (newMsgs.length === 0) return;
-      this.#lastSeenParentMessageId = newMsgs[newMsgs.length - 1].id;
-      const steeringParts = [];
-      const notes = [];
-      for (const m of newMsgs) {
-        const text = (m.text ?? "").trim();
-        const muteMatch = text.match(/^\/mute\s+(.+)$/i);
-        const releaseMatch = text.match(/^\/release\s+(.+)$/i);
-        if (muteMatch || releaseMatch) {
-          const name = (muteMatch?.[1] ?? releaseMatch?.[1] ?? "").trim().replace(/^["']|["']$/g, "");
-          const p = this.#stateManager.getParticipants().find(
-            (x) => x.config.name.toLowerCase() === name.toLowerCase() || x.config.id.toLowerCase() === name.toLowerCase(),
-          );
-          if (!p) {
-            notes.push(`⚠️ No participant matching "${name}".`);
-            continue;
-          }
-          if (muteMatch) {
-            const ok = this.#stateManager.muteParticipant(p.config.id);
-            notes.push(ok ? `🔇 ${p.config.name} muted for the rest of the meeting.` : `⚠️ Could not mute ${p.config.name}.`);
-          } else {
-            const ok = this.#stateManager.releaseParticipant(p.config.id);
-            notes.push(ok ? `🔊 ${p.config.name} released back into the rotation.` : `⚠️ ${p.config.name} was not muted.`);
-          }
-        } else if (text) {
-          steeringParts.push(text);
-        }
-      }
-      if (steeringParts.length > 0) {
-        const combined = steeringParts.join(" | ").slice(0, 500);
-        this.#stateManager.setNextRoundSteering(
-          `📌 The meeting owner interjected mid-deliberation: "${combined}" — factor this into your next contribution.`,
-        );
-        notes.push(`ℹ️ Owner input received — steering injected: ${combined.slice(0, 120)}${combined.length > 120 ? "…" : ""}`);
-      }
-      for (const note of notes) {
-        await this.#sessionManager.postProgress(note);
-      }
-    } catch (err) {
-      this.#logger.debug("steering_check_failed", "Parent-message steering check failed", extractErrorInfo(err));
-    }
+  async _collectUserSteering(...args) {
+    return weavingHelpers._collectUserSteering.apply(this, args);
   }
 
   /**
    * Single deadline authority (audit 01 E6) — every timeout check consults this.
    */
-  #remainingMs() {
-    return this.#startTime + this.#meetingTimeoutMs - Date.now();
+  _remainingMs(...args) {
+    return weavingHelpers._remainingMs.apply(this, args);
   }
 
   /**
    * Promise.race with a guard timer that is always cleared and unref'd, so losing
    * the race doesn't leak a pending timer (audit 05 LS6 / audit 17 PF1).
    */
-  #raceWithGuardTimer(promise, timeoutMs, label) {
-    let timer;
-    const timeoutPromise = new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`${label} timeout after ${timeoutMs}ms`)), timeoutMs);
-      if (timer.unref) timer.unref();
-    });
-    return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timer));
+  _raceWithGuardTimer(...args) {
+    return weavingHelpers._raceWithGuardTimer.apply(this, args);
   }
-
-  #checkTimeout() {
-    if (this.#remainingMs() <= 0) {
-      this.#stateManager.transitionTo("timeout");
-      this.#logger.warn("timeout", "Meeting timed out", { elapsed: Date.now() - this.#startTime, limit: this.#meetingTimeoutMs });
-      return true;
-    }
-    return false;
+  _checkTimeout(...args) {
+    return weavingHelpers._checkTimeout.apply(this, args);
   }
-
-  async runRound() {
-    if (this.#checkTimeout()) {
-      await this.#sessionManager.postProgress("⏱️ Loom timed out — generating output from collected contributions.", "warn");
-      return false;
-    }
-
-    const remaining = this.#remainingMs();
-    if (remaining < 5000) {
-      this.#stateManager.transitionTo("timeout");
-      await this.#sessionManager.postProgress("⏱️ Loom timed out — generating output from collected contributions.", "warn");
-      this.#logger.warn("timeout", "Meeting timed out before round start", { remaining });
-      return false;
-    }
-
-    const deadline = this.#startTime + this.#meetingTimeoutMs;
-
-    const round = this.#roundInitializer.initializeRound(this.#stateManager, this.#database, () => this.#notifyUpdate());
-    const { activeParticipants, skipped } = this.#roundInitializer.filterActiveParticipants(this.#stateManager, round);
-
-    if (skipped.length > 0) {
-      await this.#sessionManager.postProgress(`⏭️ Skipped: ${skipped.join(", ")} (inactive, no new reflections)`);
-    }
-
-    if (activeParticipants.length === 0) {
-      this.#stateManager.transitionTo("converged");
-      return false;
-    }
-
-    if (!this.#roundExecutor) {
-      throw new LoomError("RoundExecutor not initialized — call initialize() first", { phase: "round_execution", recoverable: false });
-    }
-
-    const { round: updatedRound } = await this.#roundService.runRound({
-      round,
-      activeParticipants,
-      promptOrchestrator: async (system, model, message, type) => this.#promptOrchestrator(system, model, message, type, round.number),
-      getHighestTierModel: () => this.#getHighestTierModel(),
-      getFallbackModel: () => this.#getAllowedFallbackModel(),
-      state: this.#stateManager.getState(),
-      deadline,
-    });
-
-    return this.#finalizeRound(updatedRound);
+  async runRound(...args) {
+    return roundHelpers.runRound.apply(this, args);
   }
-
-  async #finalizeRound(updatedRound) {
-    try {
-      this.#database.setRoundSummary(updatedRound.number, updatedRound.summary);
-
-      const newStateOfPlay = updateStateOfPlay(
-        this.#stateManager.getWeave(),
-        this.#stateManager.getQuestion(),
-        this.#stateManager.getTags(),
-      );
-      this.#stateManager.setStateOfPlay(newStateOfPlay);
-      this.#database.setStateOfPlay(newStateOfPlay);
-
-      try {
-        await this.#raceWithGuardTimer(
-          this.#vectorIndex.indexRound(
-            updatedRound.number,
-            updatedRound.summary,
-            updatedRound.contributions,
-          ),
-          5000,
-          "indexRound",
-        );
-      } catch (err) {
-        this.#logger.warn("vector_index_round_failed", `Failed to index round ${updatedRound.number} for vector search`, extractErrorInfo(err));
-        try {
-          this.#database.addOrchestratorMessage("vector_index_timeout", "assistant", `⚠️ Vector indexing timed out for round ${updatedRound.number} — keyword fallback for that round.`, updatedRound.number);
-        } catch {}
-      }
-
-      const contribCount = updatedRound.contributions.length;
-      const turnRequestCount = (updatedRound.turn_requests || []).length;
-      const summaryText = updatedRound.summary ? ` | ${truncate(updatedRound.summary, SUMMARY_TRUNCATE_LEN)}` : "";
-      await this.#sessionManager.postProgress(
-        `📋 Round ${this.#stateManager.getCurrentRound()} complete — ${contribCount} contribution${contribCount !== 1 ? "s" : ""}, ${turnRequestCount} turn request${turnRequestCount !== 1 ? "s" : ""}${summaryText}`
-      );
-
-      if (this.#options.onRoundComplete) {
-        this.#options.onRoundComplete(this.#stateManager.getCurrentRound(), updatedRound.summary);
-      }
-      this.#notifyUpdate();
-
-      // Moderator check (convergence/deadlock)
-      const modResult = await this.#moderatorService.checkAndProcess({
-        round: updatedRound,
-        participants: this.#stateManager.getParticipants(),
-        weave: this.#stateManager.getWeave(),
-        currentRound: this.#stateManager.getCurrentRound(),
-        maxRounds: this.#stateManager.getMaxRounds(),
-        promptOrchestrator: async (system, model, message) => this.#promptOrchestrator(system, model, message, "moderation", updatedRound.number),
-        getHighestTierModel: () => this.#getHighestTierModel(),
-        postProgress: async (message) => this.#sessionManager.postProgress(message),
-        stateOfPlay: this.#stateManager.getStateOfPlay(),
-      });
-
-      if (modResult.action === "converge") {
-        this.#stateManager.transitionTo("converged");
-        await this.#persistState();
-        return false;
-      }
-
-      if (modResult.action === "break") {
-        this.#stateManager.setNextSpeakerId(this.#stateManager.getParticipants()[modResult.nextSpeakerIdx]?.config.id ?? null);
-      }
-
-      // Plan turn order for next round (unless moderator forced a break)
-      if (modResult.action !== "break") {
-        const turnRequests = updatedRound.turn_requests || [];
-        const orderedParticipants = await this.#moderatorService.planTurnOrder({
-          stateOfPlay: this.#stateManager.getStateOfPlay(),
-          roundSummary: updatedRound.summary || "",
-          turnRequests,
-          participants: this.#stateManager.getParticipants(),
-          promptOrchestrator: async (system, model, message) => this.#promptOrchestrator(system, model, message, "turn_order", updatedRound.number),
-          getHighestTierModel: () => this.#getHighestTierModel(),
-        });
-        
-        // Store planned order for next round
-        if (orderedParticipants.length > 0) {
-          this.#stateManager.setNextSpeakerId(orderedParticipants[0]);
-          this.#stateManager.setPlannedTurnOrder(orderedParticipants);
-        }
-      }
-
-      const participants = this.#stateManager.getParticipants();
-      const passed = participants.filter((p) => p.status === "passed").length;
-      const failed = participants.filter((p) => p.status === "failed").length;
-      const active = participants.length - passed - failed;
-      const allPassed = active === 0 && passed > 0 && failed === 0;
-      const allFailed = active === 0 && failed > 0 && passed === 0;
-      const mixedDone = active === 0 && passed > 0 && failed > 0;
-      const exhausted = this.#stateManager.getCurrentRound() >= this.#stateManager.getMaxRounds() && active > 0;
-      if (allPassed) {
-        this.#stateManager.transitionTo("converged");
-        await this.#persistState();
-        return false;
-      }
-      if (allFailed || mixedDone) {
-        this.#stateManager.transitionTo("aborted");
-        await this.#persistState();
-        return false;
-      }
-      if (exhausted) {
-        this.#stateManager.transitionTo("max_rounds_reached");
-        await this.#persistState();
-        return false;
-      }
-
-      // Contribution-mix steering (audit 01 E3): if last round was pure
-      // conflict with no consolidation, nudge the next round toward synthesis.
-      // Cheap, prompt-level, no new LLM calls — measured by PV5 telemetry.
-      const typeCounts = {};
-      for (const c of (updatedRound.contributions || [])) {
-        typeCounts[c.type] = (typeCounts[c.type] || 0) + 1;
-      }
-      if ((typeCounts.challenge || 0) + (typeCounts.dissent || 0) >= 3 && !typeCounts.synthesize) {
-        this.#stateManager.setNextRoundSteering(
-          "Steering note for the next speaker: last round had multiple challenges/dissents with no synthesis. Please consolidate positions above — cite [#id] — before opening a new challenge."
-        );
-      }
-
-      await this.#persistState();
-      return true;
-    } catch (err) {
-      const info = extractErrorInfo(err);
-      // Error taxonomy (audit 01 E2): distinguish "degrade and continue" from
-      // "the finalization logic itself is broken". Never silently return false —
-      // that is indistinguishable from a clean convergence.
-      const persistenceFailure = this.#isPersistenceError(err);
-      if (persistenceFailure) {
-        // Degrade: state stays in memory; the meeting can proceed to the next round.
-        this.#logger.warn("finalize_round_degraded", `Round ${updatedRound.number} finalization degraded by persistence failure`, info);
-        try {
-          await this.#persistState();
-        } catch (persistErr) {
-          this.#logger.error("finalize_round_persist_failed", `Could not persist state after degradation for round ${updatedRound.number}`, extractErrorInfo(persistErr));
-        }
-        return true;
-      }
-      // State-machine or logic error: abort honestly, persist the aborted status
-      // BEFORE rethrowing so the terminal status survives the unwinding (audit 05 note).
-      this.#logger.error("finalize_round_failed", `Failed to finalize round ${updatedRound.number}`, info);
-      try {
-        this.#stateManager.transitionTo("aborted");
-        await this.#persistState();
-        await this.#sessionManager.postProgress(`❌ Meeting aborted — internal error while finalizing round ${updatedRound.number}: ${err.message}`, "error");
-      } catch (abortErr) {
-        this.#logger.error("finalize_round_abort_failed", "Could not persist aborted status during finalize failure", extractErrorInfo(abortErr));
-      }
-      throw err;
-    }
+  async _finalizeRound(...args) {
+    return roundHelpers._finalizeRound.apply(this, args);
   }
 
   /**
    * Classify whether an error from finalization is a persistence/indexing problem
    * (degradable) vs. a logic/state-machine error (must abort) — audit 01 E2.
    */
-  #isPersistenceError(err) {
-    if (!(err instanceof Error)) return false;
-    const msg = String(err.message || "").toLowerCase();
-    return (
-      msg.includes("sqlite") ||
-      msg.includes("database") ||
-      msg.includes("disk i/o") ||
-      msg.includes("readonly") ||
-      err.code === "SQLITE_BUSY" ||
-      err.code === "SQLITE_READONLY" ||
-      err.code === "EACCES"
-    );
+  _isPersistenceError(...args) {
+    return roundHelpers._isPersistenceError.apply(this, args);
   }
-
-   async #persistState() {
-    const sharedState = this.#stateManager.buildSharedState();
-    const stats = this.#getMergedStats();
-    try {
-      await this.#persistenceService.persistState(sharedState, this.#stateManager.getNextSpeakerId(), stats, this.#stateManager.getMaxRounds());
-    } catch (err) {
-      const info = extractErrorInfo(err);
-      this.#logger.error("persist_state_failed", "Failed to persist meeting state to database", info);
-    }
-   }
-
-  #getMergedStats() {
-    const roundStats = this.#roundExecutor?.getCallStats() ?? {};
-    return { ...this.#callStats, ...roundStats };
+  async _persistState(...args) {
+    return roundHelpers._persistState.apply(this, args);
   }
-
-  #logError(context, error) {
-    try {
-      const info = extractErrorInfo(error);
-      this.#logger.error(context, info.message, { stack: info.stack });
-      if (this.#database) {
-        this.#database.logError(context, info.message, { stack: info.stack });
-      }
-    } catch {
-      // Last-resort: do not let error logging failures propagate
-    }
+  _getMergedStats(...args) {
+    return roundHelpers._getMergedStats.apply(this, args);
   }
-
-  #notifyUpdate() {
-    this.#stallWatchdog.touch();
-    if (this.#options.onUpdate) {
-      this.#options.onUpdate(this.#stateManager.getState());
-    }
+  _logError(...args) {
+    return roundHelpers._logError.apply(this, args);
   }
-
-  async #synthesize() {
-    const allFailed = this.#stateManager.getParticipants().every((p) => p.status === "failed");
-    if (allFailed) {
-      const output = `# Deliberation Output\n\n## Decision\nNo output could be generated — all participants failed to respond.\n\n## Reasoning\nAll ${this.#stateManager.getParticipants().length} participants encountered errors during the deliberation.\n\n## Action Items\n- Check model connectivity and retry\n- Verify provider authentication\n\n## Confidence\nLow (no contributions received)`;
-      this.#saveArtifact({ content: output, format: "markdown", decisions: [], action_items: [], dissent: [], open_questions: [], confidence: "low" });
-      await this.#sessionManager.postProgress("⚠️ All participants failed — no synthesis possible.", "error");
-      this.#logger.error("all_failed", "All participants failed — no synthesis possible");
-      await this.#persistState();
-      return output;
-    }
-
-    const totalContributions = this.#stateManager.getWeave().length;
-    if (totalContributions === 0) {
-      const output = `# Deliberation Output\n\n## Decision\nNo output could be generated — all participants passed without contributing.\n\n## Reasoning\nAll ${this.#stateManager.getParticipants().length} participants chose to pass. This may indicate the question was unclear or participants had nothing to add.\n\n## Action Items\n- Rephrase the question with more specific context\n- Add participants with more targeted expertise\n\n## Confidence\nLow (no contributions received)`;
-      this.#saveArtifact({ content: output, format: "markdown", decisions: [], action_items: [], dissent: [], open_questions: [], confidence: "low" });
-      await this.#sessionManager.postProgress("ℹ️ All participants passed — no contributions to synthesize.");
-      this.#logger.warn("all_passed", "All participants passed — no contributions to synthesize");
-      await this.#persistState();
-      return output;
-    }
-
-    const synthesizer = this.#synthesisCoordinator.selectSynthesizer(this.#stateManager.getParticipants());
-    const transcriptData = this.#database.getTranscriptData(this.#meetingId);
-
-    const objections = collectObjections({
-      rounds: this.#stateManager.getRounds(),
-      participants: this.#stateManager.getParticipants(),
-    });
-    this.#stateManager.setObjections(objections);
-
-    let result;
-    try {
-      result = await this.#synthesisCoordinator.run(
-        transcriptData,
-        this.#stateManager.getParticipants(),
-        objections,
-        synthesizer,
-        (p) => this.#getParticipantModel(p, true),
-        () => {
-          if (this.#options.onSynthesisStart) this.#options.onSynthesisStart();
-        },
-        (output) => {
-          if (this.#options.onSynthesisComplete) this.#options.onSynthesisComplete(output);
-          this.#notifyUpdate();
-        },
-        this.#stateManager.getStateOfPlay(),
-        // User context reaches synthesis directly (audit 01 P8)
-        this.#stateManager.getContext?.() ?? "",
-      );
-    } catch (err) {      const message = err instanceof Error ? err.message : String(err);
-      this.#logger.error("synthesis_failed", `Synthesis failed — persisting degraded artifact: ${message}`);
-      await this.#sessionManager.postProgress(`⚠️ Synthesis failed (${message}) — degraded artifact persisted.`, "error");
-      const degraded = `# Deliberation Output\n\n## Decision\nSynthesis could not be completed (${message}).\n\n## Reasoning\nThe meeting reached its end state but the synthesis step failed. The full transcript is preserved for review.\n\n## Action Items\n- Retry synthesis with the meeting data\n- Review the transcript tab for the full deliberation\n\n## Confidence\nLow (synthesis interrupted)`;
-      result = {
-        output: degraded,
-        artifact: { content: degraded, format: "markdown", decisions: [], action_items: [], dissent: [], open_questions: [], confidence: "low" },
-      };
-    }
-
-    this.#callStats.synthesis++;
-    await this.#persistState();
-    this.#saveArtifact(result.artifact ?? { content: result.output, format: "markdown", decisions: [], action_items: [], dissent: [], open_questions: [], confidence: null });
-    this.#saveMeetingMetrics();
-    return result.output;
+  _notifyUpdate(...args) {
+    return roundHelpers._notifyUpdate.apply(this, args);
+  }
+  async _synthesize(...args) {
+    return synthesisHelpers._synthesize.apply(this, args);
   }
 
   /**
@@ -912,68 +271,13 @@ export class MeetingOrchestrator {
    * final weave — contribution mix, dissent survival, participation, votes.
    * Persisted inside meeting_metrics.counters.quality for trend analysis.
    */
-  #computeQualityTelemetry() {
-    try {
-      const weave = this.#stateManager.getWeave();
-      const byType = {};
-      for (const c of weave) {
-        byType[c.type] = (byType[c.type] ?? 0) + 1;
-      }
-      const participants = this.#stateManager.getParticipants();
-      const contributors = new Set(weave.map((c) => c.participant_id));
-      const objections = this.#stateManager.getObjections?.() ?? [];
-      const unresolved = objections.filter((o) => o.unresolved);
-      return {
-        contributions_by_type: byType,
-        challenges: byType.challenge ?? 0,
-        dissents: byType.dissent ?? 0,
-        unresolved_objections: unresolved.length,
-        total_objections: objections.length,
-        participants: participants.length,
-        contributors: contributors.size,
-        participation_ratio: participants.length > 0 ? Math.round((contributors.size / participants.length) * 100) / 100 : 0,
-        votes_held: byType.vote_tally ?? 0,
-      };
-    } catch {
-      return null;
-    }
+  _computeQualityTelemetry(...args) {
+    return synthesisHelpers._computeQualityTelemetry.apply(this, args);
   }
-
-  #saveArtifact(artifact) {
-    this.#stateManager.setArtifact(artifact);
-    if (this.#database) {
-      this.#database.saveArtifact(artifact);
-    }
+  _saveArtifact(...args) {
+    return synthesisHelpers._saveArtifact.apply(this, args);
   }
-
-  #saveMeetingMetrics() {
-    if (!this.#database) return;
-    try {
-      const stats = this.#getMergedStats();
-      const weave = this.#stateManager.getWeave();
-      const allTurnRequests = this.#stateManager.getRounds().flatMap((r) => r.turn_requests);
-      // Durable degradation/observability counters (audit 07 EH3): the process-wide
-      // degrade/retry/breaker events are snapshotted into the per-meeting row so
-      // they survive restart and are visible in trend queries.
-      let processCounters = {};
-      try {
-        const snapshot = getMetricsSnapshot();
-        processCounters = {
-          degradation_events: snapshot.counters.degradation_events ?? {},
-          retry_events: snapshot.counters.retry_events ?? {},
-          breaker_events: snapshot.counters.breaker_events ?? {},
-        };
-      } catch { /* metrics unavailable — keep going */ }
-      this.#database.saveMeetingMetrics({
-        counters: { ...stats, ...processCounters, quality: this.#computeQualityTelemetry() },
-        latencies: {},
-         input_tokens: stats.input_tokens ?? 0,
-         output_tokens: stats.output_tokens ?? 0,
-         duration_ms: Date.now() - this.#startTime,
-         rounds: this.#stateManager.getCurrentRound(),
-         contributions: weave.length,
-         turn_requests: allTurnRequests.length,
-       });
-    } catch { /* non-critical */ }
+  _saveMeetingMetrics(...args) {
+    return synthesisHelpers._saveMeetingMetrics.apply(this, args);
   }
 }

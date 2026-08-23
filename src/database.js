@@ -1,114 +1,24 @@
-import { mkdirSync, existsSync, readdirSync, unlinkSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { homedir } from "node:os";
-import { createRequire } from "node:module";
+import { mkdirSync, existsSync } from "node:fs";
+import { dirname } from "node:path";
 import { Logger, extractErrorInfo } from "./logger.js";
 import { initSchema, runMigrations } from "./database/schema.js";
 import { resolveLoomBaseDir, getMeetingDbPath } from "./paths.js";
-import {
-  loadSessionIndex,
-  indexMeeting as _indexMeeting,
-  unindexMeeting as _unindexMeeting,
-  getDatabasesBySessionId as _getDatabasesBySessionId,
-} from "./database/session-index.js";
-
-const dbLogger = new Logger();
-
-// sqlite-vec native extension resolution — supports Linux, macOS, Windows and both
-// bundled (plugins/loom.js → plugins/deps/...) and dev (src/ → node_modules/...) layouts.
-const VEC_CANDIDATE_PKGS = [
-  'sqlite-vec-linux-x64',
-  'sqlite-vec-linux-arm64',
-  'sqlite-vec-darwin-arm64',
-  'sqlite-vec-darwin-x64',
-  'sqlite-vec-win32-x64',
-];
-const VEC_EXTS = ['vec0.so', 'vec0.dylib', 'vec0.node'];
-let cachedVecPath = null;
-let vecPathResolved = false;
-
-function resolveVecPath() {
-  if (vecPathResolved) return cachedVecPath;
-  vecPathResolved = true;
-  const baseDir = (import.meta.dir ?? import.meta.dirname ?? '.');
-  const roots = [
-    join(baseDir, 'deps', 'node_modules'),
-    join(baseDir, '../deps', 'node_modules'),
-    join(baseDir, 'node_modules'),
-    join(baseDir, '../node_modules'),
-    join(baseDir, '../../node_modules'),
-  ];
-  // Also probe opencode global plugin deps (deployed layout)
-  try {
-    const home = homedir();
-    roots.push(join(home, '.config', 'opencode', 'plugins', 'deps', 'node_modules'));
-    roots.push(join(home, '.config', 'opencode', 'loom', 'deps', 'node_modules'));
-  } catch {}
-  for (const root of roots) {
-    for (const pkg of VEC_CANDIDATE_PKGS) {
-      for (const ext of VEC_EXTS) {
-        const p = join(root, pkg, ext);
-        if (existsSync(p)) {
-          cachedVecPath = p;
-          return cachedVecPath;
-        }
-      }
-    }
-  }
-  // Fallback: try to resolve via package entry (when sqlite-vec itself is installed)
-  try {
-    const req = createRequire(import.meta.url);
-    const pkgPath = req.resolve('sqlite-vec-linux-x64/package.json');
-    const dir = dirname(pkgPath);
-    for (const ext of VEC_EXTS) {
-      const p = join(dir, ext);
-      if (existsSync(p)) {
-        cachedVecPath = p;
-        return cachedVecPath;
-      }
-    }
-  } catch {}
-  return null;
-}
-
-// Single bun:sqlite import point — all DB access goes through this
-let DatabaseClass = null;
-let dbReady = null;
-
-function ensureDb() {
-  if (DatabaseClass) return Promise.resolve();
-  if (dbReady) return dbReady;
-  dbReady = (async () => {
-    const mod = await import("bun:sqlite");
-    DatabaseClass = mod.Database;
-  })();
-  return dbReady;
-}
-
-function safeParseJsonArray(value) {
-  if (!value) return undefined;
-  if (Array.isArray(value)) return value;
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-// findMeetingBySessionId uses DatabaseClass from ensureDb — no separate import needed
-
-function isoNow() {
-  return new Date().toISOString();
-}
+import { ensureDb, getDatabaseClass, isoNow, resolveVecPath } from "./database/connection.js";
+import { maintenanceDue, markMaintained, checkIntegrity, cleanupOldErrors, initVectorTable } from "./database/maintenance.js";
+import * as meetingOps from "./database/meeting-operations.js";
+import * as contribOps from "./database/contribution-operations.js";
+import * as vectorOps from "./database/vector-operations.js";
+import { loadSessionIndex, indexMeeting as _indexMeeting, unindexMeeting as _unindexMeeting, getDatabasesBySessionId as _getDatabasesBySessionId } from "./database/session-index.js";
 
 export { isoNow };
+export { loadSessionIndex, _indexMeeting as indexMeeting, _unindexMeeting as unindexMeeting, _getDatabasesBySessionId as getDatabasesBySessionId };
+export { findMeetingBySessionId, getDbPathForMeeting, deleteMeetingFiles, listMeetingFiles, readSessionIdFromDbAsync, deleteMeetingsBySessionId } from "./database/lookup.js";
+
+const dbLogger = new Logger();
 
 export class MeetingDatabase {
   #db;
   #meetingId;
-
-  // ── Factory Methods ──────────────────────────────────────────────
 
   static async create(dbPath, meetingId) {
     await ensureDb();
@@ -117,6 +27,7 @@ export class MeetingDatabase {
 
   static async withTransaction(dbPath, fn) {
     await ensureDb();
+    const DatabaseClass = getDatabaseClass();
     const db = new DatabaseClass(dbPath);
     try {
       db.exec('BEGIN TRANSACTION');
@@ -133,6 +44,7 @@ export class MeetingDatabase {
 
   static async readParticipants(dbPath) {
     await ensureDb();
+    const DatabaseClass = getDatabaseClass();
     const db = new DatabaseClass(dbPath, { readonly: true });
     try {
       return db.prepare(
@@ -145,6 +57,7 @@ export class MeetingDatabase {
 
   static async readMeeting(dbPath) {
     await ensureDb();
+    const DatabaseClass = getDatabaseClass();
     const db = new DatabaseClass(dbPath, { readonly: true });
     try {
       const row = db.prepare(
@@ -161,6 +74,7 @@ export class MeetingDatabase {
     this.#meetingId = meetingId;
     const existedBefore = existsSync(dbPath);
     mkdirSync(dirname(dbPath), { recursive: true });
+    const DatabaseClass = getDatabaseClass();
     const db = new DatabaseClass(dbPath);
     this.#db = db;
     this.#db.exec("PRAGMA journal_mode = WAL");
@@ -174,248 +88,27 @@ export class MeetingDatabase {
         dbLogger.warn("sqlite_vec_load_error", "Failed to load sqlite-vec extension", extractErrorInfo(err));
       }
     } else {
-      // Only warn once per process to avoid log spam
-      if (!vecPathResolved || !cachedVecPath) {
-        const searched = vecPath ? vecPath : 'no candidate found';
-        dbLogger.warn("sqlite_vec_not_found", "sqlite-vec extension not found — vector search degraded to keyword fallback", { searched, candidates: VEC_CANDIDATE_PKGS.join(',') });
+      if (!vecPath) {
+        dbLogger.warn("sqlite_vec_not_found", "sqlite-vec extension not found — vector search degraded to keyword fallback", { searched: 'no candidate found', candidates: 'sqlite-vec-*' });
       }
     }
     initSchema(this.#db);
-    // Ordered migrations via PRAGMA user_version (audit 04 PD2) — replaces the old
-    // redundant ALTER TABLE patch that duplicated a column already in schema.js.
     try {
       runMigrations(this.#db, { logger: dbLogger });
     } catch (err) {
       dbLogger.error("db_migration_failed", "Database migration failed — continuing with base schema", extractErrorInfo(err));
     }
-    this.#initVectorTable();
-    // Retention throttle (audit 04 PD3): last-maintenance time lives in a meta
-    // table, NOT file mtime — an actively written DB resets mtime on every write,
-    // so the old gate never fired for busy meetings.
+    initVectorTable(this.#db);
     const shouldMaintain = existedBefore || process.env.LOOM_INTEGRITY_CHECK === '1'
-      ? this.#maintenanceDue()
+      ? maintenanceDue(this.#db)
       : false;
     if (shouldMaintain) {
-      this.#cleanupOldErrors();
-      this.#checkIntegrity();
-      this.#markMaintained();
+      cleanupOldErrors(this.#db);
+      checkIntegrity(this.#db);
+      markMaintained(this.#db);
     }
   }
 
-  /** Ensures the meta(key,value) table exists for maintenance bookkeeping. */
-  #ensureMetaTable() {
-    try {
-      this.#db.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)");
-    } catch { /* best effort */ }
-  }
-
-  #maintenanceDue() {
-    this.#ensureMetaTable();
-    try {
-      const row = this.#db.prepare("SELECT value FROM meta WHERE key = 'last_maintenance_at'").get();
-      if (!row) return true;
-      return Date.now() - Number(row.value) > 86400000;
-    } catch {
-      return true;
-    }
-  }
-
-  #markMaintained() {
-    this.#ensureMetaTable();
-    try {
-      this.#db.prepare(
-        "INSERT INTO meta (key, value) VALUES ('last_maintenance_at', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
-      ).run(String(Date.now()));
-    } catch { /* best effort */ }
-  }
-
-  #initVectorTable(dim = 384) {
-    const safeDim = Number(dim);
-    if (!Number.isFinite(safeDim) || safeDim < 64 || safeDim > 2048 || Math.floor(safeDim) !== safeDim) {
-      dbLogger.warn("vec_table_invalid_dim", `Invalid embedding dimension ${dim} — expected integer 64..2048`, { dim });
-      return;
-    }
-    try {
-      this.#db.exec(`
-        CREATE VIRTUAL TABLE IF NOT EXISTS vec_fabric_chunks_${safeDim} USING vec0(
-          embedding float[${safeDim}]
-        )
-      `);
-    } catch (err) {
-      dbLogger.warn("vec_table_init_failed", "Could not create vector table — sqlite-vec may not be loaded", extractErrorInfo(err));
-    }
-  }
-
-  #checkIntegrity() {
-    try {
-      const result = this.#db.prepare("PRAGMA integrity_check").get();
-      if (result.integrity_check !== "ok") {
-        dbLogger.warn("integrity_check_failed", "Database integrity check failed", { result: result.integrity_check });
-      }
-    } catch (err) {
-      dbLogger.debug("integrity_check_error", "Integrity check could not run", extractErrorInfo(err));
-    }
-  }
-
-  #cleanupOldErrors() {
-    try {
-      // ISO timestamps (2026-08-21T…Z) compared against strftime output so the
-      // formats actually match — the old datetime('now') comparison mixed formats
-      // and was wrong at the boundary day (audit 04 PD3).
-      const cutoff = new Date(Date.now() - 30 * 86400000).toISOString();
-      this.#db.prepare("DELETE FROM agent_errors WHERE created_at < ?").run(cutoff);
-      this.#db.prepare("DELETE FROM error_log WHERE created_at < ?").run(cutoff);
-    } catch (err) {
-      dbLogger.warn("old_errors_cleanup_failed", "Failed to clean up old error rows", extractErrorInfo(err));
-    }
-  }
-
-  // ── Write Operations ─────────────────────────────────────────────
-
-  initializeMeeting(input) {
-    // Guard: prevent cascade wipe if persona embeddings already indexed — caller should use upsertMeeting
-    try {
-      const embCount = this.#db.prepare(`SELECT COUNT(*) as c FROM persona_embeddings WHERE meeting_id = ?`).get(this.#meetingId)?.c ?? 0;
-      if (embCount > 0) {
-        dbLogger.warn("initialize_after_embeddings", "initializeMeeting called after persona embeddings indexed — use upsertMeeting to avoid CASCADE wipe", { meetingId: this.#meetingId, embCount });
-        // Fall through to upsert semantics instead of OR REPLACE wipe
-        return this.upsertMeeting(input);
-      }
-    } catch {}
-    const now = isoNow();
-    const insertMeeting = this.#db.prepare(
-      `INSERT INTO meetings (id, question, context, status, round, fabric, max_rounds, convergence, tags, parent_session_id, opencode_session_id, embedding_model, embedding_dim, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET
-         question=excluded.question,
-         context=excluded.context,
-         status=excluded.status,
-         round=excluded.round,
-         fabric=excluded.fabric,
-         max_rounds=excluded.max_rounds,
-         convergence=excluded.convergence,
-         tags=excluded.tags,
-         parent_session_id=excluded.parent_session_id,
-         opencode_session_id=excluded.opencode_session_id,
-         embedding_model=excluded.embedding_model,
-         embedding_dim=excluded.embedding_dim,
-         updated_at=excluded.updated_at`,
-    );
-    const insertParticipant = this.#db.prepare(
-      `INSERT INTO participants (id, meeting_id, name, persona, agenda, tier, provider_id, model_id, session_id, known_biases, communication_style, preferred_contribution_types)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
-
-    this.#db.exec('BEGIN TRANSACTION');
-    try {
-      insertMeeting.run(
-        this.#meetingId,
-        input.question,
-        input.context ?? "",
-        "initializing",
-        input.context ?? "",
-        input.maxRounds,
-        input.convergence ?? "moderator_forces", // display-only; default for legacy rows
-        JSON.stringify(input.tags ?? []),
-        input.parentSessionId,
-        input.opencodeSessionId,
-        input.embedding_model ?? null,
-        input.embedding_dim ?? null,
-        now,
-        now,
-      );
-
-      for (const p of input.participants) {
-        insertParticipant.run(
-          p.id,
-          this.#meetingId,
-          p.name,
-          p.persona,
-          p.agenda,
-          p.tier,
-          p.model?.providerID ?? null,
-          p.model?.modelID ?? null,
-          null,
-          p.known_biases ? JSON.stringify(p.known_biases) : null,
-          p.communication_style ?? null,
-          p.preferred_contribution_types ? JSON.stringify(p.preferred_contribution_types) : null,
-        );
-      }
-
-      this.#db.exec('COMMIT');
-    } catch (err) {
-      this.#db.exec('ROLLBACK');
-      throw err;
-    }
-
-    const dbPath = this.getDatabasePath();
-    _indexMeeting(dbPath, this.#meetingId, input.opencodeSessionId);
-  }
-
-  /**
-   * Upserts a meeting row — inserts if missing, updates if already present.
-   * Unlike initializeMeeting, this does NOT delete existing persona embeddings
-   * (no CASCADE), making it safe to call after composition-phase indexing.
-   */
-  upsertMeeting(input) {
-    const now = isoNow();
-    const existing = this.#db.prepare(`SELECT id FROM meetings WHERE id = ?`).get(this.#meetingId);
-    if (existing) {
-      this.#db.prepare(`
-        UPDATE meetings SET question = ?, context = ?, max_rounds = ?, convergence = ?,
-          tags = ?, parent_session_id = ?, opencode_session_id = ?, embedding_model = ?, embedding_dim = ?, updated_at = ?
-        WHERE id = ?
-      `).run(
-        input.question, input.context ?? "", input.maxRounds, input.convergence ?? "moderator_forces",
-        JSON.stringify(input.tags ?? []),
-        input.parentSessionId, input.opencodeSessionId,
-        input.embedding_model ?? null, input.embedding_dim ?? null, now, this.#meetingId,
-      );
-    } else {
-      this.initializeMeeting(input);
-    }
-  }
-
-  /**
-   * Inserts composed participants into the participants table.
-   * Used after composeRoomWithSimilarity() returns participants in memory
-   * that need to be persisted for dashboard display and meeting resumption.
-   */
-  insertParticipants(participants) {
-    const insertParticipant = this.#db.prepare(
-      `INSERT INTO participants (id, meeting_id, name, persona, agenda, tier, provider_id, model_id, session_id, known_biases, communication_style, preferred_contribution_types)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
-    this.#db.exec('BEGIN TRANSACTION');
-    try {
-      for (const p of participants) {
-        insertParticipant.run(
-          p.id,
-          this.#meetingId,
-          p.name,
-          p.persona,
-          p.agenda,
-          p.tier,
-          p.model?.providerID ?? null,
-          p.model?.modelID ?? null,
-          null,
-          p.known_biases ? JSON.stringify(p.known_biases) : null,
-          p.communication_style ?? null,
-          p.preferred_contribution_types ? JSON.stringify(p.preferred_contribution_types) : null,
-        );
-      }
-      this.#db.exec('COMMIT');
-    } catch (err) {
-      this.#db.exec('ROLLBACK');
-      throw err;
-    }
-  }
-
-  /**
-   * Executes a function within a database transaction.
-   * @param {Function} fn - Function to execute, receives the database instance
-   * @returns {Promise<any>} Result of the function
-   */
   async transaction(fn) {
     this.#db.exec('BEGIN TRANSACTION');
     try {
@@ -428,646 +121,71 @@ export class MeetingDatabase {
     }
   }
 
-  logError(context, message, details = null, severity = 'error') {
-    try {
-      this.#db
-        .prepare(
-          `INSERT INTO error_log (meeting_id, severity, context, message, details, created_at)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-        )
-        .run(this.#meetingId, severity, context, message, details ? JSON.stringify(details) : null, isoNow());
-    } catch (err) {
-      dbLogger.error("error_log_write_failed", "Failed to write error_log", { meetingId: this.#meetingId, error: err.message });
-    }
-  }
+  initializeMeeting(input) { return meetingOps.initializeMeeting(this.#db, this.#meetingId, input); }
+  upsertMeeting(input) { return meetingOps.upsertMeeting(this.#db, this.#meetingId, input); }
+  insertParticipants(participants) { return meetingOps.insertParticipants(this.#db, this.#meetingId, participants); }
+  logError(context, message, details = null, severity = 'error') { return meetingOps.logError(this.#db, this.#meetingId, context, message, details, severity); }
+  getErrorLog(meetingId) { return meetingOps.getErrorLog(this.#db, meetingId); }
+  getFabric() { return meetingOps.getFabric(this.#db, this.#meetingId); }
+  setFabric(fabric) { return meetingOps.setFabric(this.#db, this.#meetingId, fabric); }
+  getStateOfPlay() { return meetingOps.getStateOfPlay(this.#db, this.#meetingId); }
+  setStateOfPlay(stateOfPlay) { return meetingOps.setStateOfPlay(this.#db, this.#meetingId, stateOfPlay); }
+  setSemanticDegraded(flag = true) { return meetingOps.setSemanticDegraded(this.#db, this.#meetingId, flag); }
+  setPersistenceDegraded(flag = true) { return meetingOps.setPersistenceDegraded(this.#db, this.#meetingId, flag); }
+  updateMeetingTags(meetingId, tags) { return meetingOps.updateMeetingTags(this.#db, meetingId, tags); }
+  addOrchestratorMessage(msgType, role, content, round = null) { return meetingOps.addOrchestratorMessage(this.#db, this.#meetingId, msgType, role, content, round); }
+  getOrchestratorMessages(meetingId) { return meetingOps.getOrchestratorMessages(this.#db, meetingId); }
+  getMaxOrchestratorMessageId() { return meetingOps.getMaxOrchestratorMessageId(this.#db, this.#meetingId); }
+  getRound() { return meetingOps.getRound(this.#db, this.#meetingId); }
+  setRound(round) { return meetingOps.setRound(this.#db, this.#meetingId, round); }
+  setMaxRounds(maxRounds) { return meetingOps.setMaxRounds(this.#db, this.#meetingId, maxRounds); }
+  getStatus() { return meetingOps.getStatus(this.#db, this.#meetingId); }
+  setStatus(status) { return meetingOps.setStatus(this.#db, this.#meetingId, status); }
+  setReflectingParticipants(participantIds) { return meetingOps.setReflectingParticipants(this.#db, this.#meetingId, participantIds); }
+  setQueryingParticipants(participantIds) { return meetingOps.setQueryingParticipants(this.#db, this.#meetingId, participantIds); }
+  setEvidenceParticipants(participantIds) { return meetingOps.setEvidenceParticipants(this.#db, this.#meetingId, participantIds); }
+  setSummoningParticipants(participantIds) { return meetingOps.setSummoningParticipants(this.#db, this.#meetingId, participantIds); }
+  getMeeting() { return meetingOps.getMeeting(this.#db, this.#meetingId); }
+  setNextSpeaker(nextSpeakerId) { return meetingOps.setNextSpeaker(this.#db, this.#meetingId, nextSpeakerId); }
+  setStats(statsJson) { return meetingOps.setStats(this.#db, this.#meetingId, statsJson); }
+  getOpencodeSessionId() { return meetingOps.getOpencodeSessionId(this.#db, this.#meetingId); }
 
-  getErrorLog(meetingId) {
-    return this.#db
-      .prepare(
-        `SELECT id, severity, context, message, details, created_at
-         FROM error_log WHERE meeting_id = ? ORDER BY id ASC`,
-      )
-      .all(meetingId)
-      .map((r) => ({
-        id: r.id,
-        severity: r.severity,
-        context: r.context,
-        message: r.message,
-        details: r.details ? JSON.parse(r.details) : null,
-        created_at: r.created_at,
-      }));
-  }
+  addContribution(meetingId, contribution) { return contribOps.addContribution(this.#db, meetingId, contribution, () => this.getRound()); }
+  getContributions(meetingId) { return contribOps.getContributions(this.#db, meetingId); }
+  getRecentContributions(meetingId, count) { return contribOps.getRecentContributions(this.#db, meetingId, count); }
+  getContributionContext(contributionId) { return contribOps.getContributionContext(this.#db, contributionId); }
+  addTurnRequest(meetingId, turnRequest) { return contribOps.addTurnRequest(this.#db, meetingId, turnRequest); }
+  ensureParticipantRow(participantId, name = participantId, tier = "mid") { return contribOps.ensureParticipantRow(this.#db, this.#meetingId, participantId, name, tier); }
+  addContributionWithTurnRequest(meetingId, contribution, turnRequest) { return contribOps.addContributionWithTurnRequest(this.#db, meetingId, contribution, turnRequest, () => this.getRound()); }
+  getTurnRequests(meetingId) { return contribOps.getTurnRequests(this.#db, meetingId); }
+  getMaxContributionId() { return contribOps.getMaxContributionId(this.#db, this.#meetingId); }
+  setParticipantSessionId(participantId, sessionId) { return contribOps.setParticipantSessionId(this.#db, this.#meetingId, participantId, sessionId); }
+  setParticipantStatus(participantId, status) { return contribOps.setParticipantStatus(this.#db, this.#meetingId, participantId, status); }
+  setParticipantReflection(participantId, reflection) { return contribOps.setParticipantReflection(this.#db, this.#meetingId, participantId, reflection); }
+  getParticipantStatus(participantId) { return contribOps.getParticipantStatus(this.#db, this.#meetingId, participantId); }
+  getAllParticipantsWithStatus() { return contribOps.getAllParticipantsWithStatus(this.#db, this.#meetingId); }
+  setRoundSummary(round, summary) { return contribOps.setRoundSummary(this.#db, this.#meetingId, round, summary); }
+  getRoundSummaries(meetingId) { return contribOps.getRoundSummaries(this.#db, meetingId); }
+  saveArtifact(artifact) { return contribOps.saveArtifact(this.#db, this.#meetingId, artifact); }
+  getArtifact(meetingId) { return contribOps.getArtifact(this.#db, meetingId); }
+  recordAgentError(meetingId, participantId, round, errorType, errorMessage, attempts) { return contribOps.recordAgentError(this.#db, meetingId, participantId, round, errorType, errorMessage, attempts); }
+  getAgentErrors(meetingId) { return contribOps.getAgentErrors(this.#db, meetingId); }
+  getTranscriptData(meetingId) { return contribOps.getTranscriptData(this.#db, meetingId, (id) => this.getRoundSummaries(id)); }
+  getParticipantModel(participantId) { return contribOps.getParticipantModel(this.#db, this.#meetingId, participantId); }
+  saveMeetingMetrics(metrics) { return contribOps.saveMeetingMetrics(this.#db, this.#meetingId, metrics); }
+  getRecentMeetingMetrics(limit = 20) { return contribOps.getRecentMeetingMetrics(this.#db, limit); }
 
-  getFabric() {
-    try {
-      const row = this.#db
-        .prepare("SELECT fabric FROM meetings WHERE id = ?")
-        .get(this.#meetingId);
-      return row?.fabric ?? "";
-    } catch (err) {
-      const info = extractErrorInfo(err);
-      dbLogger.warn("get_fabric_failed", `Failed to get fabric for meeting ${this.#meetingId}`, info);
-      return "";
-    }
-  }
-
-  setFabric(fabric) {
-    this.#db
-      .prepare("UPDATE meetings SET fabric = ?, updated_at = ? WHERE id = ?")
-      .run(fabric, isoNow(), this.#meetingId);
-  }
-
-  getStateOfPlay() {
-    try {
-      const row = this.#db
-        .prepare("SELECT state_of_play FROM meetings WHERE id = ?")
-        .get(this.#meetingId);
-      return row?.state_of_play ?? "";
-    } catch {
-      return "";
-    }
-  }
-
-  setStateOfPlay(stateOfPlay) {
-    this.#db
-      .prepare("UPDATE meetings SET state_of_play = ?, updated_at = ? WHERE id = ?")
-      .run(stateOfPlay, isoNow(), this.#meetingId);
-  }
-
-  /**
-   * Latch a degradation flag on the meeting row (audit 07 EH2). Once set, sticky —
-   * degraded mode for a meeting is a fact about its history, not its current instant.
-   */
-  setSemanticDegraded(flag = true) {
-    try {
-      this.#db
-        .prepare("UPDATE meetings SET semantic_degraded = ?, updated_at = ? WHERE id = ?")
-        .run(flag ? 1 : 0, isoNow(), this.#meetingId);
-    } catch (err) {
-      dbLogger.warn("degradation_flag_failed", "Could not persist semantic_degraded flag", extractErrorInfo(err));
-    }
-  }
-
-  setPersistenceDegraded(flag = true) {
-    try {
-      this.#db
-        .prepare("UPDATE meetings SET persistence_degraded = ?, updated_at = ? WHERE id = ?")
-        .run(flag ? 1 : 0, isoNow(), this.#meetingId);
-    } catch (err) {
-      dbLogger.warn("degradation_flag_failed", "Could not persist persistence_degraded flag", extractErrorInfo(err));
-    }
-  }
-
-  updateMeetingTags(meetingId, tags) {
-    this.#db
-      .prepare("UPDATE meetings SET tags = ?, updated_at = ? WHERE id = ?")
-      .run(JSON.stringify(tags), isoNow(), meetingId);
-  }
-
-  addOrchestratorMessage(msgType, role, content, round = null) {
-    const roundValue = (typeof round === "object" && round !== null)
-      ? (round.number ?? null)
-      : round;
-    const safeContent = (content ?? "").toString();
-    this.#db
-      .prepare(
-        `INSERT INTO orchestrator_messages (meeting_id, msg_type, role, content, round, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      )
-      .run(this.#meetingId, msgType, role, safeContent, roundValue, isoNow());
-  }
-
-  getOrchestratorMessages(meetingId) {
-    return this.#db
-      .prepare(
-        `SELECT id, msg_type, role, content, round, created_at
-         FROM orchestrator_messages WHERE meeting_id = ? ORDER BY id ASC`,
-      )
-      .all(meetingId)
-      .map((r) => ({
-        id: r.id,
-        type: r.msg_type,
-        role: r.role,
-        content: r.content,
-        round: r.round,
-        created_at: r.created_at,
-      }));
-  }
-
-  getMaxOrchestratorMessageId() {
-    const row = this.#db
-      .prepare(`SELECT MAX(id) as maxId FROM orchestrator_messages WHERE meeting_id = ?`)
-      .get(this.#meetingId);
-    return row.maxId ?? 0;
-  }
-
-  getRound() {
-    try {
-      const row = this.#db
-        .prepare("SELECT round FROM meetings WHERE id = ?")
-        .get(this.#meetingId);
-      return row?.round ?? 0;
-    } catch (err) {
-      const info = extractErrorInfo(err);
-      dbLogger.warn("get_round_failed", `Failed to get round for meeting ${this.#meetingId}`, info);
-      return 0;
-    }
-  }
-
-   setRound(round) {
-    this.#db
-      .prepare("UPDATE meetings SET round = ?, updated_at = ? WHERE id = ?")
-      .run(round, isoNow(), this.#meetingId);
-  }
-
-  setMaxRounds(maxRounds) {
-    this.#db
-      .prepare("UPDATE meetings SET max_rounds = ?, updated_at = ? WHERE id = ?")
-      .run(maxRounds, isoNow(), this.#meetingId);
-  }
-
-  getStatus() {
-    try {
-      const row = this.#db
-        .prepare("SELECT status FROM meetings WHERE id = ?")
-        .get(this.#meetingId);
-      return row ? row.status : "initializing";
-    } catch (err) {
-      const info = extractErrorInfo(err);
-      dbLogger.warn("get_status_failed", `Failed to get status for meeting ${this.#meetingId}`, info);
-      return "initializing";
-    }
-  }
-
-  setStatus(status) {
-    this.#db
-      .prepare("UPDATE meetings SET status = ?, updated_at = ? WHERE id = ?")
-      .run(status, isoNow(), this.#meetingId);
-  }
-
-  setReflectingParticipants(participantIds) {
-    const value = participantIds && participantIds.length > 0 ? JSON.stringify(participantIds) : null;
-    this.#db
-      .prepare("UPDATE meetings SET reflecting_participants = ?, updated_at = ? WHERE id = ?")
-      .run(value, isoNow(), this.#meetingId);
-  }
-
-  setQueryingParticipants(participantIds) {
-    const value = participantIds && participantIds.length > 0 ? JSON.stringify(participantIds) : null;
-    this.#db
-      .prepare("UPDATE meetings SET querying_participants = ?, updated_at = ? WHERE id = ?")
-      .run(value, isoNow(), this.#meetingId);
-  }
-
-  setEvidenceParticipants(participantIds) {
-    const value = participantIds && participantIds.length > 0 ? JSON.stringify(participantIds) : null;
-    this.#db
-      .prepare("UPDATE meetings SET evidence_participants = ?, updated_at = ? WHERE id = ?")
-      .run(value, isoNow(), this.#meetingId);
-  }
-
-  setSummoningParticipants(participantIds) {
-    const value = participantIds && participantIds.length > 0 ? JSON.stringify(participantIds) : null;
-    this.#db
-      .prepare("UPDATE meetings SET summoning_participants = ?, updated_at = ? WHERE id = ?")
-      .run(value, isoNow(), this.#meetingId);
-  }
-
-  addContribution(meetingId, contribution) {
-    this.#db
-      .prepare(
-        `INSERT INTO contributions (meeting_id, participant_id, round, type, content, target_which, batch_id, tool_calls, prompt_context, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        meetingId,
-        contribution.participant_id,
-        contribution.round ?? this.getRound(),
-        contribution.type,
-        contribution.content,
-        contribution.targets_which ?? null,
-        contribution.batch_id ?? null,
-        contribution.tool_calls ? JSON.stringify(contribution.tool_calls) : null,
-        contribution.prompt_context ? JSON.stringify(contribution.prompt_context) : null,
-        contribution.created_at ?? isoNow(),
-      );
-  }
-
-  getContributions(meetingId) {
-    const rows = this.#db
-      .prepare(
-        `SELECT id, participant_id, round, type, content, target_which, batch_id, tool_calls, prompt_context, created_at
-         FROM contributions WHERE meeting_id = ? ORDER BY id ASC`,
-      )
-      .all(meetingId);
-    return rows.map((r) => ({
-      id: r.id,
-      participant_id: r.participant_id,
-      round: r.round,
-      content: r.content,
-      type: r.type,
-      targets_which: r.target_which != null ? Number(r.target_which) : null,
-      batch_id: r.batch_id ?? null,
-      tool_calls: r.tool_calls ? JSON.parse(r.tool_calls) : null,
-      prompt_context: r.prompt_context ? JSON.parse(r.prompt_context) : null,
-      created_at: r.created_at,
-    }));
-  }
-
-  getRecentContributions(meetingId, count) {
-    const rows = this.#db
-      .prepare(
-        `SELECT id, participant_id, round, type, content, target_which, batch_id, tool_calls, prompt_context, created_at
-         FROM contributions WHERE meeting_id = ? ORDER BY id DESC LIMIT ?`,
-      )
-      .all(meetingId, count);
-    return rows.reverse().map((r) => ({
-      id: r.id,
-      participant_id: r.participant_id,
-      round: r.round,
-      content: r.content,
-      type: r.type,
-      targets_which: r.target_which != null ? Number(r.target_which) : null,
-      batch_id: r.batch_id ?? null,
-      tool_calls: r.tool_calls ? JSON.parse(r.tool_calls) : null,
-      prompt_context: r.prompt_context ? JSON.parse(r.prompt_context) : null,
-      created_at: r.created_at,
-    }));
-  }
-
-  getContributionContext(contributionId) {
-    const row = this.#db
-      .prepare(`SELECT prompt_context FROM contributions WHERE id = ?`)
-      .get(contributionId);
-    return row?.prompt_context ? JSON.parse(row.prompt_context) : null;
-  }
-
-  addTurnRequest(meetingId, turnRequest) {
-    this.#db
-      .prepare(
-        `INSERT INTO turn_requests (meeting_id, participant_id, target_participant_id, round, content, priority, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        meetingId,
-        turnRequest.participant_id,
-        turnRequest.target_participant_id ?? null,
-        turnRequest.round ?? null,
-        turnRequest.reason,
-        turnRequest.priority,
-        isoNow(),
-      );
-  }
-
-  /**
-   * Ensures a participants row exists for synthetic contributors (audit 12 PD9).
-   * New schemas enforce an FK on contributions.participant_id, so summoned
-   * guests must have a participants row before their response is persisted.
-   * @returns {boolean} true if a row was inserted
-   */
-  ensureParticipantRow(participantId, name = participantId, tier = "mid") {
-    try {
-      const result = this.#db
-        .prepare(
-          `INSERT OR IGNORE INTO participants (id, meeting_id, name, persona, agenda, tier, status)
-           VALUES (?, ?, ?, ?, ?, ?, 'summoned')`,
-        )
-        .run(participantId, this.#meetingId, name, "Summoned guest expert", "", tier);
-      return Number(result?.changes ?? 0) > 0;
-    } catch (err) {
-      dbLogger.warn("ensure_participant_row_failed", `Failed to ensure participant row ${participantId}`, extractErrorInfo(err));
-      return false;
-    }
-  }
-
-  /**
-   * Atomically adds a contribution and its associated turn request (if present).
-   * Ensures both writes succeed or neither does, preventing orphaned records.
-   */
-  addContributionWithTurnRequest(meetingId, contribution, turnRequest) {
-    // Application-level FK check (schema has no FK on participant_id to avoid migration)
-    try {
-      const exists = this.#db.prepare(`SELECT 1 FROM participants WHERE id = ? AND meeting_id = ?`).get(contribution.participant_id, meetingId);
-      if (!exists) {
-        dbLogger.warn("orphan_contribution", `Contribution participant_id ${contribution.participant_id} not in participants for meeting ${meetingId}`);
-      }
-    } catch {}
-    this.#db.exec('BEGIN TRANSACTION');
-
-    try {
-      this.#db
-        .prepare(
-          `INSERT INTO contributions (meeting_id, participant_id, round, type, content, target_which, batch_id, tool_calls, prompt_context, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          meetingId,
-          contribution.participant_id,
-          contribution.round ?? this.getRound(),
-          contribution.type,
-          contribution.content,
-          contribution.targets_which ?? null,
-          contribution.batch_id ?? null,
-          contribution.tool_calls ? JSON.stringify(contribution.tool_calls) : null,
-          contribution.prompt_context ? JSON.stringify(contribution.prompt_context) : null,
-          contribution.created_at ?? isoNow(),
-        );
-
-      if (turnRequest) {
-        this.#db
-          .prepare(
-            `INSERT INTO turn_requests (meeting_id, participant_id, target_participant_id, round, content, priority, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          )
-          .run(
-            meetingId,
-            turnRequest.participant_id,
-            turnRequest.target_participant_id ?? null,
-            turnRequest.round ?? null,
-            turnRequest.reason,
-            turnRequest.priority,
-            isoNow(),
-          );
-      }
-
-      this.#db.exec('COMMIT');
-    } catch (err) {
-      this.#db.exec('ROLLBACK');
-      throw err;
-    }
-  }
-
-  getTurnRequests(meetingId) {
-    const rows = this.#db
-      .prepare(
-        `SELECT id, participant_id, target_participant_id, round, content as reason, priority, created_at
-         FROM turn_requests WHERE meeting_id = ? ORDER BY id ASC`,
-      )
-      .all(meetingId);
-    return rows.map((r) => ({
-      id: r.id,
-      participant_id: r.participant_id,
-      target_participant_id: r.target_participant_id,
-      round: r.round,
-      priority: r.priority,
-      content: r.reason,
-      reason: r.reason,
-      created_at: r.created_at,
-    }));
-  }
-
-  getMaxContributionId() {
-    const row = this.#db
-      .prepare(`SELECT MAX(id) as maxId FROM contributions WHERE meeting_id = ?`)
-      .get(this.#meetingId);
-    return row.maxId ?? 0;
-  }
-
-  setParticipantSessionId(participantId, sessionId) {
-    this.#db
-      .prepare("UPDATE participants SET session_id = ?, session_version = session_version + 1 WHERE id = ? AND meeting_id = ?")
-      .run(sessionId, participantId, this.#meetingId);
-  }
-
-  setParticipantStatus(participantId, status) {
-    this.#db
-      .prepare("UPDATE participants SET status = ? WHERE id = ? AND meeting_id = ?")
-      .run(status, participantId, this.#meetingId);
-  }
-
-  setParticipantReflection(participantId, reflection) {
-    this.#db
-      .prepare("UPDATE participants SET reflection = ? WHERE id = ? AND meeting_id = ?")
-      .run(reflection, participantId, this.#meetingId);
-  }
-
-  getParticipantStatus(participantId) {
-    const row = this.#db
-      .prepare("SELECT status FROM participants WHERE id = ? AND meeting_id = ?")
-      .get(participantId, this.#meetingId);
-    return row?.status ?? "listening";
-  }
-
-  getAllParticipantsWithStatus() {
-    return this.#db
-      .prepare(
-        `SELECT id, name, persona, agenda, tier, provider_id, model_id, session_id, session_version, status, reflection, known_biases, communication_style, preferred_contribution_types
-         FROM participants WHERE meeting_id = ?`,
-      )
-      .all(this.#meetingId)
-       .map((r) => ({
-        id: r.id,
-        name: r.name,
-        persona: r.persona,
-        agenda: r.agenda,
-        tier: r.tier,
-        provider_id: r.provider_id,
-        model_id: r.model_id,
-        session_id: r.session_id,
-        session_version: r.session_version ?? 0,
-        status: r.status,
-        reflection: r.reflection,
-        known_biases: safeParseJsonArray(r.known_biases),
-        communication_style: r.communication_style ?? null,
-        preferred_contribution_types: safeParseJsonArray(r.preferred_contribution_types),
-      }));
-  }
-
-  setRoundSummary(round, summary) {
-    this.#db
-      .prepare(
-        `INSERT INTO rounds (meeting_id, round, summary, created_at) VALUES (?, ?, ?, ?)
-         ON CONFLICT(meeting_id, round) DO UPDATE SET summary = excluded.summary, created_at = excluded.created_at`,
-      )
-      .run(this.#meetingId, round, summary ?? "", isoNow());
-  }
-
-  getRoundSummaries(meetingId) {
-    const rows = this.#db
-      .prepare(
-        `SELECT round, summary FROM rounds WHERE meeting_id = ? ORDER BY round ASC`,
-      )
-      .all(meetingId);
-    const map = {};
-    for (const r of rows) map[r.round] = r.summary;
-    return map;
-  }
-
-  getMeeting() {
-    const row = this.#db
-      .prepare(
-        `SELECT id, question, context, status, round, fabric, max_rounds, convergence, tags, parent_session_id, opencode_session_id, next_speaker_id, state_of_play, stats, embedding_model, embedding_dim, created_at
-         FROM meetings WHERE id = ?`,
-      )
-      .get(this.#meetingId);
-    return row ?? null;
-  }
-
-  setNextSpeaker(nextSpeakerId) {
-    this.#db
-      .prepare("UPDATE meetings SET next_speaker_id = ? WHERE id = ?")
-      .run(nextSpeakerId ?? null, this.#meetingId);
-  }
-
-  setStats(statsJson) {
-    this.#db
-      .prepare("UPDATE meetings SET stats = ? WHERE id = ?")
-      .run(statsJson ?? null, this.#meetingId);
-  }
-
-  saveArtifact(artifact) {
-    this.#db
-      .prepare(
-        `INSERT INTO artifacts (meeting_id, content, decisions, action_items, dissent, open_questions, confidence, refusals, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(meeting_id) DO UPDATE SET
-           content = excluded.content,
-           decisions = excluded.decisions,
-           action_items = excluded.action_items,
-           dissent = excluded.dissent,
-           open_questions = excluded.open_questions,
-           confidence = excluded.confidence,
-           refusals = excluded.refusals,
-           created_at = excluded.created_at`,
-      )
-      .run(
-        this.#meetingId,
-        artifact.content,
-        artifact.decisions ? JSON.stringify(artifact.decisions) : null,
-        artifact.action_items ? JSON.stringify(artifact.action_items) : null,
-        artifact.dissent ? JSON.stringify(artifact.dissent) : null,
-        artifact.open_questions ? JSON.stringify(artifact.open_questions) : null,
-        artifact.confidence ?? null,
-        artifact.refusals ? JSON.stringify(artifact.refusals) : null,
-        isoNow(),
-      );
-  }
-
-  getArtifact(meetingId) {
-    const row = this.#db
-      .prepare(
-        `SELECT content, decisions, action_items, dissent, open_questions, confidence, refusals, created_at
-         FROM artifacts WHERE meeting_id = ?`,
-      )
-      .get(meetingId);
-    if (!row) return null;
-    const parse = (json) => {
-      if (!json) return [];
-      try {
-        const parsed = JSON.parse(json);
-        return Array.isArray(parsed) ? parsed : [];
-      } catch {
-        return [];
-      }
-    };
-    return {
-      content: row.content,
-      decisions: parse(row.decisions),
-      action_items: parse(row.action_items),
-      dissent: parse(row.dissent),
-      open_questions: parse(row.open_questions),
-      refusals: parse(row.refusals),
-      confidence: row.confidence,
-      created_at: row.created_at,
-    };
-  }
-
-  recordAgentError(meetingId, participantId, round, errorType, errorMessage, attempts) {
-    this.#db
-      .prepare(
-        `INSERT INTO agent_errors (meeting_id, participant_id, round, error_type, error_message, attempts, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(meetingId, participantId, round, errorType, errorMessage ?? null, attempts, isoNow());
-  }
-
-  getAgentErrors(meetingId) {
-    return this.#db
-      .prepare(
-        `SELECT participant_id, round, error_type, error_message, attempts, created_at
-         FROM agent_errors WHERE meeting_id = ? ORDER BY id ASC`,
-      )
-      .all(meetingId)
-      .map((r) => ({
-        participant_id: r.participant_id,
-        round: r.round,
-        error_type: r.error_type,
-        error_message: r.error_message,
-        attempts: r.attempts,
-        created_at: r.created_at,
-      }));
-  }
-
-  // ── Read-Only Queries (used by dashboard & synthesis) ────────────
-
-  getTranscriptData(meetingId) {
-    const meeting = this.#db
-      .prepare("SELECT question, fabric FROM meetings WHERE id = ?")
-      .get(meetingId);
-
-    const contributions = this.#db
-      .prepare(
-        `SELECT id, participant_id, round, type, content, target_which, batch_id, tool_calls, created_at
-         FROM contributions WHERE meeting_id = ? ORDER BY round ASC, id ASC`,
-      )
-      .all(meetingId);
-
-    const turnRequests = this.#db
-      .prepare(
-        `SELECT id, participant_id, target_participant_id, round, content as reason, priority, created_at
-         FROM turn_requests WHERE meeting_id = ? ORDER BY id ASC`,
-      )
-      .all(meetingId);
-
-    const summaries = this.getRoundSummaries(meetingId);
-
-    const roundMap = new Map();
-    for (const c of contributions) {
-      if (!roundMap.has(c.round)) {
-        roundMap.set(c.round, { number: c.round, contributions: [], turn_requests: [], summary: summaries[c.round] ?? "" });
-      }
-      roundMap.get(c.round).contributions.push({
-        id: c.id,
-        participant_id: c.participant_id,
-        content: c.content,
-        type: c.type,
-        round: c.round,
-        targets_which: c.target_which != null ? Number(c.target_which) : null,
-        batch_id: c.batch_id ?? null,
-        tool_calls: c.tool_calls ? JSON.parse(c.tool_calls) : null,
-        created_at: c.created_at,
-      });
-    }
-
-    for (const tr of turnRequests) {
-      const roundNum = tr.round ?? 1;
-      if (!roundMap.has(roundNum)) {
-        roundMap.set(roundNum, { number: roundNum, contributions: [], turn_requests: [], summary: summaries[roundNum] ?? "" });
-      }
-      roundMap.get(roundNum).turn_requests.push({
-        participant_id: tr.participant_id,
-        target: tr.target_participant_id ?? "",
-        priority: tr.priority,
-        reason: tr.reason,
-      });
-    }
-
-    const rounds = Array.from(roundMap.values()).sort((a, b) => a.number - b.number);
-
-    return {
-      question: meeting?.question ?? "",
-      fabric: meeting?.fabric ?? "",
-      rounds,
-    };
-  }
-
-  getParticipantModel(participantId) {
-    const row = this.#db
-      .prepare(`SELECT provider_id, model_id FROM participants WHERE id = ? AND meeting_id = ?`)
-      .get(participantId, this.#meetingId);
-    if (!row || !row.provider_id || !row.model_id) return null;
-    return { providerID: row.provider_id, modelID: row.model_id };
-  }
+  storeFabricEmbedding(chunkId, embedding, dim = 384) { return vectorOps.storeFabricEmbedding(this.#db, chunkId, embedding, dim); }
+  storeFabricChunk(content, round, source = "round_summary", vector = null) { return vectorOps.storeFabricChunk(this.#db, this.#meetingId, content, round, source, vector); }
+  getFabricChunks() { return vectorOps.getFabricChunks(this.#db, this.#meetingId); }
+  searchFabricVectors(queryEmbedding, topK = 5, dim = 384) { return vectorOps.searchFabricVectors(this.#db, this.#meetingId, queryEmbedding, topK, dim); }
+  storePersonaEmbedding(personaName, tier, tags, embeddingText, embedding, dim = 384) { return vectorOps.storePersonaEmbedding(this.#db, this.#meetingId, personaName, tier, tags, embeddingText, embedding, dim); }
+  searchPersonaEmbeddings(queryEmbedding, tier, topK = 5, dim = 384) { return vectorOps.searchPersonaEmbeddings(this.#db, this.#meetingId, queryEmbedding, tier, topK, dim); }
+  countPersonaEmbeddings() { return vectorOps.countPersonaEmbeddings(this.#db, this.#meetingId); }
+  countPersonaVecEmbeddings(dim = 384) { return vectorOps.countPersonaVecEmbeddings(this.#db, dim); }
+  clearPersonaEmbeddings() { return vectorOps.clearPersonaEmbeddings(this.#db, this.#meetingId); }
+  getPersonaEmbeddingByName(personaName, dim = 384) { return vectorOps.getPersonaEmbeddingByName(this.#db, this.#meetingId, personaName, dim); }
+  getPersonaEmbeddingsByNames(personaNames, dim = 384) { return vectorOps.getPersonaEmbeddingsByNames(this.#db, this.#meetingId, personaNames, dim); }
 
   close() {
     try {
@@ -1082,58 +200,6 @@ export class MeetingDatabase {
     return this.#db.filename ?? this.#db.name ?? "unknown";
   }
 
-  /**
-   * Persists per-meeting metrics snapshot.
-   * @param {Object} metrics
-   */
-  saveMeetingMetrics(metrics) {
-    try {
-      this.#db.prepare(
-        `INSERT OR REPLACE INTO meeting_metrics
-         (meeting_id, counters, latencies, input_tokens, output_tokens, duration_ms, rounds, contributions, turn_requests, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(
-        this.#meetingId,
-        JSON.stringify(metrics.counters ?? {}),
-        JSON.stringify(metrics.latencies ?? {}),
-        metrics.input_tokens ?? 0,
-        metrics.output_tokens ?? 0,
-        metrics.duration_ms ?? 0,
-        metrics.rounds ?? 0,
-        metrics.contributions ?? 0,
-        metrics.turn_requests ?? 0,
-        isoNow(),
-      );
-    } catch (err) {
-      dbLogger.debug("save_metrics_failed", "Failed to save meeting metrics", extractErrorInfo(err));
-    }
-  }
-
-  /**
-   * Returns recent meeting metrics for trend analysis.
-   * @param {number} limit
-   */
-  getRecentMeetingMetrics(limit = 20) {
-    try {
-      return this.#db.prepare(
-        `SELECT * FROM meeting_metrics ORDER BY created_at DESC LIMIT ?`
-      ).all(limit);
-    } catch {
-      return [];
-    }
-  }
-
-  getOpencodeSessionId() {
-    try {
-      const row = this.#db
-        .prepare("SELECT opencode_session_id FROM meetings WHERE id = ?")
-        .get(this.#meetingId);
-      return row?.opencode_session_id ?? null;
-    } catch {
-      return null;
-    }
-  }
-
   checkpoint() {
     try {
       this.#db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
@@ -1141,423 +207,4 @@ export class MeetingDatabase {
       dbLogger.debug("wal_checkpoint_failed", "WAL checkpoint failed", extractErrorInfo(err));
     }
   }
-
-  // ── Vector Storage (sqlite-vec) ─────────────────────────────────
-
-  /**
-   * Stores a text chunk and its embedding in the fabric vector index.
-   * @param {number} chunkId - fabric_chunks.id
-   * @param {Float32Array} embedding - embedding vector
-   * @param {number} dim - embedding dimension (default: 384)
-   */
-  storeFabricEmbedding(chunkId, embedding, dim = 384) {
-    const safeDim = Number(dim);
-    if (!Number.isFinite(safeDim) || safeDim < 64 || safeDim > 2048 || Math.floor(safeDim) !== safeDim) {
-      dbLogger.warn("store_embedding_invalid_dim", `Invalid dim ${dim} for storeFabricEmbedding`, { dim });
-      return;
-    }
-    try {
-      // Ensure the vector table exists for this dimension
-      this.#initVectorTable(safeDim);
-      this.#db.prepare(
-        `INSERT INTO vec_fabric_chunks_${safeDim}(rowid, embedding) VALUES (?, vec_f32(?))`
-      ).run(chunkId, embedding);
-    } catch (err) {
-      dbLogger.debug("store_embedding_failed", "Failed to store fabric embedding", extractErrorInfo(err));
-    }
-  }
-
-  /**
-   * Stores a text chunk in the fabric_chunks table and returns its ID.
-   * @param {string} content - text content
-   * @param {number} round - round number
-   * @param {string} source - e.g. 'round_summary', 'contribution', 'context'
-   * @returns {number|null} chunk ID
-   */
-  /**
-   * Stores a text chunk and its embedding in one transaction (audit 04 PD5):
-   * an embed failure must not leave a permanent vectorless row, and chunk_index
-   * must be computed inside the transaction to be race-free.
-   * @param {string} content - text content
-   * @param {number} round - round number
-   * @param {string} source - e.g. 'round_summary', 'contribution', 'context'
-   * @param {{ embedding?: Float32Array, dim?: number }} [vector] - optional embedding to store atomically
-   * @returns {number|null} chunk ID
-   */
-  storeFabricChunk(content, round, source = "round_summary", vector = null) {
-    try {
-      const insertChunk = (rawDb) => {
-        const nextIdx = rawDb.prepare(`SELECT COALESCE(MAX(chunk_index), -1) + 1 as n FROM fabric_chunks WHERE meeting_id = ?`).get(this.#meetingId)?.n ?? 0;
-        const result = rawDb.prepare(
-          `INSERT INTO fabric_chunks (meeting_id, round, chunk_index, content, source, created_at) VALUES (?, ?, ?, ?, ?, ?)`
-        ).run(this.#meetingId, round, nextIdx, content, source, isoNow());
-        return result.lastInsertRowid;
-      };
-
-      if (vector?.embedding) {
-        // Atomic path: row + vector commit together or not at all
-        this.#db.exec("BEGIN TRANSACTION");
-        try {
-          const chunkId = insertChunk(this.#db);
-          this.storeFabricEmbedding(chunkId, vector.embedding, vector.dim ?? 384);
-          this.#db.exec("COMMIT");
-          return chunkId;
-        } catch (err) {
-          this.#db.exec("ROLLBACK");
-          throw err;
-        }
-      }
-
-      return insertChunk(this.#db);
-    } catch (err) {
-      dbLogger.debug("store_chunk_failed", "Failed to store fabric chunk", extractErrorInfo(err));
-      return null;
-    }
-  }
-
-  /**
-   * Retrieves all fabric chunks for this meeting, ordered by round.
-   * @returns {Array<{id: number, round: number, content: string, source: string}>}
-   */
-  getFabricChunks() {
-    try {
-      return this.#db.prepare(
-        `SELECT id, round, chunk_index, content, source FROM fabric_chunks WHERE meeting_id = ? ORDER BY round ASC, chunk_index ASC`
-      ).all(this.#meetingId);
-    } catch {
-      return [];
-    }
-  }
-
-  /**
-   * Performs a vector similarity search over fabric embeddings.
-   * @param {Float32Array} queryEmbedding - 384-dim query vector
-   * @param {number} topK - number of results
-   * @param {Float32Array} queryEmbedding - query vector
-   * @param {number} topK - max results
-   * @param {number} dim - embedding dimension (default: 384)
-   * @returns {Array<{id: number, distance: number, content: string, round: number, source: string}>}
-   */
-  searchFabricVectors(queryEmbedding, topK = 5, dim = 384) {
-    const safeDim = Number(dim);
-    if (!Number.isFinite(safeDim) || safeDim < 64 || safeDim > 2048 || Math.floor(safeDim) !== safeDim) {
-      dbLogger.warn("search_invalid_dim", `Invalid dim ${dim} for searchFabricVectors`, { dim });
-      return [];
-    }
-    try {
-      const limit = Math.max(1, Math.floor(Number(topK) || 5));
-      return this.#db.prepare(`
-        SELECT v.rowid, v.distance, f.content, f.round, f.source
-        FROM vec_fabric_chunks_${safeDim} v
-        JOIN fabric_chunks f ON f.id = v.rowid AND f.meeting_id = ?
-        WHERE v.embedding MATCH ? AND k = ?
-        ORDER BY v.distance
-      `).all(this.#meetingId, queryEmbedding, limit);
-    } catch {
-      return [];
-    }
-  }
-
-  // ── Persona Embedding Methods ────────────────────────────────────────────
-
-  #initPersonaVectorTable(dim = 384) {
-    const safeDim = Number(dim);
-    if (!Number.isFinite(safeDim) || safeDim < 64 || safeDim > 2048 || Math.floor(safeDim) !== safeDim) {
-      dbLogger.warn("persona_vec_table_invalid_dim", `Invalid persona embedding dimension ${dim}`, { dim });
-      return;
-    }
-    try {
-      this.#db.exec(`
-        CREATE VIRTUAL TABLE IF NOT EXISTS vec_persona_embeddings_${safeDim} USING vec0(
-          embedding float[${safeDim}],
-          tier text
-        )
-      `);
-    } catch (err) {
-      dbLogger.warn("persona_vec_table_init_failed", "Could not create persona vector table — sqlite-vec may not be loaded", extractErrorInfo(err));
-    }
-  }
-
-  /**
-   * Stores a persona embedding in the persona_embeddings table and its vector.
-   * @param {string} personaName
-   * @param {string} tier
-   * @param {string[]} tags
-   * @param {string} embeddingText - the text that was embedded
-   * @param {Float32Array} embedding
-   * @param {number} dim
-   * @returns {number|null} row ID
-   */
-  storePersonaEmbedding(personaName, tier, tags, embeddingText, embedding, dim = 384) {
-    const safeDim = Number(dim);
-    if (!Number.isFinite(safeDim) || safeDim < 64 || safeDim > 2048 || Math.floor(safeDim) !== safeDim) {
-      dbLogger.warn("store_persona_invalid_dim", `Invalid dim ${dim} for storePersonaEmbedding`, { dim });
-      return null;
-    }
-    try {
-      this.#initPersonaVectorTable(safeDim);
-      const result = this.#db.prepare(
-        `INSERT INTO persona_embeddings (meeting_id, persona_name, tier, tags, embedding_text, created_at) VALUES (?, ?, ?, ?, ?, ?)`
-      ).run(this.#meetingId, personaName, tier, JSON.stringify(tags), embeddingText, isoNow());
-      const rowId = result.lastInsertRowid;
-      this.#db.prepare(
-        `INSERT INTO vec_persona_embeddings_${safeDim}(rowid, embedding, tier) VALUES (?, vec_f32(?), ?)`
-      ).run(rowId, embedding, tier);
-      return rowId;
-    } catch (err) {
-      dbLogger.debug("store_persona_embedding_failed", "Failed to store persona embedding", extractErrorInfo(err));
-      return null;
-    }
-  }
-
-  /**
-   * Searches persona embeddings by vector similarity, filtered by tier.
-   * @param {Float32Array} queryEmbedding
-   * @param {string} tier
-   * @param {number} topK
-   * @param {number} dim
-   * @returns {Array<{id: number, distance: number, persona_name: string, tier: string, tags: string, embedding_text: string}>}
-   */
-  searchPersonaEmbeddings(queryEmbedding, tier, topK = 5, dim = 384) {
-    const safeDim = Number(dim);
-    if (!Number.isFinite(safeDim) || safeDim < 64 || safeDim > 2048 || Math.floor(safeDim) !== safeDim) {
-      dbLogger.warn("search_persona_invalid_dim", `Invalid dim ${dim} for searchPersonaEmbeddings`, { dim });
-      return [];
-    }
-    try {
-      this.#initPersonaVectorTable(safeDim);
-      const limit = Math.max(1, Math.floor(Number(topK) || 5));
-      // Post-filter instead of in-query metadata filter (audit 03 PC3):
-      // `WHERE v.tier = ?` inside the KNN query errors on older sqlite-vec builds,
-      // which silently downgraded composition to keyword matching via the catch-all.
-      // Fetch a wider top-K unfiltered and filter by tier here.
-      const fetchK = Math.max(limit * 10, 50);
-      const rows = this.#db.prepare(`
-        SELECT v.rowid, v.distance, p.persona_name, p.tier, p.tags, p.embedding_text
-        FROM vec_persona_embeddings_${safeDim} v
-        JOIN persona_embeddings p ON p.id = v.rowid AND p.meeting_id = ?
-        WHERE v.embedding MATCH ? AND k = ?
-        ORDER BY v.distance
-      `).all(this.#meetingId, queryEmbedding, fetchK);
-      return rows.filter((r) => r.tier === tier).slice(0, limit);
-    } catch (err) {
-      dbLogger.warnThrottled(
-        "search_persona_embeddings_failed",
-        "Persona vector search",
-        "Persona vector search failed — composition degrades to tag matching (audit 06 V5)",
-        extractErrorInfo(err)
-      );
-      // Latch the degradation flag so the dashboard can banner it (audit 07 EH2)
-      this.setSemanticDegraded(true);
-      return [];
-    }
-  }
-
-  /**
-   * Clears all persona embeddings for this meeting.
-   */
-  /**
-   * Returns the number of persona embeddings indexed for this meeting.
-   * @returns {number}
-   */
-  countPersonaEmbeddings() {
-    try {
-      const row = this.#db.prepare(`SELECT COUNT(*) as count FROM persona_embeddings WHERE meeting_id = ?`).get(this.#meetingId);
-      return row?.count ?? 0;
-    } catch { /* table may not exist yet */ }
-    return 0;
-  }
-
-  countPersonaVecEmbeddings(dim = 384) {
-    const safeDim = Number(dim);
-    if (!Number.isFinite(safeDim) || safeDim < 64 || safeDim > 2048 || Math.floor(safeDim) !== safeDim) return 0;
-    try {
-      const row = this.#db.prepare(`SELECT COUNT(*) as count FROM vec_persona_embeddings_${safeDim}`).get();
-      return row?.count ?? 0;
-    } catch { /* table may not exist yet */ }
-    return 0;
-  }
-
-  clearPersonaEmbeddings() {
-    try {
-      this.#db.prepare(`DELETE FROM persona_embeddings WHERE meeting_id = ?`).run(this.#meetingId);
-    } catch { /* table may not exist yet */ }
-  }
-
-  /**
-   * Retrieves a single persona embedding by persona name.
-   * @param {string} personaName
-   * @param {number} dim
-   * @returns {Float32Array|null}
-   */
-  getPersonaEmbeddingByName(personaName, dim = 384) {
-    const safeDim = Number(dim);
-    if (!Number.isFinite(safeDim) || safeDim < 64 || safeDim > 2048 || Math.floor(safeDim) !== safeDim) return null;
-    try {
-      this.#initPersonaVectorTable(safeDim);
-      const row = this.#db.prepare(`
-        SELECT v.embedding
-        FROM vec_persona_embeddings_${safeDim} v
-        JOIN persona_embeddings p ON p.id = v.rowid AND p.meeting_id = ?
-        WHERE p.persona_name = ?
-      `).get(this.#meetingId, personaName);
-      return row?.embedding ?? null;
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Retrieves embeddings for multiple persona names in a single query.
-   * @param {string[]} personaNames
-   * @param {number} dim
-   * @returns {Map<string, Float32Array>}
-   */
-  getPersonaEmbeddingsByNames(personaNames, dim = 384) {
-    if (!personaNames || personaNames.length === 0) return new Map();
-    const safeDim = Number(dim);
-    if (!Number.isFinite(safeDim) || safeDim < 64 || safeDim > 2048 || Math.floor(safeDim) !== safeDim) return new Map();
-    try {
-      this.#initPersonaVectorTable(safeDim);
-      const placeholders = personaNames.map(() => '?').join(',');
-      const rows = this.#db.prepare(`
-        SELECT p.persona_name, v.embedding
-        FROM vec_persona_embeddings_${safeDim} v
-        JOIN persona_embeddings p ON p.id = v.rowid AND p.meeting_id = ?
-        WHERE p.persona_name IN (${placeholders})
-      `).all(this.#meetingId, ...personaNames);
-      const map = new Map();
-      for (const row of rows) {
-        map.set(row.persona_name, row.embedding);
-      }
-      return map;
-    } catch {
-      return new Map();
-    }
-  }
-}
-
-// Re-export session index functions for backward compatibility
-export { loadSessionIndex, _indexMeeting as indexMeeting, _unindexMeeting as unindexMeeting, _getDatabasesBySessionId as getDatabasesBySessionId };
-
-export async function findMeetingBySessionId(directory, sessionId) {
-  await ensureDb();
-  // Most-recent-wins (audit 11 PF4 / audit 12 PD6): a session may hold several
-  // meetings (re-knits); resolve by meetings.created_at, not index insertion order.
-  const indexed = _getDatabasesBySessionId(sessionId);
-  const candidates = [];
-  for (const { dbPath } of indexed) {
-    if (!existsSync(dbPath)) continue;
-    let conn = null;
-    try {
-      conn = new DatabaseClass(dbPath, { readonly: true });
-      const row = conn
-        .prepare(
-          `SELECT id, question, status, round, max_rounds, created_at FROM meetings
-           WHERE opencode_session_id = ?
-           ORDER BY created_at DESC
-           LIMIT 1`,
-        )
-        .get(sessionId);
-      if (row) candidates.push({ row, dbPath });
-    } catch (err) {
-      const info = extractErrorInfo(err);
-      dbLogger.warn("indexed_db_lookup_failed", `Indexed DB lookup failed for ${dbPath}`, info);
-    } finally {
-      if (conn) conn.close();
-    }
-  }
-  if (candidates.length > 0) {
-    candidates.sort((a, b) => String(b.row.created_at ?? "").localeCompare(String(a.row.created_at ?? "")));
-    const { row, dbPath } = candidates[0];
-    return { meetingId: row.id, question: row.question, status: row.status, round: row.round, max_rounds: row.max_rounds, dbPath };
-  }
-
-  const meetingsDir = join(resolveLoomBaseDir(directory), "meetings");
-  if (!existsSync(meetingsDir)) return null;
-  await ensureDb();
-  // Scan most-recently-modified first so re-knit sessions resolve fast.
-  const files = readdirSync(meetingsDir)
-    .filter((f) => f.endsWith(".db"))
-    .map((f) => join(meetingsDir, f))
-    .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
-  for (const filePath of files) {
-    let conn = null;
-    try {
-      conn = new DatabaseClass(filePath, { readonly: true });
-      const row = conn
-        .prepare(
-          `SELECT id, question, status, round, max_rounds FROM meetings
-           WHERE opencode_session_id = ?
-           LIMIT 1`,
-        )
-        .get(sessionId);
-      if (row) {
-        _indexMeeting(filePath, row.id, sessionId);
-        return { meetingId: row.id, question: row.question, status: row.status, round: row.round, max_rounds: row.max_rounds, dbPath: filePath };
-      }
-    } catch (err) {
-      const info = extractErrorInfo(err);
-      dbLogger.warn("db_scan_failed", `DB scan failed for ${filePath}`, info);
-    } finally {
-      if (conn) conn.close();
-    }
-  }
-  return null;
-}
-
-export function getDbPathForMeeting(directory, meetingId) {
-  const path = getMeetingDbPath(directory, meetingId);
-  return existsSync(path) ? path : null;
-}
-
-export function deleteMeetingFiles(dbPath) {
-  _unindexMeeting(dbPath);
-  for (const suffix of ["", "-wal", "-shm"]) {
-    try { unlinkSync(`${dbPath}${suffix}`); } catch { /* ignore */ }
-  }
-}
-
-export function listMeetingFiles(directory) {
-  const dir = join(resolveLoomBaseDir(directory), "meetings");
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir).filter((f) => f.endsWith(".db"));
-}
-
-export async function readSessionIdFromDbAsync(dbPath) {
-  try {
-    await ensureDb();
-    const db = new DatabaseClass(dbPath, { readonly: true });
-    try {
-      // Check if meetings table exists before querying
-      const tableCheck = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='meetings'").get();
-      if (!tableCheck) return null;
-
-      const row = db.prepare("SELECT opencode_session_id FROM meetings LIMIT 1").get();
-      return row?.opencode_session_id ?? null;
-    } finally {
-      db.close();
-    }
-  } catch (err) {
-    const info = extractErrorInfo(err);
-    dbLogger.warn("read_session_id_failed", `Failed to read session ID from ${dbPath}`, info);
-    return null;
-  }
-}
-
-export async function deleteMeetingsBySessionId(directory, sessionId) {
-  const meetingsDir = join(resolveLoomBaseDir(directory), "meetings");
-  if (!existsSync(meetingsDir)) return 0;
-
-  let deleted = 0;
-  for (const file of readdirSync(meetingsDir)) {
-    if (!file.endsWith(".db")) continue;
-    const dbPath = join(meetingsDir, file);
-    const dbSessionId = await readSessionIdFromDbAsync(dbPath);
-    if (dbSessionId === sessionId) {
-      deleteMeetingFiles(dbPath);
-      deleted++;
-    }
-  }
-  return deleted;
 }

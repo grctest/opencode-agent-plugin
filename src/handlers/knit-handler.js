@@ -1,170 +1,25 @@
 import { MeetingOrchestrator } from "../orchestrator.js";
 import { composeRoomWithSimilarity, formatRoomPreview } from "../composer.js";
-import { createModelPlan, formatModelPlan } from "../model-discovery.js";
 import { findMeetingBySessionId, getDbPathForMeeting, deleteMeetingFiles, MeetingDatabase } from "../database.js";
-import {
-  discoverModels,
-  assignModelsToParticipants,
-} from "../services/model-service.js";
+import { discoverModels, assignModelsToParticipants } from "../services/model-service.js";
 import { Logger, extractErrorInfo } from "../logger.js";
 import { getConfig } from "../config.js";
-import { resolveLoomBaseDir, getMeetingDbPath } from "../paths.js";
-import { unlinkSync, writeFileSync, mkdirSync, openSync, fsyncSync, closeSync, renameSync } from "fs";
-import { join } from "path";
+import { getMeetingDbPath } from "../paths.js";
 import { sanitizeForPrompt } from "../utils/sanitize.js";
-
-/**
- * Extracts a short one-line decision summary from a markdown artifact,
- * preferring the first non-empty line under `## Decision`.
- * @param {string} artifact
- * @returns {string|null}
- */
-function extractDecisionSummary(artifact) {
-  if (!artifact || typeof artifact !== "string") return null;
-  const match = artifact.match(/##\s*Decision\b([\s\S]*?)(?=\n##\s|\n*$)/i);
-  const section = match ? match[1] : artifact;
-  const firstLine = section
-    .split("\n")
-    .map((l) => l.replace(/^[-*#>\s]+/, "").trim())
-    .find((l) => l.length > 0);
-  if (!firstLine) return null;
-  return firstLine.length > 200 ? `${firstLine.slice(0, 197)}...` : firstLine;
-}
-
-function createMeetingCallbacks(context, logger) {
-  return {
-    onContribution: (name, round, type) => {
-      context.metadata({
-        title: `Loom R${round}: ${name} (${type})`,
-        metadata: {
-          loom_last_contributor: name,
-          loom_last_type: type,
-          loom_round: round,
-        },
-      });
-    },
-    onRoundComplete: (round, summary) => {
-      context.metadata({
-        title: `Loom: Round ${round} complete`,
-        metadata: {
-          loom_round: round,
-          loom_round_summary: summary.slice(0, 200),
-        },
-      });
-    },
-    onSynthesisStart: () => {
-      context.metadata({ title: "Loom: Synthesizing final output...", metadata: { loom_status: "synthesizing" } });
-    },
-    onSynthesisComplete: (output) => {
-      context.metadata({
-        title: "Loom: Synthesis complete",
-        metadata: {
-          loom_status: "synthesis_complete",
-          loom_output_preview: output.slice(0, 200),
-        },
-      });
-    },
-    onUpdate: (state) => {
-      logger.debug("state_update", `Status: ${state.status}, Round: ${state.current_round}`, {
-        activeParticipants: state.participants.filter((p) => p.status === "speaking").length,
-      });
-    },
-  };
-}
-
-/**
- * Filters the full list of discovered models by the enabled-models set.
- * When enabledModels is null, all models are allowed (no filter).
- * @param {Array} allAvailable - Full list of discovered models
- * @param {Set<string>|null} enabledModels - Set of "provider/model" identifiers, or null for all
- * @returns {Array} Filtered list of models
- */
-function applyModelFilter(allAvailable, enabledModels) {
-  if (enabledModels === null) return allAvailable;
-  if (enabledModels.size === 0) return [];
-  return allAvailable.filter((m) => {
-    const key = `${m.providerID}/${m.modelID}`;
-    return enabledModels.has(key);
-  });
-}
+import { applyModelFilter } from "./knit/utils.js";
+import { createMeetingCallbacks, buildSummary } from "./knit/callbacks.js";
+import { writeReportFile as writeReportFileHelper, createSessionLock } from "./knit/file-ops.js";
+import { createModelHandlers } from "./knit/model-handlers.js";
 
 export function createKnitHandler(client, directory, activeLooms, agentTools = null) {
-  let pendingModels = null;
-  let enabledModels = null;
   const logger = new Logger();
-  const sessionLocks = new Map();
-  async function withSessionLock(sessionId, fn) {
-    const prev = sessionLocks.get(sessionId) ?? Promise.resolve();
-    let release;
-    const next = new Promise((res) => { release = res; });
-    sessionLocks.set(sessionId, prev.then(() => next));
-    try {
-      await prev;
-      return await fn();
-    } finally {
-      release();
-      if (sessionLocks.get(sessionId) === next) sessionLocks.delete(sessionId);
-    }
-  }
+  const withSessionLock = createSessionLock();
+  const state = { pendingModels: null, enabledModels: null };
 
-  /**
-   * Writes the full deliberation report to a persistent documentation file in the
-   * meeting directory, so the chat response can stay concise.
-   * @param {string} meetingId
-   * @param {string} report - Full markdown report
-   * @returns {string|null} Absolute path to the written file
-   */
+  const { handleListKnitModels, handleEnableKnitModels, handleDisableKnitModels, handleResetKnitModels } = createModelHandlers({ client, directory, logger, state });
+
   function writeReportFile(meetingId, report) {
-    const tmpSuffix = `${process.pid}.${crypto.randomUUID().slice(0, 8)}`;
-    let tmpPath = null;
-    try {
-      const baseDir = resolveLoomBaseDir(directory);
-      const dir = join(baseDir, "meetings");
-      mkdirSync(dir, { recursive: true });
-      const filePath = join(dir, `${meetingId}.md`);
-      tmpPath = `${filePath}.tmp.${tmpSuffix}`;
-      writeFileSync(tmpPath, report, "utf-8");
-      try {
-        const fd = openSync(tmpPath, "r+");
-        fsyncSync(fd);
-        closeSync(fd);
-      } catch {}
-      renameSync(tmpPath, filePath);
-      return filePath;
-    } catch (err) {
-      const info = extractErrorInfo(err);
-      logger.warn("report_write_failed", "Failed to write deliberation report file", info);
-      if (tmpPath) try { unlinkSync(tmpPath); } catch {}
-      return null;
-    }
-  }
-
-  /**
-   * Builds a concise chat summary from a completed deliberation, deferring the full
-   * report to the written documentation file and the dashboard.
-   * @param {Object} state - Final meeting state
-   * @param {string} question
-   * @param {Array} participants
-   * @param {string} meetingId
-   * @param {string|null} reportPath
-   * @param {string} [artifact] - Full artifact text (first Decision section used for summary)
-   * @returns {string} Concise summary for the chat
-   */
-  function buildSummary(state, question, participants, meetingId, reportPath, artifact = "") {
-    const decision = extractDecisionSummary(artifact);
-    const lines = [
-      `**Loom complete** — ${state.current_round} round${state.current_round !== 1 ? "s" : ""} (${state.status})`,
-      `**Question:** ${question}`,
-      `**Participants:** ${participants.length}`,
-    ];
-    if (decision) lines.push(`**Decision:** ${decision}`);
-    lines.push(`**Meeting ID:** ${meetingId}`);
-    if (reportPath) {
-      lines.push("");
-      lines.push(`Full report saved to \`${reportPath}\`.`);
-    }
-    lines.push("Run `/loom_viz` for the interactive dashboard.");
-    return lines.join("\n");
+    return writeReportFileHelper(directory, meetingId, report, logger);
   }
 
   async function handleKnit(args, context) {
@@ -174,15 +29,13 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
 
     const { available: allAvailable, sessionModel } = await discoverModels(client, directory, sessionID);
 
-    const available = applyModelFilter(allAvailable, enabledModels);
+    const available = applyModelFilter(allAvailable, state.enabledModels);
 
     if (args.fresh === true) {
       const existingMeeting = await findMeetingBySessionId(directory, sessionID);
       if (existingMeeting) {
         const extDbPath = getDbPathForMeeting(directory, existingMeeting.meetingId);
         if (extDbPath) {
-          // Unified deletion (audit 04 PD7): goes through deleteMeetingFiles so the
-          // session index is updated too — the old inline unlink left dangling entries.
           deleteMeetingFiles(extDbPath);
           logger.info("loom_fresh", "Cleared existing loom database for fresh start", { meetingId: existingMeeting.meetingId });
         }
@@ -201,7 +54,7 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
     let meetingDb = null;
 
     const modelMap = new Map();
-    const explicitModels = args.models ?? pendingModels;
+    const explicitModels = args.models ?? state.pendingModels;
     if (explicitModels && explicitModels.length > 0) {
       for (const m of explicitModels) {
         const tier = m.tier;
@@ -212,7 +65,7 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
         const modelId = "model_id" in m ? m.model_id : m.modelID;
         modelMap.set(tier, { providerID: providerId, modelID: modelId });
       }
-      pendingModels = null;
+      state.pendingModels = null;
     }
 
     if (args.participants && args.participants.length > 0) {
@@ -258,7 +111,6 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
       const maxRounds = args.max_rounds ?? getConfig().defaultMaxRounds;
       try {
         meetingDb = await MeetingDatabase.create(dbPath, meetingId);
-        // Insert meeting row BEFORE composition so FK on persona_embeddings is satisfied
         meetingDb.initializeMeeting({
           question: sanitizedQuestion,
           context: sanitizedContext,
@@ -273,7 +125,6 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
         meetingDb.close();
         meetingDb = null;
 
-        // Heavy embedding work — avoid holding DB during ONNX inference (busy_timeout 5000)
         let composeDb = await MeetingDatabase.create(dbPath, meetingId);
         try {
           composedRoom = await composeRoomWithSimilarity(args.question, composeDb);
@@ -282,7 +133,6 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
         }
         participants = composedRoom.participants;
 
-        // Persist real embedding model/dim if available
         try {
           const { isEmbedderInitialized, getEmbeddingDim } = await import("../services/embedding-service.js");
           const { DEFAULT_EMBEDDING_MODEL } = await import("../services/model-manager.js");
@@ -300,18 +150,13 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
                 opencodeSessionId: sessionID,
                 embedding_model: modelName,
                 embedding_dim: dim,
-                participants: [], // don't overwrite participants
+                participants: [],
               });
             } finally { try { tmpDb.close(); } catch {} }
           } else if (composedRoom.reasoning && composedRoom.reasoning.includes("keyword-based")) {
-            // Degraded embedder — keep meeting row but composition is keyword fallback (visible via reasoning)
           }
         } catch {}
 
-        // Apply the tier plan (from args.models / pendingModels) to composed
-        // participants, mirroring the custom-participants branch, then fill any
-        // remaining gaps from the available pool. This keeps persisted
-        // provider_id/model_id populated even when a model plan is present.
         participants = participants.map((p) =>
           p.model ? p : { ...p, model: modelMap.get(p.tier) ?? undefined }
         );
@@ -381,7 +226,6 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
       ...meetingCallbacks,
     });
 
-    // Store under both loomId (ephemeral) and meetingId (dashboard UUID) for alias support
     const meetingIdKey = engine.getMeetingId();
     activeLooms.set(loomId, engine);
     if (meetingIdKey && meetingIdKey !== loomId) activeLooms.set(meetingIdKey, engine);
@@ -516,166 +360,6 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
       logger.error("loom_extension_failed", "Loom extension failed", extInfo);
       return { title: "Loom Extension Error", output: `Could not extend the existing loom: ${extInfo.message}\n\nTry starting a fresh loom with a new chat session.`, metadata: { loom_id: loomId, loom_status: "error" } };
     }
-  }
-
-  async function handleListKnitModels() {
-    let available;
-    let sessionModel;
-    try {
-      const result = await discoverModels(client, directory, "");
-      available = result.available;
-      sessionModel = result.sessionModel;
-    } catch (err) {
-      const info = extractErrorInfo(err);
-      logger.error("model_discovery_failed", "Model discovery failed", info);
-      return `Model discovery failed: ${info.message}`;
-    }
-
-    if (available.length === 0) {
-      return "No active models found. Connect a provider (e.g. run `opencode auth login`).";
-    }
-
-    const modelKey = (m) => `${m.providerID}/${m.modelID}`;
-
-    const plan = createModelPlan(available, undefined, sessionModel);
-    pendingModels = plan.participants;
-
-    const lines = [
-      "## Available Models",
-      "",
-      "| Identifier | Provider | Cost | Context | Reasoning | Status |",
-      "|------------|----------|------|---------|-----------|--------|",
-    ];
-
-    for (const m of available) {
-      const key = modelKey(m);
-      const isEnabled = enabledModels === null ? true : enabledModels.has(key);
-      const status = isEnabled ? "enabled" : "disabled";
-      const cost = m.cost.input === 0 && m.cost.output === 0
-        ? "free"
-        : `$${m.cost.input}/$${m.cost.output}`;
-      const ctx = `${Math.round((m.limit?.context ?? 128000) / 1000)}k`;
-      const reason = m.reasoning ? "yes" : "—";
-      lines.push(`| ${key} | ${m.providerID} | ${cost} | ${ctx} | ${reason} | ${status} |`);
-    }
-
-    lines.push("");
-    lines.push(`**Total:** ${available.length} model(s)`);
-    if (enabledModels) {
-      lines.push(`**Enabled:** ${enabledModels.size} model(s)`);
-      lines.push(`**Disabled:** ${available.length - enabledModels.size} model(s)`);
-    } else {
-      lines.push("**All models enabled** (no filter set)");
-    }
-    lines.push("");
-    lines.push("Copy the exact `provider/model` identifier to enable or disable a model:");
-    lines.push("- `/enable_knit_models openai/gpt-4.1`");
-    lines.push("- `/disable_knit_models openai/o1`");
-    lines.push("- `/reset_knit_models`");
-    lines.push("");
-    lines.push(formatModelPlan(plan));
-
-    return lines.join("\n");
-  }
-
-  async function handleEnableKnitModels(args) {
-    const requested = args?.models ?? [];
-    if (requested.length === 0) {
-      return {
-        title: "Model Filter Error",
-        output: `Please specify model identifiers to enable.\n\nRun \`/list_knit_models\` to see available models with their exact identifiers.`,
-      };
-    }
-
-    let available;
-    try {
-      const result = await discoverModels(client, directory, "");
-      available = result.available;
-    } catch (err) {
-      const info = extractErrorInfo(err);
-      logger.error("model_discovery_failed", "Model discovery failed", info);
-      return `Model discovery failed: ${info.message}`;
-    }
-
-    if (available.length === 0) {
-      return "No active models found. Connect a provider (e.g. run `opencode auth login`).";
-    }
-
-    const modelKey = (m) => `${m.providerID}/${m.modelID}`;
-    const allKeys = new Set(available.map(modelKey));
-
-    const invalid = requested.filter((id) => !allKeys.has(id));
-    if (invalid.length > 0) {
-      const suggestions = [...allKeys].join("\n");
-      return {
-        title: "Model Filter Error",
-        output: `The following identifiers were not found:\n\n${invalid.map((i) => `- ${i}`).join("\n")}\n\nValid identifiers:\n${suggestions}\n\nRun \`/list_knit_models\` to see the full list.`,
-      };
-    }
-
-    if (enabledModels === null) enabledModels = new Set();
-    const added = requested.filter((id) => !enabledModels.has(id));
-    for (const id of requested) enabledModels.add(id);
-    if (added.length > 0) pendingModels = null;
-    return {
-      title: "Models Enabled",
-      output: `Enabled ${requested.length} model(s):\n${requested.map((m) => `- ${m}`).join("\n")}\n\n${enabledModels.size} model(s) are now available for Loom agents.`,
-    };
-  }
-
-  async function handleDisableKnitModels(args) {
-    const requested = args?.models ?? [];
-    if (requested.length === 0) {
-      return {
-        title: "Model Filter Error",
-        output: `Please specify model identifiers to disable.\n\nRun \`/list_knit_models\` to see available models with their exact identifiers.`,
-      };
-    }
-
-    let available;
-    try {
-      const result = await discoverModels(client, directory, "");
-      available = result.available;
-    } catch (err) {
-      const info = extractErrorInfo(err);
-      logger.error("model_discovery_failed", "Model discovery failed", info);
-      return `Model discovery failed: ${info.message}`;
-    }
-
-    if (available.length === 0) {
-      return "No active models found. Connect a provider (e.g. run `opencode auth login`).";
-    }
-
-    const modelKey = (m) => `${m.providerID}/${m.modelID}`;
-    const allKeys = new Set(available.map(modelKey));
-
-    const invalid = requested.filter((id) => !allKeys.has(id));
-    if (invalid.length > 0) {
-      const suggestions = [...allKeys].join("\n");
-      return {
-        title: "Model Filter Error",
-        output: `The following identifiers were not found:\n\n${invalid.map((i) => `- ${i}`).join("\n")}\n\nValid identifiers:\n${suggestions}\n\nRun \`/list_knit_models\` to see the full list.`,
-      };
-    }
-
-    if (enabledModels === null) enabledModels = new Set(allKeys);
-    const removed = requested.filter((id) => enabledModels.has(id));
-    for (const id of requested) enabledModels.delete(id);
-    if (removed.length > 0) pendingModels = null;
-    return {
-      title: "Models Disabled",
-      output: `Disabled ${removed.length} model(s):\n${removed.map((m) => `- ${m}`).join("\n")}\n\n${enabledModels.size} model(s) remain available for Loom agents.`,
-    };
-  }
-
-  async function handleResetKnitModels() {
-    const prevCount = enabledModels?.size ?? 0;
-    enabledModels = null;
-    pendingModels = null;
-    return {
-      title: "Model Filter Reset",
-      output: `Model filter cleared. All discovered models are now available for Loom agents (${prevCount} models were previously restricted).`,
-    };
   }
 
   return { handleKnit, handleListKnitModels, handleEnableKnitModels, handleDisableKnitModels, handleResetKnitModels };

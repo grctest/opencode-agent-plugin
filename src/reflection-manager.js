@@ -1,4 +1,4 @@
-import { buildReflectionPrompt } from "./prompts.js";
+import { buildReflectionPrompt } from "./prompts/interaction-prompts.js";
 import { extractAgentResponse, mapToolResults, findMostSimilar } from "./shared.js";
 import { getConfig, resolveBuiltInTools } from "./config.js";
 import { Logger, extractErrorInfo } from "./logger.js";
