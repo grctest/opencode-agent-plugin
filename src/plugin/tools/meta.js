@@ -10,8 +10,9 @@ export function createMetaTools({ config }) {
       },
       async execute(args, context) {
         const cfg = config.getValue("agentTools");
-        if (!cfg?.enabled || !cfg?.loom?.loom_request_next) return { error: "loom_request_next not enabled" };
-        return { queued: true, priority: Math.min(10, Math.max(1, args.priority)), reason: args.reason, note: "Turn request queued — will be considered for next round order." };
+        if (!cfg?.enabled || !cfg?.loom?.loom_request_next) return { output: JSON.stringify({ error: "loom_request_next not enabled" }), metadata: { error: true }, title: "loom_request_next error" };
+        const payload = { queued: true, priority: Math.min(10, Math.max(1, args.priority)), reason: args.reason, note: "Turn request queued — will be considered for next round order." };
+        return { output: JSON.stringify(payload), metadata: { queued: true, priority: payload.priority }, title: "loom_request_next queued" };
       },
     }),
 
@@ -32,13 +33,14 @@ export function createMetaTools({ config }) {
       },
       async execute(args, context) {
         const cfg = config.getValue("agentTools");
-        if (!cfg?.enabled || !cfg?.loom?.loom_type) return { error: "loom_type not enabled" };
+        if (!cfg?.enabled || !cfg?.loom?.loom_type) return { output: JSON.stringify({ error: "loom_type not enabled" }), metadata: { error: true }, title: "loom_type error" };
         // Fire-and-forget: just acknowledge. The authoritative type is read from toolResults
         // by RoundExecutor, so no meeting lookup is needed here.
         const valid = new Set(["propose","challenge","refine","support","dissent","synthesize","question","refuse"]);
         const t = String(args.type ?? "").toLowerCase();
-        if (!valid.has(t)) return { error: `Invalid type "${args.type}" — must be one of ${[...valid].join(", ")}` };
-        return { ok: true, type: t, reason: args.reason ?? null, note: `Type "${t}" recorded for this turn.` };
+        if (!valid.has(t)) return { output: JSON.stringify({ error: `Invalid type "${args.type}" — must be one of ${[...valid].join(", ")}` }), metadata: { error: true }, title: "loom_type error" };
+        const payload = { ok: true, type: t, reason: args.reason ?? null, note: `Type "${t}" recorded for this turn.` };
+        return { output: JSON.stringify(payload), metadata: { type: t }, title: `loom_type:${t}` };
       },
     }),
   };

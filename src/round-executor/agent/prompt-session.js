@@ -96,6 +96,19 @@ export async function promptChildSession(participant) {
   const maxRetries = fallbackConfig.enabled ? fallbackConfig.maxRetriesPerModel : 0;
   const lastError = { value: null };
 
+  // Inline loom_* tools (query/evidence/vote/summon) execute SERVER-SIDE during
+  // session.prompt and persist their own contributions immediately. If an attempt
+  // times out or errors after those side effects landed, the retry's response will
+  // not contain those ToolParts — the audit trail lives in the weave rows instead.
+  // We surface this explicitly so "tool_results_none" after a retry is explainable.
+  const warnPossibleSideEffects = (err) => {
+    this._logger.warn("attempt_failed_possible_tool_side_effects", `${participant.config.name} — attempt failed after inline loom tools may have executed; peer contributions may exist in the weave without appearing in this turn's tool_calls`, {
+      participant: participant.config.id,
+      round: currentRound,
+      error: err?.message ?? String(err),
+    });
+  };
+
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       const response = await this._executeAgentTurn(participant, activeModel, timeoutMs, promptContext);
@@ -104,6 +117,7 @@ export async function promptChildSession(participant) {
       lastError.value = err;
       const info = extractErrorInfo(err);
       this._recordModelFailure(activeModel);
+      if (attempt > 0 || err?.message === "Empty agent response") warnPossibleSideEffects(err);
 
       if (attempt < maxRetries) {
         const delay = Math.min(1000 * Math.pow(2, attempt) + Math.random() * 500, 8000);
@@ -144,6 +158,7 @@ export async function promptChildSession(participant) {
       lastError.value = err;
       const info = extractErrorInfo(err);
       this._recordModelFailure(fallbackModel);
+      warnPossibleSideEffects(err);
 
       if (attempt + 1 < fallbackAttempts) {
         const delay = Math.min(1000 * Math.pow(2, attempt) + Math.random() * 500, 8000);

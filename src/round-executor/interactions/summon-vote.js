@@ -82,10 +82,25 @@ export async function executeSummons(round, sourceParticipant, summon, {
       tool_choice: summonedToolKeys.length > 0 ? "auto" : "none",
     });
 
-    const model = sourceParticipant.config.model;
-
+    // Reuse source's assigned model (left sidebar) — stays strictly within enabled allowlist
+    let model = null;
+    try {
+      model = this._getParticipantModel ? this._getParticipantModel(sourceParticipant) : sourceParticipant.config.model;
+    } catch {
+      model = sourceParticipant.config.model;
+    }
     if (!model) {
-      this._logger.warn("summon_no_model", "No model available for summoned persona");
+      // Borrow-any enabled model from any participant — never re-discovers outside filtered pool
+      try {
+        for (const p of stateManager.getParticipants()) {
+          if (!p || p.status === "failed") continue;
+          const m = (() => { try { return this._getParticipantModel ? this._getParticipantModel(p) : p.config.model; } catch { return null; } })();
+          if (m) { model = m; break; }
+        }
+      } catch {}
+    }
+    if (!model) {
+      this._logger.warn("summon_no_model", "No model available for summoned persona — no enabled model assigned to any participant");
       return;
     }
 

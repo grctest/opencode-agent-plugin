@@ -42,13 +42,14 @@ export class StateManager {
     // Copies are frozen, not the live internals, so internal mutation paths keep working.
     const deepFreeze = (value) => {
       if (value === null || typeof value !== "object") return value;
-      Object.freeze(value);
+      if (Object.isFrozen(value)) return value;
       for (const key of Object.keys(value)) {
-        if (value[key] !== null && typeof value[key] === "object") {
-          value[key] = deepFreeze(value[key]);
+        const v = value[key];
+        if (v !== null && typeof v === "object" && !Object.isFrozen(v)) {
+          deepFreeze(v);
         }
       }
-      return value;
+      return Object.freeze(value);
     };
     const frozenCopy = (v) => {
       if (v === null || typeof v !== "object") return v;

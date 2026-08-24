@@ -133,6 +133,15 @@ export class MeetingOrchestrator {
     return [...this._orchestratorMessages];
   }
 
+  /**
+   * Public model resolver for inline loom_* tool paths (query/evidence/vote/summon).
+   * Reuses the participant's assigned (left-sidebar) model; falls back within the
+   * enabled-model allowlist only. Plugin tools call engine.getParticipantModel.
+   */
+  getParticipantModel(participant, fallbackOnError = false) {
+    return this._getParticipantModel(participant, fallbackOnError);
+  }
+
   getStateManager() {
     return this._stateManager;
   }

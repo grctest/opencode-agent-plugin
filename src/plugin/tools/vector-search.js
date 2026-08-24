@@ -27,13 +27,13 @@ export function createVectorSearchTool({ config, resolveMeeting }) {
     async execute(args, context) {
       const agentToolsConfig = config.getValue("agentTools");
       if (!agentToolsConfig?.enabled || !agentToolsConfig?.loom?.loom_vector_search) {
-        return { error: "Vector search is not enabled in configuration" };
+        return { output: JSON.stringify({ error: "Vector search is not enabled in configuration" }), metadata: { error: true }, title: "loom_vector_search error" };
       }
-      if (!context?.sessionID) return { error: "loom_vector_search: session context unavailable" };
+      if (!context?.sessionID) return { output: JSON.stringify({ error: "loom_vector_search: session context unavailable" }), metadata: { error: true }, title: "loom_vector_search error" };
 
       const meetingInfo = await resolveMeeting(context.sessionID);
       if (!meetingInfo) {
-        return { error: "Could not resolve meeting for this session" };
+        return { output: JSON.stringify({ error: "Could not resolve meeting for this session" }), metadata: { error: true }, title: "loom_vector_search error" };
       }
 
       const db = await MeetingDatabase.create(meetingInfo.dbPath, meetingInfo.meetingId);
@@ -51,7 +51,8 @@ export function createVectorSearchTool({ config, resolveMeeting }) {
           participation_tags: [],
         }));
 
-        return { results: formattedResults, truncated: false };
+        const payload = { results: formattedResults, truncated: false };
+        return { output: JSON.stringify(payload), metadata: { count: formattedResults.length, truncated: false }, title: `loom_vector_search:${formattedResults.length} results` };
       } finally {
         db.close();
       }

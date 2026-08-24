@@ -6,8 +6,25 @@ import { resolveLoomBaseDir } from "../paths.js";
 const PROGRESS_PATTERN =
   /^🎬|^⚠️|^ℹ️|is thinking\.\.\.|— synthesize:|— critique:|Round \d+ (complete|starting)|Synthesizing final output|✅ Completed|❌ Error:/;
 
+const TOOL_REQUIRED_OVERRIDES = {
+  knit: ["question"],
+  loom_viz: [],
+  loom_debug: ["loom_id"],
+  loom_type: ["type"],
+  loom_vector_search: ["query"],
+  // loom_query, loom_evidence, loom_vote, loom_summon, loom_request_next, loom_status, loom_cancel etc. already correct
+};
+
 export function createEventHandlers({ directory }) {
   return {
+    "tool.definition": async (input, output) => {
+      const override = TOOL_REQUIRED_OVERRIDES[input.toolID];
+      if (override !== undefined && output.jsonSchema && typeof output.jsonSchema === "object") {
+        // Ensure required is exactly the override (optional fields not required)
+        // Create new object to ensure registry detects change
+        output.jsonSchema = { ...output.jsonSchema, required: override };
+      }
+    },
 event: async ({ event }) => {
       if (event.type === "session.deleted") {
         const deletedId = event.properties?.info?.id;

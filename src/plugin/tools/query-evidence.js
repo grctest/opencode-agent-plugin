@@ -3,6 +3,8 @@ import { MeetingDatabase } from "../../database.js";
 import { buildQueryPrompt, buildEvidencePrompt } from "../../prompts/interaction-prompts.js";
 import { extractAgentResponse, mapToolResults } from "../../shared.js";
 import { degrade } from "../../utils/degrade.js";
+import { Logger } from "../../logger.js";
+const logger = new Logger();
 
 export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }) {
   return {
@@ -15,37 +17,60 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
       },
       async execute(args, context) {
         const cfg = config.getValue("agentTools");
-        if (!cfg?.enabled || !cfg?.loom?.loom_query) return { error: "loom_query not enabled" };
-        if (!args.targets || args.targets.length === 0) return { error: "targets required" };
-        if (!context?.sessionID) return { error: "loom_query: session context unavailable" };
+        if (!cfg?.enabled || !cfg?.loom?.loom_query) return { output: JSON.stringify({ error: "loom_query not enabled" }), metadata: { error: true }, title: "loom_query error" };
+        if (!args.targets || args.targets.length === 0) return { output: JSON.stringify({ error: "targets required" }), metadata: { error: true }, title: "loom_query error" };
+        if (!context?.sessionID) return { output: JSON.stringify({ error: "loom_query: session context unavailable" }), metadata: { error: true }, title: "loom_query error" };
         try {
           const meetingInfo = await resolveMeeting(context.sessionID);
-          if (!meetingInfo) return { queued: true, note: "Query queued — meeting not yet resolved, will be handled post-store." , targets: args.targets, question: args.question };
+          if (!meetingInfo) {
+            const p = { queued: true, note: "Query queued — meeting not yet resolved, will be handled post-store.", targets: args.targets, question: args.question };
+            return { output: JSON.stringify(p), metadata: { queued: true }, title: "loom_query queued" };
+          }
           const engine = activeLooms.get(meetingInfo.meetingId);
-          if (!engine || !engine.getStateManager) return { queued: true, targets: args.targets, question: args.question, note: "Query queued — engine not ready." };
+          if (!engine || !engine.getStateManager) {
+            const p = { queued: true, targets: args.targets, question: args.question, note: "Query queued — engine not ready." };
+            return { output: JSON.stringify(p), metadata: { queued: true }, title: "loom_query queued" };
+          }
           const stateManager = engine.getStateManager();
           const sessionManager = engine.getSessionManager();
           const db = engine.getDatabase();
-          if (!stateManager || !sessionManager || !db) return { queued: true, targets: args.targets, question: args.question, note: "Query queued — state not ready." };
+          if (!stateManager || !sessionManager || !db) {
+            const p = { queued: true, targets: args.targets, question: args.question, note: "Query queued — state not ready." };
+            return { output: JSON.stringify(p), metadata: { queued: true }, title: "loom_query queued" };
+          }
           // For inline execution, we need to prompt targets now and return their answers.
           // We use the same logic as RoundExecutor.executeQueries but inline, and return results for the invoker to synthesize.
           // To avoid double-creation, we set a flag that post-store handling should skip if inline succeeded.
           // For now, return queued and let RoundExecutor handle post-store creation; the inline result will be the peer answers returned as tool output.
           // We perform the actual peer prompting here to provide inline results.
           const allParticipants = stateManager.getParticipants();
-          if (!Array.isArray(allParticipants)) return { error: "loom_query: participant list unavailable" };
+          if (!Array.isArray(allParticipants)) return { output: JSON.stringify({ error: "loom_query: participant list unavailable" }), metadata: { error: true }, title: "loom_query error" };
           const targets = args.targets.map(id => allParticipants.find(p => p?.config?.id === id)).filter(p => p && p.status !== "failed" && p.status !== "passed" && p.status !== "muted");
-          if (targets.length === 0) return { error: `No eligible targets among [${args.targets.join(", ")}] — all filtered (self/failed/passed).` };
+          if (targets.length === 0) return { output: JSON.stringify({ error: `No eligible targets among [${args.targets.join(", ")}] — all filtered (self/failed/passed).` }), metadata: { error: true }, title: "loom_query error" };
           const caller = allParticipants.find(p => p.session_id === context.sessionID) || allParticipants.find(p => p?.config?.id && args.targets.includes(p.config.id) === false) || null;
           // Use a lightweight inline prompt for each target (without creating DB rows yet — let RoundExecutor create them post-store, but return preview)
           // For true inline, we prompt here and return the answers directly.
           const results = [];
           for (const target of targets) {
             try {
-              const model = (() => {
+              let model = (() => {
                 try { return engine.getParticipantModel ? engine.getParticipantModel(target) : null; } catch { return null; }
               })();
-              if (!model) { results.push({ participantId: target.config.id, error: "no model" }); continue; }
+              if (!model) {
+                // Fallback: borrow any other participant's resolvable model rather than failing the peer response
+                try {
+                  for (const p of stateManager.getParticipants()) {
+                    if (!p || p.status === "failed") continue;
+                    const m = (() => { try { return engine.getParticipantModel ? engine.getParticipantModel(p) : null; } catch { return null; } })();
+                    if (m) { model = m; break; }
+                  }
+                } catch {}
+              }
+              if (!model) {
+                logger.warn("participant_model_missing", `No model resolvable for ${target.config.id} — peer response skipped`, { participant: target.config.id });
+                results.push({ participantId: target.config.id, error: "peer model unavailable — could not answer (no model assignment); treat their claim as unverified" });
+                continue;
+              }
               // Shared ephemeral-prompt primitive (audit 10 MA1)
               const stateOfPlay = stateManager.getStateOfPlay?.() ?? "";
               const roundContribs = stateManager.getWeave ? stateManager.getWeave().filter(c => c.round != null && c.round >= stateManager.getCurrentRound() - 1).slice(-12) : [];
@@ -74,8 +99,9 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
                   if (t?.loom?.loom_vector_search) m.loom_vector_search = true;
                   return m;
                 })(),
-                toolChoice: "auto",
                 timeoutMs: 60000,
+                signal: context.abort,
+                abort: context.abort,
               }, meetingInfo.meetingId);
               if (!res || !res.ok) { results.push({ participantId: target.config.id, error: res?.error?.message ?? "prompt failed" }); continue; }
                             const { text, toolResults } = extractAgentResponse(res.data);
@@ -112,9 +138,11 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
               results.push({ participantId: target.config.id, error: e.message });
             }
           }
-          return { inline: true, targets: args.targets, question: args.question, responses: results, note: "Inline query — peer answers returned for synthesis and stored as indented query_response rows." };
+          const inlinePayload = { inline: true, targets: args.targets, question: args.question, responses: results, note: "Inline query — peer answers returned for synthesis and stored as indented query_response rows." };
+          return { output: JSON.stringify(inlinePayload), metadata: { inline: true, responseCount: results.length }, title: `loom_query:${results.length} responses` };
         } catch (e) {
-          return { error: `loom_query inline failed: ${e.message}`, queued: true, targets: args.targets, question: args.question };
+          const p = { error: `loom_query inline failed: ${e.message}`, queued: true, targets: args.targets, question: args.question };
+          return { output: JSON.stringify(p), metadata: { error: true, queued: true }, title: "loom_query error" };
         }
       },
     }),
@@ -128,24 +156,44 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
       },
       async execute(args, context) {
         const cfg = config.getValue("agentTools");
-        if (!cfg?.enabled || !cfg?.loom?.loom_evidence) return { error: "loom_evidence not enabled" };
-        if (!context?.sessionID) return { error: "loom_evidence: session context unavailable" };
+        if (!cfg?.enabled || !cfg?.loom?.loom_evidence) return { output: JSON.stringify({ error: "loom_evidence not enabled" }), metadata: { error: true }, title: "loom_evidence error" };
+        if (!context?.sessionID) return { output: JSON.stringify({ error: "loom_evidence: session context unavailable" }), metadata: { error: true }, title: "loom_evidence error" };
         try {
           const meetingInfo = await resolveMeeting(context.sessionID);
-          if (!meetingInfo) return { queued: true, targets: args.targets, question: args.question, note: "Evidence queued — meeting not resolved." };
+          if (!meetingInfo) {
+            const p = { queued: true, targets: args.targets, question: args.question, note: "Evidence queued — meeting not resolved." };
+            return { output: JSON.stringify(p), metadata: { queued: true }, title: "loom_evidence queued" };
+          }
           const engine = activeLooms.get(meetingInfo.meetingId);
-          if (!engine || !engine.getStateManager) return { queued: true, targets: args.targets, question: args.question, note: "Evidence queued — engine not ready." };
+          if (!engine || !engine.getStateManager) {
+            const p = { queued: true, targets: args.targets, question: args.question, note: "Evidence queued — engine not ready." };
+            return { output: JSON.stringify(p), metadata: { queued: true }, title: "loom_evidence queued" };
+          }
           const stateManager = engine.getStateManager();
           const sessionManager = engine.getSessionManager();
           const allParticipants = stateManager.getParticipants();
-          if (!Array.isArray(allParticipants)) return { error: "loom_evidence: participant list unavailable" };
+          if (!Array.isArray(allParticipants)) return { output: JSON.stringify({ error: "loom_evidence: participant list unavailable" }), metadata: { error: true }, title: "loom_evidence error" };
           const targets = args.targets.map(id => allParticipants.find(p => p?.config?.id === id)).filter(p => p && p.status !== "failed" && p.status !== "passed" && p.status !== "muted");
-          if (targets.length === 0) return { error: `No eligible targets among [${args.targets.join(", ")}]` };
+          if (targets.length === 0) return { output: JSON.stringify({ error: `No eligible targets among [${args.targets.join(", ")}]` }), metadata: { error: true }, title: "loom_evidence error" };
           const results = [];
           for (const target of targets) {
             try {
-              const model = (() => { try { return engine.getParticipantModel ? engine.getParticipantModel(target) : null; } catch { return null; } })();
-              if (!model) { results.push({ participantId: target.config.id, error: "no model" }); continue; }
+              let model = (() => { try { return engine.getParticipantModel ? engine.getParticipantModel(target) : null; } catch { return null; } })();
+              if (!model) {
+                // Fallback: borrow any other participant's resolvable model rather than failing the peer response
+                try {
+                  for (const p of stateManager.getParticipants()) {
+                    if (!p || p.status === "failed") continue;
+                    const m = (() => { try { return engine.getParticipantModel ? engine.getParticipantModel(p) : null; } catch { return null; } })();
+                    if (m) { model = m; break; }
+                  }
+                } catch {}
+              }
+              if (!model) {
+                logger.warn("participant_model_missing", `No model resolvable for ${target.config.id} — evidence_response skipped`, { participant: target.config.id });
+                results.push({ participantId: target.config.id, error: "peer model unavailable — could not research (no model assignment); treat their claim as unverified" });
+                continue;
+              }
               // Shared ephemeral-prompt primitive (audit 10 MA1)
               const stateOfPlay = stateManager.getStateOfPlay?.() ?? "";
               const roundContribs = stateManager.getWeave ? stateManager.getWeave().filter(c => c.round != null && c.round >= stateManager.getCurrentRound() - 1).slice(-12) : [];
@@ -173,8 +221,9 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
                   if (t?.loom?.loom_vector_search) m.loom_vector_search = true;
                   return m;
                 })(),
-                toolChoice: "required",
                 timeoutMs: 90000,
+                signal: context.abort,
+                abort: context.abort,
               }, meetingInfo.meetingId);
               if (!res || !res.ok) { results.push({ participantId: target.config.id, error: res?.error?.message ?? "prompt failed" }); continue; }
                             const { text, toolResults } = extractAgentResponse(res.data);
@@ -208,9 +257,11 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
               }
             } catch (e) { results.push({ participantId: target.config.id, error: e.message }); }
           }
-          return { inline: true, targets: args.targets, question: args.question, responses: results, note: "Inline evidence — peer findings returned for synthesis and stored as indented evidence_response rows." };
+          const inlinePayload2 = { inline: true, targets: args.targets, question: args.question, responses: results, note: "Inline evidence — peer findings returned for synthesis and stored as indented evidence_response rows." };
+          return { output: JSON.stringify(inlinePayload2), metadata: { inline: true, responseCount: results.length }, title: `loom_evidence:${results.length} findings` };
         } catch (e) {
-          return { error: `loom_evidence inline failed: ${e.message}`, queued: true, targets: args.targets, question: args.question };
+          const p = { error: `loom_evidence inline failed: ${e.message}`, queued: true, targets: args.targets, question: args.question };
+          return { output: JSON.stringify(p), metadata: { error: true, queued: true }, title: "loom_evidence error" };
         }
       },
     }),

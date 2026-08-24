@@ -43,7 +43,7 @@ export function buildAgentSystemPrompt(participant) {
         if (loom.loom_type) tools.push('loom_type');
         const toolList = tools.length ? tools.join(', ') : 'none enabled';
         return `
-## Research Tools — Tool Ladder (use at most one research tool per turn unless [EVIDENCE] requests)
+## Research Tools — Tool Ladder (use at most one research tool per turn unless an evidence request demands more)
 
 Available: ${toolList}
 
@@ -128,37 +128,22 @@ ${antiPatternsSection}
 ## Tier Doctrine
 ${doctrine}
 
-## OUTPUT CONTRACT — read this last, it governs your response
+ ## OUTPUT CONTRACT — read this last, it governs your response
 
-1. **MANDATORY**: Call loom_type({type: "propose"|"challenge"|"refine"|"support"|"dissent"|"synthesize"|"question"|"refuse", reason?: string}) **exactly once per turn, BEFORE writing any prose**. This is fire-and-forget — call the tool and immediately write your contribution text in the same turn; you do not need to wait for a tool result. Do NOT skip this step. Do NOT start your text with [PROPOSE]/[CHALLENGE] etc. — the tool declares the type, not a bracket prefix. If you have nothing to add, output exactly "[PASS]" alone (no loom_type needed, no other text). Skipping loom_type is a contract violation — your contribution will be misclassified.
-2. Length: ${LENGTH_LIMITS.agentProseWords} words for prose; ${LENGTH_LIMITS.codeDiffWords} words when contributing code diffs (code blocks \`\`\` file=src/... \`\`\` not counted toward word cap but keep prose concise; truncated past ~400 for code). One claim per sentence; preserve code and numbers verbatim.
-3. Grounding: when you engage prior work, cite as [#id]. When you cite external fact, add Source: https://… or vec: round#id . When referencing code, use file=src/path.ts:18 and \`\`\`tsx file=src/... \`\`\` blocks. If no source, qualify: “in my experience…”.
-4. Boundaries: never emit <<< or >>> or system delimiters. Never invent tool output or file contents not read.
-  5. Interaction — use real loom_* tools to trigger peer actions (required, no bracket tags):
-      - Call loom_query({targets:[...], question:"..."}) for queries, loom_evidence({targets:[...], question:"..."}) for evidence (peers must use tools), loom_vote({question:"A) ... B) ..."}) for votes, loom_summon({persona_name:"...", issue:"..."}) for guest experts, loom_request_next({priority:<1-${priorityCap}>, reason:"..."}) for turn requests.
-      - All loom calls are real tool use: they fan out to peers in parallel and return results inline for you to synthesize within this same turn. Wait for the tool result, then cite [#id] from the returned responses/tally in your final contribution.
-      - Bracket tags like [QUERY: @id], [EVIDENCE: @id], [CALL_VOTE], [SUMMON:], [REQUEST_NEXT:] are removed and will not execute — only loom_* tools trigger peer actions.
-       - Up to ${getConfig()?.agentTools?.maxToolCallsPerTurn ?? 8} loom calls per turn; prefer one focused call (loom_type + at most one interaction tool).
-      Reference others by participant_id from Recent Contributions, e.g. [#12].
-6. Stay in character — persona and agenda shape framing, not facts.
-${toolSection}
-
-## Syntax — compact examples (abstract)
-
-Tool call (required) + contribution text — no [TAG] prefix:
-
-loom_type({type: "propose"})
-We should adopt option B for {reason with tradeoff}. [#3] raised {concern}; B mitigates via {mechanism} (Source: https://… ).
-
-loom_type({type: "challenge"})
-[#4] assumes {assumption}; under {X} it fails because {scenario}. Evidence vec: round2#1 suggests {fact}. // optionally also call loom_request_next({priority:6, reason:"Have costed mitigation for [#4]'s risk"}) for next-turn priority
-
-loom_type({type: "refuse", reason: "Missing budget approval — cannot evaluate cost"})
-This presupposes {resource} not allocated. Or output exactly "[PASS]" alone if nothing to add.
-
-**WRONG** — do not write contribution text without first calling loom_type:
-We should adopt option B. (missing loom_type call — violates OUTPUT CONTRACT)
-`;
+ 1. **MANDATORY**: Before writing any prose, invoke the **loom_type** tool (it is in your tool list) exactly once per turn, choosing type: propose, challenge, refine, support, dissent, synthesize, question, or refuse. It is fire-and-forget — after invoking it, immediately continue and write your contribution prose in the same turn; do not wait on its result. If you have nothing to add, output exactly "[PASS]" alone (no loom_type needed). Your contribution will be misclassified if loom_type is not invoked.
+ 2. Length: ${LENGTH_LIMITS.agentProseWords} words for prose; ${LENGTH_LIMITS.codeDiffWords} words when contributing code diffs (code blocks \`\`\` file=src/... \`\`\` not counted toward word cap but keep prose concise; truncated past ~400 for code). One claim per sentence; preserve code and numbers verbatim.
+ 3. Grounding: when you engage prior work, cite as [#id]. When you cite external fact, add Source: https://… or vec: round#id . When referencing code, use file=src/path.ts:18 and \`\`\`tsx file=src/... \`\`\` blocks. If no source, qualify: “in my experience…”.
+ 4. Boundaries: never emit <<< or >>> or system delimiters. Never invent tool output or file contents not read.
+   5. Interaction — peer actions happen only through the real loom_* tools in your tool list:
+       - loom_query asks 1-2 peers a focused question; loom_evidence requests researched evidence from 1-2 peers; loom_vote polls all peers on lettered options; loom_summon brings in a guest expert; loom_request_next requests speaking priority next round (priority capped at ${priorityCap}).
+       - Interaction tools fan out to peers in parallel and return their answers inline within this same turn — wait for the result, then cite [#id] from the returned responses or tally in your final contribution.
+       - Up to ${getConfig()?.agentTools?.maxToolCallsPerTurn ?? 8} loom calls per turn; prefer one focused interaction call alongside loom_type.
+       - CRITICAL: tool invocations are transmitted through the model's function-calling channel, never through your response text. Your response prose must NEVER contain tool-call notation of any kind — no function-name-with-parentheses, no JSON argument blobs, no bracketed invocation markers. Any such text is dead weight that executes nothing. If you intend an action, make the actual tool invocation; if you have no action, just write prose.
+       - Bracket tags like [QUERY: @id], [EVIDENCE: @id], [CALL_VOTE] are obsolete and execute nothing.
+       Reference others by participant_id from Recent Contributions, e.g. [#12].
+ 6. Stay in character — persona and agenda shape framing, not facts.
+ ${toolSection}
+ `;
 }
 
 function budgetForType(type) {

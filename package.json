@@ -54,6 +54,7 @@
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-window": "^2.3.0",
-    "sqlite-vec": "^0.1.9"
+    "sqlite-vec": "^0.1.9",
+    "zod": "^4.1.8"
   }
 }

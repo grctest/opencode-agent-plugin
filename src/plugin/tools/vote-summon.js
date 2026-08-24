@@ -3,7 +3,6 @@ import { MeetingDatabase } from "../../database.js";
 import { buildVotePrompt, buildSummonPrompt } from "../../prompts/interaction-prompts.js";
 import { extractAgentResponse, mapToolResults } from "../../shared.js";
 import { getPersonas } from "../../composer.js";
-import { getHighestTierModel } from "../../services/model-service.js";
 import { degrade } from "../../utils/degrade.js";
 import * as sharedVoteTally from "../../utils/vote-tally.js";
 
@@ -16,19 +15,28 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
       },
       async execute(args, context) {
         const cfg = config.getValue("agentTools");
-        if (!cfg?.enabled || !cfg?.loom?.loom_vote) return { error: "loom_vote not enabled" };
-        if (!context?.sessionID) return { error: "loom_vote: session context unavailable" };
+        if (!cfg?.enabled || !cfg?.loom?.loom_vote) return { output: JSON.stringify({ error: "loom_vote not enabled" }), metadata: { error: true }, title: "loom_vote error" };
+        if (!context?.sessionID) return { output: JSON.stringify({ error: "loom_vote: session context unavailable" }), metadata: { error: true }, title: "loom_vote error" };
         try {
           const meetingInfo = await resolveMeeting(context.sessionID);
-          if (!meetingInfo) return { queued: true, question: args.question, note: "Vote queued — meeting not resolved." };
+          if (!meetingInfo) {
+            const p = { queued: true, question: args.question, note: "Vote queued — meeting not resolved." };
+            return { output: JSON.stringify(p), metadata: { queued: true }, title: "loom_vote queued" };
+          }
           const engine = activeLooms.get(meetingInfo.meetingId);
-          if (!engine || !engine.getStateManager) return { queued: true, question: args.question, note: "Vote queued — engine not ready." };
+          if (!engine || !engine.getStateManager) {
+            const p = { queued: true, question: args.question, note: "Vote queued — engine not ready." };
+            return { output: JSON.stringify(p), metadata: { queued: true }, title: "loom_vote queued" };
+          }
           const stateManager = engine.getStateManager();
           const sessionManager = engine.getSessionManager();
           const db = engine.getDatabase();
-          if (!stateManager || !sessionManager || !db) return { queued: true, question: args.question, note: "Vote queued — state not ready." };
+          if (!stateManager || !sessionManager || !db) {
+            const p = { queued: true, question: args.question, note: "Vote queued — state not ready." };
+            return { output: JSON.stringify(p), metadata: { queued: true }, title: "loom_vote queued" };
+          }
           const allParticipants = stateManager.getParticipants();
-          if (!Array.isArray(allParticipants)) return { error: "loom_vote: participant list unavailable" };
+          if (!Array.isArray(allParticipants)) return { output: JSON.stringify({ error: "loom_vote: participant list unavailable" }), metadata: { error: true }, title: "loom_vote error" };
           const caller = allParticipants.find(p => p?.session_id === context.sessionID) || null;
           const callerBatchId = caller?.currentBatchId ?? `inline-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
           const currentRound = stateManager.getCurrentRound();
@@ -57,17 +65,32 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
               stateManager.addContribution(tallyContrib);
               if (roundObj) roundObj.contributions.push(tallyContrib);
               degrade("tally_db_failed", "Failed to persist vote_tally — visible in memory only this session", () => db.addContributionWithTurnRequest(stateManager.getState().id, tallyContrib, null), null);
-              return { inline: true, question: args.question, tally: tallyContent.slice(0,800), votes: [], tallyId: tallyContrib.id, note: "Vote completed inline — source only." };
+              const payload = { inline: true, question: args.question, tally: tallyContent.slice(0,800), votes: [], tallyId: tallyContrib.id, note: "Vote completed inline — source only." };
+              return { output: JSON.stringify(payload), metadata: { inline: true }, title: "loom_vote:source only" };
             } catch (e) {
-              return { inline: true, question: args.question, tally: tallyContent.slice(0,800), votes: [], note: `Vote inline stored failed: ${e.message}` };
+              const payload = { inline: true, question: args.question, tally: tallyContent.slice(0,800), votes: [], note: `Vote inline stored failed: ${e.message}` };
+              return { output: JSON.stringify(payload), metadata: { inline: true, error: true }, title: "loom_vote error" };
             }
           }
           // Parallel fan-out to voters
           const voteResponses = [];
           const voterResults = [];
           await Promise.allSettled(voters.map(async (voter) => {
-            const model = (() => { try { return engine.getParticipantModel ? engine.getParticipantModel(voter) : null; } catch { return null; }})();
-            if (!model) { voterResults.push({ voter: voter.config.name, error: "no model" }); return; }
+            let model = (() => { try { return engine.getParticipantModel ? engine.getParticipantModel(voter) : null; } catch { return null; }})();
+            if (!model) {
+              // Fallback: borrow any other participant's resolvable model rather than dropping the vote
+              try {
+                for (const p of stateManager.getParticipants()) {
+                  if (!p || p.status === "failed") continue;
+                  const m = (() => { try { return engine.getParticipantModel ? engine.getParticipantModel(p) : null; } catch { return null; } })();
+                  if (m) { model = m; break; }
+                }
+              } catch {}
+            }
+            if (!model) {
+              voterResults.push({ voter: voter.config.id, error: "peer model unavailable — vote not cast (no model assignment)" });
+              return;
+            }
             try {
               const previousStatus = voter.status;
               voter.status = "speaking";
@@ -91,15 +114,16 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
                 question: args.question,
                 round: currentRound,
               };
-              // Shared ephemeral-prompt primitive (audit 10 MA1)
+              // Shared ephemeral-prompt primitive (audit 10 MA1) — scoped: votes need no tools (no bash/read per user request)
               const res = await sessionManager.runEphemeralPrompt(voter, {
                 system: systemPrompt,
                 model,
                 temperature: voter.tier_config?.temperature ?? 0.7,
                 parts: [{ type: "text", text: prompt }],
                 tools: {},
-                toolChoice: "none",
                 timeoutMs: 60000,
+                signal: context.abort,
+                abort: context.abort,
               }, meetingInfo.meetingId);
               if (!res.ok) throw res.error;
                             const { text } = extractAgentResponse(res.data);
@@ -159,9 +183,11 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
           stateManager.addContribution(tallyContrib);
           if (roundObj) roundObj.contributions.push(tallyContrib);
           degrade("tally_db_failed", "Failed to persist final vote_tally — visible in memory only this session", () => db.addContributionWithTurnRequest(stateManager.getState().id, tallyContrib, null), null);
-          return { inline: true, question: args.question, tally: tallyContent.slice(0,800), votes: voterResults, tallyId: tallyContrib.id, note: "Vote completed inline — tally and vote_response/tally rows stored, returned for same-turn synthesis." };
+          const payload = { inline: true, question: args.question, tally: tallyContent.slice(0,800), votes: voterResults, tallyId: tallyContrib.id, note: "Vote completed inline — tally and vote_response/tally rows stored, returned for same-turn synthesis." };
+          return { output: JSON.stringify(payload), metadata: { inline: true, voteCount: voterResults.length }, title: `loom_vote:${voterResults.length} votes` };
         } catch (e) {
-          return { error: `loom_vote inline failed: ${e.message}`, queued: true, question: args.question };
+          const p = { error: `loom_vote inline failed: ${e.message}`, queued: true, question: args.question };
+          return { output: JSON.stringify(p), metadata: { error: true, queued: true }, title: "loom_vote error" };
         }
       },
     }),
@@ -174,20 +200,26 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
       },
       async execute(args, context) {
         const cfg = config.getValue("agentTools");
-        if (!cfg?.enabled || !cfg?.loom?.loom_summon) return { error: "loom_summon not enabled" };
-        if (!context?.sessionID) return { error: "loom_summon: session context unavailable" };
+        if (!cfg?.enabled || !cfg?.loom?.loom_summon) return { output: JSON.stringify({ error: "loom_summon not enabled" }), metadata: { error: true }, title: "loom_summon error" };
+        if (!context?.sessionID) return { output: JSON.stringify({ error: "loom_summon: session context unavailable" }), metadata: { error: true }, title: "loom_summon error" };
         try {
           const meetingInfo = await resolveMeeting(context.sessionID);
-          if (!meetingInfo) return { queued: true, persona_name: args.persona_name, issue: args.issue, note: "Summon queued — meeting not resolved." };
+          if (!meetingInfo) {
+            const p = { queued: true, persona_name: args.persona_name, issue: args.issue, note: "Summon queued — meeting not resolved." };
+            return { output: JSON.stringify(p), metadata: { queued: true }, title: "loom_summon queued" };
+          }
           const engine = activeLooms.get(meetingInfo.meetingId);
-          if (!engine) return { queued: true, persona_name: args.persona_name, issue: args.issue, note: "Summon queued — engine not ready." };
+          if (!engine) {
+            const p = { queued: true, persona_name: args.persona_name, issue: args.issue, note: "Summon queued — engine not ready." };
+            return { output: JSON.stringify(p), metadata: { queued: true }, title: "loom_summon queued" };
+          }
                     const allPersonas = getPersonas();
           let found = null;
           for (const tier of Object.keys(allPersonas)) {
             const m = allPersonas[tier].find(p => p.name.toLowerCase() === args.persona_name.toLowerCase());
             if (m) { found = { ...m, tier }; break; }
           }
-          if (!found) return { error: `Persona "${args.persona_name}" not found` };
+          if (!found) return { output: JSON.stringify({ error: `Persona "${args.persona_name}" not found` }), metadata: { error: true }, title: "loom_summon error" };
           // For summon, we do inline prompt of the guest and return its content for immediate synthesis.
           const stateManager = engine.getStateManager();
           const sessionManager = engine.getSessionManager();
@@ -197,14 +229,21 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
           const systemPrompt = `You are ${found.name} (${found.tier}) — guest expert summoned into Loom for one additive contribution. Be concise (100-150 words), grounded, in character. Build on what's settled; don't re-litigate without new evidence. Name one constraint only you would know. Cite Source: URL or [#id] if you use evidence. Never emit <<< or >>>. No contribution tags.`;
           // Use a temporary summoned participant config to create session
           const summonedConfig = { config: { id: `summoned_${found.name.toLowerCase().replace(/[^a-z0-9]/g,'_')}`, name: found.name, tier: found.tier, persona: found.persona, expertise: found.expertise, communication_style: found.communication_style }, tier_config: { temperature: 0.7 } };
-          // Try to get a model — use caller's model or fallback
+          // Reuse the caller's assigned model (left sidebar) — stays strictly within enabled allowlist
           let model = null;
           try { const participants = stateManager.getParticipants(); const caller = participants.find(p => p.session_id === context.sessionID) || participants[0]; model = engine.getParticipantModel ? engine.getParticipantModel(caller) : null; } catch {}
           if (!model) {
-            try { const ms = stateManager.getParticipants().map(p=>({tier:p.config.tier, model:p.config.model})); model = getHighestTierModel(ms.map(m=>({tier:m.tier, model:m.model}))); } catch {}
+            // Borrow-any enabled model from any participant — never re-discovers outside the filtered pool
+            try {
+              for (const p of stateManager.getParticipants()) {
+                if (!p || p.status === "failed") continue;
+                const m = (() => { try { return engine.getParticipantModel ? engine.getParticipantModel(p) : null; } catch { return null; } })();
+                if (m) { model = m; break; }
+              }
+            } catch {}
           }
-          if (!model) return { error: "No model available for summon" };
-          // Shared ephemeral-prompt primitive (audit 10 MA1)
+          if (!model) return { output: JSON.stringify({ error: "No model available for summon — no enabled model assigned to any participant in this meeting" }), metadata: { error: true }, title: "loom_summon error" };
+          // Shared ephemeral-prompt primitive (audit 10 MA1) — scoped permissions: only read/webfetch/websearch/loom_vector_search (no bash/glob/grep per guide: least privilege)
           const res = await sessionManager.runEphemeralPrompt(summonedConfig, {
             system: systemPrompt,
             model,
@@ -216,16 +255,14 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
               if (t?.builtIn?.webfetch || t?.builtIn?.web_fetch) m.webfetch = true;
               if (t?.builtIn?.websearch || t?.builtIn?.web_search) m.websearch = true;
               if (t?.builtIn?.read) m.read = true;
-              if (t?.builtIn?.bash?.enabled) m.bash = true;
-              if (t?.builtIn?.glob) m.glob = true;
-              if (t?.builtIn?.grep) m.grep = true;
               if (t?.loom?.loom_vector_search) m.loom_vector_search = true;
               return m;
             })(),
-            toolChoice: "auto",
             timeoutMs: 90000,
+            signal: context.abort,
+            abort: context.abort,
           }, meetingInfo.meetingId);
-          if (!res.ok) return { error: res.error?.message ?? "summon prompt failed" };
+          if (!res.ok) return { output: JSON.stringify({ error: res.error?.message ?? "summon prompt failed" }), metadata: { error: true }, title: "loom_summon error" };
                     const { text, toolResults } = extractAgentResponse(res.data);
           const content = (text ?? "").slice(0,1200);
           // Store as summoned_response for timeline aesthetic (indented row)
@@ -260,9 +297,11 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
               db2.addContributionWithTurnRequest(stateManager2.getState().id, contrib2, null);
             }, null);
           } catch {}
-          return { inline: true, persona_name: args.persona_name, issue: args.issue, guest: found.name, content, note: "Inline summon — guest perspective returned for synthesis and stored as indented summoned_response row." };
+          const payload = { inline: true, persona_name: args.persona_name, issue: args.issue, guest: found.name, content, note: "Inline summon — guest perspective returned for synthesis and stored as indented summoned_response row." };
+          return { output: JSON.stringify(payload), metadata: { inline: true, guest: found.name }, title: `loom_summon:${found.name}` };
         } catch (e) {
-          return { error: `loom_summon inline failed: ${e.message}`, queued: true, persona_name: args.persona_name, issue: args.issue };
+          const p = { error: `loom_summon inline failed: ${e.message}`, queued: true, persona_name: args.persona_name, issue: args.issue };
+          return { output: JSON.stringify(p), metadata: { error: true, queued: true }, title: "loom_summon error" };
         }
       },
     }),

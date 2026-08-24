@@ -111,10 +111,16 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
       const attempts = tools.filter((t) => t.status === "error" || t.attempted_tool).length;
       this._logger.info("tool_results", `${participant.config.name} used ${toolResults1.length} tool(s)${attempts > 0 ? ` (${attempts} failed/attempted)` : ""}`, { tools });
     } else {
+      // Diagnostic: distinguish "provider never called tools" from "parts dropped
+      // before extraction". If partTypes contains tool-like types here, extraction
+      // is at fault; if only text/reasoning, the provider saw no/ignored tools.
+      const partTypes = (result1.data?.parts ?? []).map(p => p.type);
       this._logger.info("tool_results_none", `${participant.config.name} made 0 tool calls (LLM responded with text only)`, {
         participant: participant.config.id,
         round: currentRound,
         offeredTools: Object.keys(toolsMap),
+        partTypeCounts: partTypes.reduce((acc, t) => { acc[t] = (acc[t] ?? 0) + 1; return acc; }, {}),
+        model,
       });
     }
 
@@ -233,8 +239,26 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
     }
 
     const safeContent = sanitizeAgentOutput(finalText);
-    const response = parseAgentResponse(participant.config.id, safeContent, participant.config.tier);
-    if (!response) throw new Error("Failed to parse agent response");
+    let response = parseAgentResponse(participant.config.id, safeContent, participant.config.tier);
+    if (!response) {
+      this._logger.warn("parse_fallback", `Failed to parse response for ${participant.config.name} — falling back to propose with raw content`, {
+        participant: participant.config.id,
+        round: currentRound,
+        rawPreview: String(finalText).slice(0, 500),
+        safePreview: String(safeContent).slice(0, 500),
+      });
+      // Fallback: treat raw safeContent as propose so the turn is not lost and models are not exhausted
+      response = {
+        participant_id: participant.config.id,
+        content: safeContent.slice(0, 5000) || "[No content after sanitization]",
+        type: "propose",
+        request_next: null,
+        query: null,
+        evidence: null,
+        summon: null,
+        vote: null,
+      };
+    }
 
     const declaredType = extractDeclaredType(finalToolResults);
     if (declaredType) {

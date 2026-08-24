@@ -251,17 +251,7 @@ export function mapToolResults(toolResults) {
       : null;
     // Preserve full fidelity — no slicing. The dashboard can truncate for display,
     // but the DB must retain the complete evidence for audit (per bug-fix requirement).
-  // Diagnostic: warn if LLM returned parts but no tool parts were captured — helps
-  // diagnose empty Tool Use tab when agents claim to have used tools.
-  const partTypes = data.parts.map(p => p.type);
-  if (toolResults.length === 0 && data.parts.length > 0) {
-    const hasToolLikeTypes = partTypes.some(t => t === "tool" || t === "tool_use" || t === "function_call");
-    if (!hasToolLikeTypes) {
-      console.warn(`[loom] extractAgentResponse: ${data.parts.length} part(s) returned but 0 ToolParts captured (types: ${[...new Set(partTypes)].join(", ")}) — Tool Use tab will be empty`);
-    }
-  }
-
-  return {
+    return {
       tool: t.tool,
       callID: t.callID,
       status: t.status ?? null,

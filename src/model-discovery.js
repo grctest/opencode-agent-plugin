@@ -70,7 +70,7 @@ export function assignModelsByTier(available, sessionModel, roles) {
   if (available.length === 0) return [];
 
   const sorted = sortModelsByQuality(available);
-  const priorityOrder = ["principal", "senior", "mid", "junior"];
+  const priorityOrder = ["principal", "senior", "mid", "civilian", "junior"];
   const sortedRoles = [...roles].sort(
     (a, b) => priorityOrder.indexOf(a) - priorityOrder.indexOf(b),
   );

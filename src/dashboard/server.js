@@ -65,6 +65,7 @@ export function startDashboard(directory, port) {
   const server = Bun.serve({
     port,
     hostname,
+    idleTimeout: 60,
     async fetch(req) {
       try {
         const url = new URL(req.url);

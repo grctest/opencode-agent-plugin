@@ -175,7 +175,7 @@ export function assignModelsToParticipants(participants, available, sessionModel
 function getModelDiversity(available, participants, tierMap, overrideMap) {
   const diversityMap = new Map();
 
-  const tierOrder = ["principal", "senior", "mid", "junior"];
+  const tierOrder = ["principal", "senior", "mid", "civilian", "junior"];
   const uniqueTiers = [...new Set(participants.map((p) => p.tier))];
 
   // Need more models than tiers for diversity to make sense
@@ -236,7 +236,7 @@ function getModelDiversity(available, participants, tierMap, overrideMap) {
  * @returns {{providerID:string, modelID:string}|null}
  */
 export function getHighestTierModel(participants) {
-  for (const tier of ["principal", "senior", "mid", "junior"]) {
+  for (const tier of ["principal", "senior", "mid", "civilian", "junior"]) {
     const p = participants.find((pp) => pp.tier === tier && pp.model?.providerID && pp.model.modelID);
     if (p) return { providerID: p.model.providerID, modelID: p.model.modelID };
   }
