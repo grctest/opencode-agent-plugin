@@ -37,7 +37,10 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
           }
           const allParticipants = stateManager.getParticipants();
           if (!Array.isArray(allParticipants)) return { output: JSON.stringify({ error: "loom_vote: participant list unavailable" }), metadata: { error: true }, title: "loom_vote error" };
-          const caller = allParticipants.find(p => p?.session_id === context.sessionID) || null;
+          let caller = allParticipants.find(p => p?.session_id === context.sessionID) || null;
+          // Robust fallback: speaking participant is the caller when session_id mismatches
+          if (!caller) caller = allParticipants.find(p => p?.status === "speaking") || null;
+          if (!caller) caller = allParticipants.find(p => p?.status !== "failed" && p?.status !== "passed" && p?.status !== "muted") || null;
           const callerBatchId = caller?.currentBatchId ?? `inline-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
           const currentRound = stateManager.getCurrentRound();
           let roundObj = null;
@@ -47,6 +50,45 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
           // Voters = all other active participants excluding caller
           const voters = allParticipants.filter(p => (!caller || p.config.id !== caller.config.id) && p.status !== "failed" && p.status !== "passed" && p.status !== "muted");
           const extractVoteLetter = (text) => sharedVoteTally.extractVoteLetter(text);
+          // Idempotent per-question guard: if this batch already polled this exact question (retry or duplicate tool call), reuse existing rows
+          try {
+            const weave = stateManager.getWeave ? stateManager.getWeave() : [];
+            const existingTally = weave.find(c => c.batch_id === callerBatchId && c.type === "vote_tally" && c.prompt_context?.question === args.question);
+            if (existingTally) {
+              const existingVotes = weave.filter(c => c.batch_id === callerBatchId && c.type === "vote_response" && c.prompt_context?.question === args.question);
+              const tallyContent = existingTally.content;
+              const voterResults = existingVotes.map(v => {
+                const raw = (v.content ?? "").replace(/^\[Vote from .+?\]\s*/m, "").trim();
+                return { voter: v.participant_id, name: v.content.match(/\[Vote from (.+?)\]/)?.[1] ?? v.participant_id, content: raw.slice(0,200) };
+              });
+              const payload = { inline: true, question: args.question, tally: tallyContent.slice(0,800), votes: voterResults, tallyId: existingTally.id, note: "Vote reused — identical poll already exists for this batch (duplicate tool call suppressed)." };
+              return { output: JSON.stringify(payload), metadata: { inline: true, voteCount: voterResults.length, reused: true }, title: `loom_vote:${voterResults.length} votes (cached)` };
+            }
+            const existingVotesForQuestion = weave.filter(c => c.batch_id === callerBatchId && c.type === "vote_response" && c.prompt_context?.question === args.question);
+            if (existingVotesForQuestion.length > 0) {
+              // Partial poll already exists (retry after timeout left votes but no tally) — reuse them and build tally
+              const voteResponses = existingVotesForQuestion.map(v => {
+                const raw = (v.content ?? "").replace(/^\[Vote from .+?\]\s*/m, "").trim();
+                const name = v.content.match(/\[Vote from (.+?)\]/)?.[1] ?? v.participant_id;
+                return { voter: name, content: raw };
+              });
+              const { lines: tallyLines } = sharedVoteTally.buildTally({
+                question: args.question,
+                sourceLetter: extractVoteLetter(sourceSnippet),
+                sourceLabel: caller?.config?.name ?? "source",
+                responses: voteResponses,
+              });
+              const tallyContent = tallyLines.join("\n");
+              const voterResults = existingVotesForQuestion.map(v => {
+                const raw = (v.content ?? "").replace(/^\[Vote from .+?\]\s*/m, "").trim();
+                return { voter: v.participant_id, name: v.content.match(/\[Vote from (.+?)\]/)?.[1] ?? v.participant_id, content: raw.slice(0,200) };
+              });
+              // Find or create tally for these votes (reuse if not yet created)
+              let tallyId = existingTally?.id ?? `reused-${Date.now()}`;
+              const payload = { inline: true, question: args.question, tally: tallyContent.slice(0,800), votes: voterResults, tallyId, note: "Vote reused — partial poll already exists for this batch, tally rebuilt." };
+              return { output: JSON.stringify(payload), metadata: { inline: true, voteCount: voterResults.length, reused: true }, title: `loom_vote:${voterResults.length} votes (reused)` };
+            }
+          } catch {}
           if (voters.length === 0) {
             const tallyContent = `[Vote Tally] ${args.question}\nSource vote: ${sourceSnippet.slice(0,200)}\nTotal voters: 1 (source only)`;
             try {
@@ -75,7 +117,34 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
           // Parallel fan-out to voters
           const voteResponses = [];
           const voterResults = [];
+          // Idempotency: if this batch already has a vote from this voter, reuse it (retry guard)
+          const isRetryDuplicate = () => {
+            try {
+              const weave = stateManager.getWeave ? stateManager.getWeave() : [];
+              return weave.some(c => c.batch_id === callerBatchId && c.type === "vote_response" && c.participant_id === voter.config?.id);
+            } catch { return false; }
+          };
+          // Pre-check before model fetch to avoid duplicate fan-out on retry
+          const existingVoteContribs = (() => {
+            try {
+              const weave = stateManager.getWeave ? stateManager.getWeave() : [];
+              return weave.filter(c => c.batch_id === callerBatchId && c.type === "vote_response");
+            } catch { return []; }
+          })();
+          // If we already have votes for this batch (retry after timeout), skip fresh fan-out and reuse
+          // This check is per-voter below; for whole batch we still need to collect existing
           await Promise.allSettled(voters.map(async (voter) => {
+            // Idempotent skip: reuse existing vote for this batch+voter instead of re-prompting
+            try {
+              const weave = stateManager.getWeave ? stateManager.getWeave() : [];
+              const existing = weave.find(c => c.batch_id === callerBatchId && c.type === "vote_response" && c.participant_id === voter.config.id);
+              if (existing) {
+                const raw = (existing.content ?? "").replace(/^\[Vote from .+?\]\s*/m, "").trim();
+                voteResponses.push({ voter: voter.config.name, content: raw });
+                voterResults.push({ voter: voter.config.id, name: voter.config.name, content: raw.slice(0,200) });
+                return;
+              }
+            } catch {}
             let model = (() => { try { return engine.getParticipantModel ? engine.getParticipantModel(voter) : null; } catch { return null; }})();
             if (!model) {
               // Fallback: borrow any other participant's resolvable model rather than dropping the vote
@@ -95,8 +164,9 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
               const previousStatus = voter.status;
               voter.status = "speaking";
               try { db.setParticipantStatus(voter.config.id, "speaking"); } catch {}
+              const callerForPrompt = caller ?? { config: { name: allParticipants.find(p=>p.status==="speaking")?.config?.name ?? "Unknown", tier: "mid", id: allParticipants.find(p=>p.status==="speaking")?.config?.id ?? "unknown" } };
               const prompt = buildVotePrompt(
-                caller ?? { config: { name: "Caller", tier: "mid", id: "caller" } },
+                callerForPrompt,
                 voter,
                 sourceSnippet,
                 args.question,
@@ -106,11 +176,13 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
                 stateManager.getStateOfPlay?.() ?? ""
               );
               const systemPrompt = `You are ${voter.config.name} (${voter.config.tier}) — voting in Loom.\n\nChoose one letter (A/B/C…) as listed in the vote question. Format exactly:\n[Vote: X]\nOne sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No contribution tags, 1-2 sentences total, in character.`;
+              const effectiveSourceId = caller?.config?.id ?? callerForPrompt.config.id;
               const promptContext = {
                 type: "vote_response",
                 system_prompt: systemPrompt,
                 user_prompt: prompt,
-                source_participant_id: caller?.config?.id ?? "caller",
+                source_participant_id: effectiveSourceId,
+                source_participant_name: caller?.config?.name ?? callerForPrompt.config.name,
                 question: args.question,
                 round: currentRound,
               };
@@ -168,21 +240,32 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
             tallyLines.push(`Leading option: ${winner} (${count} votes)`);
           }
           const tallyContent = tallyLines.join("\n");
-          const tallyContrib = {
-            id: stateManager.nextContributionId(),
-            round: currentRound,
-            participant_id: caller?.config?.id ?? allParticipants[0]?.config?.id ?? "unknown",
-            content: tallyContent,
-            type: "vote_tally",
-            targets_which: null,
-            batch_id: callerBatchId,
-            tool_calls: null,
-            prompt_context: { type: "vote_tally", question: args.question, votes: voteResponses, round: currentRound },
-            created_at: new Date().toISOString(),
-          };
-          stateManager.addContribution(tallyContrib);
-          if (roundObj) roundObj.contributions.push(tallyContrib);
-          degrade("tally_db_failed", "Failed to persist final vote_tally — visible in memory only this session", () => db.addContributionWithTurnRequest(stateManager.getState().id, tallyContrib, null), null);
+          // Idempotent tally: reuse existing tally for this batch if present (retry)
+          let tallyContrib = null;
+          try {
+            const weave = stateManager.getWeave ? stateManager.getWeave() : [];
+            const existingTally = weave.find(c => c.batch_id === callerBatchId && c.type === "vote_tally");
+            if (existingTally) {
+              tallyContrib = existingTally;
+            }
+          } catch {}
+          if (!tallyContrib) {
+            tallyContrib = {
+              id: stateManager.nextContributionId(),
+              round: currentRound,
+              participant_id: caller?.config?.id ?? allParticipants[0]?.config?.id ?? "unknown",
+              content: tallyContent,
+              type: "vote_tally",
+              targets_which: null,
+              batch_id: callerBatchId,
+              tool_calls: null,
+              prompt_context: { type: "vote_tally", question: args.question, votes: voteResponses, round: currentRound },
+              created_at: new Date().toISOString(),
+            };
+            stateManager.addContribution(tallyContrib);
+            if (roundObj) roundObj.contributions.push(tallyContrib);
+            degrade("tally_db_failed", "Failed to persist final vote_tally — visible in memory only this session", () => db.addContributionWithTurnRequest(stateManager.getState().id, tallyContrib, null), null);
+          }
           const payload = { inline: true, question: args.question, tally: tallyContent.slice(0,800), votes: voterResults, tallyId: tallyContrib.id, note: "Vote completed inline — tally and vote_response/tally rows stored, returned for same-turn synthesis." };
           return { output: JSON.stringify(payload), metadata: { inline: true, voteCount: voterResults.length }, title: `loom_vote:${voterResults.length} votes` };
         } catch (e) {
@@ -225,7 +308,10 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
           const sessionManager = engine.getSessionManager();
                     const roundContribs = stateManager.getWeave ? stateManager.getWeave().filter(c => c.round != null && c.round >= stateManager.getCurrentRound() - 1).slice(-12) : [];
           const stateOfPlay = stateManager.getStateOfPlay?.() ?? "";
-          const prompt = buildSummonPrompt(found, { config: { name: "Caller", tier: "mid", id: "caller" } }, args.issue, roundContribs, stateManager.getCurrentRound(), stateManager.getMaxRounds(), stateOfPlay);
+          let summonCaller = stateManager.getParticipants().find(p => p.session_id === context.sessionID) || null;
+          if (!summonCaller) summonCaller = stateManager.getParticipants().find(p => p?.status === "speaking") || null;
+          const summonCallerForPrompt = summonCaller ?? { config: { name: "Unknown", tier: "mid", id: "unknown" } };
+          const prompt = buildSummonPrompt(found, summonCallerForPrompt, args.issue, roundContribs, stateManager.getCurrentRound(), stateManager.getMaxRounds(), stateOfPlay);
           const systemPrompt = `You are ${found.name} (${found.tier}) — guest expert summoned into Loom for one additive contribution. Be concise (100-150 words), grounded, in character. Build on what's settled; don't re-litigate without new evidence. Name one constraint only you would know. Cite Source: URL or [#id] if you use evidence. Never emit <<< or >>>. No contribution tags.`;
           // Use a temporary summoned participant config to create session
           const summonedConfig = { config: { id: `summoned_${found.name.toLowerCase().replace(/[^a-z0-9]/g,'_')}`, name: found.name, tier: found.tier, persona: found.persona, expertise: found.expertise, communication_style: found.communication_style }, tier_config: { temperature: 0.7 } };
@@ -273,8 +359,9 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
             let roundObj2 = null;
             try { const st = stateManager2.getState(); roundObj2 = (st.rounds || []).find(r => r.number === currentRound) || null; } catch {}
             const allParts2 = stateManager2.getParticipants();
-            const callerForBatch2 = allParts2.find(p => p.session_id === context.sessionID) || null;
-            const batchId2 = callerForBatch2?.currentBatchId ?? `inline-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
+            let callerForBatch2 = allParts2.find(p => p.session_id === context.sessionID) || null;
+            if (!callerForBatch2) callerForBatch2 = allParts2.find(p => p?.status === "speaking") || null;
+            const batchId2 = callerForBatch2?.currentBatchId ?? summonCaller?.currentBatchId ?? `inline-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
             const contributionTools2 = mapToolResults(toolResults);
             const contrib2 = {
               id: stateManager2.nextContributionId(),
@@ -285,7 +372,19 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
               targets_which: null,
               batch_id: batchId2,
               tool_calls: contributionTools2 ?? [],
-              prompt_context: { type: "summoned_response", persona_name: found.name, persona_tier: found.tier, issue: args.issue, round: currentRound },
+              prompt_context: {
+                type: "summoned_response",
+                persona_name: found.name,
+                persona_tier: found.tier,
+                issue: args.issue,
+                round: currentRound,
+                source_participant_id: summonCaller?.config?.id ?? callerForBatch2?.config?.id ?? null,
+                source_batch_id: batchId2,
+                system_prompt: systemPrompt,
+                user_prompt: prompt,
+                state_of_play: stateOfPlay,
+                round_contributions_used: roundContribs.slice(-4).map(c => ({ id: c.id, participant_id: c.participant_id, type: c.type, content: (c.content ?? "").slice(0,300) })),
+              },
               created_at: new Date().toISOString(),
             };
             stateManager2.addContribution(contrib2);

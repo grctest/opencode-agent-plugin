@@ -7,17 +7,13 @@ import { z } from 'zod';
  * All peer interactions now use real loom_* tools (loom_query, loom_evidence, loom_vote, loom_summon, loom_request_next).
  */
 
-// Contribution types that agents can produce
+// Contribution types — primary agent turns are now untyped ("contribution");
+// peer responses retain their specific types for timeline grouping.
 export const ContributionTypeSchema = z.enum([
-  'propose',
-  'challenge',
-  'refine',
-  'support',
-  'dissent',
-  'synthesize',
-  'question',
-  'refuse',
+  'contribution',
   'query_response',
+  'perspective_response',
+  'critique_response',
   'evidence_response',
   'summoned_response',
   'vote_response',
@@ -30,10 +26,13 @@ export const RequestNextSchema = z.object({
   reason: z.string().min(1).max(500),
 }).nullable();
 
-// Kept for backward compat — always null (use loom_query etc. tools)
+// Kept for backward compat — always null (use loom_query tool)
 export const QuerySchema = z.object({
-  targets: z.array(z.string()).min(1).max(2),
-  question: z.string().min(1).max(500),
+  queries: z.array(z.object({
+    target: z.string().min(1),
+    question: z.string().min(1).max(500),
+    mode: z.enum(['clarify', 'perspective', 'evidence', 'critique', 'risks', 'assumptions', 'alternatives']).optional(),
+  })).min(1),
 }).nullable();
 
 export const EvidenceSchema = z.object({
@@ -62,9 +61,8 @@ export const AgentResponseSchema = z.object({
   vote: VoteSchema,
 });
 
-// Raw parsing — contribution type is now declared via loom_type tool, not a text prefix.
-// This parser only normalizes content: it handles [PASS] and strips any stray
-// legacy [TAG] prefix for display cleanliness, but does NOT infer type from text.
+// Raw parsing — no longer type-aware. Agents just write prose; the following
+// agents interpret the full content directly. We keep a single placeholder type.
 export function parseAgentResponseRaw(response, tier) {
   const text = response.trim();
 
@@ -73,17 +71,15 @@ export function parseAgentResponseRaw(response, tier) {
   }
 
   if (text === '[PASS]') {
-    return { content: '[PASS]', type: 'propose', request_next: null, query: null, evidence: null, summon: null, vote: null };
+    return { content: '[PASS]', type: 'contribution', request_next: null, query: null, evidence: null, summon: null, vote: null };
   }
 
-  // Strip a single leading legacy tag if the model still emits one (e.g. "[CHALLENGE] ...").
-  // This is display hygiene only — the authoritative type comes from the loom_type tool.
   const cleaned = text.replace(/^\[(?:PROPOSE|CHALLENGE|REFINE|SUPPORT|DISSENT|SYNTHESIZE|QUESTION|REFUSE(?::[^\]]*)?)\]\s*/i, '').trim();
   const content = cleaned.length > 0 ? cleaned : text;
 
   return {
     content,
-    type: 'propose', // placeholder — RoundExecutor overwrites with loom_type tool result
+    type: 'contribution',
     request_next: null,
     query: null,
     evidence: null,
@@ -92,30 +88,7 @@ export function parseAgentResponseRaw(response, tier) {
   };
 }
 
-/**
- * Extracts the declared contribution type from loom_type tool results.
- * The agent is expected to call loom_type({type}) exactly once per turn;
- * we take the last such call as authoritative. Returns null if not called.
- * @param {Array} toolResults - mapped tool results (from mapToolResults)
- * @returns {string|null}
- */
+// Kept for backward compat — now always returns null since loom_type is removed.
 export function extractDeclaredType(toolResults) {
-  if (!Array.isArray(toolResults) || toolResults.length === 0) return null;
-  const VALID = new Set(['propose','challenge','refine','support','dissent','synthesize','question','refuse']);
-  let found = null;
-  for (const tr of toolResults) {
-    const name = tr.tool ?? tr.attempted_tool;
-    if (name !== 'loom_type') continue;
-    if (tr.status === 'error') continue;
-    // Input may be stringified JSON or object
-    let input = tr.input;
-    if (typeof input === 'string') {
-      try { input = JSON.parse(input); } catch { continue; }
-    }
-    const candidate = typeof input?.type === 'string' ? input.type.toLowerCase().trim() : null;
-    if (candidate && VALID.has(candidate)) {
-      found = candidate;
-    }
-  }
-  return found;
+  return null;
 }

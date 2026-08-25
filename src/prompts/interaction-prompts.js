@@ -1,5 +1,6 @@
 import { sanitizeForDisplay } from "../utils/sanitize.js";
 import { TIER_ORDER, LENGTH_LIMITS } from "./constants.js";
+import { QUERY_MODES } from "./query-modes.js";
 import { getRecentContributionsBlock, buildEvidenceGuidance, buildSeniorityContext, buildRoundContext } from "./blocks.js";
 
 /** Builds a prompt asking a listener to reflect on a speaker's contribution. */
@@ -49,8 +50,10 @@ If you cite deliberation content, use [#id]; if you cite external fact, use Sour
 ${toolSection}`;
 }
 
-/** Builds a prompt for a queried agent to respond to a direct question from another agent. */
-export function buildQueryPrompt(sourceAgent, targetAgent, sourceContribution, question, roundContributions, currentRound, maxRounds, stateOfPlay = "") {
+/** Builds a prompt for a queried agent to respond to a direct question from another agent.
+ * mode: one of QUERY_MODES keys (clarify | perspective | evidence | critique | risks | assumptions | alternatives). */
+export function buildQueryPrompt(sourceAgent, targetAgent, sourceContribution, question, roundContributions, currentRound, maxRounds, stateOfPlay = "", mode = "clarify") {
+  const meta = QUERY_MODES[mode] ?? QUERY_MODES.clarify;
   const safeSourceName = sanitizeForDisplay(sourceAgent.config.name);
   const safeQuestion = sanitizeForDisplay(question);
   const safeContribution = sanitizeForDisplay(sourceContribution);
@@ -62,13 +65,13 @@ export function buildQueryPrompt(sourceAgent, targetAgent, sourceContribution, q
     TIER_ORDER[sourceAgent.config.tier] ?? 1,
   );
   const roundContext = buildRoundContext(currentRound, maxRounds);
-  const toolSection = buildEvidenceGuidance("query");
+  const toolSection = buildEvidenceGuidance(meta.guidanceKind);
 
   const recentMine = getRecentContributionsBlock(roundContributions, targetAgent.config.id);
   const reflectionLine = targetAgent.reflection ? `Your current position: "${sanitizeForDisplay(targetAgent.reflection.slice(0, 240))}"` : "";
   const sopSnippet = stateOfPlay ? `State of Play — Open Questions (what answer would unblock):\n${sanitizeForDisplay(stateOfPlay, 600)}\n\n` : "";
 
-  return `## Direct Query — to ${sanitizeForDisplay(targetAgent.config.name)} (${targetAgent.config.tier}) from ${safeSourceName} (${sourceAgent.config.tier})
+  const header = `## ${mode === "clarify" ? "Direct Query" : `${mode.charAt(0).toUpperCase() + mode.slice(1)} Request`} — to ${sanitizeForDisplay(targetAgent.config.name)} (${targetAgent.config.tier}) from ${safeSourceName} (${sourceAgent.config.tier})
 
 Context (what they said):
 "${safeContribution}"
@@ -80,8 +83,9 @@ ${sopSnippet}${recentMine ? recentMine + "\n\n" : ""}${reflectionLine ? reflecti
 Round: ${roundContext}
 
 ## Task
-Answer in ${LENGTH_LIMITS.querySentences} sentences, no contribution tags ([PROPOSE] etc). Address the specific question; if it’s “what was said”, prefer loom_vector_search over memory. If you don’t know, say “insufficient evidence” — do not speculate. Cite Source: [#id] or URL if you use evidence. Stay in character.
+${meta.taskBlock()}
 ${toolSection}`;
+  return header;
 }
 
 /**

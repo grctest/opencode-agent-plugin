@@ -1,6 +1,6 @@
 import { useRef, useMemo, useCallback, useState, useEffect, memo } from "react";
 import { cn, relativeTime } from "../utils.js";
-import { ContributionItem, TurnRequestItem, ThinkingCard, ReflectionRow, QueryResponseRow, EvidenceResponseRow, SummonedResponseRow, VoteResponseRow, VoteTallyRow, OrchestratorItem, ORCHESTRATOR_TYPE_META, ContentDialog, renderMarkdown } from "./Cards.jsx";
+import { ContributionItem, TurnRequestItem, ThinkingCard, ReflectionRow, QueryResponseRow, EvidenceResponseRow, SummonedResponseRow, VoteResponseRow, OrchestratorItem, ORCHESTRATOR_TYPE_META, ContentDialog, renderMarkdown } from "./Cards.jsx";
 
 import { List } from "react-window";
 
@@ -19,7 +19,6 @@ const QUERY_RESPONSE_HEIGHT = 80;
 const EVIDENCE_RESPONSE_HEIGHT = 80;
 const SUMMONED_RESPONSE_HEIGHT = 80;
 const VOTE_RESPONSE_HEIGHT = 80;
-const VOTE_TALLY_HEIGHT = 100;
 const ORCHESTRATOR_ITEM_HEIGHT = 80;
 
 const ROUND_SUMMARY_HEIGHT = 88;
@@ -104,10 +103,11 @@ function getRowHeight(item) {
   if (item.type === "model_fallback") return INTERJECTION_HEIGHT;
   if (item.type === "reflection") return REFLECTION_HEIGHT;
   if (item.type === "query_response") return QUERY_RESPONSE_HEIGHT;
+  if (item.type === "perspective_response") return EVIDENCE_RESPONSE_HEIGHT;
+  if (item.type === "critique_response") return EVIDENCE_RESPONSE_HEIGHT;
   if (item.type === "evidence_response") return EVIDENCE_RESPONSE_HEIGHT;
   if (item.type === "summoned_response") return SUMMONED_RESPONSE_HEIGHT;
   if (item.type === "vote_response") return VOTE_RESPONSE_HEIGHT;
-  if (item.type === "vote_tally") return VOTE_TALLY_HEIGHT;
   if (item.type === "loom_invocation") return LOOM_INVOCATION_HEIGHT;
   if (item.type === "orchestrator") return ORCHESTRATOR_ITEM_HEIGHT;
   if (item.type === "thinking_turn") return THINKING_TURN_HEIGHT;
@@ -187,7 +187,7 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
       <div style={style} className="loom-vrow loom-vrow-loom-invocation" title={`${detail} — click to open invoker's Tool use`}>
         <div
           className="loom-card loom-contribution-card loom-loom-invocation-row loom-contrib-clickable"
-          style={{ borderLeft: "3px solid #6366f1", paddingLeft: "1rem", marginLeft: "2rem", opacity: 0.95, cursor: "pointer" }}
+          style={{ borderLeft: "3px solid #6366f1", paddingLeft: "1rem", opacity: 0.95, cursor: "pointer" }}
           onClick={openInvokerDialog}
           role="button"
           tabIndex={0}
@@ -223,6 +223,33 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
           contributions={contributions}
           participantName={participantName}
           onDialogOpen={onDialogOpen}
+          invokerId={item.invokerId}
+        />
+      </div>
+    );
+  }
+  if (item.type === "perspective_response") {
+    return (
+      <div style={style} className="loom-vrow loom-vrow-perspective-response">
+        <QueryResponseRow
+          queryResponse={item.perspectiveResponse}
+          contributions={contributions}
+          participantName={participantName}
+          onDialogOpen={onDialogOpen}
+          invokerId={item.invokerId}
+        />
+      </div>
+    );
+  }
+  if (item.type === "critique_response") {
+    return (
+      <div style={style} className="loom-vrow loom-vrow-critique-response">
+        <QueryResponseRow
+          queryResponse={item.critiqueResponse}
+          contributions={contributions}
+          participantName={participantName}
+          onDialogOpen={onDialogOpen}
+          invokerId={item.invokerId}
         />
       </div>
     );
@@ -315,6 +342,7 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
           contributions={contributions}
           participantName={participantName}
           onDialogOpen={onDialogOpen}
+          invokerId={item.invokerId}
         />
       </div>
     );
@@ -324,8 +352,10 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
       <div style={style} className="loom-vrow loom-vrow-summoned-response">
         <SummonedResponseRow
           summonedResponse={item.summonedResponse}
+          contributions={contributions}
           participantName={participantName}
           onDialogOpen={onDialogOpen}
+          invokerId={item.invokerId}
         />
       </div>
     );
@@ -338,17 +368,7 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
           contributions={contributions}
           participantName={participantName}
           onDialogOpen={onDialogOpen}
-        />
-      </div>
-    );
-  }
-  if (item.type === "vote_tally") {
-    return (
-      <div style={style} className="loom-vrow loom-vrow-vote-tally">
-        <VoteTallyRow
-          tally={item.tally}
-          participantName={participantName}
-          onDialogOpen={onDialogOpen}
+          invokerId={item.invokerId}
         />
       </div>
     );
@@ -438,7 +458,9 @@ const TimelineTabBase = ({
   })();
 
   useEffect(() => {
-    if (activeTab !== "context" || !dialogContribution || dialogContribution.contribution.prompt_context || fetchedContext || contextLoading) return;
+    const pc = dialogContribution?.contribution?.prompt_context;
+    const hasFullContext = pc && (pc.system_prompt || pc.user_prompt || pc.state_of_play || pc.round_contributions_used);
+    if (activeTab !== "context" || !dialogContribution || hasFullContext || fetchedContext || contextLoading) return;
     const cid = dialogContribution.contribution.id;
     const mid = meetingIdForContext || dialogContribution.contribution.meeting_id;
     if (!cid || !mid) return;
@@ -532,12 +554,13 @@ const flatItems = useMemo(() => {
         const roundErrors = roundErrors0;
         const showExtensionMarker = showExtensionMarker0;
 
+        const visibleContribsCount = contribs.filter(c => c.type !== "vote_tally").length;
         items.push({
         type: "header",
         round,
         isCollapsed,
         isActive: round === activeRound,
-        contribsCount: contribs.length,
+        contribsCount: visibleContribsCount,
         errorsCount: roundErrors.length,
         showExtensionMarker,
       });
@@ -561,15 +584,17 @@ const flatItems = useMemo(() => {
         const consumedSummonIds = new Set();
         const votesByTarget = new Map();
         const consumedVoteIds = new Set();
-        const voteTallies = [];
-        const consumedTallyIds = new Set();
         // Batch grouping for inline real tool use where targets_which is null but batch_id links to invoker
         const queryByBatch = new Map();
         const evidenceByBatch = new Map();
         const votesByBatch = new Map();
-        const talliesByBatch = new Map();
+        const summonByBatch = new Map();
 
         for (const c of contribs) {
+          if (c.type === "vote_tally") {
+            // Tally intentionally excluded from timeline (invoker interprets votes inline)
+            continue;
+          }
           if (c.type === "reflection") {
             const targetId = c.targets_which;
             if (targetId != null) {
@@ -577,6 +602,24 @@ const flatItems = useMemo(() => {
               reflectionsByTarget.get(targetId).push(c);
             }
           } else if (c.type === "query_response") {
+            const targetId = c.targets_which;
+            if (targetId != null) {
+              if (!queryResponsesByTarget.has(targetId)) queryResponsesByTarget.set(targetId, []);
+              queryResponsesByTarget.get(targetId).push(c);
+            } else if (c.batch_id) {
+              if (!queryByBatch.has(c.batch_id)) queryByBatch.set(c.batch_id, []);
+              queryByBatch.get(c.batch_id).push(c);
+            }
+          } else if (c.type === "perspective_response") {
+            const targetId = c.targets_which;
+            if (targetId != null) {
+              if (!queryResponsesByTarget.has(targetId)) queryResponsesByTarget.set(targetId, []);
+              queryResponsesByTarget.get(targetId).push(c);
+            } else if (c.batch_id) {
+              if (!queryByBatch.has(c.batch_id)) queryByBatch.set(c.batch_id, []);
+              queryByBatch.get(c.batch_id).push(c);
+            }
+          } else if (c.type === "critique_response") {
             const targetId = c.targets_which;
             if (targetId != null) {
               if (!queryResponsesByTarget.has(targetId)) queryResponsesByTarget.set(targetId, []);
@@ -595,7 +638,12 @@ const flatItems = useMemo(() => {
               evidenceByBatch.get(c.batch_id).push(c);
             }
           } else if (c.type === "summoned_response") {
-            summonedResponses.push(c);
+            if (c.batch_id) {
+              if (!summonByBatch.has(c.batch_id)) summonByBatch.set(c.batch_id, []);
+              summonByBatch.get(c.batch_id).push(c);
+            } else {
+              summonedResponses.push(c);
+            }
           } else if (c.type === "vote_response") {
             const targetId = c.targets_which;
             if (targetId != null) {
@@ -605,12 +653,6 @@ const flatItems = useMemo(() => {
               if (!votesByBatch.has(c.batch_id)) votesByBatch.set(c.batch_id, []);
               votesByBatch.get(c.batch_id).push(c);
             }
-          } else if (c.type === "vote_tally") {
-            if (c.batch_id) {
-              if (!talliesByBatch.has(c.batch_id)) talliesByBatch.set(c.batch_id, []);
-              talliesByBatch.get(c.batch_id).push(c);
-            }
-            voteTallies.push(c);
           } else {
             const key = c.participant_id;
             if (!regularByAgent.has(key)) regularByAgent.set(key, []);
@@ -618,7 +660,87 @@ const flatItems = useMemo(() => {
           }
         }
 
-        for (const [agentId, agentContribs] of regularByAgent) {
+        // Map batch_id -> invoker participant_id for quick lookup
+        const batchToInvoker = new Map();
+        for (const [, contribs] of regularByAgent) {
+          for (const c of contribs) if (c.batch_id) batchToInvoker.set(c.batch_id, c.participant_id);
+        }
+        // Helper to find invoker for an orphan response (query/evidence/vote/summon)
+        const findInvokerIdForResponse = (resp) => {
+          if (resp.batch_id && batchToInvoker.has(resp.batch_id)) {
+            const v = batchToInvoker.get(resp.batch_id);
+            if (v && v !== "caller" && v !== "unknown") return v;
+          }
+          const srcId = resp.prompt_context?.source_participant_id ?? resp.prompt_context?.sourceParticipantId ?? resp.prompt_context?.source_participant_name;
+          if (srcId && srcId !== "caller" && srcId !== "unknown" && srcId !== "Unknown") {
+            // prompt_context may store name instead of id for older data; try to resolve name to id via participants
+            if (srcId.length < 30 && !srcId.includes(" ")) {
+              // treat as id
+              return srcId;
+            }
+          }
+          if (resp.prompt_context?.source_participant_id && resp.prompt_context.source_participant_id !== "caller" && resp.prompt_context.source_participant_id !== "unknown") return resp.prompt_context.source_participant_id;
+          if (resp.prompt_context?.sourceParticipantId && resp.prompt_context.sourceParticipantId !== "caller" && resp.prompt_context.sourceParticipantId !== "unknown") return resp.prompt_context.sourceParticipantId;
+          // Scan tool calls on regular contributions that target this responder
+          let best = null;
+          let bestId = -1;
+          for (const [, rContribs] of regularByAgent) {
+            for (const c of rContribs) {
+              if (c.id >= resp.id) continue;
+              const calls = c.tool_calls ?? [];
+              for (const tc of calls) {
+                const tool = tc.tool ?? tc.attempted_tool;
+                if (!tool) continue;
+                try {
+                  const input = typeof tc.input === "string" ? JSON.parse(tc.input) : tc.input;
+                  if (tool === "loom_query" || tool === "loom_evidence") {
+                    const queries = input.queries ?? (Array.isArray(input.targets) ? input.targets.map(t => ({target: t})) : []);
+                    // also handle single question form {target, question} legacy
+                    const targets = queries.map(q => q.target ?? q.targetId).filter(Boolean);
+                    if (targets.includes(resp.participant_id)) {
+                      if (c.id > bestId) { bestId = c.id; best = c.participant_id; }
+                    }
+                  } else if (tool === "loom_vote") {
+                    if (resp.type === "vote_response" && resp.round === c.round) {
+                      if (c.id > bestId) { bestId = c.id; best = c.participant_id; }
+                    }
+                  } else if (tool === "loom_summon") {
+                    if (resp.type === "summoned_response" && resp.round === c.round) {
+                      if (c.id > bestId) { bestId = c.id; best = c.participant_id; }
+                    }
+                  }
+                } catch {}
+              }
+            }
+          }
+          return best;
+        };
+
+        // Order invokers chronologically by earliest contribution id/timestamp
+        const sortedAgentEntries = [...regularByAgent.entries()].sort((a, b) => {
+          const aFirst = a[1][0];
+          const bFirst = b[1][0];
+          const aId = aFirst?.id ?? 0;
+          const bId = bFirst?.id ?? 0;
+          if (aId !== bId) return aId - bId;
+          const aTime = aFirst?.created_at ? new Date(aFirst.created_at).getTime() : 0;
+          const bTime = bFirst?.created_at ? new Date(bFirst.created_at).getTime() : 0;
+          return aTime - bTime;
+        });
+        // Thinking placeholder for agents yet to speak — shown above sub-agent rows (per user request)
+        if (round === activeRound && isWeaving && thinkingParticipants.length > 0) {
+          const thinkingIds = new Set(thinkingParticipants.map((p) => p.id));
+          const agentIdsInRound = new Set(regularByAgent.keys());
+          const pendingThinking = thinkingParticipants.filter((p) => !agentIdsInRound.has(p.id));
+          for (const p of pendingThinking) {
+            items.push({
+              type: "thinking_turn",
+              participant: p,
+              round,
+            });
+          }
+        }
+        for (const [agentId, agentContribs] of sortedAgentEntries) {
           items.push({
             type: "agent_turn",
             agentId,
@@ -627,7 +749,6 @@ const flatItems = useMemo(() => {
           });
 
           // Loom invocations — aesthetic indented rows under the invoker, mirroring reflections
-          // These are not separate LLM calls for vote tally (which is code), but show the tool dispatch that was interpreted inline.
           for (const c of agentContribs) {
             const loomCalls = (c.tool_calls ?? []).filter(tc => (tc.tool ?? tc.attempted_tool ?? "").startsWith("loom_"));
             for (const tc of loomCalls) {
@@ -638,6 +759,81 @@ const flatItems = useMemo(() => {
                 sourceParticipantId: c.participant_id,
                 round,
               });
+            }
+          }
+          // Per-invoker thinking placeholders — shown ABOVE this invoker's sub-agent responses
+          if (round === activeRound && isWeaving) {
+            for (const c of agentContribs) {
+              if ((c.type === "challenge" || c.type === "dissent") && !reflectionsByTarget.has(c.id)) {
+                for (const p of reflectingParticipants) {
+                  if (p.id !== c.participant_id) {
+                    items.push({
+                      type: "thinking_reflection",
+                      triggerContributionId: c.id,
+                      triggerType: c.type,
+                      triggerAgentName: participantName(c.participant_id),
+                      reflectorName: p.name,
+                      round,
+                    });
+                  }
+                }
+              }
+            }
+            const queriedTargets = new Set();
+            const evidenceTargets = new Set();
+            const hasSummonCall = agentContribs.some(agc => (agc.tool_calls ?? []).some(tc => (tc.tool ?? tc.attempted_tool) === "loom_summon"));
+            for (const c of agentContribs) {
+              for (const tc of (c.tool_calls ?? [])) {
+                const tool = tc.tool ?? tc.attempted_tool;
+                if (!tool) continue;
+                try {
+                  const input = typeof tc.input === "string" ? JSON.parse(tc.input) : tc.input;
+                  if (tool === "loom_query" || tool === "loom_evidence") {
+                    const queries = input.queries ?? (Array.isArray(input.targets) ? input.targets.map(t => ({ target: t })) : []);
+                    const qs = Array.isArray(queries) ? queries : [];
+                    for (const q of qs) {
+                      const tid = q.target ?? q.targetId;
+                      if (tid) {
+                        if (q.mode === "evidence" || tool === "loom_evidence") { evidenceTargets.add(tid); queriedTargets.delete(tid); }
+                        else queriedTargets.add(tid);
+                      }
+                    }
+                    if (input.target && !input.queries) {
+                      const tid = input.target;
+                      if (tool === "loom_evidence" || input.mode === "evidence") evidenceTargets.add(tid);
+                      else queriedTargets.add(tid);
+                    }
+                  }
+                } catch {}
+              }
+            }
+            for (const qp of queryingParticipants) {
+              if (!queriedTargets.has(qp.id)) continue;
+              const hasResponded = contribs.some(c => {
+                if (!["query_response","perspective_response","critique_response"].includes(c.type)) return false;
+                if (c.participant_id !== qp.id) return false;
+                const invoker = findInvokerIdForResponse(c);
+                return invoker === agentId;
+              });
+              if (!hasResponded) {
+                items.push({ type: "thinking_query", queriedAgentName: qp.name, round, invokerId: agentId });
+              }
+            }
+            for (const ep of evidenceParticipants) {
+              if (!evidenceTargets.has(ep.id)) continue;
+              const hasResponded = contribs.some(c => c.type === "evidence_response" && c.participant_id === ep.id && findInvokerIdForResponse(c) === agentId);
+              if (!hasResponded) {
+                items.push({ type: "thinking_evidence", evidenceAgentName: ep.name, round, invokerId: agentId });
+              }
+            }
+            if (hasSummonCall) {
+              const hasResponded = contribs.some(c => c.type === "summoned_response" && findInvokerIdForResponse(c) === agentId);
+              if (!hasResponded && summoningParticipants.length > 0) {
+                for (const sp of summoningParticipants) {
+                  items.push({ type: "thinking_summon", summonName: sp.name, round, invokerId: agentId });
+                  break;
+                }
+              }
             }
           }
 
@@ -688,7 +884,7 @@ const flatItems = useMemo(() => {
                 for (const qr of queryByBatch.get(c.batch_id)) {
                   if (!consumedQueryIds.has(qr.id)) {
                     consumedQueryIds.add(qr.id);
-                    items.push({ type: "query_response", queryResponse: qr, round });
+                    items.push({ type: qr.type, queryResponse: qr, perspectiveResponse: qr, critiqueResponse: qr, round, invokerId: c.participant_id });
                   }
                 }
               }
@@ -696,7 +892,7 @@ const flatItems = useMemo(() => {
                 for (const er of evidenceByBatch.get(c.batch_id)) {
                   if (!consumedEvidenceIds.has(er.id)) {
                     consumedEvidenceIds.add(er.id);
-                    items.push({ type: "evidence_response", evidenceResponse: er, round });
+                    items.push({ type: "evidence_response", evidenceResponse: er, round, invokerId: c.participant_id });
                   }
                 }
               }
@@ -704,17 +900,107 @@ const flatItems = useMemo(() => {
                 for (const v of votesByBatch.get(c.batch_id)) {
                   if (!consumedVoteIds.has(v.id)) {
                     consumedVoteIds.add(v.id);
-                    items.push({ type: "vote_response", voteResponse: v, round });
+                    items.push({ type: "vote_response", voteResponse: v, round, invokerId: c.participant_id });
                   }
                 }
               }
-              if (talliesByBatch.has(c.batch_id)) {
-                for (const t of talliesByBatch.get(c.batch_id)) {
-                  if (!consumedTallyIds.has(t.id)) {
-                    consumedTallyIds.add(t.id);
-                    items.push({ type: "vote_tally", tally: t, round });
+              if (summonByBatch.has(c.batch_id)) {
+                for (const sr of summonByBatch.get(c.batch_id)) {
+                  if (!consumedSummonIds.has(sr.id)) {
+                    consumedSummonIds.add(sr.id);
+                    items.push({ type: "summoned_response", summonedResponse: sr, round, invokerId: c.participant_id });
                   }
                 }
+              }
+            }
+          }
+          // Attach any remaining orphan responses that belong to this invoker via batch/prompt/tool-call fallback
+          // Query (including perspective/critique)
+          for (const [, list] of queryResponsesByTarget) {
+            for (const qr of list) {
+              if (consumedQueryIds.has(qr.id)) continue;
+              const invoker = findInvokerIdForResponse(qr);
+              if (invoker === agentId) {
+                consumedQueryIds.add(qr.id);
+                items.push({ type: qr.type, queryResponse: qr, perspectiveResponse: qr, critiqueResponse: qr, round, invokerId: agentId });
+              }
+            }
+          }
+          for (const [bid, list] of queryByBatch) {
+            for (const qr of list) {
+              if (consumedQueryIds.has(qr.id)) continue;
+              const invoker = findInvokerIdForResponse(qr);
+              if (invoker === agentId) {
+                consumedQueryIds.add(qr.id);
+                items.push({ type: qr.type, queryResponse: qr, perspectiveResponse: qr, critiqueResponse: qr, round, invokerId: agentId });
+              }
+            }
+          }
+          for (const [, list] of evidenceResponsesByTarget) {
+            for (const er of list) {
+              if (consumedEvidenceIds.has(er.id)) continue;
+              const invoker = findInvokerIdForResponse(er);
+              if (invoker === agentId) {
+                consumedEvidenceIds.add(er.id);
+                items.push({ type: "evidence_response", evidenceResponse: er, round, invokerId: agentId });
+              }
+            }
+          }
+          for (const [bid, list] of evidenceByBatch) {
+            for (const er of list) {
+              if (consumedEvidenceIds.has(er.id)) continue;
+              const invoker = findInvokerIdForResponse(er);
+              if (invoker === agentId) {
+                consumedEvidenceIds.add(er.id);
+                items.push({ type: "evidence_response", evidenceResponse: er, round, invokerId: agentId });
+              }
+            }
+          }
+          for (const [, list] of votesByTarget) {
+            for (const v of list) {
+              if (consumedVoteIds.has(v.id)) continue;
+              const invoker = findInvokerIdForResponse(v);
+              if (invoker === agentId) {
+                consumedVoteIds.add(v.id);
+                items.push({ type: "vote_response", voteResponse: v, round, invokerId: agentId });
+              }
+            }
+          }
+          for (const [bid, list] of votesByBatch) {
+            for (const v of list) {
+              if (consumedVoteIds.has(v.id)) continue;
+              const invoker = findInvokerIdForResponse(v);
+              if (invoker === agentId) {
+                consumedVoteIds.add(v.id);
+                items.push({ type: "vote_response", voteResponse: v, round, invokerId: agentId });
+              }
+            }
+          }
+          for (const [bid, list] of summonByBatch) {
+            for (const sr of list) {
+              if (consumedSummonIds.has(sr.id)) continue;
+              const invoker = findInvokerIdForResponse(sr);
+              if (invoker === agentId) {
+                consumedSummonIds.add(sr.id);
+                items.push({ type: "summoned_response", summonedResponse: sr, round, invokerId: agentId });
+              }
+            }
+          }
+          for (const sr of summonedResponses) {
+            if (consumedSummonIds.has(sr.id)) continue;
+            const invoker = findInvokerIdForResponse(sr);
+            if (invoker === agentId) {
+              consumedSummonIds.add(sr.id);
+              items.push({ type: "summoned_response", summonedResponse: sr, round, invokerId: agentId });
+            }
+          }
+          for (const [, list] of reflectionsByTarget) {
+            for (const r of list) {
+              if (consumedReflectionIds.has(r.id)) continue;
+              const target = contribs.find(c => c.id === r.targets_which);
+              if (target && target.participant_id === agentId) {
+                consumedReflectionIds.add(r.id);
+                items.push({ type: "reflection", reflection: r, round });
               }
             }
           }
@@ -735,10 +1021,14 @@ const flatItems = useMemo(() => {
         for (const [, queryResponses] of queryResponsesByTarget) {
           for (const qr of queryResponses) {
             if (!consumedQueryIds.has(qr.id)) {
+              const invoker = findInvokerIdForResponse(qr);
               items.push({
-                type: "query_response",
+                type: qr.type,
                 queryResponse: qr,
+                perspectiveResponse: qr,
+                critiqueResponse: qr,
                 round,
+                invokerId: invoker,
               });
             }
           }
@@ -747,30 +1037,49 @@ const flatItems = useMemo(() => {
         for (const [, evidenceResponses] of evidenceResponsesByTarget) {
           for (const er of evidenceResponses) {
             if (!consumedEvidenceIds.has(er.id)) {
+              const invoker = findInvokerIdForResponse(er);
               items.push({
                 type: "evidence_response",
                 evidenceResponse: er,
                 round,
+                invokerId: invoker,
               });
             }
           }
         }
 
+        // Orphan summoned responses without batch_id (fallback)
         for (const sr of summonedResponses) {
-          items.push({
-            type: "summoned_response",
-            summonedResponse: sr,
-            round,
-          });
+          if (!consumedSummonIds.has(sr.id)) {
+            const invoker = findInvokerIdForResponse(sr);
+            items.push({
+              type: "summoned_response",
+              summonedResponse: sr,
+              round,
+              invokerId: invoker,
+            });
+          }
+        }
+        // Orphan batch-linked summoned responses (invoker had no regular contribution — fallback)
+        for (const [, srs] of summonByBatch) {
+          for (const sr of srs) {
+            if (!consumedSummonIds.has(sr.id)) {
+              const invoker = findInvokerIdForResponse(sr);
+              items.push({ type: "summoned_response", summonedResponse: sr, round, invokerId: invoker });
+              consumedSummonIds.add(sr.id);
+            }
+          }
         }
 
         for (const [, votes] of votesByTarget) {
           for (const v of votes) {
             if (!consumedVoteIds.has(v.id)) {
+              const invoker = findInvokerIdForResponse(v);
               items.push({
                 type: "vote_response",
                 voteResponse: v,
                 round,
+                invokerId: invoker,
               });
             }
           }
@@ -779,7 +1088,8 @@ const flatItems = useMemo(() => {
         for (const [, votes] of votesByBatch) {
           for (const v of votes) {
             if (!consumedVoteIds.has(v.id)) {
-              items.push({ type: "vote_response", voteResponse: v, round });
+              const invoker = findInvokerIdForResponse(v);
+              items.push({ type: "vote_response", voteResponse: v, round, invokerId: invoker });
               consumedVoteIds.add(v.id);
             }
           }
@@ -787,7 +1097,8 @@ const flatItems = useMemo(() => {
         for (const [, qrs] of queryByBatch) {
           for (const qr of qrs) {
             if (!consumedQueryIds.has(qr.id)) {
-              items.push({ type: "query_response", queryResponse: qr, round });
+              const invoker = findInvokerIdForResponse(qr);
+              items.push({ type: qr.type, queryResponse: qr, perspectiveResponse: qr, critiqueResponse: qr, round, invokerId: invoker });
               consumedQueryIds.add(qr.id);
             }
           }
@@ -795,19 +1106,10 @@ const flatItems = useMemo(() => {
         for (const [, ers] of evidenceByBatch) {
           for (const er of ers) {
             if (!consumedEvidenceIds.has(er.id)) {
-              items.push({ type: "evidence_response", evidenceResponse: er, round });
+              const invoker = findInvokerIdForResponse(er);
+              items.push({ type: "evidence_response", evidenceResponse: er, round, invokerId: invoker });
               consumedEvidenceIds.add(er.id);
             }
-          }
-        }
-
-        for (const tally of voteTallies) {
-          if (!consumedTallyIds.has(tally.id)) {
-            items.push({
-              type: "vote_tally",
-              tally,
-              round,
-            });
           }
         }
 
@@ -832,81 +1134,6 @@ const flatItems = useMemo(() => {
 
         for (const og of orchestratorGroups) {
           items.push({ type: "orchestrator", group: og });
-        }
-
-        if (round === activeRound && isWeaving && thinkingParticipants.length > 0) {
-          const thinkingIds = new Set(thinkingParticipants.map((p) => p.id));
-          const agentIdsInRound = new Set(regularByAgent.keys());
-          const pendingThinking = thinkingParticipants.filter((p) => !agentIdsInRound.has(p.id));
-          for (const p of pendingThinking) {
-            items.push({
-              type: "thinking_turn",
-              participant: p,
-              round,
-            });
-          }
-        }
-
-        if (round === activeRound && isWeaving) {
-          for (const c of contribs) {
-            if ((c.type === "challenge" || c.type === "dissent") && !reflectionsByTarget.has(c.id)) {
-              const triggerAgentName = participantName(c.participant_id);
-              for (const p of reflectingParticipants) {
-                if (p.id !== c.participant_id) {
-                  items.push({
-                    type: "thinking_reflection",
-                    triggerContributionId: c.id,
-                    triggerType: c.type,
-                    triggerAgentName,
-                    reflectorName: p.name,
-                    round,
-                  });
-                }
-              }
-            }
-          }
-
-          // Thinking placeholders for active queries
-          for (const qp of queryingParticipants) {
-            const hasResponded = contribs.some(
-              (c) => c.type === "query_response" && c.participant_id === qp.id
-            );
-            if (!hasResponded) {
-              items.push({
-                type: "thinking_query",
-                queriedAgentName: qp.name,
-                round,
-              });
-            }
-          }
-
-          // Thinking placeholders for active evidence requests
-          for (const ep of evidenceParticipants) {
-            const hasResponded = contribs.some(
-              (c) => c.type === "evidence_response" && c.participant_id === ep.id
-            );
-            if (!hasResponded) {
-              items.push({
-                type: "thinking_evidence",
-                evidenceAgentName: ep.name,
-                round,
-              });
-            }
-          }
-
-          // Thinking placeholders for active summons
-          for (const sp of summoningParticipants) {
-            const hasResponded = contribs.some(
-              (c) => c.type === "summoned_response" && c.participant_id === sp.id
-            );
-            if (!hasResponded) {
-              items.push({
-                type: "thinking_summon",
-                summonName: sp.name,
-                round,
-              });
-            }
-          }
         }
 
         const roundSummary = roundSummaries[round];
@@ -992,8 +1219,6 @@ const flatItems = useMemo(() => {
         ? `Summoned expert: ${dialogContribution.personaName}`
         : dialogContribution.isVoteResponse
         ? `Vote by ${dialogContribution.participantName}`
-        : dialogContribution.isVoteTally
-        ? `Vote tally by ${dialogContribution.participantName}`
         : `${dialogContribution.participantName} — ${dialogContribution.contribution.type}`) : ""}
       className={dialogContribution ? (dialogContribution.isReflection
         ? "loom-dialog-type-reflection"
@@ -1005,8 +1230,6 @@ const flatItems = useMemo(() => {
         ? "loom-dialog-type-summoned_response"
         : dialogContribution.isVoteResponse
         ? "loom-dialog-type-vote_response"
-        : dialogContribution.isVoteTally
-        ? "loom-dialog-type-vote_tally"
         : `loom-dialog-type-${dialogContribution.contribution.type}`) : ""}
       >
         {dialogContribution && (
@@ -1234,7 +1457,9 @@ const flatItems = useMemo(() => {
               {activeTab === "context" && (
                 <div className="loom-context-panel">
                   {(() => {
-                    const ctx = dialogContribution.contribution.prompt_context ?? fetchedContext;
+                    const pc = dialogContribution.contribution.prompt_context;
+                    const hasFull = pc && (pc.system_prompt || pc.user_prompt || pc.state_of_play);
+                    const ctx = hasFull ? pc : (fetchedContext ?? pc);
                     if (contextLoading) {
                       return <p className="loom-text loom-text-muted loom-context-empty">Loading prompt context...</p>;
                     }

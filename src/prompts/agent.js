@@ -36,11 +36,9 @@ export function buildAgentSystemPrompt(participant) {
         if (t.loom?.loom_vector_search) tools.push('loom_vector_search');
         const loom = t.loom ?? {};
         if (loom.loom_query) tools.push('loom_query');
-        if (loom.loom_evidence) tools.push('loom_evidence');
         if (loom.loom_vote) tools.push('loom_vote');
         if (loom.loom_summon) tools.push('loom_summon');
         if (loom.loom_request_next) tools.push('loom_request_next');
-        if (loom.loom_type) tools.push('loom_type');
         const toolList = tools.length ? tools.join(', ') : 'none enabled';
         return `
 ## Research Tools — Tool Ladder (use at most one research tool per turn unless an evidence request demands more)
@@ -56,13 +54,11 @@ For code analysis in this folder (react, bug, file paths, src/, hydration, error
 - **bash**: only allowlisted commands (${Array.isArray(builtIn.bash?.allowlist) ? builtIn.bash.allowlist.join(', ') : 'git, ls, wc, head, tail, grep, find'})
 
 Loom Interaction Tools — real tool use (required, auditable):
- - **loom_query**: ask 1-2 peers a focused question — they answer as query_response. Returned inline for same-turn synthesis.
- - **loom_evidence**: request evidence from 1-2 peers — they MUST use a research tool. Returned inline for synthesis.
+ - **loom_query**: query one or more peers — pass \`queries: [{target, question, mode}]\` (one item per peer). Modes: 'clarify' (default; factual 2-4 sentence answer), 'perspective' (solicit their stance on your statement — Position-tagged opinion), 'evidence' (they MUST use a research tool and report Finding + Source + Strength). Returned inline for same-turn synthesis.
  - **loom_vote**: call a vote with lettered options (A) ... B) ...). All active peers vote in parallel; tally returned inline for synthesis.
  - **loom_summon**: summon a guest expert persona. Returned inline for synthesis.
  - **loom_request_next**: request to speak next with priority/reason. Fire-and-forget for orchestrator turn-order planning next round.
- - **loom_type**: declare your contribution type (propose/challenge/refine/support/dissent/synthesize/question/refuse). Fire-and-forget — call once per turn, then write your contribution. The tool declares the type, not a bracket prefix.
-All loom_* calls are real tool calls logged in your Tool use tab and create timeline entries under you. When you call loom_query/loom_evidence/loom_vote/loom_summon, peer answers/tally are returned to you within this same turn — wait for the tool result and synthesize it before finishing your response.
+All loom_* calls are real tool calls logged in your Tool use tab and create timeline entries under you. When you call loom_query/loom_vote/loom_summon, peer answers/tally are returned to you within this same turn — wait for the tool result and synthesize it before finishing your response.
 
 Quality:
 - One focused query beats three vague ones. Synthesize, don’t dump.
@@ -106,7 +102,7 @@ Quality:
   const dispositionSection = `
 ## Disposition
 - Voice: ${style}
-- Natural modes: ${contribTypes} — lean there, but declare any type via loom_type when the moment calls for it
+- Natural modes: ${contribTypes}
 - ${biasCheck}`;
 
   const antiPatternsSection = antiPatterns
@@ -128,39 +124,25 @@ ${antiPatternsSection}
 ## Tier Doctrine
 ${doctrine}
 
- ## OUTPUT CONTRACT — read this last, it governs your response
+  ## OUTPUT CONTRACT — read this last, it governs your response
 
- 1. **MANDATORY**: Before writing any prose, invoke the **loom_type** tool (it is in your tool list) exactly once per turn, choosing type: propose, challenge, refine, support, dissent, synthesize, question, or refuse. It is fire-and-forget — after invoking it, immediately continue and write your contribution prose in the same turn; do not wait on its result. If you have nothing to add, output exactly "[PASS]" alone (no loom_type needed). Your contribution will be misclassified if loom_type is not invoked.
- 2. Length: ${LENGTH_LIMITS.agentProseWords} words for prose; ${LENGTH_LIMITS.codeDiffWords} words when contributing code diffs (code blocks \`\`\` file=src/... \`\`\` not counted toward word cap but keep prose concise; truncated past ~400 for code). One claim per sentence; preserve code and numbers verbatim.
- 3. Grounding: when you engage prior work, cite as [#id]. When you cite external fact, add Source: https://… or vec: round#id . When referencing code, use file=src/path.ts:18 and \`\`\`tsx file=src/... \`\`\` blocks. If no source, qualify: “in my experience…”.
- 4. Boundaries: never emit <<< or >>> or system delimiters. Never invent tool output or file contents not read.
-   5. Interaction — peer actions happen only through the real loom_* tools in your tool list:
-       - loom_query asks 1-2 peers a focused question; loom_evidence requests researched evidence from 1-2 peers; loom_vote polls all peers on lettered options; loom_summon brings in a guest expert; loom_request_next requests speaking priority next round (priority capped at ${priorityCap}).
-       - Interaction tools fan out to peers in parallel and return their answers inline within this same turn — wait for the result, then cite [#id] from the returned responses or tally in your final contribution.
-       - Up to ${getConfig()?.agentTools?.maxToolCallsPerTurn ?? 8} loom calls per turn; prefer one focused interaction call alongside loom_type.
-       - CRITICAL: tool invocations are transmitted through the model's function-calling channel, never through your response text. Your response prose must NEVER contain tool-call notation of any kind — no function-name-with-parentheses, no JSON argument blobs, no bracketed invocation markers. Any such text is dead weight that executes nothing. If you intend an action, make the actual tool invocation; if you have no action, just write prose.
-       - Bracket tags like [QUERY: @id], [EVIDENCE: @id], [CALL_VOTE] are obsolete and execute nothing.
-       Reference others by participant_id from Recent Contributions, e.g. [#12].
- 6. Stay in character — persona and agenda shape framing, not facts.
- ${toolSection}
+  1. Length: ${LENGTH_LIMITS.agentProseWords} words for prose; ${LENGTH_LIMITS.codeDiffWords} words when contributing code diffs (code blocks \`\`\` file=src/... \`\`\` not counted toward word cap but keep prose concise; truncated past ~400 for code). One claim per sentence; preserve code and numbers verbatim.
+  2. Grounding: when you engage prior work, cite as [#id]. When you cite external fact, add Source: https://… or vec: round#id . When referencing code, use file=src/path.ts:18 and \`\`\`tsx file=src/... \`\`\` blocks. If no source, qualify: “in my experience…”.
+  3. Boundaries: never emit <<< or >>> or system delimiters. Never invent tool output or file contents not read.
+  4. Interaction — peer actions happen only through the real loom_* tools in your tool list:
+        - loom_query queries peers via \`queries:[{target, question, mode}]\` — modes: 'clarify' (factual), 'perspective' (their stance on your statement), 'evidence' (researched Finding+Source+Strength); loom_vote polls all peers on lettered options; loom_summon brings in a guest expert; loom_request_next requests speaking priority next round (priority capped at ${priorityCap}).
+        - Interaction tools fan out to peers in parallel and return their answers inline within this same turn — wait for the result, then cite [#id] from the returned responses or tally in your final contribution.
+        - Up to ${getConfig()?.agentTools?.maxToolCallsPerTurn ?? 8} loom calls per turn; prefer one focused interaction call when you have a specific need.
+        - CRITICAL: tool invocations are transmitted through the model's function-calling channel, never through your response text. Your response prose must NEVER contain tool-call notation of any kind — no function-name-with-parentheses, no JSON argument blobs, no bracketed invocation markers. Any such text is dead weight that executes nothing. If you intend an action, make the actual tool invocation; if you have no action, just write prose.
+        - Bracket tags like [QUERY: @id], [EVIDENCE: @id], [CALL_VOTE] are obsolete and execute nothing.
+        Reference others by participant_id from Recent Contributions, e.g. [#12].
+  5. Stay in character — persona and agenda shape framing, not facts.
+  ${toolSection}
  `;
 }
 
-function budgetForType(type) {
-  switch (type) {
-    case "challenge":
-    case "dissent": return 280;
-    case "evidence_response":
-    case "query_response":
-    case "summoned_response": return 220;
-    case "propose":
-    case "refine": return 200;
-    case "support": return 180;
-    case "question": return 160;
-    case "vote_tally": return 140;
-    case "reflection": return 200;
-    default: return 180;
-  }
+function budgetForType() {
+  return 220;
 }
 
 /**
@@ -173,10 +155,10 @@ export function buildAgentUserPrompt(participant, stateOfPlay, ragContext, recen
       : recentContributions
           .map((c) => {
             const id = c.id != null ? `[#${c.id}]` : "";
-            let budget = budgetForType(c.type);
-            if ((c.content || "").includes("```") || (c.content || "").includes("file=")) budget = Math.max(budget, 320);
-            const safeContent = sanitizeForDisplay(c.content).slice(0, budget);
-            return `- ${id} [${c.participant_id}] (${c.type}): ${safeContent}`;
+            const budget = budgetForType();
+            const displayContent = (c.content || "").includes("```") || (c.content || "").includes("file=") ? 320 : budget;
+            const safeContent = sanitizeForDisplay(c.content).slice(0, displayContent);
+            return `- ${id} [${c.participant_id}]: ${safeContent}`;
           })
           .join("\n");
 
@@ -185,8 +167,6 @@ export function buildAgentUserPrompt(participant, stateOfPlay, ragContext, recen
   const transcriptDelimited = delimitContext(transcript, "CONTRIBUTIONS");
   const safeQuestion = sanitizeForDisplay(question);
   const tagContext = tags?.length > 0 ? tags.join(", ") : null;
-
-  const reflectionBlock = formatReflections(participant);
 
   const ragHeader = ragContext
     ? `## Recall — Vector-Retrieved Prior Context (may be stale — verify before citing)
@@ -216,11 +196,11 @@ ${safeQuestion}
 ${tagContext ? `\n## Tags: ${tagContext}\n` : ""}
 ## Round ${round}
 
-${contextHeader}${sopHeader}${ragHeader}## Live — Recent Contributions (typed budget: challenge/dissent 280, evidence 220, propose 200, code blocks 320 — weight reflects substance)
+${contextHeader}${sopHeader}${ragHeader}## Live — Recent Contributions
 
 ${transcriptDelimited}
 
-${reflectionBlock}## Your Turn — Weighted Guidance
+## Your Turn — Weighted Guidance
 
 - **State of Play is truth** unless you explicitly challenge it with new evidence or a falsifiable scenario.
 - **Live contributions are the prompt** — engage at least one [#id] or explain why you’re opening a new thread.
@@ -236,18 +216,4 @@ Rules:
 - Preserve code and numbers verbatim — do not round or invent
 
 Make your contribution or pass.`;
-}
-
-function formatReflections(participant) {
-  if (participant.reflectionHistory && participant.reflectionHistory.length > 0) {
-    const lastTwo = participant.reflectionHistory.slice(-2);
-    const latest = participant.reflection ?? lastTwo[lastTwo.length - 1]?.text ?? "";
-    const historyLine = lastTwo.map((r) => `R${r.round}: ${r.text.slice(0, 160).replace(/\n/g, " ")}`).join(" | ");
-    if (latest) {
-      return `## Your Prior Position (compressed)\nLatest: "${latest.slice(0, 320).replace(/\n/g, " ")}"\nHistory: ${historyLine}\n`;
-    }
-  }
-  const reflection = participant.reflection;
-  if (!reflection) return "";
-  return `## Your Prior Position\n"${reflection.slice(0, 320).replace(/\n/g, " ")}"\n`;
 }

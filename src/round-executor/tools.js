@@ -15,7 +15,6 @@ export function buildToolsMap(config) {
     const loom = resolveLoomTools(agentToolsConfig);
     if (loom.loom_vector_search) toolsMap.loom_vector_search = true;
     if (loom.loom_query) toolsMap.loom_query = true;
-    if (loom.loom_evidence) toolsMap.loom_evidence = true;
     if (loom.loom_vote) toolsMap.loom_vote = true;
     if (loom.loom_summon) toolsMap.loom_summon = true;
     if (loom.loom_request_next) toolsMap.loom_request_next = true;

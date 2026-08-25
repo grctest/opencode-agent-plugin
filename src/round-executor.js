@@ -5,9 +5,7 @@ import { getConfig, resolveBuiltInTools, resolveLoomTools } from "./config.js";
 import { extractAgentResponse, mapToolResults, truncate, extractFileBlockTools, getPriorityCap } from "./shared.js";
 import { getPersonas } from "./composer.js";
 import { Logger, extractErrorInfo } from "./logger.js";
-import { runMidRoundReflections } from "./reflection-manager.js";
 import { sanitizeForPrompt, sanitizeForDisplay, sanitizeAgentOutput } from "./utils/sanitize.js";
-import { extractDeclaredType } from "./schemas.js";
 import { withRetry, isRetryableError, CircuitBreaker } from "./utils/retry.js";
 import { selectFallbackModel } from "./services/model-service.js";
 import { incrementKeyedCounter, recordLatency } from "./metrics.js";
@@ -109,8 +107,6 @@ export class RoundExecutor {
   /**
    * Runs the prompt phase for a round. Agents speak sequentially — each sees
    * all prior same-round contributions before responding.
-   * After each challenge/dissent, agents that spoke BEFORE the challenger
-   * immediately reflect on it (mid-round reflections).
    */
   async runPromptPhase(round, activeParticipants) {
     this._turnOrder = [];
@@ -152,43 +148,6 @@ export class RoundExecutor {
       this._options.onProgress?.(`${p.config.name} (${p.config.tier}) is thinking...`);
       const result = await this._promptChildSession(p);
       await this._handlePromptResult(p, result, round);
-
-      // Mid-round reflections: if this agent challenged/dissented,
-      // trigger reflection for the most persona-similar active participant
-      if (result && (result.type === "challenge" || result.type === "dissent")) {
-        const allActive = this._stateManager.getActiveParticipants();
-
-        if (allActive.length > 1) {
-          // Store the challenge/dissent content and type for the reflection prompt
-          p.currentContribution = result.content;
-          p.currentContributionId = round.contributions[round.contributions.length - 1]?.id;
-          p.currentContributionType = result.type;
-
-          // Exclude participants already queried/evidence-requested via loom tools for this trigger
-          const excludedForReflection = [];
-          if (result?.tool_calls) {
-            for (const tc of result.tool_calls) {
-              const tname = tc.tool ?? tc.attempted_tool;
-              if (tname === "loom_query" || tname === "loom_evidence") {
-                try {
-                  const inp = typeof tc.input === "string" ? JSON.parse(tc.input) : tc.input;
-                  if (Array.isArray(inp.targets)) excludedForReflection.push(...inp.targets);
-                } catch {}
-              }
-            }
-          }
-
-          await runMidRoundReflections(round, p, allActive, {
-            sessionManager: this._sessionManager,
-            getParticipantModel: this._getParticipantModel,
-            stateManager: this._stateManager,
-            db: this._db,
-            logError: this._logError,
-            callStats: this._callStats,
-            excludedIds: [...new Set(excludedForReflection)],
-          });
-        }
-      }
       }
     } finally {
         if (this._roundSessionIds) {

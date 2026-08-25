@@ -10,6 +10,8 @@ export function createPollSystem(directory) {
   const lastErrorId = new Map();
   const participantStatusCache = new Map();
   const lastMtime = new Map();
+  const lastRoundSummariesHash = new Map();
+  const lastArtifactCreatedAt = new Map();
 
   const SLOW_CONSUMER_TIMEOUT_MS = 30000;
 
@@ -64,10 +66,6 @@ export function createPollSystem(directory) {
         if (!dbPath) continue;
         const api = DashboardApi.get(dbPath);
         const currentMtime = api.refreshIfStale();
-        const prevMtime = lastMtime.get(meetingId);
-        if (prevMtime !== undefined && currentMtime === prevMtime) {
-          continue;
-        }
         lastMtime.set(meetingId, currentMtime);
 
         const currentState = api.getState();
@@ -82,8 +80,38 @@ export function createPollSystem(directory) {
             participantStatusCache.set(`artifact:${meetingId}`, artifact.created_at);
             broadcast(meetingId, { type: "artifact", data: artifact, timestamp: new Date().toISOString() });
           }
-          continue;
+          // Still poll round_summaries and other data even in terminal to ensure final summaries stream
         }
+        // Always poll round_summaries (even in terminal) for live overview/timeline summaries
+        try {
+          const summaries = api.getRoundSummaries(meetingId);
+          const hash = JSON.stringify(summaries);
+          const prevHash = lastRoundSummariesHash.get(meetingId);
+          if (hash !== prevHash) {
+            lastRoundSummariesHash.set(meetingId, hash);
+            if (prevHash !== undefined) {
+              broadcast(meetingId, { type: "round_summaries", data: summaries, timestamp: new Date().toISOString() });
+              hadActivity = true;
+            } else {
+              // Don't broadcast initial load — client already has it via /api/meeting, but store hash
+              // Store without broadcast to avoid duplicate on first poll
+            }
+          }
+        } catch {}
+        // Live artifact for non-terminal synthesis (weaving)
+        try {
+          const liveArtifact = api.getArtifact();
+          if (liveArtifact && lastArtifactCreatedAt.get(meetingId) !== liveArtifact.created_at) {
+            const prevAt = lastArtifactCreatedAt.get(meetingId);
+            lastArtifactCreatedAt.set(meetingId, liveArtifact.created_at);
+            if (prevAt !== undefined) {
+              broadcast(meetingId, { type: "artifact", data: liveArtifact, timestamp: new Date().toISOString() });
+              hadActivity = true;
+            }
+          } else if (!liveArtifact) {
+            // No artifact yet, keep cache empty
+          }
+        } catch {}
 
         const maxId = api.getMaxContributionId();
         const prevId = lastContributionId.get(meetingId) ?? 0;
@@ -131,7 +159,19 @@ export function createPollSystem(directory) {
         const state = currentState;
         if (state) {
           const prevState = participantStatusCache.get(`state:${meetingId}`);
-          const stateStr = JSON.stringify({ status: state.status, round: state.round, stats: state.stats });
+          // Widen diff to include fields that drive Timeline thinking placeholders and Overview
+          const stateStr = JSON.stringify({
+            status: state.status,
+            round: state.round,
+            stats: state.stats,
+            fabric: state.fabric,
+            reflecting_participants: state.reflecting_participants,
+            querying_participants: state.querying_participants,
+            evidence_participants: state.evidence_participants,
+            summoning_participants: state.summoning_participants,
+            max_rounds: state.max_rounds,
+            convergence: state.convergence,
+          });
           if (prevState !== stateStr) {
             participantStatusCache.set(`state:${meetingId}`, stateStr);
             broadcast(meetingId, {
@@ -139,24 +179,22 @@ export function createPollSystem(directory) {
               data: state,
               timestamp: new Date().toISOString(),
             });
-            if (state.status === "weaving") hadActivity = true;
+            hadActivity = true;
           }
         }
 
         const participants = api.getParticipants();
         const statusKey = meetingId;
         const prevStatus = participantStatusCache.get(statusKey);
-        const newStatus = JSON.stringify(participants.map((p) => ({ id: p.id, status: p.status })));
+        const newStatus = JSON.stringify(participants.map((p) => ({ id: p.id, status: p.status, tier: p.tier, model_id: p.model_id })));
         if (prevStatus !== newStatus) {
           participantStatusCache.set(statusKey, newStatus);
-          if (prevStatus !== undefined) {
-            broadcast(meetingId, {
-              type: "participants",
-              data: participants,
-              timestamp: new Date().toISOString(),
-            });
-            hadActivity = true;
-          }
+          broadcast(meetingId, {
+            type: "participants",
+            data: participants,
+            timestamp: new Date().toISOString(),
+          });
+          hadActivity = true;
         }
 
         const maxErrorId = api.getMaxErrorId();
@@ -211,6 +249,8 @@ export function createPollSystem(directory) {
         participantStatusCache.delete(`state:${meetingId}`);
         participantStatusCache.delete(`terminal:${meetingId}`);
         participantStatusCache.delete(`artifact:${meetingId}`);
+        lastRoundSummariesHash.delete(meetingId);
+        lastArtifactCreatedAt.delete(meetingId);
       }
     }
   };

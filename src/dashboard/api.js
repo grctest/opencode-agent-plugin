@@ -9,7 +9,7 @@ import * as exportsHelpers from "./api/exports.js";
 
 const DB_CACHE_MAX = 10;
 
-const DB_REFRESH_INTERVAL_MS = 2000;
+const DB_REFRESH_INTERVAL_MS = 500;
 
 const DB_TTL_MS = 5 * 60 * 1000;
 

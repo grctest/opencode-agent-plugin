@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo, memo } from "react";
 import { createPortal } from "react-dom";
-import { cn, tierClass, typeClass, relativeTime } from "../utils.js";
+import { cn, tierClass, typeClass } from "../utils.js";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { TierBadge, TypeBadge } from "./Badges.jsx";
@@ -175,20 +175,12 @@ export const ContributionItem = memo(({ contribution, participantName, onDialogO
     >
       <div>
         <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">
-          <span className="loom-contrib-participant">
+          <span className="loom-contrib-participant" style={{ fontWeight: 700 }}>
             {participantName}
           </span>
-          <TypeBadge type={contribution.type} />
-          <span className="loom-text-xs loom-text-muted">Round {contribution.round}</span>
-          <span className="loom-text-xs loom-text-muted">{relativeTime(contribution.created_at)}</span>
-          <button
-            onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(`**[${participantName}]** (${contribution.type}): ${content}`); }}
-            className="loom-copy-btn"
-            style={{ marginLeft: "auto", fontSize: "0.75rem", padding: "2px 6px", border: "1px solid #ccc", borderRadius: "4px", background: "transparent", cursor: "pointer" }}
-            aria-label="Copy markdown"
-          >
-            Copy
-          </button>
+          <span style={{ marginLeft: "auto" }}>
+            <TypeBadge type={contribution.type} />
+          </span>
         </div>
         {loomCalls.length > 0 && (
           <div className="loom-flex loom-flex-wrap loom-gap-xs loom-mt-xs">
@@ -289,9 +281,8 @@ export const ReflectionRow = memo(({ reflection, contributions, participantName,
     >
       <div>
         <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">
-          <span className="loom-badge loom-badge-reflection">reflection</span>
-          <span className="loom-text-xs loom-text-muted">Reflection by {reflectionAgentName} on #{reflection.targets_which} [{triggerType}] by {triggerAgentName} (Round {reflection.round})</span>
-          <span className="loom-text-xs loom-text-muted">{relativeTime(reflection.created_at)}</span>
+          <span className="loom-text-xs"><span style={{ fontWeight: 700 }}>{reflectionAgentName}</span> <span className="loom-text-muted">reflected on</span> <span style={{ fontWeight: 700 }}>{triggerAgentName}</span><span className="loom-text-muted">'s {triggerType} #{reflection.targets_which}</span></span>
+          <span style={{ marginLeft: "auto" }}><span className="loom-badge loom-badge-reflection">reflection</span></span>
         </div>
       </div>
       {isLong ? (
@@ -303,13 +294,29 @@ export const ReflectionRow = memo(({ reflection, contributions, participantName,
   );
 });
 
-export const QueryResponseRow = memo(({ queryResponse, contributions, participantName, onDialogOpen }) => {
+export const QueryResponseRow = memo(({ queryResponse, contributions, participantName, onDialogOpen, invokerId }) => {
   const source = useMemo(() => {
     if (!queryResponse.targets_which) return null;
     return contributions.find((c) => c.id === queryResponse.targets_which);
   }, [queryResponse.targets_which, contributions]);
 
-  const sourceAgentName = source ? participantName(source.participant_id) : "another agent";
+  const isValidInvoker = (id) => id && id !== "caller" && id !== "Caller" && id !== "unknown" && id !== "Unknown";
+  const sourceAgentName = useMemo(() => {
+    if (isValidInvoker(invokerId)) return participantName(invokerId);
+    if (source) return participantName(source.participant_id);
+    // prompt_context fallback (for pre-fix data)
+    const pcId = queryResponse.prompt_context?.source_participant_id ?? queryResponse.prompt_context?.sourceParticipantId;
+    if (isValidInvoker(pcId)) return participantName(pcId);
+    if (queryResponse.batch_id && contributions) {
+      const batchContribs = contributions.filter(c => c.batch_id === queryResponse.batch_id);
+      const invoker = batchContribs.find(c => c.id !== queryResponse.id && !["query_response","perspective_response","critique_response","evidence_response","vote_response","summoned_response","vote_tally","reflection"].includes(c.type));
+      if (invoker) return participantName(invoker.participant_id);
+      const anyOther = batchContribs.find(c => c.id !== queryResponse.id && c.participant_id !== queryResponse.participant_id);
+      if (anyOther) return participantName(anyOther.participant_id);
+    }
+    return "another agent";
+  }, [invokerId, source, queryResponse.batch_id, queryResponse.id, queryResponse.participant_id, queryResponse.prompt_context, contributions, participantName]);
+
   const responderName = participantName(queryResponse.participant_id);
 
   const content = queryResponse.content ?? "";
@@ -333,9 +340,8 @@ export const QueryResponseRow = memo(({ queryResponse, contributions, participan
     >
       <div>
         <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">
-          <span className="loom-badge loom-badge-query_response">query response</span>
-          <span className="loom-text-xs loom-text-muted">{responderName} responding to query from {sourceAgentName} (Round {queryResponse.round})</span>
-          <span className="loom-text-xs loom-text-muted">{relativeTime(queryResponse.created_at)}</span>
+          <span className="loom-text-xs"><span style={{ fontWeight: 700 }}>{responderName}</span> <span className="loom-text-muted">responded to query from</span> <span style={{ fontWeight: 700 }}>{sourceAgentName}</span></span>
+          <span style={{ marginLeft: "auto" }}><span className="loom-badge loom-badge-query_response">query response</span></span>
         </div>
       </div>
       {isLong ? (
@@ -347,13 +353,27 @@ export const QueryResponseRow = memo(({ queryResponse, contributions, participan
   );
 });
 
-export const EvidenceResponseRow = memo(({ evidenceResponse, contributions, participantName, onDialogOpen }) => {
+export const EvidenceResponseRow = memo(({ evidenceResponse, contributions, participantName, onDialogOpen, invokerId }) => {
   const source = useMemo(() => {
     if (!evidenceResponse.targets_which) return null;
     return contributions.find((c) => c.id === evidenceResponse.targets_which);
   }, [evidenceResponse.targets_which, contributions]);
 
-  const sourceAgentName = source ? participantName(source.participant_id) : "another agent";
+  const isValidInvoker = (id) => id && id !== "caller" && id !== "Caller" && id !== "unknown" && id !== "Unknown";
+  const sourceAgentName = useMemo(() => {
+    if (isValidInvoker(invokerId)) return participantName(invokerId);
+    if (source) return participantName(source.participant_id);
+    const pcId = evidenceResponse.prompt_context?.source_participant_id ?? evidenceResponse.prompt_context?.sourceParticipantId;
+    if (isValidInvoker(pcId)) return participantName(pcId);
+    if (evidenceResponse.batch_id && contributions) {
+      const batchContribs = contributions.filter(c => c.batch_id === evidenceResponse.batch_id);
+      const invoker = batchContribs.find(c => c.id !== evidenceResponse.id && !["query_response","perspective_response","critique_response","evidence_response","vote_response","summoned_response","vote_tally","reflection"].includes(c.type));
+      if (invoker) return participantName(invoker.participant_id);
+      const anyOther = batchContribs.find(c => c.id !== evidenceResponse.id && c.participant_id !== evidenceResponse.participant_id);
+      if (anyOther) return participantName(anyOther.participant_id);
+    }
+    return "another agent";
+  }, [invokerId, source, evidenceResponse.batch_id, evidenceResponse.id, evidenceResponse.participant_id, evidenceResponse.prompt_context, contributions, participantName]);
   const sourceType = source?.type?.toUpperCase() ?? "CONTRIBUTION";
   const responderName = participantName(evidenceResponse.participant_id);
 
@@ -378,9 +398,8 @@ export const EvidenceResponseRow = memo(({ evidenceResponse, contributions, part
     >
       <div>
         <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">
-          <span className="loom-badge loom-badge-evidence_response">evidence</span>
-          <span className="loom-text-xs loom-text-muted">{responderName} providing evidence on {sourceAgentName}'s {sourceType} (Round {evidenceResponse.round})</span>
-          <span className="loom-text-xs loom-text-muted">{relativeTime(evidenceResponse.created_at)}</span>
+          <span className="loom-text-xs"><span style={{ fontWeight: 700 }}>{responderName}</span> <span className="loom-text-muted">providing evidence on</span> <span style={{ fontWeight: 700 }}>{sourceAgentName}</span><span className="loom-text-muted">'s {sourceType}</span></span>
+          <span style={{ marginLeft: "auto" }}><span className="loom-badge loom-badge-evidence_response">evidence</span></span>
         </div>
       </div>
       {isLong ? (
@@ -392,13 +411,7 @@ export const EvidenceResponseRow = memo(({ evidenceResponse, contributions, part
   );
 });
 
-export const SummonedResponseRow = memo(({ summonedResponse, participantName, onDialogOpen }) => {
-  const requesterName = useMemo(() => {
-    const content = summonedResponse.content ?? "";
-    const match = content.match(/^\[Summoned: .+?\]\s*/m);
-    return match ? "a participant" : "a participant";
-  }, [summonedResponse]);
-
+export const SummonedResponseRow = memo(({ summonedResponse, contributions, participantName, onDialogOpen, invokerId }) => {
   const content = summonedResponse.content ?? "";
   const stripped = useMemo(() => {
     return content.replace(/^\[Summoned: .+?\]\s*/m, "");
@@ -414,6 +427,21 @@ export const SummonedResponseRow = memo(({ summonedResponse, participantName, on
     return match ? { name: match[1], tier: match[2] } : { name: "Guest Expert", tier: "unknown" };
   }, [content]);
 
+  const isValidInvoker = (id) => id && id !== "caller" && id !== "Caller" && id !== "unknown" && id !== "Unknown";
+  const invokerName = useMemo(() => {
+    if (isValidInvoker(invokerId)) return participantName(invokerId);
+    const pcId = summonedResponse.prompt_context?.source_participant_id ?? summonedResponse.prompt_context?.sourceParticipantId;
+    if (isValidInvoker(pcId)) return participantName(pcId);
+    if (summonedResponse.batch_id && contributions) {
+      const batchContribs = contributions.filter(c => c.batch_id === summonedResponse.batch_id);
+      const invoker = batchContribs.find(c => c.id !== summonedResponse.id && !["query_response","perspective_response","critique_response","evidence_response","vote_response","summoned_response","vote_tally","reflection"].includes(c.type));
+      if (invoker) return participantName(invoker.participant_id);
+      const anyOther = batchContribs.find(c => c.id !== summonedResponse.id && c.participant_id !== summonedResponse.participant_id);
+      if (anyOther) return participantName(anyOther.participant_id);
+    }
+    return null;
+  }, [invokerId, summonedResponse.batch_id, summonedResponse.id, summonedResponse.participant_id, summonedResponse.prompt_context, contributions, participantName]);
+
   const openDialog = () => onDialogOpen?.({ contribution: summonedResponse, participantName: personaInfo.name, isSummonedResponse: true, personaName: personaInfo.name, personaTier: personaInfo.tier });
 
   const clickable = isLong || hasTools;
@@ -427,9 +455,8 @@ export const SummonedResponseRow = memo(({ summonedResponse, participantName, on
     >
       <div>
         <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">
-          <span className="loom-badge loom-badge-summoned_response">summoned</span>
-          <span className="loom-text-xs loom-text-muted">Guest expert {personaInfo.name} ({personaInfo.tier}) — Round {summonedResponse.round}</span>
-          <span className="loom-text-xs loom-text-muted">{relativeTime(summonedResponse.created_at)}</span>
+          <span className="loom-text-xs"><span style={{ fontWeight: 700 }}>Guest expert {personaInfo.name}</span> <span className="loom-text-muted">({personaInfo.tier}){invokerName ? " summoned by " : ""}</span>{invokerName && <span style={{ fontWeight: 700 }}>{invokerName}</span>}</span>
+          <span style={{ marginLeft: "auto" }}><span className="loom-badge loom-badge-summoned_response">summoned</span></span>
         </div>
       </div>
       {isLong ? (
@@ -441,13 +468,36 @@ export const SummonedResponseRow = memo(({ summonedResponse, participantName, on
   );
 });
 
-export const VoteResponseRow = memo(({ voteResponse, contributions, participantName, onDialogOpen }) => {
+export const VoteResponseRow = memo(({ voteResponse, contributions, participantName, onDialogOpen, invokerId }) => {
   const source = useMemo(() => {
     if (!voteResponse.targets_which) return null;
     return contributions.find((c) => c.id === voteResponse.targets_which);
   }, [voteResponse.targets_which, contributions]);
 
-  const sourceAgentName = source ? participantName(source.participant_id) : "another agent";
+  const isValidInvoker = (id) => id && id !== "caller" && id !== "Caller" && id !== "unknown" && id !== "Unknown";
+  const sourceAgentName = useMemo(() => {
+    if (isValidInvoker(invokerId)) return participantName(invokerId);
+    if (source) return participantName(source.participant_id);
+    const pcId = voteResponse.prompt_context?.source_participant_id ?? voteResponse.prompt_context?.sourceParticipantId ?? voteResponse.prompt_context?.source_participant_name;
+    if (isValidInvoker(pcId)) {
+      // pcId may be name for old data; try to map name to participant id via contributions
+      const byName = contributions?.find(c => {
+        const n = participantName(c.participant_id);
+        return n === pcId;
+      });
+      if (byName) return participantName(byName.participant_id);
+      return participantName(pcId);
+    }
+    if (voteResponse.batch_id && contributions) {
+      const batchContribs = contributions.filter(c => c.batch_id === voteResponse.batch_id);
+      const invoker = batchContribs.find(c => c.id !== voteResponse.id && !["query_response","perspective_response","critique_response","evidence_response","vote_response","summoned_response","vote_tally","reflection"].includes(c.type));
+      if (invoker) return participantName(invoker.participant_id);
+      const anyOther = batchContribs.find(c => c.id !== voteResponse.id && c.participant_id !== voteResponse.participant_id);
+      if (anyOther) return participantName(anyOther.participant_id);
+    }
+    return "another agent";
+  }, [invokerId, source, voteResponse.batch_id, voteResponse.id, voteResponse.participant_id, voteResponse.prompt_context, contributions, participantName]);
+
   const voterName = participantName(voteResponse.participant_id);
 
   const content = voteResponse.content ?? "";
@@ -471,9 +521,8 @@ export const VoteResponseRow = memo(({ voteResponse, contributions, participantN
     >
       <div>
         <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">
-          <span className="loom-badge loom-badge-vote_response">vote</span>
-          <span className="loom-text-xs loom-text-muted">{voterName} voted on poll from {sourceAgentName} (Round {voteResponse.round})</span>
-          <span className="loom-text-xs loom-text-muted">{relativeTime(voteResponse.created_at)}</span>
+          <span className="loom-text-xs"><span style={{ fontWeight: 700 }}>{voterName}</span> <span className="loom-text-muted">voted on poll from</span> <span style={{ fontWeight: 700 }}>{sourceAgentName}</span></span>
+          <span style={{ marginLeft: "auto" }}><span className="loom-badge loom-badge-vote_response">vote</span></span>
         </div>
       </div>
       {isLong ? (
@@ -509,9 +558,8 @@ export const VoteTallyRow = memo(({ tally, participantName, onDialogOpen }) => {
     >
       <div>
         <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">
-          <span className="loom-badge loom-badge-vote_tally">tally</span>
-          <span className="loom-text-xs loom-text-muted">Vote tally by {orchestratorName} (Round {tally.round})</span>
-          <span className="loom-text-xs loom-text-muted">{relativeTime(tally.created_at)}</span>
+          <span className="loom-text-xs"><span style={{ fontWeight: 700 }}>{orchestratorName}</span> <span className="loom-text-muted">tally</span></span>
+          <span style={{ marginLeft: "auto" }}><span className="loom-badge loom-badge-vote_tally">tally</span></span>
         </div>
       </div>
       {isLong ? (
@@ -598,7 +646,6 @@ export const OrchestratorItem = memo(({ group, onDialogOpen }) => {
   const msg = group.query ?? group.response;
   const meta = ORCHESTRATOR_TYPE_META[msg.type] || { emoji: "❓", label: msg.type };
   const content = msg.content ?? "";
-  const timestamp = msg.created_at;
 
   const openDialog = () => onDialogOpen?.({ orchestratorGroup: group, type: msg.type });
   const onKeyDown = (e) => {
@@ -617,9 +664,8 @@ export const OrchestratorItem = memo(({ group, onDialogOpen }) => {
       onKeyDown={onKeyDown}
     >
       <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center loom-mb-xs">
-        <span className="loom-orchestrator-item-name">Orchestrator</span>
-        <span className="loom-badge loom-badge-orchestrator">{meta.label}</span>
-        <span className="loom-text-xs loom-text-muted">{relativeTime(timestamp)}</span>
+        <span className="loom-orchestrator-item-name" style={{ fontWeight: 700 }}>Orchestrator</span>
+        <span className="loom-badge loom-badge-orchestrator" style={{ marginLeft: "auto" }}>{meta.label}</span>
       </div>
       <p className="loom-text loom-text-muted">{content.slice(0, 150)}{content.length > 150 ? "..." : ""}</p>
     </div>

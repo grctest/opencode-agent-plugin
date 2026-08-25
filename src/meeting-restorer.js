@@ -26,8 +26,10 @@ export function restoreStateFromDb({ db, stateManager, meetingId, options }) {
   }
 
   // Honor the persisted status (audit 05 LS1): terminal meetings stay terminal unless
-  // the caller explicitly asked for a fresh start.
-  if (TERMINAL_STATUSES.has(meeting.status) && !options?.fresh) {
+  // the caller explicitly asked for a fresh start or is extending the deliberation.
+  // Extension is an explicit user action to continue — it clears the terminal status
+  // while preserving all previous rounds/context, then MeetingExtender bumps max_rounds.
+  if (TERMINAL_STATUSES.has(meeting.status) && !options?.fresh && !options?.allowExtend) {
     throw new LoomError(
       `Cannot resume: meeting is already ${meeting.status}. Use a fresh /knit to start over, or pass fresh:true to force.`,
       { phase: "resume", recoverable: false, status: meeting.status }

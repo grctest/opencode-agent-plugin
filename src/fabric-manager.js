@@ -57,7 +57,7 @@ export function updateStateOfPlay(weave, question, tags) {
       filesInvolved.push(fileSnippet);
     }
 
-    const bucket = classifyContribution(c.type, content);
+    const bucket = classifyContribution(c.type, content, c.prompt_context?.mode ?? "");
     switch (bucket) {
       case "decisions": decisions.push(content); break;
       case "agreements": agreements.push(content); break;
@@ -84,7 +84,7 @@ export function updateStateOfPlay(weave, question, tags) {
  * Classifies a contribution into a state-of-play bucket.
  * Primary: use the parsed type tag. Fallback: keyword matching on content.
  */
-function classifyContribution(type, content) {
+function classifyContribution(type, content, mode = "") {
   switch (type) {
     case "propose":
     case "refine":
@@ -93,10 +93,14 @@ function classifyContribution(type, content) {
       return "agreements";
     case "challenge":
     case "dissent":
+    case "critique_response":
       return "disagreements";
     case "question":
       return "openQuestions";
     case "query_response":
+      // Mode-aware: risks/assumptions analyses feed open questions, not key facts
+      if (mode === "risks" || mode === "assumptions") return "openQuestions";
+      return "keyFacts";
     case "evidence_response":
     case "summoned_response":
       return "keyFacts";

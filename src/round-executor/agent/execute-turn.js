@@ -3,7 +3,6 @@ import { getConfig, resolveBuiltInTools, resolveLoomTools } from "../../config.j
 import { extractAgentResponse, mapToolResults, extractFileBlockTools, getPriorityCap } from "../../shared.js";
 import { parseAgentResponse } from "../../validation.js";
 import { sanitizeAgentOutput } from "../../utils/sanitize.js";
-import { extractDeclaredType } from "../../schemas.js";
 import { isRetryableError } from "../../utils/retry.js";
 import { selectFallbackModel } from "../../services/model-service.js";
 import { incrementKeyedCounter, recordLatency } from "../../metrics.js";
@@ -24,7 +23,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
   }
   let ephemeralSessionIdToDelete = isRoundScoped ? null : ephemeralSessionId;
 
-  const isSynthesisLoom = (name) => ["loom_query","loom_evidence","loom_vote","loom_summon"].includes(name);
+  const isSynthesisLoom = (name) => ["loom_query","loom_vote","loom_summon"].includes(name);
   const isLoomTool = (name) => name?.startsWith("loom_") && name !== "loom_vector_search";
 
   const truncateToolResults = (trs, agentToolsConfig) => {
@@ -147,7 +146,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
             const out = typeof tc.output === "string" ? tc.output : JSON.stringify(tc.output);
             return `Tool ${tc.tool} (${tc.callID}) returned:\n${out.slice(0, 3500)}`;
           }).join("\n\n");
-          const synthesisInstruction = `Loom tool results:\n${loomOutputs}\n\nNow synthesize your final contribution incorporating these responses. Cite [#id] when referencing peer answers. Do not re-call loom_query/loom_evidence/loom_vote/loom_summon — you have the results. Stay in character and follow OUTPUT CONTRACT.`;
+          const synthesisInstruction = `Loom tool results:\n${loomOutputs}\n\nNow synthesize your final contribution incorporating these responses. Cite [#id] when referencing peer answers. Do not re-call loom_query/loom_vote/loom_summon — you have the results. Stay in character and follow OUTPUT CONTRACT.`;
           this._logger.info("synthesis_prompt", `Same-turn synthesis for ${participant.config.name} with ${loomSynthesisCalls.length} loom result(s)`, { tools: loomSynthesisCalls.map(t=>t.tool), remainingMs });
           const synthStart = Date.now();
           synthRan = true;
@@ -241,51 +240,22 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
     const safeContent = sanitizeAgentOutput(finalText);
     let response = parseAgentResponse(participant.config.id, safeContent, participant.config.tier);
     if (!response) {
-      this._logger.warn("parse_fallback", `Failed to parse response for ${participant.config.name} — falling back to propose with raw content`, {
+      this._logger.warn("parse_fallback", `Failed to parse response for ${participant.config.name} — falling back to generic contribution`, {
         participant: participant.config.id,
         round: currentRound,
         rawPreview: String(finalText).slice(0, 500),
         safePreview: String(safeContent).slice(0, 500),
       });
-      // Fallback: treat raw safeContent as propose so the turn is not lost and models are not exhausted
       response = {
         participant_id: participant.config.id,
         content: safeContent.slice(0, 5000) || "[No content after sanitization]",
-        type: "propose",
+        type: "contribution",
         request_next: null,
         query: null,
         evidence: null,
         summon: null,
         vote: null,
       };
-    }
-
-    const declaredType = extractDeclaredType(finalToolResults);
-    if (declaredType) {
-      response.type = declaredType;
-      if (declaredType === 'refuse') {
-        const lastRefuse = [...finalToolResults].reverse().find(tr => {
-          const n = tr.tool ?? tr.attempted_tool;
-          if (n !== 'loom_type' || tr.status === 'error') return false;
-          let inp = tr.input;
-          if (typeof inp === 'string') { try { inp = JSON.parse(inp); } catch { return false; } }
-          return typeof inp?.type === 'string' && inp.type.toLowerCase().trim() === 'refuse';
-        });
-        let reason = null;
-        if (lastRefuse) {
-          let inp = lastRefuse.input;
-          if (typeof inp === 'string') { try { inp = JSON.parse(inp); } catch {} }
-          reason = typeof inp?.reason === 'string' ? inp.reason.trim() : null;
-        }
-        if (reason) {
-          response.content = `${reason}. ${response.content}`.trim();
-        }
-      }
-    } else if (safeContent !== '[PASS]') {
-      this._logger.warn("missing_loom_type", `${participant.config.name} did not call loom_type — defaulting to propose (no bracket fallback)`, {
-        participant: participant.config.id,
-        round: currentRound,
-      });
     }
 
     response.tool_calls = mapToolResults(finalToolResults);

@@ -15,33 +15,5 @@ export function createMetaTools({ config }) {
         return { output: JSON.stringify(payload), metadata: { queued: true, priority: payload.priority }, title: "loom_request_next queued" };
       },
     }),
-
-    loom_type: tool({
-      description:
-        "Declare the type of your primary contribution for this turn. " +
-        "You MUST call this exactly once per turn to indicate whether your contribution is a proposal, challenge, question, etc. " +
-        "This is fire-and-forget — call it and then write your contribution text; you don't need to wait for anything.",
-      args: {
-        type: tool.schema
-          .enum(["propose", "challenge", "refine", "support", "dissent", "synthesize", "question", "refuse"])
-          .describe("Contribution type for this turn"),
-        reason: tool.schema
-          .string()
-          .max(300)
-          .optional()
-          .describe("If type is refuse, brief reason (e.g. 'Missing budget approval')"),
-      },
-      async execute(args, context) {
-        const cfg = config.getValue("agentTools");
-        if (!cfg?.enabled || !cfg?.loom?.loom_type) return { output: JSON.stringify({ error: "loom_type not enabled" }), metadata: { error: true }, title: "loom_type error" };
-        // Fire-and-forget: just acknowledge. The authoritative type is read from toolResults
-        // by RoundExecutor, so no meeting lookup is needed here.
-        const valid = new Set(["propose","challenge","refine","support","dissent","synthesize","question","refuse"]);
-        const t = String(args.type ?? "").toLowerCase();
-        if (!valid.has(t)) return { output: JSON.stringify({ error: `Invalid type "${args.type}" — must be one of ${[...valid].join(", ")}` }), metadata: { error: true }, title: "loom_type error" };
-        const payload = { ok: true, type: t, reason: args.reason ?? null, note: `Type "${t}" recorded for this turn.` };
-        return { output: JSON.stringify(payload), metadata: { type: t }, title: `loom_type:${t}` };
-      },
-    }),
   };
 }

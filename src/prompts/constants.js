@@ -8,6 +8,11 @@ export const LENGTH_LIMITS = Object.freeze({
   codeDiffWords: "150-350",
   querySentences: "2-4",
   evidenceWords: "100-180",
+  perspectiveWords: "80-150",
+  critiqueWords: "120-200",
+  risksWords: "100-180",
+  assumptionsWords: "80-150",
+  alternativesWords: "120-200",
   summonWords: "100-150",
 });
 

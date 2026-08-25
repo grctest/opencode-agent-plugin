@@ -45,11 +45,9 @@ export const DEFAULT_CONFIG = {
     loom: {
       loom_vector_search: true,
       loom_query: true,
-      loom_evidence: true,
       loom_vote: true,
       loom_summon: true,
       loom_request_next: true,
-      loom_type: true,
     },
     sameTurnSynthesis: true,
     reflection: {
@@ -102,11 +100,9 @@ export const NESTED_SCHEMA = {
   'agentTools.builtIn.lsp': { type: 'boolean' },
   'agentTools.loom.loom_vector_search': { type: 'boolean' },
   'agentTools.loom.loom_query': { type: 'boolean' },
-  'agentTools.loom.loom_evidence': { type: 'boolean' },
   'agentTools.loom.loom_vote': { type: 'boolean' },
   'agentTools.loom.loom_summon': { type: 'boolean' },
   'agentTools.loom.loom_request_next': { type: 'boolean' },
-  'agentTools.loom.loom_type': { type: 'boolean' },
   'agentTools.sameTurnSynthesis': { type: 'boolean' },
   'agentTools.reflection.bash': { type: 'boolean' },
   'agentTools.reflection.glob': { type: 'boolean' },
@@ -122,4 +118,6 @@ export const DEPRECATED_KEYS = {
   maxTurnRequestWords: 'never enforced — turn-request length is governed by prompts; key removed',
   maxTurnRequestsPerRound: 'never enforced — ordering is planTurnOrder; key removed',
   'turnRequestThresholds.autoGrant': 'dormant by design — ordering is planTurnOrder, not autoGrant; key removed',
+  'agentTools.loom.loom_evidence': 'merged into loom_query with mode evidence — use loom_query with mode evidence instead',
+  'agentTools.loom.loom_type': 'removed — primary agent turns are no longer typed, following agents interpret content directly',
 };

@@ -39,7 +39,7 @@ export function useSSEReset(meetingId) {
  * Applies incremental SSE updates to meeting data state.
  * Returns event handlers to attach to window.
  */
-export function useSSEHandlers({ setContributions, setTurnRequests, setState, setParticipants, setAgentErrors, setArtifact, setOrchestratorMessages }) {
+export function useSSEHandlers({ setContributions, setTurnRequests, setState, setParticipants, setAgentErrors, setArtifact, setOrchestratorMessages, setRoundSummaries }) {
   useEffect(() => {
     const handleContributions = (e) => {
       const newContribs = e.detail;
@@ -109,6 +109,17 @@ export function useSSEHandlers({ setContributions, setTurnRequests, setState, se
       });
     };
 
+    const handleRoundSummaries = (e) => {
+      const summaries = e.detail;
+      if (summaries && typeof summaries === "object") {
+        setRoundSummaries((prev) => {
+          const prevStr = JSON.stringify(prev);
+          const nextStr = JSON.stringify(summaries);
+          return prevStr === nextStr ? prev : { ...summaries };
+        });
+      }
+    };
+
     window.addEventListener("loom-new-contributions", handleContributions);
     window.addEventListener("loom-new-turn-requests", handleTurnRequests);
     window.addEventListener("loom-state-update", handleState);
@@ -116,6 +127,7 @@ export function useSSEHandlers({ setContributions, setTurnRequests, setState, se
     window.addEventListener("loom-agent-error", handleAgentError);
     window.addEventListener("loom-artifact", handleArtifact);
     window.addEventListener("loom-orchestrator-messages", handleOrchestratorMessages);
+    window.addEventListener("loom-round-summaries", handleRoundSummaries);
 
     return () => {
       window.removeEventListener("loom-new-contributions", handleContributions);
@@ -125,6 +137,7 @@ export function useSSEHandlers({ setContributions, setTurnRequests, setState, se
       window.removeEventListener("loom-agent-error", handleAgentError);
       window.removeEventListener("loom-artifact", handleArtifact);
       window.removeEventListener("loom-orchestrator-messages", handleOrchestratorMessages);
+      window.removeEventListener("loom-round-summaries", handleRoundSummaries);
     };
   }, []);
 }
@@ -262,7 +275,7 @@ export function useMeetingApi(meetingId, resetKey) {
     }
   }, [contributions]);
 
-  useSSEHandlers({ setContributions, setTurnRequests, setState, setParticipants, setAgentErrors, setArtifact, setOrchestratorMessages });
+  useSSEHandlers({ setContributions, setTurnRequests, setState, setParticipants, setAgentErrors, setArtifact, setOrchestratorMessages, setRoundSummaries });
 
   return {
     state,

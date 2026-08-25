@@ -1,57 +1,107 @@
 import { tool } from "@opencode-ai/plugin";
 import { MeetingDatabase } from "../../database.js";
 import { buildQueryPrompt, buildEvidencePrompt } from "../../prompts/interaction-prompts.js";
+import { QUERY_MODES, QUERY_MODE_NAMES, researchTools } from "../../prompts/query-modes.js";
 import { extractAgentResponse, mapToolResults } from "../../shared.js";
 import { degrade } from "../../utils/degrade.js";
 import { Logger } from "../../logger.js";
 const logger = new Logger();
 
+function normalizeQueries(args) {
+  if (!Array.isArray(args.queries)) return [];
+  return args.queries
+    .filter((q) => q && typeof q.target === "string" && q.target.trim().length > 0 && typeof q.question === "string" && q.question.trim().length > 0)
+    .map((q) => ({
+      targetId: q.target.trim(),
+      question: q.question.trim(),
+      mode: QUERY_MODES[q.mode] ? q.mode : "clarify",
+    }));
+}
+
 export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }) {
   return {
     loom_query: tool({
       description:
-        "Ask 1-2 peers a focused question. Their answers will be returned inline and recorded as query_response contributions. Use for clarifying assumptions or asking 'what was said'.",
+        "Query one or more peers — pass `queries: [{target, question, mode}]`, one item per peer. Modes: " +
+        "'clarify' (default; factual answer), 'perspective' (solicit their stance on your statement — Position-tagged opinion), " +
+        "'evidence' (they MUST use a research tool; Finding + Source + Strength), 'critique' (adversarially stress-test your statement — most damaging objection), " +
+        "'risks' (failure modes + severity + mitigation), 'assumptions' (unstated premises + how to test them), 'alternatives' (genuinely different approaches). " +
+        "Answers are returned inline for same-turn synthesis.",
       args: {
-        targets: tool.schema.array(tool.schema.string()).min(1).max(2).describe("Participant IDs to query (max 2, e.g. ['junior_0'])"),
-        question: tool.schema.string().min(1).max(500).describe("Your question (1-500 chars)"),
+        queries: tool.schema
+          .array(
+            tool.schema.object({
+              target: tool.schema.string().min(1).describe("Participant ID to query (e.g. 'junior_0')"),
+              question: tool.schema.string().min(1).max(500).describe("Your question for this target (1-500 chars)"),
+              mode: tool.schema.enum(QUERY_MODE_NAMES).optional().describe("Query kind — default 'clarify'"),
+            }),
+          )
+          .min(1)
+          .describe("One query object per target peer"),
       },
       async execute(args, context) {
         const cfg = config.getValue("agentTools");
         if (!cfg?.enabled || !cfg?.loom?.loom_query) return { output: JSON.stringify({ error: "loom_query not enabled" }), metadata: { error: true }, title: "loom_query error" };
-        if (!args.targets || args.targets.length === 0) return { output: JSON.stringify({ error: "targets required" }), metadata: { error: true }, title: "loom_query error" };
+        const queries = normalizeQueries(args);
+        if (queries.length === 0) return { output: JSON.stringify({ error: "queries required — at least one {target, question} item" }), metadata: { error: true }, title: "loom_query error" };
         if (!context?.sessionID) return { output: JSON.stringify({ error: "loom_query: session context unavailable" }), metadata: { error: true }, title: "loom_query error" };
         try {
           const meetingInfo = await resolveMeeting(context.sessionID);
           if (!meetingInfo) {
-            const p = { queued: true, note: "Query queued — meeting not yet resolved, will be handled post-store.", targets: args.targets, question: args.question };
+            const p = { queued: true, note: "Query queued — meeting not yet resolved, will be handled post-store.", queries };
             return { output: JSON.stringify(p), metadata: { queued: true }, title: "loom_query queued" };
           }
           const engine = activeLooms.get(meetingInfo.meetingId);
           if (!engine || !engine.getStateManager) {
-            const p = { queued: true, targets: args.targets, question: args.question, note: "Query queued — engine not ready." };
+            const p = { queued: true, queries, note: "Query queued — engine not ready." };
             return { output: JSON.stringify(p), metadata: { queued: true }, title: "loom_query queued" };
           }
           const stateManager = engine.getStateManager();
           const sessionManager = engine.getSessionManager();
           const db = engine.getDatabase();
           if (!stateManager || !sessionManager || !db) {
-            const p = { queued: true, targets: args.targets, question: args.question, note: "Query queued — state not ready." };
+            const p = { queued: true, queries, note: "Query queued — state not ready." };
             return { output: JSON.stringify(p), metadata: { queued: true }, title: "loom_query queued" };
           }
-          // For inline execution, we need to prompt targets now and return their answers.
-          // We use the same logic as RoundExecutor.executeQueries but inline, and return results for the invoker to synthesize.
-          // To avoid double-creation, we set a flag that post-store handling should skip if inline succeeded.
-          // For now, return queued and let RoundExecutor handle post-store creation; the inline result will be the peer answers returned as tool output.
-          // We perform the actual peer prompting here to provide inline results.
           const allParticipants = stateManager.getParticipants();
           if (!Array.isArray(allParticipants)) return { output: JSON.stringify({ error: "loom_query: participant list unavailable" }), metadata: { error: true }, title: "loom_query error" };
-          const targets = args.targets.map(id => allParticipants.find(p => p?.config?.id === id)).filter(p => p && p.status !== "failed" && p.status !== "passed" && p.status !== "muted");
-          if (targets.length === 0) return { output: JSON.stringify({ error: `No eligible targets among [${args.targets.join(", ")}] — all filtered (self/failed/passed).` }), metadata: { error: true }, title: "loom_query error" };
-          const caller = allParticipants.find(p => p.session_id === context.sessionID) || allParticipants.find(p => p?.config?.id && args.targets.includes(p.config.id) === false) || null;
-          // Use a lightweight inline prompt for each target (without creating DB rows yet — let RoundExecutor create them post-store, but return preview)
-          // For true inline, we prompt here and return the answers directly.
-          const results = [];
-          for (const target of targets) {
+
+          // Resolve each query to an eligible target participant
+          const resolved = queries
+            .map((q) => ({ ...q, participant: allParticipants.find((p) => p?.config?.id === q.targetId) }))
+            .filter((q) => q.participant && q.participant.status !== "failed" && q.participant.status !== "passed" && q.participant.status !== "muted");
+          const skipped = queries.filter((q) => !resolved.some((r) => r.targetId === q.targetId)).map((q) => ({ target: q.targetId, error: "ineligible target (unknown/self/failed/passed/muted)" }));
+
+          let caller = allParticipants.find((p) => p.session_id === context.sessionID) || null;
+          if (!caller) caller = allParticipants.find((p) => p?.status === "speaking") || null;
+          if (!caller) caller = allParticipants.find((p) => p?.status !== "failed" && p?.status !== "passed" && p?.status !== "muted") || null;
+          const sourceName = caller?.config?.name ?? "Unknown";
+
+          const results = [...skipped];
+          // Precompute batch for idempotency (same for all queries in this call)
+          const batchIdForCheck = (() => {
+            try {
+              const allParts = stateManager.getParticipants();
+              let cfb = allParts.find(p => p.session_id === context.sessionID) || null;
+              if (!cfb) cfb = allParts.find(p => p?.status === "speaking") || null;
+              if (!cfb) cfb = caller;
+              return cfb?.currentBatchId ?? null;
+            } catch { return null; }
+          })();
+          for (const { participant: target, question, mode } of resolved) {
+            const meta = QUERY_MODES[mode];
+            // Idempotent: reuse existing response for this batch+target+question (retry guard)
+            try {
+              if (batchIdForCheck) {
+                const weave = stateManager.getWeave ? stateManager.getWeave() : [];
+                const existing = weave.find(c => c.batch_id === batchIdForCheck && c.participant_id === target.config.id && c.type === meta.contributionType && c.prompt_context?.question === question);
+                if (existing) {
+                  const raw = (existing.content ?? "").replace(/^\[.+?\]\s*/m, "").trim();
+                  results.push({ target: target.config.id, name: target.config.name, mode, content: raw.slice(0,800), contributionId: existing.id });
+                  continue;
+                }
+              }
+            } catch {}
             try {
               let model = (() => {
                 try { return engine.getParticipantModel ? engine.getParticipantModel(target) : null; } catch { return null; }
@@ -67,50 +117,63 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
                 } catch {}
               }
               if (!model) {
-                logger.warn("participant_model_missing", `No model resolvable for ${target.config.id} — peer response skipped`, { participant: target.config.id });
-                results.push({ participantId: target.config.id, error: "peer model unavailable — could not answer (no model assignment); treat their claim as unverified" });
+                logger.warn("participant_model_missing", `No model resolvable for ${target.config.id} — ${meta.contributionType} skipped`, { participant: target.config.id });
+                results.push({ target: target.config.id, mode, error: "peer model unavailable — could not respond (no model assignment); treat their claim as unverified" });
                 continue;
               }
-              // Shared ephemeral-prompt primitive (audit 10 MA1)
+
               const stateOfPlay = stateManager.getStateOfPlay?.() ?? "";
               const roundContribs = stateManager.getWeave ? stateManager.getWeave().filter(c => c.round != null && c.round >= stateManager.getCurrentRound() - 1).slice(-12) : [];
-              const prompt = buildQueryPrompt(
-                { config: { name: "Caller", tier: "mid", id: "caller" } },
-                target,
-                args.question,
-                args.question,
-                roundContribs,
-                stateManager.getCurrentRound(),
-                stateManager.getMaxRounds(),
-                stateOfPlay
-              );
-              const systemPrompt = `You are ${target.config.name} (${target.config.tier}) — answering a directed query in Loom. Be concise (2-4 sentences), grounded, and in character. Answer the specific question, not the whole deliberation. Cite Source: [#id] or URL if you use evidence. Never emit <<< or >>>.`;
+
+              const callerForPrompt = caller ?? { config: { name: sourceName, tier: "mid", id: "unknown" } };
+              let prompt;
+              if (mode === "evidence") {
+                prompt = buildEvidencePrompt(
+                  callerForPrompt,
+                  target,
+                  question,
+                  question,
+                  roundContribs,
+                  stateManager.getCurrentRound(),
+                  stateManager.getMaxRounds()
+                );
+              } else {
+                prompt = buildQueryPrompt(
+                  callerForPrompt,
+                  target,
+                  question,
+                  question,
+                  roundContribs,
+                  stateManager.getCurrentRound(),
+                  stateManager.getMaxRounds(),
+                  stateOfPlay,
+                  mode
+                );
+              }
+
+              const systemPrompt = meta.systemPrompt(target);
               const res = await sessionManager.runEphemeralPrompt(target, {
                 system: systemPrompt,
                 model,
                 temperature: target.tier_config?.temperature ?? 0.7,
                 parts: [{ type: "text", text: prompt }],
-                tools: (() => {
-                  const t = config.getValue("agentTools");
-                  const m = {};
-                  if (t?.builtIn?.webfetch || t?.builtIn?.web_fetch) m.webfetch = true;
-                  if (t?.builtIn?.websearch || t?.builtIn?.web_search) m.websearch = true;
-                  if (t?.builtIn?.read) m.read = true;
-                  if (t?.loom?.loom_vector_search) m.loom_vector_search = true;
-                  return m;
-                })(),
-                timeoutMs: 60000,
+                tools: researchTools(),
+                timeoutMs: meta.timeoutMs,
                 signal: context.abort,
                 abort: context.abort,
               }, meetingInfo.meetingId);
-              if (!res || !res.ok) { results.push({ participantId: target.config.id, error: res?.error?.message ?? "prompt failed" }); continue; }
-                            const { text, toolResults } = extractAgentResponse(res.data);
+              if (!res || !res.ok) { results.push({ target: target.config.id, mode, error: res?.error?.message ?? "prompt failed" }); continue; }
+
+              const { text, toolResults } = extractAgentResponse(res.data);
               const content = (text ?? "").slice(0,2000);
-              // Store as query_response for timeline aesthetic (so it appears as indented row even though inline)
+
+              // Persist as a typed contribution grouped under the invoker's batch
               try {
                 const allParts = stateManager.getParticipants();
-                const callerForBatch = allParts.find(p => p.session_id === context.sessionID) || null;
-                const batchId = callerForBatch?.currentBatchId ?? `inline-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
+                let callerForBatch = allParts.find(p => p.session_id === context.sessionID) || null;
+                if (!callerForBatch) callerForBatch = allParts.find(p => p?.status === "speaking") || null;
+                if (!callerForBatch) callerForBatch = caller;
+                const batchId = callerForBatch?.currentBatchId ?? caller?.currentBatchId ?? `inline-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
                 const currentRound = stateManager.getCurrentRound();
                 let roundObj = null;
                 try { const st = stateManager.getState(); roundObj = (st.rounds || []).find(r => r.number === currentRound) || null; } catch {}
@@ -119,152 +182,58 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
                   id: stateManager.nextContributionId(),
                   round: currentRound,
                   participant_id: target.config.id,
-                  content: `[Response to query from ${callerForBatch?.config?.name ?? "caller"}]\n\n${content}`,
-                  type: "query_response",
+                  content: `${meta.contentPrefix(target.config.name, sourceName)}\n\n${content}`,
+                  type: meta.contributionType,
                   targets_which: null,
                   batch_id: batchId,
                   tool_calls: contributionTools ?? [],
-                  prompt_context: { type: "query_response", question: args.question, round: currentRound },
+                  prompt_context: {
+                    type: meta.contributionType,
+                    mode,
+                    question,
+                    round: currentRound,
+                    source_participant_id: caller?.config?.id ?? null,
+                    source_participant_name: sourceName,
+                    source_batch_id: batchId,
+                    system_prompt: systemPrompt,
+                    user_prompt: prompt,
+                    state_of_play: stateOfPlay,
+                    round_contributions_used: roundContribs.slice(-4).map(c => ({ id: c.id, participant_id: c.participant_id, type: c.type, content: (c.content ?? "").slice(0,300) })),
+                  },
                   created_at: new Date().toISOString(),
                 };
                 stateManager.addContribution(contrib);
                 if (roundObj) roundObj.contributions.push(contrib);
                 degrade("contribution_db_failed", "Failed to persist contribution — visible in memory only this session", () => db.addContributionWithTurnRequest(stateManager.getState().id, contrib, null), null);
-                results.push({ participantId: target.config.id, name: target.config.name, content: content.slice(0,800), contributionId: contrib.id });
+
+                // Perspective answers update the responder's stored reflection — this path
+                // is replacing automatic challenge/dissent reflections long-term.
+                if (mode === "perspective" && text && text.trim()) {
+                  try {
+                    const trimmed = text.trim();
+                    target.reflection = trimmed;
+                    if (!Array.isArray(target.reflectionHistory)) target.reflectionHistory = [];
+                    target.reflectionHistory.push({ round: currentRound, text: trimmed, at: Date.now() });
+                    if (target.reflectionHistory.length > 5) target.reflectionHistory.shift();
+                    db.setParticipantReflection(target.config.id, trimmed);
+                  } catch {}
+                }
+
+                results.push({ target: target.config.id, name: target.config.name, mode, content: content.slice(0,800), contributionId: contrib.id });
               } catch {
-                results.push({ participantId: target.config.id, name: target.config.name, content: content.slice(0,800) });
+                results.push({ target: target.config.id, name: target.config.name, mode, content: content.slice(0,800) });
               }
             } catch (e) {
-              results.push({ participantId: target.config.id, error: e.message });
+              results.push({ target: target.config.id, mode, error: e.message });
             }
           }
-          const inlinePayload = { inline: true, targets: args.targets, question: args.question, responses: results, note: "Inline query — peer answers returned for synthesis and stored as indented query_response rows." };
-          return { output: JSON.stringify(inlinePayload), metadata: { inline: true, responseCount: results.length }, title: `loom_query:${results.length} responses` };
+          const inlinePayload = { inline: true, queries, responses: results, note: "Inline query — peer answers returned for synthesis and stored as indented rows." };
+          return { output: JSON.stringify(inlinePayload), metadata: { inline: true, responseCount: results.length - skipped.length }, title: `loom_query:${results.length - skipped.length} responses` };
         } catch (e) {
-          const p = { error: `loom_query inline failed: ${e.message}`, queued: true, targets: args.targets, question: args.question };
+          const p = { error: `loom_query inline failed: ${e.message}`, queued: true, queries };
           return { output: JSON.stringify(p), metadata: { error: true, queued: true }, title: "loom_query error" };
         }
       },
     }),
-
-    loom_evidence: tool({
-      description:
-        "Request evidence from 1-2 peers. They MUST use a research tool (websearch/webfetch/read/loom_vector_search) and report Finding + Source + Strength.",
-      args: {
-        targets: tool.schema.array(tool.schema.string()).min(1).max(2).describe("Participant IDs to request evidence from (max 2)"),
-        question: tool.schema.string().min(1).max(500).describe("Evidence question (1-500 chars)"),
-      },
-      async execute(args, context) {
-        const cfg = config.getValue("agentTools");
-        if (!cfg?.enabled || !cfg?.loom?.loom_evidence) return { output: JSON.stringify({ error: "loom_evidence not enabled" }), metadata: { error: true }, title: "loom_evidence error" };
-        if (!context?.sessionID) return { output: JSON.stringify({ error: "loom_evidence: session context unavailable" }), metadata: { error: true }, title: "loom_evidence error" };
-        try {
-          const meetingInfo = await resolveMeeting(context.sessionID);
-          if (!meetingInfo) {
-            const p = { queued: true, targets: args.targets, question: args.question, note: "Evidence queued — meeting not resolved." };
-            return { output: JSON.stringify(p), metadata: { queued: true }, title: "loom_evidence queued" };
-          }
-          const engine = activeLooms.get(meetingInfo.meetingId);
-          if (!engine || !engine.getStateManager) {
-            const p = { queued: true, targets: args.targets, question: args.question, note: "Evidence queued — engine not ready." };
-            return { output: JSON.stringify(p), metadata: { queued: true }, title: "loom_evidence queued" };
-          }
-          const stateManager = engine.getStateManager();
-          const sessionManager = engine.getSessionManager();
-          const allParticipants = stateManager.getParticipants();
-          if (!Array.isArray(allParticipants)) return { output: JSON.stringify({ error: "loom_evidence: participant list unavailable" }), metadata: { error: true }, title: "loom_evidence error" };
-          const targets = args.targets.map(id => allParticipants.find(p => p?.config?.id === id)).filter(p => p && p.status !== "failed" && p.status !== "passed" && p.status !== "muted");
-          if (targets.length === 0) return { output: JSON.stringify({ error: `No eligible targets among [${args.targets.join(", ")}]` }), metadata: { error: true }, title: "loom_evidence error" };
-          const results = [];
-          for (const target of targets) {
-            try {
-              let model = (() => { try { return engine.getParticipantModel ? engine.getParticipantModel(target) : null; } catch { return null; } })();
-              if (!model) {
-                // Fallback: borrow any other participant's resolvable model rather than failing the peer response
-                try {
-                  for (const p of stateManager.getParticipants()) {
-                    if (!p || p.status === "failed") continue;
-                    const m = (() => { try { return engine.getParticipantModel ? engine.getParticipantModel(p) : null; } catch { return null; } })();
-                    if (m) { model = m; break; }
-                  }
-                } catch {}
-              }
-              if (!model) {
-                logger.warn("participant_model_missing", `No model resolvable for ${target.config.id} — evidence_response skipped`, { participant: target.config.id });
-                results.push({ participantId: target.config.id, error: "peer model unavailable — could not research (no model assignment); treat their claim as unverified" });
-                continue;
-              }
-              // Shared ephemeral-prompt primitive (audit 10 MA1)
-              const stateOfPlay = stateManager.getStateOfPlay?.() ?? "";
-              const roundContribs = stateManager.getWeave ? stateManager.getWeave().filter(c => c.round != null && c.round >= stateManager.getCurrentRound() - 1).slice(-12) : [];
-              const prompt = buildEvidencePrompt(
-                { config: { name: "Caller", tier: "mid", id: "caller" } },
-                target,
-                args.question,
-                args.question,
-                roundContribs,
-                stateManager.getCurrentRound(),
-                stateManager.getMaxRounds()
-              );
-              const systemPrompt = `You are ${target.config.name} (${target.config.tier}) — providing evidence in Loom. You MUST use at least one research tool. No speculation. Structure: Finding (1 sentence) + Source (URL or [#id]) + Strength: strong|weak|inconclusive. If inconclusive, state why and what would resolve it. 100-180 words, in character, never emit <<< or >>>.`;
-              const res = await sessionManager.runEphemeralPrompt(target, {
-                system: systemPrompt,
-                model,
-                temperature: target.tier_config?.temperature ?? 0.7,
-                parts: [{ type: "text", text: prompt }],
-                tools: (() => {
-                  const t = config.getValue("agentTools");
-                  const m = {};
-                  if (t?.builtIn?.webfetch || t?.builtIn?.web_fetch) m.webfetch = true;
-                  if (t?.builtIn?.websearch || t?.builtIn?.web_search) m.websearch = true;
-                  if (t?.builtIn?.read) m.read = true;
-                  if (t?.loom?.loom_vector_search) m.loom_vector_search = true;
-                  return m;
-                })(),
-                timeoutMs: 90000,
-                signal: context.abort,
-                abort: context.abort,
-              }, meetingInfo.meetingId);
-              if (!res || !res.ok) { results.push({ participantId: target.config.id, error: res?.error?.message ?? "prompt failed" }); continue; }
-                            const { text, toolResults } = extractAgentResponse(res.data);
-              const content = (text ?? "").slice(0,2000);
-              try {
-                const allParts = stateManager.getParticipants();
-                const callerForBatch = allParts.find(p => p.session_id === context.sessionID) || null;
-                const batchId = callerForBatch?.currentBatchId ?? `inline-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
-                const currentRound = stateManager.getCurrentRound();
-                let roundObj = null;
-                try { const st = stateManager.getState(); roundObj = (st.rounds || []).find(r => r.number === currentRound) || null; } catch {}
-                const contributionTools = mapToolResults(toolResults);
-                const contrib = {
-                  id: stateManager.nextContributionId(),
-                  round: currentRound,
-                  participant_id: target.config.id,
-                  content: `[Evidence from ${target.config.name}]\n\n${content}`,
-                  type: "evidence_response",
-                  targets_which: null,
-                  batch_id: batchId,
-                  tool_calls: contributionTools ?? [],
-                  prompt_context: { type: "evidence_response", question: args.question, round: currentRound },
-                  created_at: new Date().toISOString(),
-                };
-                stateManager.addContribution(contrib);
-                if (roundObj) roundObj.contributions.push(contrib);
-                try { const db2 = stateManager.getState ? engine.getDatabase() : null; if (db2) db2.addContributionWithTurnRequest(stateManager.getState().id, contrib, null); } catch (dbErr) { logger.warn('contribution_db_failed', `Failed to persist ${contrib.type} for ${target.config.id} — visible in memory only this session`, { error: dbErr?.message }); }
-                results.push({ participantId: target.config.id, name: target.config.name, content: content.slice(0,800), contributionId: contrib.id });
-              } catch {
-                results.push({ participantId: target.config.id, name: target.config.name, content: content.slice(0,800) });
-              }
-            } catch (e) { results.push({ participantId: target.config.id, error: e.message }); }
-          }
-          const inlinePayload2 = { inline: true, targets: args.targets, question: args.question, responses: results, note: "Inline evidence — peer findings returned for synthesis and stored as indented evidence_response rows." };
-          return { output: JSON.stringify(inlinePayload2), metadata: { inline: true, responseCount: results.length }, title: `loom_evidence:${results.length} findings` };
-        } catch (e) {
-          const p = { error: `loom_evidence inline failed: ${e.message}`, queued: true, targets: args.targets, question: args.question };
-          return { output: JSON.stringify(p), metadata: { error: true, queued: true }, title: "loom_evidence error" };
-        }
-      },
-    }),
-
   };
 }

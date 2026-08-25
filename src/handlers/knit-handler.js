@@ -301,6 +301,7 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
         directory,
         meetingId: existingMeeting.meetingId,
         resume: true,
+        allowExtend: true,
         question: existingMeeting.question,
         context: args.context ? sanitizeForPrompt(args.context, 8000) : "No additional context provided.",
         parentSessionId: sessionID,

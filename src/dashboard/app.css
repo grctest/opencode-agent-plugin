@@ -1555,9 +1555,54 @@ input {
   padding-bottom: 0.375rem;
 }
 
+.loom-vrow.loom-vrow-perspective-response {
+  padding-left: 2rem;
+  padding-bottom: 0.375rem;
+}
+
+.loom-vrow.loom-vrow-critique-response {
+  padding-left: 2rem;
+  padding-bottom: 0.375rem;
+}
+
+.loom-vrow.loom-vrow-evidence-response {
+  padding-left: 2rem;
+  padding-bottom: 0.375rem;
+}
+
+.loom-vrow.loom-vrow-summoned-response {
+  padding-left: 2rem;
+  padding-bottom: 0.375rem;
+}
+
+.loom-vrow.loom-vrow-vote-response {
+  padding-left: 2rem;
+  padding-bottom: 0.375rem;
+}
+
+.loom-vrow.loom-vrow-loom-invocation {
+  padding-left: 2rem;
+  padding-bottom: 0.375rem;
+}
+
 .loom-query-response-row {
   border-left: 2px solid #0d9488;
   background: color-mix(in oklch, #0d9488 4%, var(--color-card));
+}
+
+.loom-evidence-response-row {
+  border-left: 2px solid #0369a1;
+  background: color-mix(in oklch, #0369a1 4%, var(--color-card));
+}
+
+.loom-summoned-response-row {
+  border-left: 2px solid #a855f7;
+  background: color-mix(in oklch, #a855f7 4%, var(--color-card));
+}
+
+.loom-vote-response-row {
+  border-left: 2px solid #10b981;
+  background: color-mix(in oklch, #10b981 4%, var(--color-card));
 }
 
 /* Round groups */

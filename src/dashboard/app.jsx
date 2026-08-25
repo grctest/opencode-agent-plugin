@@ -62,6 +62,20 @@ function useSSE(meetingId, onEvent) {
             const pData = await pRes.json();
             onEventRef.current({ type: "participants", data: pData, timestamp });
           }
+          // Fallback parity with SSE: also refresh data that previously required reload
+          try {
+            const mRes = await fetch(`/api/meeting?meeting=${meetingId}&include_context=1&limit=1`);
+            if (mRes.ok) {
+              const mData = await mRes.json();
+              if (mData.round_summaries) onEventRef.current({ type: "round_summaries", data: mData.round_summaries, timestamp });
+              if (mData.artifact) onEventRef.current({ type: "artifact", data: mData.artifact, timestamp });
+              if (mData.orchestrator_messages) onEventRef.current({ type: "orchestrator_messages", data: mData.orchestrator_messages, timestamp });
+              if (mData.turn_requests) onEventRef.current({ type: "turn_requests", data: mData.turn_requests, timestamp });
+              if (mData.agent_errors) {
+                for (const err of mData.agent_errors) onEventRef.current({ type: "agent_error", data: err, timestamp });
+              }
+            }
+          } catch {}
         } catch (err) {
           window.dispatchEvent(new CustomEvent("loom-sse-error", {
             detail: { message: err.message, phase: "polling" }
@@ -337,6 +351,8 @@ export function App() {
       }
     } else if (data.type === "orchestrator_messages") {
       window.dispatchEvent(new CustomEvent("loom-orchestrator-messages", { detail: data.data }));
+    } else if (data.type === "round_summaries") {
+      window.dispatchEvent(new CustomEvent("loom-round-summaries", { detail: data.data }));
     }
   }, []);
 
