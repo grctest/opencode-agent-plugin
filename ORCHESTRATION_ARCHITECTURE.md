@@ -4,6 +4,18 @@
 
 A complete technical reference for how the Loom multi-agent deliberation system works, from user input to final output. Every LLM prompt, every data structure, every decision point. Written for someone who cannot read the source code.
 
+### ID Glossary (naming debt §10)
+
+| ID | Meaning | Source |
+|---|---|---|
+| `meetingId` / `loomId` | DB primary key for a deliberation (`meetings.id`, UUID) | `paths.js:getMeetingDbPath`, `handlers/knit/handler.js` |
+| `sessionID` / `parentSessionId` | opencode chat session that owns the meeting (parent of all ephemeral sessions) | `client.session.create({parentID})` |
+| `opencodeSessionId` | Duplicate of parent session ID persisted in `meetings.opencode_session_id` for resume | `database/session-index.js` |
+| `ephemeralSessionId` | Short-lived child session per agent per round (round-scoped) | `session-manager.js:createEphemeralSession` |
+| `orchestratorSessionId` | One persistent session for moderation/summary/turn-order | `session-manager.js:promptOrchestrator` |
+| `weave` | In-memory `StateManager.weave` == `contributions` table rows == `data.rounds[].contributions` | `services/state-manager.js` |
+| `fabric` | Legacy name for `meetings.fabric` (initial user context); now superseded by `state_of_play` but retained in DB for compat | `fabric-manager.js` (alias: `state-of-play`) |
+
 ---
 
 ## Table of Contents

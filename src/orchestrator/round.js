@@ -3,22 +3,32 @@ import { LoomError, extractErrorInfo } from "../logger.js";
 import { updateStateOfPlay } from "../fabric-manager.js";
 import { truncate } from "../shared.js";
 import { SUMMARY_TRUNCATE_LEN } from "./constants.js";
+// TimeBudget is owned by MeetingOrchestrator; round helpers use this._timeBudget when available (Phase 3 centralization)
 
 export async function runRound() {
-    if (this._checkTimeout()) {
+    // Centralized deadline logic via TimeBudget (Phase 3)
+    if (this._timeBudget) this._timeBudget.syncFrom(this);
+    const timeBudget = this._timeBudget;
+
+    if (timeBudget ? timeBudget.checkTimeout() : this._checkTimeout()) {
+      if (timeBudget) {
+        this._stateManager.transitionTo("timeout");
+        this._logger.warn("timeout", "Meeting timed out", { elapsed: Date.now() - this._startTime, limit: this._meetingTimeoutMs });
+      }
       await this._sessionManager.postProgress("⏱️ Loom timed out — generating output from collected contributions.", "warn");
       return false;
     }
 
-    const remaining = this._remainingMs();
-    if (remaining < 5000) {
+    const remaining = timeBudget ? timeBudget.remainingMs() : this._remainingMs();
+    const isExpiredGrace = timeBudget ? timeBudget.isExpired(5000) : remaining < 5000;
+    if (isExpiredGrace) {
       this._stateManager.transitionTo("timeout");
       await this._sessionManager.postProgress("⏱️ Loom timed out — generating output from collected contributions.", "warn");
       this._logger.warn("timeout", "Meeting timed out before round start", { remaining });
       return false;
     }
 
-    const deadline = this._startTime + this._meetingTimeoutMs;
+    const deadline = timeBudget ? timeBudget.deadline() : this._startTime + this._meetingTimeoutMs;
 
     const round = this._roundInitializer.initializeRound(this._stateManager, this._database, () => this._notifyUpdate());
     const { activeParticipants, skipped } = this._roundInitializer.filterActiveParticipants(this._stateManager, round);
@@ -179,7 +189,7 @@ export async function _finalizeRound(updatedRound) {
       const persistenceFailure = this._isPersistenceError(err);
       if (persistenceFailure) {
         // Degrade: state stays in memory; the meeting can proceed to the next round.
-        this._logger.warn("finalize_round_degraded", `Round ${updatedRound.number} finalization degraded by persistence failure`, info);
+        this._logger.error("finalize_round_degraded", `Round ${updatedRound.number} finalization degraded by persistence failure`, info);
         try {
           await this._persistState();
         } catch (persistErr) {
@@ -219,10 +229,20 @@ export async function _persistState() {
     const sharedState = this._stateManager.buildSharedState();
     const stats = this._getMergedStats();
     try {
-      await this._persistenceService.persistState(sharedState, this._stateManager.getNextSpeakerId(), stats, this._stateManager.getMaxRounds());
+      const { withRetry, isRetryableError } = await import("../utils/retry.js");
+      await withRetry(() => this._persistenceService.persistState(sharedState, this._stateManager.getNextSpeakerId(), stats, this._stateManager.getMaxRounds()), {
+        maxAttempts: 3, baseDelayMs: 50, maxDelayMs: 200, retryable: isRetryableError,
+      });
     } catch (err) {
       const info = extractErrorInfo(err);
-      this._logger.error("persist_state_failed", "Failed to persist meeting state to database", info);
+      this._logger.error("persist_state_failed", "Failed to persist meeting state to database — meeting continues in-memory, DB is now divergent (will be flagged degraded)", info);
+      // Flag persistence degraded so dashboard can surface it
+      try {
+        const { degrade } = await import("../utils/degrade.js");
+        await degrade("persist.state", "persistState flagged degraded", async () => {
+          this._database.setPersistenceDegraded?.(1);
+        }, null);
+      } catch {}
     }
    }
 

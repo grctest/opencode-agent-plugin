@@ -29,6 +29,11 @@ function getDepsDirs() {
 
 let cachedOrt = null;
 let cachedTokenizer = null;
+// Cached singletons persist for the process lifetime (onnxruntime/tokenizer are
+// expensive to reload). No automatic dispose is needed in production; the
+// dispose path below exists for tests and graceful shutdown and releases the
+// references so GC / re-init can proceed. Call disposeCachedDeps() when
+// tearing down to avoid leaks in long-running test suites.
 
 /**
  * Resolve an optional native dependency (onnxruntime-node, @huggingface/tokenizers)
@@ -76,6 +81,19 @@ async function resolveTokenizer() {
     cachedTokenizer = module.Tokenizer;
   }
   return cachedTokenizer;
+}
+
+/**
+ * Dispose cached native deps. Production code keeps singletons alive;
+ * this path exists for tests / graceful shutdown to release references
+ * and allow GC or re-init with a different dep dir.
+ */
+export function disposeCachedDeps() {
+  // onnxruntime-node and tokenizers have no explicit .dispose(); dropping
+  // the cached module reference is sufficient to let GC reclaim and forces
+  // resolveDep to re-probe on next load.
+  cachedOrt = null;
+  cachedTokenizer = null;
 }
 
 export const DEFAULT_EMBEDDING_MODEL = "Snowflake/snowflake-arctic-embed-xs";

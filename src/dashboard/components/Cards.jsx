@@ -248,32 +248,19 @@ export const ReflectionInline = memo(({ reflection, contributions, participantNa
   );
 });
 
-export const ReflectionRow = memo(({ reflection, contributions, participantName, onDialogOpen }) => {
-  const trigger = useMemo(() => {
-    if (!reflection.targets_which) return null;
-    return contributions.find((c) => c.id === reflection.targets_which);
-  }, [reflection.targets_which, contributions]);
-
-  const triggerType = trigger?.type?.toUpperCase() ?? "CONTRIBUTION";
-  const triggerAgentName = trigger ? participantName(trigger.participant_id) : "another agent";
-  const reflectionAgentName = participantName(reflection.participant_id);
-
-  const content = reflection.content ?? "";
-  const stripped = useMemo(() => {
-    return content.replace(/^\[Reflection on #\d+ \[[\w]+\] by .+?\]\s*/m, "");
-  }, [content]);
+// Base component consolidates duplicated response-row rendering.
+// Props: badgeClass/header/strippedRegex take caller specifics; wrappers stay ~10 lines.
+export const BaseResponseRow = memo(({ contribution, header, badgeLabel, badgeClass, strippedRegex, typeClass, rowClass, onDialogOpen, dialogPayload }) => {
+  const content = contribution.content ?? "";
+  const stripped = useMemo(() => content.replace(strippedRegex, ""), [content, strippedRegex]);
   const isLong = stripped.length > 300;
-  // Audit-first: always make rows with recorded tool calls clickable so their
-  // Tool use tab is reachable even when the text is short.
-  const hasTools = (reflection.tool_calls ?? []).length > 0;
+  const hasTools = (contribution.tool_calls ?? []).length > 0;
   const clickable = isLong || hasTools;
   const html = useMemo(() => renderMarkdown(stripped), [stripped]);
-
-  const openDialog = () => onDialogOpen?.({ contribution: reflection, participantName: reflectionAgentName, isReflection: true, triggerAgentName, triggerType });
-
+  const openDialog = () => onDialogOpen?.({ contribution, ...dialogPayload });
   return (
     <div
-      className={cn("loom-card", "loom-contribution-card", "loom-contrib-type-reflection", "loom-reflection-row", clickable && "loom-contrib-clickable")}
+      className={cn("loom-card", "loom-contribution-card", typeClass, rowClass, clickable && "loom-contrib-clickable")}
       onClick={openDialog}
       role={clickable ? "button" : undefined}
       tabIndex={clickable ? 0 : undefined}
@@ -281,8 +268,8 @@ export const ReflectionRow = memo(({ reflection, contributions, participantName,
     >
       <div>
         <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">
-          <span className="loom-text-xs"><span style={{ fontWeight: 700 }}>{reflectionAgentName}</span> <span className="loom-text-muted">reflected on</span> <span style={{ fontWeight: 700 }}>{triggerAgentName}</span><span className="loom-text-muted">'s {triggerType} #{reflection.targets_which}</span></span>
-          <span style={{ marginLeft: "auto" }}><span className="loom-badge loom-badge-reflection">reflection</span></span>
+          <span className="loom-text-xs">{header}</span>
+          <span style={{ marginLeft: "auto" }}><span className={cn("loom-badge", badgeClass)}>{badgeLabel}</span></span>
         </div>
       </div>
       {isLong ? (
@@ -294,17 +281,21 @@ export const ReflectionRow = memo(({ reflection, contributions, participantName,
   );
 });
 
-export const QueryResponseRow = memo(({ queryResponse, contributions, participantName, onDialogOpen, invokerId }) => {
-  const source = useMemo(() => {
-    if (!queryResponse.targets_which) return null;
-    return contributions.find((c) => c.id === queryResponse.targets_which);
-  }, [queryResponse.targets_which, contributions]);
+export const ReflectionRow = memo(({ reflection, contributions, participantName, onDialogOpen }) => {
+  const trigger = useMemo(() => !reflection.targets_which ? null : contributions.find((c) => c.id === reflection.targets_which), [reflection.targets_which, contributions]);
+  const triggerType = trigger?.type?.toUpperCase() ?? "CONTRIBUTION";
+  const triggerAgentName = trigger ? participantName(trigger.participant_id) : "another agent";
+  const reflectionAgentName = participantName(reflection.participant_id);
+  const header = <><span style={{ fontWeight: 700 }}>{reflectionAgentName}</span> <span className="loom-text-muted">reflected on</span> <span style={{ fontWeight: 700 }}>{triggerAgentName}</span><span className="loom-text-muted">'s {triggerType} #{reflection.targets_which}</span></>;
+  return <BaseResponseRow contribution={reflection} header={header} badgeLabel="reflection" badgeClass="loom-badge-reflection" strippedRegex={/^\[Reflection on #\d+ \[[\w]+\] by .+?\]\s*/m} typeClass="loom-contrib-type-reflection" rowClass="loom-reflection-row" onDialogOpen={onDialogOpen} dialogPayload={{ participantName: reflectionAgentName, isReflection: true, triggerAgentName, triggerType }} />;
+});
 
+export const QueryResponseRow = memo(({ queryResponse, contributions, participantName, onDialogOpen, invokerId }) => {
+  const source = useMemo(() => !queryResponse.targets_which ? null : contributions.find((c) => c.id === queryResponse.targets_which), [queryResponse.targets_which, contributions]);
   const isValidInvoker = (id) => id && id !== "caller" && id !== "Caller" && id !== "unknown" && id !== "Unknown";
   const sourceAgentName = useMemo(() => {
     if (isValidInvoker(invokerId)) return participantName(invokerId);
     if (source) return participantName(source.participant_id);
-    // prompt_context fallback (for pre-fix data)
     const pcId = queryResponse.prompt_context?.source_participant_id ?? queryResponse.prompt_context?.sourceParticipantId;
     if (isValidInvoker(pcId)) return participantName(pcId);
     if (queryResponse.batch_id && contributions) {
@@ -316,49 +307,13 @@ export const QueryResponseRow = memo(({ queryResponse, contributions, participan
     }
     return "another agent";
   }, [invokerId, source, queryResponse.batch_id, queryResponse.id, queryResponse.participant_id, queryResponse.prompt_context, contributions, participantName]);
-
   const responderName = participantName(queryResponse.participant_id);
-
-  const content = queryResponse.content ?? "";
-  const stripped = useMemo(() => {
-    return content.replace(/^\[Response to query from .+?\]\s*/m, "");
-  }, [content]);
-  const isLong = stripped.length > 300;
-  const hasTools = (queryResponse.tool_calls ?? []).length > 0;
-  const clickable = isLong || hasTools;
-  const html = useMemo(() => renderMarkdown(stripped), [stripped]);
-
-  const openDialog = () => onDialogOpen?.({ contribution: queryResponse, participantName: responderName, isQueryResponse: true, sourceAgentName });
-
-  return (
-    <div
-      className={cn("loom-card", "loom-contribution-card", "loom-contrib-type-query_response", "loom-query-response-row", clickable && "loom-contrib-clickable")}
-      onClick={openDialog}
-      role={clickable ? "button" : undefined}
-      tabIndex={clickable ? 0 : undefined}
-      onKeyDown={clickable ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDialog(); } } : undefined}
-    >
-      <div>
-        <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">
-          <span className="loom-text-xs"><span style={{ fontWeight: 700 }}>{responderName}</span> <span className="loom-text-muted">responded to query from</span> <span style={{ fontWeight: 700 }}>{sourceAgentName}</span></span>
-          <span style={{ marginLeft: "auto" }}><span className="loom-badge loom-badge-query_response">query response</span></span>
-        </div>
-      </div>
-      {isLong ? (
-        <p className="loom-text loom-text-muted">{stripped.slice(0, 300)}...</p>
-      ) : (
-        <div className="loom-prose" dangerouslySetInnerHTML={{ __html: html }} />
-      )}
-    </div>
-  );
+  const header = <><span style={{ fontWeight: 700 }}>{responderName}</span> <span className="loom-text-muted">responded to query from</span> <span style={{ fontWeight: 700 }}>{sourceAgentName}</span></>;
+  return <BaseResponseRow contribution={queryResponse} header={header} badgeLabel="query response" badgeClass="loom-badge-query_response" strippedRegex={/^\[Response to query from .+?\]\s*/m} typeClass="loom-contrib-type-query_response" rowClass="loom-query-response-row" onDialogOpen={onDialogOpen} dialogPayload={{ participantName: responderName, isQueryResponse: true, sourceAgentName }} />;
 });
 
 export const EvidenceResponseRow = memo(({ evidenceResponse, contributions, participantName, onDialogOpen, invokerId }) => {
-  const source = useMemo(() => {
-    if (!evidenceResponse.targets_which) return null;
-    return contributions.find((c) => c.id === evidenceResponse.targets_which);
-  }, [evidenceResponse.targets_which, contributions]);
-
+  const source = useMemo(() => !evidenceResponse.targets_which ? null : contributions.find((c) => c.id === evidenceResponse.targets_which), [evidenceResponse.targets_which, contributions]);
   const isValidInvoker = (id) => id && id !== "caller" && id !== "Caller" && id !== "unknown" && id !== "Unknown";
   const sourceAgentName = useMemo(() => {
     if (isValidInvoker(invokerId)) return participantName(invokerId);
@@ -376,57 +331,16 @@ export const EvidenceResponseRow = memo(({ evidenceResponse, contributions, part
   }, [invokerId, source, evidenceResponse.batch_id, evidenceResponse.id, evidenceResponse.participant_id, evidenceResponse.prompt_context, contributions, participantName]);
   const sourceType = source?.type?.toUpperCase() ?? "CONTRIBUTION";
   const responderName = participantName(evidenceResponse.participant_id);
-
-  const content = evidenceResponse.content ?? "";
-  const stripped = useMemo(() => {
-    return content.replace(/^\[Evidence from .+? on .+?\]\s*/m, "");
-  }, [content]);
-  const isLong = stripped.length > 300;
-  const hasTools = (evidenceResponse.tool_calls ?? []).length > 0;
-  const clickable = isLong || hasTools;
-  const html = useMemo(() => renderMarkdown(stripped), [stripped]);
-
-  const openDialog = () => onDialogOpen?.({ contribution: evidenceResponse, participantName: responderName, isEvidenceResponse: true, sourceAgentName, sourceType });
-
-  return (
-    <div
-      className={cn("loom-card", "loom-contribution-card", "loom-contrib-type-evidence_response", "loom-evidence-response-row", clickable && "loom-contrib-clickable")}
-      onClick={openDialog}
-      role={clickable ? "button" : undefined}
-      tabIndex={clickable ? 0 : undefined}
-      onKeyDown={clickable ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDialog(); } } : undefined}
-    >
-      <div>
-        <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">
-          <span className="loom-text-xs"><span style={{ fontWeight: 700 }}>{responderName}</span> <span className="loom-text-muted">providing evidence on</span> <span style={{ fontWeight: 700 }}>{sourceAgentName}</span><span className="loom-text-muted">'s {sourceType}</span></span>
-          <span style={{ marginLeft: "auto" }}><span className="loom-badge loom-badge-evidence_response">evidence</span></span>
-        </div>
-      </div>
-      {isLong ? (
-        <p className="loom-text loom-text-muted">{stripped.slice(0, 300)}...</p>
-      ) : (
-        <div className="loom-prose" dangerouslySetInnerHTML={{ __html: html }} />
-      )}
-    </div>
-  );
+  const header = <><span style={{ fontWeight: 700 }}>{responderName}</span> <span className="loom-text-muted">providing evidence on</span> <span style={{ fontWeight: 700 }}>{sourceAgentName}</span><span className="loom-text-muted">'s {sourceType}</span></>;
+  return <BaseResponseRow contribution={evidenceResponse} header={header} badgeLabel="evidence" badgeClass="loom-badge-evidence_response" strippedRegex={/^\[Evidence from .+? on .+?\]\s*/m} typeClass="loom-contrib-type-evidence_response" rowClass="loom-evidence-response-row" onDialogOpen={onDialogOpen} dialogPayload={{ participantName: responderName, isEvidenceResponse: true, sourceAgentName, sourceType }} />;
 });
 
 export const SummonedResponseRow = memo(({ summonedResponse, contributions, participantName, onDialogOpen, invokerId }) => {
   const content = summonedResponse.content ?? "";
-  const stripped = useMemo(() => {
-    return content.replace(/^\[Summoned: .+?\]\s*/m, "");
-  }, [content]);
-  const isLong = stripped.length > 300;
-  const hasTools = (summonedResponse.tool_calls ?? []).length > 0;
-
-  const html = useMemo(() => renderMarkdown(stripped), [stripped]);
-
-  // Extract persona name and tier from the content prefix
   const personaInfo = useMemo(() => {
     const match = content.match(/^\[Summoned: (.+?) \((.+?)\)\]/m);
     return match ? { name: match[1], tier: match[2] } : { name: "Guest Expert", tier: "unknown" };
   }, [content]);
-
   const isValidInvoker = (id) => id && id !== "caller" && id !== "Caller" && id !== "unknown" && id !== "Unknown";
   const invokerName = useMemo(() => {
     if (isValidInvoker(invokerId)) return participantName(invokerId);
@@ -441,50 +355,19 @@ export const SummonedResponseRow = memo(({ summonedResponse, contributions, part
     }
     return null;
   }, [invokerId, summonedResponse.batch_id, summonedResponse.id, summonedResponse.participant_id, summonedResponse.prompt_context, contributions, participantName]);
-
-  const openDialog = () => onDialogOpen?.({ contribution: summonedResponse, participantName: personaInfo.name, isSummonedResponse: true, personaName: personaInfo.name, personaTier: personaInfo.tier });
-
-  const clickable = isLong || hasTools;
-  return (
-    <div
-      className={cn("loom-card", "loom-contribution-card", "loom-contrib-type-summoned_response", "loom-summoned-response-row", clickable && "loom-contrib-clickable")}
-      onClick={openDialog}
-      role={clickable ? "button" : undefined}
-      tabIndex={clickable ? 0 : undefined}
-      onKeyDown={clickable ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDialog(); } } : undefined}
-    >
-      <div>
-        <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">
-          <span className="loom-text-xs"><span style={{ fontWeight: 700 }}>Guest expert {personaInfo.name}</span> <span className="loom-text-muted">({personaInfo.tier}){invokerName ? " summoned by " : ""}</span>{invokerName && <span style={{ fontWeight: 700 }}>{invokerName}</span>}</span>
-          <span style={{ marginLeft: "auto" }}><span className="loom-badge loom-badge-summoned_response">summoned</span></span>
-        </div>
-      </div>
-      {isLong ? (
-        <p className="loom-text loom-text-muted">{stripped.slice(0, 300)}...</p>
-      ) : (
-        <div className="loom-prose" dangerouslySetInnerHTML={{ __html: html }} />
-      )}
-    </div>
-  );
+  const header = <><span style={{ fontWeight: 700 }}>Guest expert {personaInfo.name}</span> <span className="loom-text-muted">({personaInfo.tier}){invokerName ? " summoned by " : ""}</span>{invokerName && <span style={{ fontWeight: 700 }}>{invokerName}</span>}</>;
+  return <BaseResponseRow contribution={summonedResponse} header={header} badgeLabel="summoned" badgeClass="loom-badge-summoned_response" strippedRegex={/^\[Summoned: .+?\]\s*/m} typeClass="loom-contrib-type-summoned_response" rowClass="loom-summoned-response-row" onDialogOpen={onDialogOpen} dialogPayload={{ participantName: personaInfo.name, isSummonedResponse: true, personaName: personaInfo.name, personaTier: personaInfo.tier }} />;
 });
 
 export const VoteResponseRow = memo(({ voteResponse, contributions, participantName, onDialogOpen, invokerId }) => {
-  const source = useMemo(() => {
-    if (!voteResponse.targets_which) return null;
-    return contributions.find((c) => c.id === voteResponse.targets_which);
-  }, [voteResponse.targets_which, contributions]);
-
+  const source = useMemo(() => !voteResponse.targets_which ? null : contributions.find((c) => c.id === voteResponse.targets_which), [voteResponse.targets_which, contributions]);
   const isValidInvoker = (id) => id && id !== "caller" && id !== "Caller" && id !== "unknown" && id !== "Unknown";
   const sourceAgentName = useMemo(() => {
     if (isValidInvoker(invokerId)) return participantName(invokerId);
     if (source) return participantName(source.participant_id);
     const pcId = voteResponse.prompt_context?.source_participant_id ?? voteResponse.prompt_context?.sourceParticipantId ?? voteResponse.prompt_context?.source_participant_name;
     if (isValidInvoker(pcId)) {
-      // pcId may be name for old data; try to map name to participant id via contributions
-      const byName = contributions?.find(c => {
-        const n = participantName(c.participant_id);
-        return n === pcId;
-      });
+      const byName = contributions?.find(c => participantName(c.participant_id) === pcId);
       if (byName) return participantName(byName.participant_id);
       return participantName(pcId);
     }
@@ -497,41 +380,9 @@ export const VoteResponseRow = memo(({ voteResponse, contributions, participantN
     }
     return "another agent";
   }, [invokerId, source, voteResponse.batch_id, voteResponse.id, voteResponse.participant_id, voteResponse.prompt_context, contributions, participantName]);
-
   const voterName = participantName(voteResponse.participant_id);
-
-  const content = voteResponse.content ?? "";
-  const stripped = useMemo(() => {
-    return content.replace(/^\[Vote from .+?\]\s*/m, "");
-  }, [content]);
-  const isLong = stripped.length > 300;
-  const hasTools = (voteResponse.tool_calls ?? []).length > 0;
-  const clickable = isLong || hasTools;
-  const html = useMemo(() => renderMarkdown(stripped), [stripped]);
-
-  const openDialog = () => onDialogOpen?.({ contribution: voteResponse, participantName: voterName, isVoteResponse: true, sourceAgentName });
-
-  return (
-    <div
-      className={cn("loom-card", "loom-contribution-card", "loom-contrib-type-vote_response", "loom-vote-response-row", clickable && "loom-contrib-clickable")}
-      onClick={openDialog}
-      role={clickable ? "button" : undefined}
-      tabIndex={clickable ? 0 : undefined}
-      onKeyDown={clickable ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDialog(); } } : undefined}
-    >
-      <div>
-        <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">
-          <span className="loom-text-xs"><span style={{ fontWeight: 700 }}>{voterName}</span> <span className="loom-text-muted">voted on poll from</span> <span style={{ fontWeight: 700 }}>{sourceAgentName}</span></span>
-          <span style={{ marginLeft: "auto" }}><span className="loom-badge loom-badge-vote_response">vote</span></span>
-        </div>
-      </div>
-      {isLong ? (
-        <p className="loom-text loom-text-muted">{stripped.slice(0, 300)}...</p>
-      ) : (
-        <div className="loom-prose" dangerouslySetInnerHTML={{ __html: html }} />
-      )}
-    </div>
-  );
+  const header = <><span style={{ fontWeight: 700 }}>{voterName}</span> <span className="loom-text-muted">voted on poll from</span> <span style={{ fontWeight: 700 }}>{sourceAgentName}</span></>;
+  return <BaseResponseRow contribution={voteResponse} header={header} badgeLabel="vote" badgeClass="loom-badge-vote_response" strippedRegex={/^\[Vote from .+?\]\s*/m} typeClass="loom-contrib-type-vote_response" rowClass="loom-vote-response-row" onDialogOpen={onDialogOpen} dialogPayload={{ participantName: voterName, isVoteResponse: true, sourceAgentName }} />;
 });
 
 export const VoteTallyRow = memo(({ tally, participantName, onDialogOpen }) => {

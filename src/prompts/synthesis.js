@@ -12,7 +12,7 @@ export function detectTaskMode(question, tags = []) {
     /\bbug\b/, /\berror\b/, /\bstack\b/, /\brepro\b/, /\brefactor\b/, /\bhook\b/, /\bhydration\b/
   ];
   const hits = codeSignals.filter(rx => rx.test(combined)).length;
-  if (hits >= 1) return "code-analysis";
+  if (hits >= 2) return "code-analysis";
   if (tagStr.includes("engineering") && (q.includes("file") || q.includes("code") || q.includes("project"))) return "code-analysis";
   return "conversational";
 }
@@ -22,7 +22,7 @@ export function buildSynthesisPrompt(question, transcript, participants = [], ta
   const mode = detectTaskMode(question, tags);
   const isCode = mode === "code-analysis";
   const safeQuestion = escapeDelimiters(sanitizeForDisplay(question, 20000));
-  const safeTranscript = delimitContext(escapeDelimiters(sanitizeForDisplay(transcript, 100000)), "TRANSCRIPT");
+  const safeTranscript = delimitContext(escapeDelimiters(sanitizeForDisplay(transcript, 8000)), "TRANSCRIPT");
   const participantsSection = participants.length > 0
     ? `\n## Participants (activity)\n${participants.map((p) => `- ${escapeDelimiters(sanitizeForDisplay(p.config.name, 80))} (${p.config.tier}): ${p.contributions_count} contributions${p.status === "failed" ? " [failed]" : p.status === "passed" ? " [passed late]" : ""}`).join("\n")}\n`
     : "";

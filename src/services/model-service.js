@@ -1,3 +1,13 @@
+/**
+ * Phase 3 audit: model trio kept distinct — model-discovery.js owns
+ * assignModelsByTier/sortModelsByQuality (capability scoring), this file is
+ * the discovery+assignment service, and model-manager.js is the embedding
+ * ONNX manager. Consolidating discovery into this file would be invasive
+ * and conflate LLM/provider models with embedding models, so we keep the
+ * separation and add this comment. parseFastPathModel dedup already done:
+ * single source is src/config/utils.js (re-exported via config/loader.js).
+ * A re-export alias is provided at bottom for callers expecting barrel.
+ */
 import { assignModelsByTier, sortModelsByQuality } from "../model-discovery.js";
 import { Logger, extractErrorInfo } from "../logger.js";
 
@@ -260,3 +270,7 @@ export function selectFallbackModel(currentModel, availableModels, circuitBreake
   const picked = healthy[Math.floor(Math.random() * healthy.length)];
   return { providerID: picked.providerID, modelID: picked.modelID };
 }
+
+// Re-export alias for model-discovery barrel expectations (Phase 3) — allows
+// `import { assignModelsByTier } from "./services/model-service.js"` as consolidation alias.
+export { assignModelsByTier, sortModelsByQuality };

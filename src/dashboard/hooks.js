@@ -191,15 +191,20 @@ export function useMeetingApi(meetingId, resetKey) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const lastPollIdRef = useRef(0);
+  const abortRef = useRef(null);
 
   const fetchMeetingData = useCallback(async (id) => {
     if (!id) {
       setLoading(false);
       return;
     }
+    if (abortRef.current) abortRef.current.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const signal = controller.signal;
     setLoading(true);
     try {
-      const res = await fetch(`/api/meeting?meeting=${id}&include_context=1&limit=100`);
+      const res = await fetch(`/api/meeting?meeting=${id}&include_context=1&limit=100`, { signal });
       if (!res.ok) {
         if (res.status === 404) {
           throw new Error("Meeting not found. It may have been deleted or is still initializing.");
@@ -210,6 +215,7 @@ export function useMeetingApi(meetingId, resetKey) {
       if (data.error) {
         throw new Error(data.error);
       }
+      if (signal.aborted) return;
       setState(data.state);
       setParticipants(data.participants);
       setTurnRequests(data.turn_requests ?? []);
@@ -225,8 +231,9 @@ export function useMeetingApi(meetingId, resetKey) {
       if (typeof total === "number" && all.length < total) {
         let nextOffset = (offset ?? 0) + (limit ?? all.length);
         while (all.length < total && nextOffset < total) {
+          if (signal.aborted) break;
           try {
-            const pres = await fetch(`/api/contributions?meeting=${id}&limit=${limit ?? 500}&offset=${nextOffset}&include_context=1`);
+            const pres = await fetch(`/api/contributions?meeting=${id}&limit=${limit ?? 500}&offset=${nextOffset}&include_context=1`, { signal });
             if (!pres.ok) {
               pageFailure = `Failed to load contributions page at offset ${nextOffset} (HTTP ${pres.status})`;
               break;
@@ -236,6 +243,7 @@ export function useMeetingApi(meetingId, resetKey) {
             all = all.concat(batch);
             nextOffset += batch.length || (limit ?? 500);
           } catch (err) {
+            if (err.name === "AbortError") break;
             pageFailure = `Failed to load contributions page at offset ${nextOffset}: ${err.message}`;
             break;
           }
@@ -257,9 +265,9 @@ export function useMeetingApi(meetingId, resetKey) {
       lastPollIdRef.current = Math.max(...all.map((c) => c.id ?? 0), 0);
       window.dispatchEvent(new CustomEvent("loom-initial-contributions", { detail: all }));
     } catch (e) {
-      setError(e.message);
+      if (e.name !== "AbortError") setError(e.message);
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) setLoading(false);
     }
   }, []);
 
@@ -267,6 +275,9 @@ export function useMeetingApi(meetingId, resetKey) {
     if (meetingId) {
       fetchMeetingData(meetingId);
     }
+    return () => {
+      if (abortRef.current) abortRef.current.abort();
+    };
   }, [meetingId, fetchMeetingData, resetKey]);
 
   useEffect(() => {

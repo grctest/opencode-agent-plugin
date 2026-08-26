@@ -1,6 +1,7 @@
 import { useRef, useMemo, useCallback, useState, useEffect, memo } from "react";
 import { cn, relativeTime } from "../utils.js";
 import { ContributionItem, TurnRequestItem, ThinkingCard, ReflectionRow, QueryResponseRow, EvidenceResponseRow, SummonedResponseRow, VoteResponseRow, OrchestratorItem, ORCHESTRATOR_TYPE_META, ContentDialog, renderMarkdown } from "./Cards.jsx";
+import { buildFlatItems, pairOrchestratorMessages } from "../utils/timeline.js";
 
 import { List } from "react-window";
 
@@ -77,22 +78,8 @@ const RoundSummaryItem = memo(({ summary, group, onDialogOpen }) => {
   );
 });
 
-function pairOrchestratorMessages(messages) {
-  const groups = [];
-  let i = 0;
-  while (i < messages.length) {
-    const msg = messages[i];
-    if (msg.role === "user") {
-      const response = messages[i + 1]?.role === "assistant" ? messages[i + 1] : null;
-      groups.push({ query: msg, response });
-      i += response ? 2 : 1;
-    } else {
-      groups.push({ query: null, response: msg });
-      i += 1;
-    }
-  }
-  return groups;
-}
+// pairOrchestratorMessages now imported from ../utils/timeline.js; local wrapper kept for compatibility
+// function pairOrchestratorMessages removed — see utils/timeline.js
 
 function getRowHeight(item) {
   if (item.type === "header") {
@@ -135,14 +122,15 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
           </div>
         )}
         <div className={cn("loom-round-group", item.isActive && "loom-round-active")}>
-          <button className="loom-round-header" onClick={() => onToggleCollapse(item.round)}>
-            <span className="loom-round-toggle">{item.isCollapsed ? "▶" : "▼"}</span>
+          <button className="loom-round-header" onClick={() => onToggleCollapse(item.round)} aria-expanded={!item.isCollapsed} aria-controls={`round-content-${item.round}`} aria-label={`Round ${item.round} ${item.isCollapsed ? "collapsed" : "expanded"}`}>
+            <span className="loom-round-toggle" aria-hidden="true">{item.isCollapsed ? "▶" : "▼"}</span>
             <span className="loom-round-title">Round {item.round}</span>
-            <span className="loom-round-count">{item.contribsCount} contribution{item.contribsCount !== 1 ? "s" : ""}</span>
+            <span className="loom-round-count" aria-live="polite">{item.contribsCount} contribution{item.contribsCount !== 1 ? "s" : ""}</span>
             {item.errorsCount > 0 && (
               <span className="loom-round-errors"><span aria-hidden="true">⚠</span> {item.errorsCount}</span>
             )}
           </button>
+          <div id={`round-content-${item.round}`} hidden={item.isCollapsed} aria-hidden={item.isCollapsed} />
         </div>
       </div>
     );
@@ -504,660 +492,20 @@ const TimelineTabBase = ({
     setOrchestratorActiveTab("prompt");
   }, []);
 
-    // Per-round segment cache (audit 11 PF2)
-  const roundSegmentCacheRef = useRef(new Map());
-const flatItems = useMemo(() => {
-    // Per-round segment cache (audit 11 PF2): an incremental contribution only
-    // recomputes its own round's items — the other rounds come from cache.
-    const out = [];
-    const segCache = roundSegmentCacheRef.current;
-    const liveRounds = new Set(groupedContributions.map(([r]) => r));
-    for (const key of [...segCache.keys()]) {
-      if (!liveRounds.has(key)) segCache.delete(key);
-    }
-    for (const [round, contribs] of groupedContributions) {
-      const isCollapsed0 = collapsedRounds.includes(round);
-      const roundErrors0 = agentErrors.filter((e) => e.round === round);
-      const showExtensionMarker0 = extensions.length > 0 && round === (maxRounds ? maxRounds - (extensions.length * 4) : 0) + 1;
-      const liveSig = [
-        thinkingParticipants.map((p) => p.id).join(","),
-        reflectingParticipants.map((p) => p.id).join(","),
-        queryingParticipants.map((p) => p.id).join(","),
-        evidenceParticipants.map((p) => p.id).join(","),
-        summoningParticipants.map((p) => p.id).join(","),
-      ].join("|");
-      const sig = [
-        round,
-        contribs.length,
-        contribs.length ? contribs[contribs.length - 1]?.id ?? null : null,
-        isCollapsed0,
-        round === activeRound,
-        roundErrors0.map((e) => e.id).join(","),
-        turnRequests.length,
-        turnRequests.length ? turnRequests[turnRequests.length - 1]?.id ?? null : null,
-        showExtensionMarker0,
-        liveSig,
-        orchestratorMessages?.length ?? 0,
-        roundSummaries[round] ?? "",
-      ].join("~");
+  // Extracted pure function — see src/dashboard/utils/timeline.js
+  const flatItems = useMemo(() => buildFlatItems(groupedContributions, {
+    collapsedRounds, activeRound, agentErrors, turnRequests, extensions, maxRounds, isWeaving,
+    thinkingParticipants, reflectingParticipants, queryingParticipants, evidenceParticipants, summoningParticipants,
+    participantName, orchestratorMessages, roundSummaries
+  }), [groupedContributions, collapsedRounds, activeRound, agentErrors, turnRequests, extensions, maxRounds, isWeaving, thinkingParticipants, reflectingParticipants, queryingParticipants, evidenceParticipants, summoningParticipants, participantName, orchestratorMessages, roundSummaries]);
 
-      const cachedSeg = segCache.get(round);
-      if (cachedSeg && cachedSeg.sig === sig) {
-        out.push(...cachedSeg.items);
-        continue;
-      }
-
-      const segItems = [];
-      {
-        const items = segItems;
-        const isCollapsed = isCollapsed0;
-        const roundErrors = roundErrors0;
-        const showExtensionMarker = showExtensionMarker0;
-
-        const visibleContribsCount = contribs.filter(c => c.type !== "vote_tally").length;
-        items.push({
-        type: "header",
-        round,
-        isCollapsed,
-        isActive: round === activeRound,
-        contribsCount: visibleContribsCount,
-        errorsCount: roundErrors.length,
-        showExtensionMarker,
-      });
-
-      if (!isCollapsed) {
-        const roundTurnRequests = turnRequests.filter((tr) => {
-          if (contribs.length === 0) return false;
-          const contribTimes = contribs.map((c) => c.created_at);
-          const roundStart = Math.min(...contribTimes);
-          return tr.created_at >= roundStart;
-        });
-
-        const regularByAgent = new Map();
-        const reflectionsByTarget = new Map();
-        const consumedReflectionIds = new Set();
-        const queryResponsesByTarget = new Map();
-        const consumedQueryIds = new Set();
-        const evidenceResponsesByTarget = new Map();
-        const consumedEvidenceIds = new Set();
-        const summonedResponses = [];
-        const consumedSummonIds = new Set();
-        const votesByTarget = new Map();
-        const consumedVoteIds = new Set();
-        // Batch grouping for inline real tool use where targets_which is null but batch_id links to invoker
-        const queryByBatch = new Map();
-        const evidenceByBatch = new Map();
-        const votesByBatch = new Map();
-        const summonByBatch = new Map();
-
-        for (const c of contribs) {
-          if (c.type === "vote_tally") {
-            // Tally intentionally excluded from timeline (invoker interprets votes inline)
-            continue;
-          }
-          if (c.type === "reflection") {
-            const targetId = c.targets_which;
-            if (targetId != null) {
-              if (!reflectionsByTarget.has(targetId)) reflectionsByTarget.set(targetId, []);
-              reflectionsByTarget.get(targetId).push(c);
-            }
-          } else if (c.type === "query_response") {
-            const targetId = c.targets_which;
-            if (targetId != null) {
-              if (!queryResponsesByTarget.has(targetId)) queryResponsesByTarget.set(targetId, []);
-              queryResponsesByTarget.get(targetId).push(c);
-            } else if (c.batch_id) {
-              if (!queryByBatch.has(c.batch_id)) queryByBatch.set(c.batch_id, []);
-              queryByBatch.get(c.batch_id).push(c);
-            }
-          } else if (c.type === "perspective_response") {
-            const targetId = c.targets_which;
-            if (targetId != null) {
-              if (!queryResponsesByTarget.has(targetId)) queryResponsesByTarget.set(targetId, []);
-              queryResponsesByTarget.get(targetId).push(c);
-            } else if (c.batch_id) {
-              if (!queryByBatch.has(c.batch_id)) queryByBatch.set(c.batch_id, []);
-              queryByBatch.get(c.batch_id).push(c);
-            }
-          } else if (c.type === "critique_response") {
-            const targetId = c.targets_which;
-            if (targetId != null) {
-              if (!queryResponsesByTarget.has(targetId)) queryResponsesByTarget.set(targetId, []);
-              queryResponsesByTarget.get(targetId).push(c);
-            } else if (c.batch_id) {
-              if (!queryByBatch.has(c.batch_id)) queryByBatch.set(c.batch_id, []);
-              queryByBatch.get(c.batch_id).push(c);
-            }
-          } else if (c.type === "evidence_response") {
-            const targetId = c.targets_which;
-            if (targetId != null) {
-              if (!evidenceResponsesByTarget.has(targetId)) evidenceResponsesByTarget.set(targetId, []);
-              evidenceResponsesByTarget.get(targetId).push(c);
-            } else if (c.batch_id) {
-              if (!evidenceByBatch.has(c.batch_id)) evidenceByBatch.set(c.batch_id, []);
-              evidenceByBatch.get(c.batch_id).push(c);
-            }
-          } else if (c.type === "summoned_response") {
-            if (c.batch_id) {
-              if (!summonByBatch.has(c.batch_id)) summonByBatch.set(c.batch_id, []);
-              summonByBatch.get(c.batch_id).push(c);
-            } else {
-              summonedResponses.push(c);
-            }
-          } else if (c.type === "vote_response") {
-            const targetId = c.targets_which;
-            if (targetId != null) {
-              if (!votesByTarget.has(targetId)) votesByTarget.set(targetId, []);
-              votesByTarget.get(targetId).push(c);
-            } else if (c.batch_id) {
-              if (!votesByBatch.has(c.batch_id)) votesByBatch.set(c.batch_id, []);
-              votesByBatch.get(c.batch_id).push(c);
-            }
-          } else {
-            const key = c.participant_id;
-            if (!regularByAgent.has(key)) regularByAgent.set(key, []);
-            regularByAgent.get(key).push(c);
-          }
-        }
-
-        // Map batch_id -> invoker participant_id for quick lookup
-        const batchToInvoker = new Map();
-        for (const [, contribs] of regularByAgent) {
-          for (const c of contribs) if (c.batch_id) batchToInvoker.set(c.batch_id, c.participant_id);
-        }
-        // Helper to find invoker for an orphan response (query/evidence/vote/summon)
-        const findInvokerIdForResponse = (resp) => {
-          if (resp.batch_id && batchToInvoker.has(resp.batch_id)) {
-            const v = batchToInvoker.get(resp.batch_id);
-            if (v && v !== "caller" && v !== "unknown") return v;
-          }
-          const srcId = resp.prompt_context?.source_participant_id ?? resp.prompt_context?.sourceParticipantId ?? resp.prompt_context?.source_participant_name;
-          if (srcId && srcId !== "caller" && srcId !== "unknown" && srcId !== "Unknown") {
-            // prompt_context may store name instead of id for older data; try to resolve name to id via participants
-            if (srcId.length < 30 && !srcId.includes(" ")) {
-              // treat as id
-              return srcId;
-            }
-          }
-          if (resp.prompt_context?.source_participant_id && resp.prompt_context.source_participant_id !== "caller" && resp.prompt_context.source_participant_id !== "unknown") return resp.prompt_context.source_participant_id;
-          if (resp.prompt_context?.sourceParticipantId && resp.prompt_context.sourceParticipantId !== "caller" && resp.prompt_context.sourceParticipantId !== "unknown") return resp.prompt_context.sourceParticipantId;
-          // Scan tool calls on regular contributions that target this responder
-          let best = null;
-          let bestId = -1;
-          for (const [, rContribs] of regularByAgent) {
-            for (const c of rContribs) {
-              if (c.id >= resp.id) continue;
-              const calls = c.tool_calls ?? [];
-              for (const tc of calls) {
-                const tool = tc.tool ?? tc.attempted_tool;
-                if (!tool) continue;
-                try {
-                  const input = typeof tc.input === "string" ? JSON.parse(tc.input) : tc.input;
-                  if (tool === "loom_query" || tool === "loom_evidence") {
-                    const queries = input.queries ?? (Array.isArray(input.targets) ? input.targets.map(t => ({target: t})) : []);
-                    // also handle single question form {target, question} legacy
-                    const targets = queries.map(q => q.target ?? q.targetId).filter(Boolean);
-                    if (targets.includes(resp.participant_id)) {
-                      if (c.id > bestId) { bestId = c.id; best = c.participant_id; }
-                    }
-                  } else if (tool === "loom_vote") {
-                    if (resp.type === "vote_response" && resp.round === c.round) {
-                      if (c.id > bestId) { bestId = c.id; best = c.participant_id; }
-                    }
-                  } else if (tool === "loom_summon") {
-                    if (resp.type === "summoned_response" && resp.round === c.round) {
-                      if (c.id > bestId) { bestId = c.id; best = c.participant_id; }
-                    }
-                  }
-                } catch {}
-              }
-            }
-          }
-          return best;
-        };
-
-        // Order invokers chronologically by earliest contribution id/timestamp
-        const sortedAgentEntries = [...regularByAgent.entries()].sort((a, b) => {
-          const aFirst = a[1][0];
-          const bFirst = b[1][0];
-          const aId = aFirst?.id ?? 0;
-          const bId = bFirst?.id ?? 0;
-          if (aId !== bId) return aId - bId;
-          const aTime = aFirst?.created_at ? new Date(aFirst.created_at).getTime() : 0;
-          const bTime = bFirst?.created_at ? new Date(bFirst.created_at).getTime() : 0;
-          return aTime - bTime;
-        });
-        // Thinking placeholder for agents yet to speak — shown above sub-agent rows (per user request)
-        if (round === activeRound && isWeaving && thinkingParticipants.length > 0) {
-          const thinkingIds = new Set(thinkingParticipants.map((p) => p.id));
-          const agentIdsInRound = new Set(regularByAgent.keys());
-          const pendingThinking = thinkingParticipants.filter((p) => !agentIdsInRound.has(p.id));
-          for (const p of pendingThinking) {
-            items.push({
-              type: "thinking_turn",
-              participant: p,
-              round,
-            });
-          }
-        }
-        for (const [agentId, agentContribs] of sortedAgentEntries) {
-          items.push({
-            type: "agent_turn",
-            agentId,
-            round,
-            contributions: agentContribs,
-          });
-
-          // Loom invocations — aesthetic indented rows under the invoker, mirroring reflections
-          for (const c of agentContribs) {
-            const loomCalls = (c.tool_calls ?? []).filter(tc => (tc.tool ?? tc.attempted_tool ?? "").startsWith("loom_"));
-            for (const tc of loomCalls) {
-              items.push({
-                type: "loom_invocation",
-                invocation: tc,
-                sourceContributionId: c.id,
-                sourceParticipantId: c.participant_id,
-                round,
-              });
-            }
-          }
-          // Per-invoker thinking placeholders — shown ABOVE this invoker's sub-agent responses
-          if (round === activeRound && isWeaving) {
-            for (const c of agentContribs) {
-              if ((c.type === "challenge" || c.type === "dissent") && !reflectionsByTarget.has(c.id)) {
-                for (const p of reflectingParticipants) {
-                  if (p.id !== c.participant_id) {
-                    items.push({
-                      type: "thinking_reflection",
-                      triggerContributionId: c.id,
-                      triggerType: c.type,
-                      triggerAgentName: participantName(c.participant_id),
-                      reflectorName: p.name,
-                      round,
-                    });
-                  }
-                }
-              }
-            }
-            const queriedTargets = new Set();
-            const evidenceTargets = new Set();
-            const hasSummonCall = agentContribs.some(agc => (agc.tool_calls ?? []).some(tc => (tc.tool ?? tc.attempted_tool) === "loom_summon"));
-            for (const c of agentContribs) {
-              for (const tc of (c.tool_calls ?? [])) {
-                const tool = tc.tool ?? tc.attempted_tool;
-                if (!tool) continue;
-                try {
-                  const input = typeof tc.input === "string" ? JSON.parse(tc.input) : tc.input;
-                  if (tool === "loom_query" || tool === "loom_evidence") {
-                    const queries = input.queries ?? (Array.isArray(input.targets) ? input.targets.map(t => ({ target: t })) : []);
-                    const qs = Array.isArray(queries) ? queries : [];
-                    for (const q of qs) {
-                      const tid = q.target ?? q.targetId;
-                      if (tid) {
-                        if (q.mode === "evidence" || tool === "loom_evidence") { evidenceTargets.add(tid); queriedTargets.delete(tid); }
-                        else queriedTargets.add(tid);
-                      }
-                    }
-                    if (input.target && !input.queries) {
-                      const tid = input.target;
-                      if (tool === "loom_evidence" || input.mode === "evidence") evidenceTargets.add(tid);
-                      else queriedTargets.add(tid);
-                    }
-                  }
-                } catch {}
-              }
-            }
-            for (const qp of queryingParticipants) {
-              if (!queriedTargets.has(qp.id)) continue;
-              const hasResponded = contribs.some(c => {
-                if (!["query_response","perspective_response","critique_response"].includes(c.type)) return false;
-                if (c.participant_id !== qp.id) return false;
-                const invoker = findInvokerIdForResponse(c);
-                return invoker === agentId;
-              });
-              if (!hasResponded) {
-                items.push({ type: "thinking_query", queriedAgentName: qp.name, round, invokerId: agentId });
-              }
-            }
-            for (const ep of evidenceParticipants) {
-              if (!evidenceTargets.has(ep.id)) continue;
-              const hasResponded = contribs.some(c => c.type === "evidence_response" && c.participant_id === ep.id && findInvokerIdForResponse(c) === agentId);
-              if (!hasResponded) {
-                items.push({ type: "thinking_evidence", evidenceAgentName: ep.name, round, invokerId: agentId });
-              }
-            }
-            if (hasSummonCall) {
-              const hasResponded = contribs.some(c => c.type === "summoned_response" && findInvokerIdForResponse(c) === agentId);
-              if (!hasResponded && summoningParticipants.length > 0) {
-                for (const sp of summoningParticipants) {
-                  items.push({ type: "thinking_summon", summonName: sp.name, round, invokerId: agentId });
-                  break;
-                }
-              }
-            }
-          }
-
-          for (const c of agentContribs) {
-            if (reflectionsByTarget.has(c.id)) {
-              for (const r of reflectionsByTarget.get(c.id)) {
-                consumedReflectionIds.add(r.id);
-                items.push({
-                  type: "reflection",
-                  reflection: r,
-                  round,
-                });
-              }
-            }
-            if (queryResponsesByTarget.has(c.id)) {
-              for (const qr of queryResponsesByTarget.get(c.id)) {
-                consumedQueryIds.add(qr.id);
-                items.push({
-                  type: "query_response",
-                  queryResponse: qr,
-                  round,
-                });
-              }
-            }
-            if (evidenceResponsesByTarget.has(c.id)) {
-              for (const er of evidenceResponsesByTarget.get(c.id)) {
-                consumedEvidenceIds.add(er.id);
-                items.push({
-                  type: "evidence_response",
-                  evidenceResponse: er,
-                  round,
-                });
-              }
-            }
-            if (votesByTarget.has(c.id)) {
-              for (const v of votesByTarget.get(c.id)) {
-                consumedVoteIds.add(v.id);
-                items.push({
-                  type: "vote_response",
-                  voteResponse: v,
-                  round,
-                });
-              }
-            }
-            // Batch-linked inline responses (real tool use): batch_id groups when targets_which is null
-            if (c.batch_id) {
-              if (queryByBatch.has(c.batch_id)) {
-                for (const qr of queryByBatch.get(c.batch_id)) {
-                  if (!consumedQueryIds.has(qr.id)) {
-                    consumedQueryIds.add(qr.id);
-                    items.push({ type: qr.type, queryResponse: qr, perspectiveResponse: qr, critiqueResponse: qr, round, invokerId: c.participant_id });
-                  }
-                }
-              }
-              if (evidenceByBatch.has(c.batch_id)) {
-                for (const er of evidenceByBatch.get(c.batch_id)) {
-                  if (!consumedEvidenceIds.has(er.id)) {
-                    consumedEvidenceIds.add(er.id);
-                    items.push({ type: "evidence_response", evidenceResponse: er, round, invokerId: c.participant_id });
-                  }
-                }
-              }
-              if (votesByBatch.has(c.batch_id)) {
-                for (const v of votesByBatch.get(c.batch_id)) {
-                  if (!consumedVoteIds.has(v.id)) {
-                    consumedVoteIds.add(v.id);
-                    items.push({ type: "vote_response", voteResponse: v, round, invokerId: c.participant_id });
-                  }
-                }
-              }
-              if (summonByBatch.has(c.batch_id)) {
-                for (const sr of summonByBatch.get(c.batch_id)) {
-                  if (!consumedSummonIds.has(sr.id)) {
-                    consumedSummonIds.add(sr.id);
-                    items.push({ type: "summoned_response", summonedResponse: sr, round, invokerId: c.participant_id });
-                  }
-                }
-              }
-            }
-          }
-          // Attach any remaining orphan responses that belong to this invoker via batch/prompt/tool-call fallback
-          // Query (including perspective/critique)
-          for (const [, list] of queryResponsesByTarget) {
-            for (const qr of list) {
-              if (consumedQueryIds.has(qr.id)) continue;
-              const invoker = findInvokerIdForResponse(qr);
-              if (invoker === agentId) {
-                consumedQueryIds.add(qr.id);
-                items.push({ type: qr.type, queryResponse: qr, perspectiveResponse: qr, critiqueResponse: qr, round, invokerId: agentId });
-              }
-            }
-          }
-          for (const [bid, list] of queryByBatch) {
-            for (const qr of list) {
-              if (consumedQueryIds.has(qr.id)) continue;
-              const invoker = findInvokerIdForResponse(qr);
-              if (invoker === agentId) {
-                consumedQueryIds.add(qr.id);
-                items.push({ type: qr.type, queryResponse: qr, perspectiveResponse: qr, critiqueResponse: qr, round, invokerId: agentId });
-              }
-            }
-          }
-          for (const [, list] of evidenceResponsesByTarget) {
-            for (const er of list) {
-              if (consumedEvidenceIds.has(er.id)) continue;
-              const invoker = findInvokerIdForResponse(er);
-              if (invoker === agentId) {
-                consumedEvidenceIds.add(er.id);
-                items.push({ type: "evidence_response", evidenceResponse: er, round, invokerId: agentId });
-              }
-            }
-          }
-          for (const [bid, list] of evidenceByBatch) {
-            for (const er of list) {
-              if (consumedEvidenceIds.has(er.id)) continue;
-              const invoker = findInvokerIdForResponse(er);
-              if (invoker === agentId) {
-                consumedEvidenceIds.add(er.id);
-                items.push({ type: "evidence_response", evidenceResponse: er, round, invokerId: agentId });
-              }
-            }
-          }
-          for (const [, list] of votesByTarget) {
-            for (const v of list) {
-              if (consumedVoteIds.has(v.id)) continue;
-              const invoker = findInvokerIdForResponse(v);
-              if (invoker === agentId) {
-                consumedVoteIds.add(v.id);
-                items.push({ type: "vote_response", voteResponse: v, round, invokerId: agentId });
-              }
-            }
-          }
-          for (const [bid, list] of votesByBatch) {
-            for (const v of list) {
-              if (consumedVoteIds.has(v.id)) continue;
-              const invoker = findInvokerIdForResponse(v);
-              if (invoker === agentId) {
-                consumedVoteIds.add(v.id);
-                items.push({ type: "vote_response", voteResponse: v, round, invokerId: agentId });
-              }
-            }
-          }
-          for (const [bid, list] of summonByBatch) {
-            for (const sr of list) {
-              if (consumedSummonIds.has(sr.id)) continue;
-              const invoker = findInvokerIdForResponse(sr);
-              if (invoker === agentId) {
-                consumedSummonIds.add(sr.id);
-                items.push({ type: "summoned_response", summonedResponse: sr, round, invokerId: agentId });
-              }
-            }
-          }
-          for (const sr of summonedResponses) {
-            if (consumedSummonIds.has(sr.id)) continue;
-            const invoker = findInvokerIdForResponse(sr);
-            if (invoker === agentId) {
-              consumedSummonIds.add(sr.id);
-              items.push({ type: "summoned_response", summonedResponse: sr, round, invokerId: agentId });
-            }
-          }
-          for (const [, list] of reflectionsByTarget) {
-            for (const r of list) {
-              if (consumedReflectionIds.has(r.id)) continue;
-              const target = contribs.find(c => c.id === r.targets_which);
-              if (target && target.participant_id === agentId) {
-                consumedReflectionIds.add(r.id);
-                items.push({ type: "reflection", reflection: r, round });
-              }
-            }
-          }
-        }
-
-        for (const [, reflections] of reflectionsByTarget) {
-          for (const r of reflections) {
-            if (!consumedReflectionIds.has(r.id)) {
-              items.push({
-                type: "reflection",
-                reflection: r,
-                round,
-              });
-            }
-          }
-        }
-
-        for (const [, queryResponses] of queryResponsesByTarget) {
-          for (const qr of queryResponses) {
-            if (!consumedQueryIds.has(qr.id)) {
-              const invoker = findInvokerIdForResponse(qr);
-              items.push({
-                type: qr.type,
-                queryResponse: qr,
-                perspectiveResponse: qr,
-                critiqueResponse: qr,
-                round,
-                invokerId: invoker,
-              });
-            }
-          }
-        }
-
-        for (const [, evidenceResponses] of evidenceResponsesByTarget) {
-          for (const er of evidenceResponses) {
-            if (!consumedEvidenceIds.has(er.id)) {
-              const invoker = findInvokerIdForResponse(er);
-              items.push({
-                type: "evidence_response",
-                evidenceResponse: er,
-                round,
-                invokerId: invoker,
-              });
-            }
-          }
-        }
-
-        // Orphan summoned responses without batch_id (fallback)
-        for (const sr of summonedResponses) {
-          if (!consumedSummonIds.has(sr.id)) {
-            const invoker = findInvokerIdForResponse(sr);
-            items.push({
-              type: "summoned_response",
-              summonedResponse: sr,
-              round,
-              invokerId: invoker,
-            });
-          }
-        }
-        // Orphan batch-linked summoned responses (invoker had no regular contribution — fallback)
-        for (const [, srs] of summonByBatch) {
-          for (const sr of srs) {
-            if (!consumedSummonIds.has(sr.id)) {
-              const invoker = findInvokerIdForResponse(sr);
-              items.push({ type: "summoned_response", summonedResponse: sr, round, invokerId: invoker });
-              consumedSummonIds.add(sr.id);
-            }
-          }
-        }
-
-        for (const [, votes] of votesByTarget) {
-          for (const v of votes) {
-            if (!consumedVoteIds.has(v.id)) {
-              const invoker = findInvokerIdForResponse(v);
-              items.push({
-                type: "vote_response",
-                voteResponse: v,
-                round,
-                invokerId: invoker,
-              });
-            }
-          }
-        }
-        // Orphan batch-linked votes (if invoker had no regular contribution but vote still exists — fallback)
-        for (const [, votes] of votesByBatch) {
-          for (const v of votes) {
-            if (!consumedVoteIds.has(v.id)) {
-              const invoker = findInvokerIdForResponse(v);
-              items.push({ type: "vote_response", voteResponse: v, round, invokerId: invoker });
-              consumedVoteIds.add(v.id);
-            }
-          }
-        }
-        for (const [, qrs] of queryByBatch) {
-          for (const qr of qrs) {
-            if (!consumedQueryIds.has(qr.id)) {
-              const invoker = findInvokerIdForResponse(qr);
-              items.push({ type: qr.type, queryResponse: qr, perspectiveResponse: qr, critiqueResponse: qr, round, invokerId: invoker });
-              consumedQueryIds.add(qr.id);
-            }
-          }
-        }
-        for (const [, ers] of evidenceByBatch) {
-          for (const er of ers) {
-            if (!consumedEvidenceIds.has(er.id)) {
-              const invoker = findInvokerIdForResponse(er);
-              items.push({ type: "evidence_response", evidenceResponse: er, round, invokerId: invoker });
-              consumedEvidenceIds.add(er.id);
-            }
-          }
-        }
-
-        for (const tr of roundTurnRequests) {
-          items.push({ type: "turn_request", turnRequest: tr });
-        }
-
-        // Add model fallback events as timeline items
-        for (const err of roundErrors) {
-          if (err.error_type === "model_fallback") {
-            items.push({ type: "model_fallback", error: err, round });
-          }
-        }
-
-        const roundOrchestratorMessages = orchestratorMessages
-          ? orchestratorMessages
-              .filter((m) => m.round === round && (m.role === "user" || m.role === "assistant"))
-              .sort((a, b) => (a.id ?? 0) - (b.id ?? 0))
-          : [];
-
-        const orchestratorGroups = pairOrchestratorMessages(roundOrchestratorMessages);
-
-        for (const og of orchestratorGroups) {
-          items.push({ type: "orchestrator", group: og });
-        }
-
-        const roundSummary = roundSummaries[round];
-        const summaryMsgs = roundOrchestratorMessages.filter((m) => m.type === "summary");
-        // Only render the rounds-table summary when no LLM summary exchange
-        // was recorded — otherwise the grey OrchestratorItem already shows it.
-        if (roundSummary && summaryMsgs.length === 0) {
-          items.push({
-            type: "round_summary",
-            round,
-            summary: roundSummary,
-            group: {
-              query: null,
-              response: { type: "summary", role: "assistant", content: roundSummary, created_at: null },
-            },
-          });
-        }
-      }
-      }
-      segCache.set(round, { sig, items: segItems });
-      out.push(...segItems);
-    }
-    return out;
-  }, [groupedContributions, collapsedRounds, activeRound, agentErrors, turnRequests, extensions, maxRounds, isWeaving, thinkingParticipants, reflectingParticipants, queryingParticipants, evidenceParticipants, summoningParticipants, participantName, orchestratorMessages, roundSummaries]);
+  // Wire poll error handler to setPollError (exposed via aria-live)
+  const [pollError, setPollError] = useState(null);
+  useEffect(() => {
+    const handler = (e) => setPollError(e.detail?.message ?? String(e.detail ?? "poll error"));
+    window.addEventListener("loom-sse-error", handler);
+    return () => window.removeEventListener("loom-sse-error", handler);
+  }, []);
 
   const rowHeightFn = useCallback((index, cellProps) => {
     const item = cellProps.items[index];
@@ -1186,6 +534,15 @@ const flatItems = useMemo(() => {
 
   return (
     <div className="loom-main-content">
+      {/* Poll error aria-live region — wired to setPollError */}
+      {pollError && (
+        <div className="loom-card loom-card-error loom-mb-sm" role="alert" aria-live="polite" aria-atomic="true">
+          <p className="loom-text-xs">{pollError}</p>
+          <button className="loom-link-btn" onClick={() => setPollError(null)} aria-label="Dismiss poll error">Dismiss</button>
+        </div>
+      )}
+      {/* Live indicator for assistive tech */}
+      <div className="sr-only" aria-live="polite" aria-atomic="true">{isWeaving ? `Live — round ${activeRound} weaving` : `Round ${activeRound} complete`}</div>
       {groupedContributions.length === 0 && contributions.length === 0 && !isWeaving && (
         <div className="loom-empty-state">
           <div className="loom-empty-icon" aria-hidden="true">🧵</div>
@@ -1194,7 +551,7 @@ const flatItems = useMemo(() => {
         </div>
       )}
       {flatItems.length > 0 && (
-        <div className="loom-timeline-list">
+        <div className="loom-timeline-list" aria-live="polite">
           <List
             listRef={listRef}
             rowCount={flatItems.length}

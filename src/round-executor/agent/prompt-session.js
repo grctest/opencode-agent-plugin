@@ -8,6 +8,7 @@ import { selectFallbackModel } from "../../services/model-service.js";
 import { incrementKeyedCounter, recordLatency } from "../../metrics.js";
 import { extractErrorInfo } from "../../logger.js";
 import { buildToolsMap, buildToolsMapWithoutLoom } from "../tools.js";
+import { delimitContext } from "../../prompts/delimiters.js";
 
 export async function promptChildSession(participant) {
   participant.status = "speaking";
@@ -62,7 +63,7 @@ export async function promptChildSession(participant) {
     this._stateManager.getTags(),
     this._stateManager.getContext?.() ?? "",
   );
-  const userPrompt = steeringHint ? `${userPromptBase}\n\n${steeringHint}` : userPromptBase;
+  const userPrompt = steeringHint ? `${userPromptBase}\n\n${delimitContext(steeringHint, "STEERING_HINT")}` : userPromptBase;
 
   const promptContext = {
     type: "agent_turn",

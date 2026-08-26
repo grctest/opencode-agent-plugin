@@ -74,6 +74,17 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
 
           let caller = allParticipants.find((p) => p.session_id === context.sessionID) || null;
           if (!caller) caller = allParticipants.find((p) => p?.status === "speaking") || null;
+          // Last spoken in this round is most likely invoker when session_id mismatches (tool called mid-turn)
+          if (!caller) {
+            try {
+              const weave = stateManager.getWeave?.() ?? [];
+              const roundWeave = weave.filter(c => c.round === stateManager.getCurrentRound());
+              if (roundWeave.length > 0) {
+                const lastId = roundWeave[roundWeave.length - 1].participant_id;
+                caller = allParticipants.find(p => p.config.id === lastId) || null;
+              }
+            } catch {}
+          }
           if (!caller) caller = allParticipants.find((p) => p?.status !== "failed" && p?.status !== "passed" && p?.status !== "muted") || null;
           const sourceName = caller?.config?.name ?? "Unknown";
 
@@ -173,7 +184,9 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
                 let callerForBatch = allParts.find(p => p.session_id === context.sessionID) || null;
                 if (!callerForBatch) callerForBatch = allParts.find(p => p?.status === "speaking") || null;
                 if (!callerForBatch) callerForBatch = caller;
-                const batchId = callerForBatch?.currentBatchId ?? caller?.currentBatchId ?? `inline-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
+                // Deterministic fallback keeps batch linkable: meetingId-round-callerId
+                const fallbackBatch = `inline-${stateManager.getState?.()?.id ?? meetingInfo.meetingId}-${stateManager.getCurrentRound?.() ?? 0}-${caller?.config?.id ?? "unknown"}`;
+                const batchId = callerForBatch?.currentBatchId ?? caller?.currentBatchId ?? fallbackBatch;
                 const currentRound = stateManager.getCurrentRound();
                 let roundObj = null;
                 try { const st = stateManager.getState(); roundObj = (st.rounds || []).find(r => r.number === currentRound) || null; } catch {}

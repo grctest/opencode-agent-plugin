@@ -30,15 +30,15 @@ export class MeetingDatabase {
     const DatabaseClass = getDatabaseClass();
     const db = new DatabaseClass(dbPath);
     try {
-      db.exec('BEGIN TRANSACTION');
+      db.exec('BEGIN IMMEDIATE');
       const result = await fn(db);
       db.exec('COMMIT');
       return result;
     } catch (err) {
-      db.exec('ROLLBACK');
+      try { db.exec('ROLLBACK'); } catch {}
       throw err;
     } finally {
-      db.close();
+      try { db.close(); } catch {}
     }
   }
 
@@ -50,8 +50,8 @@ export class MeetingDatabase {
       return db.prepare(
         `SELECT id, name, persona, agenda, tier, provider_id, model_id FROM participants ORDER BY tier ASC`
       ).all();
-    } finally {
-      db.close();
+    } catch (err) { throw err; } finally {
+      try { db.close(); } catch {}
     }
   }
 
@@ -65,8 +65,8 @@ export class MeetingDatabase {
          FROM meetings LIMIT 1`
       ).get();
       return row ?? null;
-    } finally {
-      db.close();
+    } catch (err) { throw err; } finally {
+      try { db.close(); } catch {}
     }
   }
 
@@ -80,6 +80,8 @@ export class MeetingDatabase {
     this.#db.exec("PRAGMA journal_mode = WAL");
     this.#db.exec("PRAGMA foreign_keys = ON");
     this.#db.exec("PRAGMA busy_timeout = 5000");
+    this.#db.exec("PRAGMA synchronous = NORMAL");
+    this.#db.exec("PRAGMA wal_autocheckpoint = 1000");
     const vecPath = resolveVecPath();
     if (vecPath && existsSync(vecPath)) {
       try {
@@ -110,13 +112,13 @@ export class MeetingDatabase {
   }
 
   async transaction(fn) {
-    this.#db.exec('BEGIN TRANSACTION');
+    this.#db.exec('BEGIN IMMEDIATE');
     try {
       const result = await fn(this.#db);
       this.#db.exec('COMMIT');
       return result;
     } catch (err) {
-      this.#db.exec('ROLLBACK');
+      try { this.#db.exec('ROLLBACK'); } catch {}
       throw err;
     }
   }
@@ -178,7 +180,7 @@ export class MeetingDatabase {
   storeFabricEmbedding(chunkId, embedding, dim = 384) { return vectorOps.storeFabricEmbedding(this.#db, chunkId, embedding, dim); }
   storeFabricChunk(content, round, source = "round_summary", vector = null) { return vectorOps.storeFabricChunk(this.#db, this.#meetingId, content, round, source, vector); }
   getFabricChunks() { return vectorOps.getFabricChunks(this.#db, this.#meetingId); }
-  searchFabricVectors(queryEmbedding, topK = 5, dim = 384) { return vectorOps.searchFabricVectors(this.#db, this.#meetingId, queryEmbedding, topK, dim); }
+  searchFabricVectors(queryEmbedding, topK = 5, dim = 384, excludeRound = -1) { return vectorOps.searchFabricVectors(this.#db, this.#meetingId, queryEmbedding, topK, dim, excludeRound); }
   storePersonaEmbedding(personaName, tier, tags, embeddingText, embedding, dim = 384) { return vectorOps.storePersonaEmbedding(this.#db, this.#meetingId, personaName, tier, tags, embeddingText, embedding, dim); }
   searchPersonaEmbeddings(queryEmbedding, tier, topK = 5, dim = 384) { return vectorOps.searchPersonaEmbeddings(this.#db, this.#meetingId, queryEmbedding, tier, topK, dim); }
   countPersonaEmbeddings() { return vectorOps.countPersonaEmbeddings(this.#db, this.#meetingId); }

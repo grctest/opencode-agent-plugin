@@ -1,5 +1,8 @@
 import { Logger, extractErrorInfo } from "./logger.js";
 
+// Compat: bracket directives (PROPOSE/CHALLENGE etc.) were removed from the live protocol
+// (all peer interactions now use loom_* tools). These regexes remain only for stored
+// data from older meetings — defensive strip so old rows don't pollute state-of-play.
 const TAG_STRIP_RE = /^\[(?:PROPOSE|CHALLENGE|REFINE|SUPPORT|DISSENT|SYNTHESIZE|QUESTION|REFUSE)\]\s*/i;
 const REQUEST_NEXT_RE = /\[REQUEST_NEXT:[^\]]*\]/gi;
 const QUERY_TAG_RE = /\[QUERY:\s*[^\]]*\]\s*/gi;
@@ -166,7 +169,7 @@ export function formatStateOfPlay(sections, question, tags) {
 function formatRoundLines(round, participants) {
   const lines = [];
   const isFinal = round.number === undefined;
-  lines.push(`### Round ${isFinal ? "(Final)" : round.number}${isFinal ? "" : ""}`);
+  lines.push(`### Round ${isFinal ? "(Final)" : round.number}`);
 
   for (const c of round.contributions) {
     const participant = participants.find((p) => p.config.id === c.participant_id);

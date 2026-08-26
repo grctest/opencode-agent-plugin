@@ -25,9 +25,6 @@ import { getHighestTierModel } from "./services/model-service.js";
 import { getMeetingDbPath } from "./paths.js";
 import { DashboardApi } from "./dashboard/api.js";
 
-const PROGRESS_PATTERN =
-  /^🎬|^⚠️|^ℹ️|is thinking\.\.\.|— synthesize:|— critique:|Round \d+ (complete|starting)|Synthesizing final output|✅ Completed|❌ Error:/;
-
 export const Loom = async (input) => {
   const { client, directory } = input;
 
@@ -59,10 +56,11 @@ export const Loom = async (input) => {
   // dashboard's initEmbeddingModel(), which previously was the only place the
   // model got loaded. Failures are non-fatal: semantic features degrade visibly.
   // Single config-driven startup (audit 06 V4): honor the configured model here,
-  // once — orchestrator consumes whatever this loads.
-  const startupConfig = createConfig().get();
-  const resolvedModel = startupConfig.embeddingModel ?? DEFAULT_EMBEDDING_MODEL;
-  const resolvedQuant = startupConfig.embeddingQuant ?? DEFAULT_EMBEDDING_QUANT;
+  // once — orchestrator consumes whatever this loads. Use the config instance
+  // already created with the session directory (not a global no-dir cache).
+  const startupValues = config.get();
+  const resolvedModel = startupValues.embeddingModel ?? DEFAULT_EMBEDDING_MODEL;
+  const resolvedQuant = startupValues.embeddingQuant ?? DEFAULT_EMBEDDING_QUANT;
   const { ensureEmbedderInitialized, getEmbeddingDim } = await import("./services/embedding-service.js");
   ensureEmbedderInitialized(resolvedModel, resolvedQuant)
     .then(() => {
@@ -87,7 +85,8 @@ export const Loom = async (input) => {
    * Cached to avoid readdirSync scan per tool call.
    */
   const _resolveMeetingFactory = createResolveMeeting(directory, meetingResolveCache);
-  const resolveMeeting = (sessionID) => _resolveMeetingFactory(sessionID, client);  const agentTools = createAgentTools({ config, resolveMeeting, activeLooms, directory });
+  const resolveMeeting = (sessionID) => _resolveMeetingFactory(sessionID, client);
+  const agentTools = createAgentTools({ config, resolveMeeting, activeLooms, directory });
 
   const { setupProcessHandlers } = createLifecycleHandlers(activeLooms);
   setupProcessHandlers();
@@ -95,13 +94,6 @@ export const Loom = async (input) => {
 
   const activeDashboardRef = { current: activeDashboard };
   const pluginReturn = createPluginReturn({ activeLooms, activeDashboardRef, directory, config, handleKnit, handleListKnitModels, handleEnableKnitModels, handleDisableKnitModels, handleResetKnitModels, agentTools });
-  // Sync activeDashboard let with ref
-  activeDashboard = activeDashboardRef.current;
-  // Need to handle that pluginReturn's activeDashboardRef is updated via closure? Actually pluginReturn's tools close over activeDashboardRef, not the let
-  // So we need to keep them in sync: the helper's setActiveDashboard will update ref, but index.js's let also needs to reflect
-  // For now, we can just return pluginReturn and let the helper manage its own activeDashboardRef
-  // To keep original behavior where activeDashboard is a let in index.js that is mutated by loom_viz/stop, we need to make the helper's activeDashboardRef be the same object
-  // We'll just return pluginReturn and also sync back
   return pluginReturn;
 };
 

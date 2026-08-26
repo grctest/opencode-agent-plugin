@@ -51,9 +51,7 @@ function acquireLock(lockPath) {
         // Lock vanished between checks — retry below
       }
       if (Date.now() >= deadline) return false;
-      // Busy-wait briefly with backoff-friendly sleep
-      const spinStart = Date.now();
-      while (Date.now() - spinStart < 25) { /* tight spin */ }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
     }
   }
 }
@@ -107,6 +105,18 @@ function persistSessionIndex({ compact = false } = {}) {
       indexLogger.warn("session_index_lock_timeout", "Could not acquire session-index lock — skipping this persist (will retry on next change)");
       return;
     }
+    // Re-read inside lock and merge so we don't clobber another process's writes (last-writer-wins fix)
+    try {
+      const onDisk = JSON.parse(readFileSync(filePath, "utf-8"));
+      for (const [sid, entries] of Object.entries(onDisk)) {
+        const mine = sessionIndex.get(sid);
+        if (!mine) { sessionIndex.set(sid, entries.filter((e) => existsSync(e.dbPath))); continue; }
+        const merged = new Map();
+        for (const e of [...entries, ...mine]) merged.set(e.dbPath, e);
+        const valid = [...merged.values()].filter((e) => existsSync(e.dbPath));
+        if (valid.length > 0) sessionIndex.set(sid, valid); else sessionIndex.delete(sid);
+      }
+    } catch (err) { if (err.code !== "ENOENT") indexLogger.debug("session_index_merge_failed", "Could not re-read index for merge", { error: err.message }); }
     if (compact) {
       // Drop entries whose DB files no longer exist before persisting the compacted result
       for (const [sessionId, entries] of sessionIndex) {

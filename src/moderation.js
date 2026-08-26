@@ -65,10 +65,14 @@ export function parseModeratorRuling(text) {
   }
 
   if (!decision) {
-    const lower = text.toLowerCase();
-    if (lower.includes("converge") || lower.includes("synthesize") || lower.includes("wrap up")) {
-      next_speaker = "synthesize";
-      decision = "Converge the deliberation";
+    if (rulingMatch) {
+      const lower = rulingMatch[1].toLowerCase();
+      if (lower.includes("converge") || lower.includes("synthesize") || lower.includes("wrap up")) {
+        next_speaker = "synthesize";
+        decision = "Converge the deliberation";
+      } else {
+        decision = content.slice(0, 200);
+      }
     } else {
       decision = text.slice(0, 200);
     }
@@ -92,12 +96,6 @@ export async function checkModeratorIntervention(round, participants, weave, cur
     (t) => t === "challenge" || t === "dissent",
   ).length;
   if (challengeCount < trigger.recentChallenges) {
-    return { action: "continue", nextSpeakerIdx: -1 };
-  }
-
-  // Consensus short-circuit: if no conflict signals at all, skip moderator
-  const hasConflict = recentTypes.some((t) => t === "challenge" || t === "dissent");
-  if (!hasConflict) {
     return { action: "continue", nextSpeakerIdx: -1 };
   }
 

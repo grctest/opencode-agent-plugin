@@ -1,3 +1,20 @@
+/**
+ * MeetingOrchestrator — composition root (Phase 3 audit).
+ *
+ * Composition: this class is the single owner of meeting state/services and
+ * delegates behavior to focused helpers under src/orchestrator/ (weaving,
+ * round, synthesis, models, init) plus services/. Helpers are currently
+ * mixed in via thin `apply(this)` forwarders so `this` stays the orchestrator
+ * instance (explicit dependency injection via args is the intended future —
+ * see weaving/round helpers receiving stateManager/database/etc. directly).
+ * This header documents the intended decomposition; the forwarder pattern is
+ * retained for minimal-risk Phase 3.
+ *
+ * Constants (SUMMARY_TRUNCATE_LEN / MAX_ORCHESTRATOR_MESSAGES) are now
+ * canonical here; src/orchestrator/constants.js re-exports them for
+ * backward compat. Deadline logic is centralized in TimeBudget.
+ */
+
 import { getTierConfig } from "./shared.js";
 import { getConfig } from "./config.js";
 import { getMeetingDbPath } from "./paths.js";
@@ -29,9 +46,11 @@ import * as roundHelpers from "./orchestrator/round.js";
 import * as synthesisHelpers from "./orchestrator/synthesis.js";
 import * as modelsHelpers from "./orchestrator/models.js";
 import * as initHelpers from "./orchestrator/init.js";
+import { TimeBudget } from "./orchestrator/time-budget.js";
 
-// Re-exported for backward compat — single source is ./orchestrator/constants.js
-export { SUMMARY_TRUNCATE_LEN, MAX_ORCHESTRATOR_MESSAGES } from "./orchestrator/constants.js";
+// Canonical constants — single source (Phase 3 collapse of orchestrator/constants.js)
+export const SUMMARY_TRUNCATE_LEN = 200;
+export const MAX_ORCHESTRATOR_MESSAGES = 200;
 
 export class MeetingOrchestrator {
   _meetingId;
@@ -61,6 +80,8 @@ export class MeetingOrchestrator {
   _personaIndex = null;
   _availableModels = [];
   _maxTotalTokens = 0;
+  /** @type {import("./orchestrator/time-budget.js").TimeBudget} */
+  _timeBudget;
 
   constructor(options) {
     this._meetingId = options.meetingId ?? crypto.randomUUID();
@@ -114,6 +135,8 @@ export class MeetingOrchestrator {
       },
       logger: this._logger,
     });
+
+    this._timeBudget = new TimeBudget(this._startTime, this._meetingTimeoutMs);
   }
 
    getDbPath() {
@@ -166,7 +189,7 @@ export class MeetingOrchestrator {
     this._logger.info("cancellation", "Loom cancelled by user");
   }
 
-   async close() {
+    async close() {
     try {
       if (this._sessionManager) {
         try { await this._sessionManager.deleteOrchestratorSession(); } catch {}
@@ -176,9 +199,21 @@ export class MeetingOrchestrator {
         this._database.close();
       }
     } catch (err) {
-      this._logger.warn("close_failed", "Failed to close database", extractErrorInfo(err));
+      this._logger.error("close_failed", "Failed to close database", extractErrorInfo(err));
+    } finally {
+      try { this._stallWatchdog?.stop(); } catch {}
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Mixin forwarders (Phase 3): thin `apply(this)` delegators — `this` remains
+  // the orchestrator instance so helpers can access services/state. Explicit
+  // dependency-injection (passing stateManager/database/etc. as args) is the
+  // intended future; retained here for minimal-risk audit with documented
+  // composition in the file header. Each forwarder has JSDoc where behavior
+  // is non-trivial; trivial delegators are intentionally one-liners.
+  // ---------------------------------------------------------------------------
+  /** @returns {Array<{tier:string, model:any}>} */
   _modelList(...args) {
     return modelsHelpers._modelList.apply(this, args);
   }
@@ -217,8 +252,13 @@ export class MeetingOrchestrator {
 
   /**
    * Single deadline authority (audit 01 E6) — every timeout check consults this.
+   * Delegates to TimeBudget when available (Phase 3 centralization).
    */
   _remainingMs(...args) {
+    if (this._timeBudget) {
+      this._timeBudget.syncFrom(this);
+      return this._timeBudget.remainingMs(...args);
+    }
     return weavingHelpers._remainingMs.apply(this, args);
   }
 
@@ -230,6 +270,15 @@ export class MeetingOrchestrator {
     return weavingHelpers._raceWithGuardTimer.apply(this, args);
   }
   _checkTimeout(...args) {
+    if (this._timeBudget) {
+      this._timeBudget.syncFrom(this);
+      if (this._timeBudget.checkTimeout()) {
+        this._stateManager.transitionTo("timeout");
+        this._logger.warn("timeout", "Meeting timed out", { elapsed: Date.now() - this._startTime, limit: this._meetingTimeoutMs });
+        return true;
+      }
+      return false;
+    }
     return weavingHelpers._checkTimeout.apply(this, args);
   }
   async runRound(...args) {

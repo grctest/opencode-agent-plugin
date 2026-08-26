@@ -10,6 +10,11 @@ import { usePersistedState, useMeetingApi, useSSEReset, useEmbeddingStatus } fro
 
 const POLLING_FALLBACK_INTERVAL = 3000;
 
+// Tech Debt: window event bus for meeting data retained (loom-*-* events).
+// Ideal: useSSE accepts callbacks directly instead of window.dispatchEvent,
+// and useMeetingApi singly owns lastPollIdRef without duplicate polling.
+// Full bus removal was too invasive for Phase 5; BaseResponseRow extraction
+// and critical bug fixes prioritized. See hooks.js useMeetingApi owns canonical lastPollIdRef.
 function useSSE(meetingId, onEvent) {
   const [connected, setConnected] = useState(false);
   const [reconnectAttempt, setReconnectAttempt] = useState(0);
@@ -17,6 +22,8 @@ function useSSE(meetingId, onEvent) {
   const esRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
   const pollingRef = useRef(null);
+  // Note: lastPollIdRef here is secondary; canonical is owned by useMeetingApi.
+  // Duplicate polling retained for fallback only; seeded via loom-initial-contributions.
   const lastPollIdRef = useRef(0);
   const onEventRef = useRef(onEvent);
   onEventRef.current = onEvent;
@@ -77,6 +84,7 @@ function useSSE(meetingId, onEvent) {
             }
           } catch {}
         } catch (err) {
+          setLastError(err.message);
           window.dispatchEvent(new CustomEvent("loom-sse-error", {
             detail: { message: err.message, phase: "polling" }
           }));
@@ -153,8 +161,17 @@ function useSSE(meetingId, onEvent) {
         if (cancelled) return;
         try {
           const data = JSON.parse(event.data);
+          // Wire poll error handler to setLastError (server poll.js broadcasts type:"error")
+          if (data.type === "error") {
+            setLastError(data.data?.message ?? "poll error");
+            window.dispatchEvent(new CustomEvent("loom-sse-error", {
+              detail: { message: data.data?.message ?? "poll error", phase: data.data?.phase ?? "poll" }
+            }));
+            return;
+          }
           onEventRef.current(data);
         } catch (err) {
+          setLastError(`Failed to parse SSE message: ${err.message}`);
           window.dispatchEvent(new CustomEvent("loom-sse-error", {
             detail: { message: `Failed to parse SSE message: ${err.message}`, phase: "parse" }
           }));

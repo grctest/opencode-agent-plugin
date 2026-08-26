@@ -31,14 +31,14 @@ export function storeFabricChunk(db, meetingId, content, round, source = "round_
     };
 
     if (vector?.embedding) {
-      db.exec("BEGIN TRANSACTION");
+      db.exec("BEGIN IMMEDIATE");
       try {
         const chunkId = insertChunk(db);
         storeFabricEmbedding(db, chunkId, vector.embedding, vector.dim ?? 384);
         db.exec("COMMIT");
         return chunkId;
       } catch (err) {
-        db.exec("ROLLBACK");
+        try { db.exec("ROLLBACK"); } catch {}
         throw err;
       }
     }
@@ -60,7 +60,7 @@ export function getFabricChunks(db, meetingId) {
   }
 }
 
-export function searchFabricVectors(db, meetingId, queryEmbedding, topK = 5, dim = 384) {
+export function searchFabricVectors(db, meetingId, queryEmbedding, topK = 5, dim = 384, excludeRound = -1) {
   const safeDim = Number(dim);
   if (!Number.isFinite(safeDim) || safeDim < 64 || safeDim > 2048 || Math.floor(safeDim) !== safeDim) {
     dbLogger.warn("search_invalid_dim", `Invalid dim ${dim} for searchFabricVectors`, { dim });
@@ -68,6 +68,16 @@ export function searchFabricVectors(db, meetingId, queryEmbedding, topK = 5, dim
   }
   try {
     const limit = Math.max(1, Math.floor(Number(topK) || 5));
+    const hasExclude = excludeRound != null && excludeRound !== -1;
+    if (hasExclude) {
+      return db.prepare(`
+        SELECT v.rowid, v.distance, f.content, f.round, f.source
+        FROM vec_fabric_chunks_${safeDim} v
+        JOIN fabric_chunks f ON f.id = v.rowid AND f.meeting_id = ?
+        WHERE v.embedding MATCH ? AND k = ? AND f.round != ?
+        ORDER BY v.distance
+      `).all(meetingId, queryEmbedding, limit, excludeRound);
+    }
     return db.prepare(`
         SELECT v.rowid, v.distance, f.content, f.round, f.source
         FROM vec_fabric_chunks_${safeDim} v
@@ -151,6 +161,20 @@ export function countPersonaVecEmbeddings(db, dim = 384) {
 }
 
 export function clearPersonaEmbeddings(db, meetingId) {
+  // Enumerate vec persona tables so vec rows don't orphan when dim changes
+  let dims = [];
+  try {
+    const rows = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'vec_persona_embeddings_%'`).all();
+    for (const r of rows) { const m = r.name.match(/vec_persona_embeddings_(\d+)$/); if (m) dims.push(Number(m[1])); }
+  } catch {}
+  if (dims.length === 0) dims = [384];
+  for (const d of dims) {
+    try {
+      const safeDim = Math.floor(Number(d));
+      if (!Number.isFinite(safeDim) || safeDim < 64 || safeDim > 2048) continue;
+      db.prepare(`DELETE FROM vec_persona_embeddings_${safeDim} WHERE rowid IN (SELECT id FROM persona_embeddings WHERE meeting_id = ?)`).run(meetingId);
+    } catch {}
+  }
   try {
     db.prepare(`DELETE FROM persona_embeddings WHERE meeting_id = ?`).run(meetingId);
   } catch { /* table may not exist yet */ }

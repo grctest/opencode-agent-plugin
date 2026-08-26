@@ -65,8 +65,9 @@ export function listMeetings(directory) {
 
   const meetings = [];
   for (const file of files) {
+    let db = null;
     try {
-      const db = new Database(file, { readonly: true });
+      db = new Database(file, { readonly: true });
       try { db.exec("PRAGMA busy_timeout = 5000"); } catch {}
       const state = db
         .prepare(
@@ -76,7 +77,6 @@ export function listMeetings(directory) {
       const participantCount = (
         db.prepare(`SELECT COUNT(*) as count FROM participants`).get()
       )?.count ?? 0;
-      db.close();
 
       if (state) {
         meetings.push({
@@ -92,6 +92,8 @@ export function listMeetings(directory) {
       }
     } catch {
       // Corrupted or locked DB — skip this meeting file
+    } finally {
+      try { if (db) db.close(); } catch {}
     }
   }
 

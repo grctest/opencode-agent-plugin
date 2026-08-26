@@ -1,4 +1,5 @@
 import { getConfig } from "../config.js";
+import { parseFastPathModel } from "../config/utils.js";
 import { getHighestTierModel } from "../services/model-service.js";
 import { Logger, LoomError, extractErrorInfo } from "../logger.js";
 import { MAX_ORCHESTRATOR_MESSAGES } from "./constants.js";
@@ -59,16 +60,7 @@ export function _getParticipantModel(participant, fallbackOnError = false) {
 
 export async function _promptOrchestrator(system, model, message, type = "orchestrator", round = null) {
     const cfg = getConfig();
-    const fastPathModel = cfg.fastPathModelObj ?? (cfg.fastPathModel ? (() => {
-      const s = cfg.fastPathModel;
-      if (typeof s === 'string' && s.includes('/')) {
-        const idx = s.indexOf('/');
-        const providerID = s.slice(0, idx).trim();
-        const modelID = s.slice(idx + 1).trim();
-        if (providerID && modelID) return { providerID, modelID };
-      }
-      return null;
-    })() : null);
+    const fastPathModel = cfg.fastPathModelObj ?? parseFastPathModel(cfg.fastPathModel);
     const useModel = (fastPathModel && (type === "moderation" || type === "summary"))
       ? fastPathModel
       : model;

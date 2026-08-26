@@ -135,3 +135,26 @@ export async function embedText(text, opts = {}) {
 export function getEmbedderMeta() {
   return currentModel ? { name: currentModel.name, quant: currentModel.quant, ...currentModel.meta } : null;
 }
+
+/**
+ * Dispose the loaded embedder and release native resources.
+ * Production keeps the singleton alive; this is for tests / shutdown.
+ * Releases ONNX session (if .release/.dispose exists) and clears cached
+ * tokenizer/ort via model-manager.
+ */
+export async function disposeEmbedder() {
+  if (currentModel?.session) {
+    try {
+      // onnxruntime sessions may expose release() or dispose()
+      if (typeof currentModel.session.release === "function") await currentModel.session.release();
+      else if (typeof currentModel.session.dispose === "function") await currentModel.session.dispose();
+    } catch {}
+  }
+  currentModel = null;
+  currentDim = EMBEDDING_DIM;
+  currentMaxTokens = 512;
+  try {
+    const { disposeCachedDeps } = await import("./model-manager.js");
+    disposeCachedDeps();
+  } catch {}
+}

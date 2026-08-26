@@ -19,6 +19,7 @@ export async function initialize() {
     }
 
     this._startTime = Date.now();
+    if (this._timeBudget) this._timeBudget.reset(this._startTime, this._meetingTimeoutMs);
 
     try {
       const dbPath = this.getDbPath();

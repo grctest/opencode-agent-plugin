@@ -2,6 +2,29 @@
   --radius-sm: calc(0.5rem - 4px);
   --radius-md: calc(0.5rem - 2px);
   --radius-lg: 0.5rem;
+  /* Badge palette — consolidated to avoid duplicated hex literals */
+  --badge-green: #16a34a;
+  --badge-amber: #ca8a04;
+  --badge-red: #b91c1c;
+  --badge-red-bright: #dc2626;
+  --badge-gray: #6b7280;
+  --badge-pink: #be185d;
+  --badge-orange: #ea580c;
+  --badge-yellow: #d97706;
+  --badge-orange-light: #f59e0b;
+  --badge-blue-mid: #2563eb;
+  --badge-purple-dark: #9333ea;
+  --badge-purple: #7e22ce;
+  --badge-teal-dark: #047857;
+  --badge-teal: #0d9488;
+  --badge-blue-deep: #1d4ed8;
+  --badge-green-dark: #15803d;
+  --badge-cyan: #0e7490;
+  --badge-brown: #c2410c;
+  --badge-indigo: #6366f1;
+  --badge-sky: #0369a1;
+  --badge-violet: #a855f7;
+  --badge-emerald: #10b981;
 }
 
 :root,
@@ -58,7 +81,7 @@ body {
   color: var(--color-foreground);
   font-family: system-ui, -apple-system, sans-serif;
   margin: 0;
-  height: 100vh;
+  height: 100dvh;
   overflow: hidden;
 }
 
@@ -147,7 +170,7 @@ input {
 /* Layout */
 .loom-layout {
   display: flex;
-  height: 100vh;
+  height: 100dvh;
   overflow: hidden;
 }
 
@@ -538,38 +561,38 @@ input {
   line-height: 1;
 }
 
-.loom-badge-turn-request { background: #be185d; color: white; }
-.loom-badge-weaving { background: #ca8a04; color: white; }
-.loom-badge-converged { background: #16a34a; color: white; }
-.loom-badge-max_rounds_reached { background: #ea580c; color: white; }
+.loom-badge-turn-request { background: var(--badge-pink); color: white; }
+.loom-badge-weaving { background: var(--badge-amber); color: white; }
+.loom-badge-converged { background: var(--badge-green); color: white; }
+.loom-badge-max_rounds_reached { background: var(--badge-orange); color: white; }
 .loom-badge-initializing { background: var(--color-muted); color: var(--color-muted-foreground); }
-.loom-badge-aborted { background: #6b7280; color: white; }
-.loom-badge-timeout { background: #b91c1c; color: white; }
+.loom-badge-aborted { background: var(--badge-gray); color: white; }
+.loom-badge-timeout { background: var(--badge-red); color: white; }
 .loom-badge-junior { background: var(--color-secondary); color: var(--color-secondary-foreground); }
-.loom-badge-mid { background: #2563eb; color: white; }
-.loom-badge-senior { background: #9333ea; color: white; }
-.loom-badge-principal { background: #d97706; color: white; }
+.loom-badge-mid { background: var(--badge-blue-mid); color: white; }
+.loom-badge-senior { background: var(--badge-purple-dark); color: white; }
+.loom-badge-principal { background: var(--badge-yellow); color: white; }
 
-.loom-badge-confidence-high { background: #16a34a; color: white; }
-.loom-badge-confidence-medium { background: #ca8a04; color: white; }
-.loom-badge-confidence-low { background: #dc2626; color: white; }
+.loom-badge-confidence-high { background: var(--badge-green); color: white; }
+.loom-badge-confidence-medium { background: var(--badge-amber); color: white; }
+.loom-badge-confidence-low { background: var(--badge-red-bright); color: white; }
 .loom-badge-confidence-unknown { background: var(--color-muted); color: var(--color-muted-foreground); }
 
-.loom-badge-propose { background: #15803d; color: white; }
-.loom-badge-challenge { background: #b91c1c; color: white; }
-.loom-badge-refine { background: #1d4ed8; color: white; }
-.loom-badge-support { background: #047857; color: white; }
-.loom-badge-dissent { background: #c2410c; color: white; }
-.loom-badge-synthesize { background: #7e22ce; color: white; }
-.loom-badge-question { background: #0e7490; color: white; }
-.loom-badge-reflection { background: #6366f1; color: white; }
-.loom-badge-query_response { background: #0d9488; color: white; }
-.loom-badge-evidence_response { background: #0369a1; color: white; }
-.loom-badge-summoned_response { background: #a855f7; color: white; }
-.loom-badge-vote_response { background: #10b981; color: white; }
-.loom-badge-vote_tally { background: #f59e0b; color: white; }
+.loom-badge-propose { background: var(--badge-green-dark); color: white; }
+.loom-badge-challenge { background: var(--badge-red); color: white; }
+.loom-badge-refine { background: var(--badge-blue-deep); color: white; }
+.loom-badge-support { background: var(--badge-teal-dark); color: white; }
+.loom-badge-dissent { background: var(--badge-brown); color: white; }
+.loom-badge-synthesize { background: var(--badge-purple); color: white; }
+.loom-badge-question { background: var(--badge-cyan); color: white; }
+.loom-badge-reflection { background: var(--badge-indigo); color: white; }
+.loom-badge-query_response { background: var(--badge-teal); color: white; }
+.loom-badge-evidence_response { background: var(--badge-sky); color: white; }
+.loom-badge-summoned_response { background: var(--badge-violet); color: white; }
+.loom-badge-vote_response { background: var(--badge-emerald); color: white; }
+.loom-badge-vote_tally { background: var(--badge-orange-light); color: white; }
 
-.loom-badge-orchestrator { background: #6b7280; color: white; }
+.loom-badge-orchestrator { background: var(--badge-gray); color: white; }
 
 /* Agent status */
 .loom-agent-status {
@@ -2128,12 +2151,19 @@ input {
   color: var(--color-foreground);
 }
 
+/* Responsive: Phase 5 — 800px breakpoint for column layout + dvh */
+@media (max-width: 800px) {
+  .loom-layout { flex-direction: column; }
+  .loom-sidebar { width: 100%; max-height: 40vh; }
+  body { height: 100dvh; }
+}
+
 /* Responsive floor — desktop-only but single-column at 768px */
 @media (max-width: 768px) {
   .loom-layout {
     flex-direction: column;
     height: auto;
-    min-height: 100vh;
+    min-height: 100dvh;
   }
   .loom-sidebar {
     width: 100%;

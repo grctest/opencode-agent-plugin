@@ -23,8 +23,9 @@ export async function runMeeting() {
     return output;
   }
 
-export async function extendMeeting(newPrompt) {
+ export async function extendMeeting(newPrompt) {
     this._startTime = Date.now();
+    if (this._timeBudget) this._timeBudget.reset(this._startTime, this._meetingTimeoutMs);
     this._cancelled = false;
     this._stallWatchdog.reset();
 
@@ -88,6 +89,11 @@ export async function _runWeavingLoop() {
   }
 
   export function _remainingMs() {
+    if (this._timeBudget) {
+      this._timeBudget.syncFrom(this);
+      return this._timeBudget.remainingMs();
+    }
+    if (!this._meetingTimeoutMs || this._meetingTimeoutMs <= 0) return Infinity;
     return this._startTime + this._meetingTimeoutMs - Date.now();
   }
 
@@ -101,6 +107,15 @@ export function _raceWithGuardTimer(promise, timeoutMs, label) {
   }
 
 export function _checkTimeout() {
+    if (this._timeBudget) {
+      this._timeBudget.syncFrom(this);
+      if (this._timeBudget.checkTimeout()) {
+        this._stateManager.transitionTo("timeout");
+        this._logger.warn("timeout", "Meeting timed out", { elapsed: Date.now() - this._startTime, limit: this._meetingTimeoutMs });
+        return true;
+      }
+      return false;
+    }
     if (this._remainingMs() <= 0) {
       this._stateManager.transitionTo("timeout");
       this._logger.warn("timeout", "Meeting timed out", { elapsed: Date.now() - this._startTime, limit: this._meetingTimeoutMs });

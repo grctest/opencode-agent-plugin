@@ -37,7 +37,7 @@ export function initializeMeeting(db, meetingId, input) {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
 
-  db.exec('BEGIN TRANSACTION');
+  db.exec('BEGIN IMMEDIATE');
   try {
     insertMeeting.run(
       meetingId,
@@ -75,7 +75,7 @@ export function initializeMeeting(db, meetingId, input) {
 
     db.exec('COMMIT');
   } catch (err) {
-    db.exec('ROLLBACK');
+    try { db.exec('ROLLBACK'); } catch {}
     throw err;
   }
 
@@ -113,7 +113,7 @@ export function insertParticipants(db, meetingId, participants) {
     `INSERT INTO participants (id, meeting_id, name, persona, agenda, tier, provider_id, model_id, session_id, known_biases, communication_style, preferred_contribution_types)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
-  db.exec('BEGIN TRANSACTION');
+  db.exec('BEGIN IMMEDIATE');
   try {
     for (const p of participants) {
       insertParticipant.run(
@@ -133,7 +133,7 @@ export function insertParticipants(db, meetingId, participants) {
     }
     db.exec('COMMIT');
   } catch (err) {
-    db.exec('ROLLBACK');
+    try { db.exec('ROLLBACK'); } catch {}
     throw err;
   }
 }
@@ -158,14 +158,18 @@ export function getErrorLog(db, meetingId) {
          FROM error_log WHERE meeting_id = ? ORDER BY id ASC`,
     )
     .all(meetingId)
-    .map((r) => ({
-      id: r.id,
-      severity: r.severity,
-      context: r.context,
-      message: r.message,
-      details: r.details ? JSON.parse(r.details) : null,
-      created_at: r.created_at,
-    }));
+    .map((r) => {
+      let details = null;
+      if (r.details) { try { details = JSON.parse(r.details); } catch { details = { raw: r.details }; } }
+      return {
+        id: r.id,
+        severity: r.severity,
+        context: r.context,
+        message: r.message,
+        details,
+        created_at: r.created_at,
+      };
+    });
 }
 
 export function getFabric(db, meetingId) {
@@ -176,7 +180,7 @@ export function getFabric(db, meetingId) {
     return row?.fabric ?? "";
   } catch (err) {
     const info = extractErrorInfo(err);
-    dbLogger.warn("get_fabric_failed", `Failed to get fabric for meeting ${meetingId}`, info);
+    dbLogger.error("get_fabric_failed", `Failed to get fabric for meeting ${meetingId}`, info);
     return "";
   }
 }
@@ -210,7 +214,7 @@ export function setSemanticDegraded(db, meetingId, flag = true) {
       .prepare("UPDATE meetings SET semantic_degraded = ?, updated_at = ? WHERE id = ?")
       .run(flag ? 1 : 0, isoNow(), meetingId);
   } catch (err) {
-    dbLogger.warn("degradation_flag_failed", "Could not persist semantic_degraded flag", extractErrorInfo(err));
+    dbLogger.error("degradation_flag_failed", "Could not persist semantic_degraded flag", extractErrorInfo(err));
   }
 }
 
@@ -220,7 +224,7 @@ export function setPersistenceDegraded(db, meetingId, flag = true) {
       .prepare("UPDATE meetings SET persistence_degraded = ?, updated_at = ? WHERE id = ?")
       .run(flag ? 1 : 0, isoNow(), meetingId);
   } catch (err) {
-    dbLogger.warn("degradation_flag_failed", "Could not persist persistence_degraded flag", extractErrorInfo(err));
+    dbLogger.error("degradation_flag_failed", "Could not persist persistence_degraded flag", extractErrorInfo(err));
   }
 }
 
@@ -275,7 +279,7 @@ export function getRound(db, meetingId) {
     return row?.round ?? 0;
   } catch (err) {
     const info = extractErrorInfo(err);
-    dbLogger.warn("get_round_failed", `Failed to get round for meeting ${meetingId}`, info);
+    dbLogger.error("get_round_failed", `Failed to get round for meeting ${meetingId}`, info);
     return 0;
   }
 }
@@ -300,7 +304,7 @@ export function getStatus(db, meetingId) {
     return row ? row.status : "initializing";
   } catch (err) {
     const info = extractErrorInfo(err);
-    dbLogger.warn("get_status_failed", `Failed to get status for meeting ${meetingId}`, info);
+    dbLogger.error("get_status_failed", `Failed to get status for meeting ${meetingId}`, info);
     return "initializing";
   }
 }

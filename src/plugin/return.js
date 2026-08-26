@@ -159,8 +159,9 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
           const port = args.port ?? 3210;
 
           // Resolve current session's meeting so the dashboard opens to the right place
+          // Defensive casing: opencode versions differ on sessionID vs sessionId/session_id
           let initialMeetingId = null;
-          const sessionId = context?.sessionID;
+          const sessionId = context?.sessionID ?? context?.sessionId ?? context?.session_id ?? null;
           if (sessionId) {
             try {
               const current = await findMeetingBySessionId(directory, sessionId);

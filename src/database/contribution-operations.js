@@ -23,6 +23,14 @@ export function addContribution(db, meetingId, contribution, getRoundFn) {
     );
 }
 
+function safeJsonParse(val, fallback = null) {
+  if (!val) return fallback;
+  try { return JSON.parse(val); } catch (err) {
+    dbLogger.warn("json_parse_failed", `Failed to parse JSON field — returning ${fallback === null ? "null" : "fallback"}`, { message: err.message });
+    return fallback;
+  }
+}
+
 export function getContributions(db, meetingId) {
   const rows = db
     .prepare(
@@ -38,8 +46,8 @@ export function getContributions(db, meetingId) {
     type: r.type,
     targets_which: r.target_which != null ? Number(r.target_which) : null,
     batch_id: r.batch_id ?? null,
-    tool_calls: r.tool_calls ? JSON.parse(r.tool_calls) : null,
-    prompt_context: r.prompt_context ? JSON.parse(r.prompt_context) : null,
+    tool_calls: safeJsonParse(r.tool_calls, null),
+    prompt_context: safeJsonParse(r.prompt_context, null),
     created_at: r.created_at,
   }));
 }
@@ -59,8 +67,8 @@ export function getRecentContributions(db, meetingId, count) {
     type: r.type,
     targets_which: r.target_which != null ? Number(r.target_which) : null,
     batch_id: r.batch_id ?? null,
-    tool_calls: r.tool_calls ? JSON.parse(r.tool_calls) : null,
-    prompt_context: r.prompt_context ? JSON.parse(r.prompt_context) : null,
+    tool_calls: safeJsonParse(r.tool_calls, null),
+    prompt_context: safeJsonParse(r.prompt_context, null),
     created_at: r.created_at,
   }));
 }
@@ -69,7 +77,7 @@ export function getContributionContext(db, contributionId) {
   const row = db
     .prepare(`SELECT prompt_context FROM contributions WHERE id = ?`)
     .get(contributionId);
-  return row?.prompt_context ? JSON.parse(row.prompt_context) : null;
+  return safeJsonParse(row?.prompt_context, null);
 }
 
 export function addTurnRequest(db, meetingId, turnRequest) {
@@ -111,7 +119,7 @@ export function addContributionWithTurnRequest(db, meetingId, contribution, turn
       dbLogger.warn("orphan_contribution", `Contribution participant_id ${contribution.participant_id} not in participants for meeting ${meetingId}`);
     }
   } catch {}
-  db.exec('BEGIN TRANSACTION');
+  db.exec('BEGIN IMMEDIATE');
 
   try {
     db
@@ -151,7 +159,7 @@ export function addContributionWithTurnRequest(db, meetingId, contribution, turn
 
     db.exec('COMMIT');
   } catch (err) {
-    db.exec('ROLLBACK');
+    try { db.exec('ROLLBACK'); } catch {}
     throw err;
   }
 }

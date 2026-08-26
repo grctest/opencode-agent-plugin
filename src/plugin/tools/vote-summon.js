@@ -40,8 +40,19 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
           let caller = allParticipants.find(p => p?.session_id === context.sessionID) || null;
           // Robust fallback: speaking participant is the caller when session_id mismatches
           if (!caller) caller = allParticipants.find(p => p?.status === "speaking") || null;
+          if (!caller) {
+            try {
+              const weave = stateManager.getWeave?.() ?? [];
+              const roundWeave = weave.filter(c => c.round === stateManager.getCurrentRound());
+              if (roundWeave.length > 0) {
+                const lastId = roundWeave[roundWeave.length - 1].participant_id;
+                caller = allParticipants.find(p => p.config.id === lastId) || null;
+              }
+            } catch {}
+          }
           if (!caller) caller = allParticipants.find(p => p?.status !== "failed" && p?.status !== "passed" && p?.status !== "muted") || null;
-          const callerBatchId = caller?.currentBatchId ?? `inline-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
+          const fallbackBatch = `inline-${stateManager.getState?.()?.id ?? meetingInfo.meetingId}-${stateManager.getCurrentRound?.() ?? 0}-${caller?.config?.id ?? "unknown"}`;
+          const callerBatchId = caller?.currentBatchId ?? fallbackBatch;
           const currentRound = stateManager.getCurrentRound();
           let roundObj = null;
           try { const st = stateManager.getState(); roundObj = (st.rounds || []).find(r => r.number === currentRound) || null; } catch {}
@@ -361,7 +372,8 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
             const allParts2 = stateManager2.getParticipants();
             let callerForBatch2 = allParts2.find(p => p.session_id === context.sessionID) || null;
             if (!callerForBatch2) callerForBatch2 = allParts2.find(p => p?.status === "speaking") || null;
-            const batchId2 = callerForBatch2?.currentBatchId ?? summonCaller?.currentBatchId ?? `inline-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
+            const fallbackBatch2 = `inline-${stateManager2.getState?.()?.id ?? meetingInfo.meetingId}-${stateManager2.getCurrentRound?.() ?? 0}-${summonCaller?.config?.id ?? "unknown"}`;
+            const batchId2 = callerForBatch2?.currentBatchId ?? summonCaller?.currentBatchId ?? fallbackBatch2;
             const contributionTools2 = mapToolResults(toolResults);
             const contrib2 = {
               id: stateManager2.nextContributionId(),

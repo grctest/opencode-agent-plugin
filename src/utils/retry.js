@@ -30,8 +30,15 @@ export function isRetryableError(err) {
     err.code === 'ETIMEDOUT' ||
     err.code === 'ENOTFOUND' ||
     err.code === 'ECONNRESET' ||
-    err.code === 'EPIPE'
+    err.code === 'EPIPE' ||
+    err.code === 'SQLITE_BUSY' ||
+    err.code === 'SQLITE_BUSY_SNAPSHOT' ||
+    err.code === 'SQLITE_READONLY'
   ) {
+    return true;
+  }
+  // SQLite busy string variants (bun:sqlite surfaces as message, not always code)
+  if (err.message && /SQLITE_BUSY|database is locked|database is busy/i.test(err.message)) {
     return true;
   }
 
@@ -114,9 +121,10 @@ export async function withRetry(fn, options = {}) {
  * Tracks per-model failures and allows retry testing once the reset timeout elapses.
  */
 export class CircuitBreaker {
-  constructor({ failureThreshold = 3, resetTimeoutMs = 300000 } = {}) {
+  constructor({ failureThreshold = 3, resetTimeoutMs = 300000, maxSize = 50 } = {}) {
     this.failureThreshold = failureThreshold;
     this.resetTimeoutMs = resetTimeoutMs;
+    this.maxSize = maxSize;
     this.#states = new Map();
   }
 
@@ -157,6 +165,11 @@ export class CircuitBreaker {
       incrementKeyedCounter('breaker_events', `${key}:open`);
     }
     this.#states.set(key, state);
+    // LRU eviction: bound Map to maxSize (50) to avoid unbounded growth
+    if (this.#states.size > this.maxSize) {
+      const oldestKey = this.#states.keys().next().value;
+      this.#states.delete(oldestKey);
+    }
     return state;
   }
 

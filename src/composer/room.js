@@ -7,7 +7,7 @@ import { Logger, extractErrorInfo } from "../logger.js";
 const composerLogger = new Logger();
 
 function analyzeQuestionComplexity(question) {
-  if (typeof question !== 'string' || question.trim().length === 0) return { score: 0, level: 'simple' };
+  if (typeof question !== 'string' || question.trim().length === 0) return "low";
   const wordCount = question.trim().split(/\s+/).filter(Boolean).length;
   const questionMarks = (question.match(/\?/g) || []).length;
   const hasMultipleDimensions = /\b(and|or|vs|versus|compare|tradeoff|pros\.?cons|advantages\.?disadvantages)\b/i.test(question);
@@ -42,12 +42,13 @@ function generateRolesFromComplexity(count, complexity) {
 }
 
 function applySeniorityBoost(roles, boost) {
-  const tierOrder = ["junior", "mid", "civilian", "senior", "principal"];
+  const tierOrder = ["junior", "mid", "senior", "principal"];
   if (boost === 0) return roles;
 
   return roles.map((role) => {
+    if (role === "civilian") return role; // civilians keep their seat (PC1) — handled separately
     const idx = tierOrder.indexOf(role);
-    if (idx === -1 || role === "civilian") return role; // civilians keep their seat (PC1)
+    if (idx === -1) return role;
     const newIdx = Math.max(0, Math.min(tierOrder.length - 1, idx + boost));
     return tierOrder[newIdx];
   });
@@ -232,8 +233,18 @@ export async function composeRoomWithSimilarity(question, database) {
  * composition still works without the embedder (degraded but functional).
  */
 function composeRoomByKeyword(question, personas, roles, complexity, count, used, participants) {
-  if (typeof question !== 'string' || question.length === 0) return participants;
-  const tokens = question.toLowerCase().split(/\W+/).filter((t) => t.length > 3);
+  if (typeof question !== 'string' || question.length === 0) {
+    const estimatedRounds = complexity === "high" ? 4 : complexity === "medium" ? 3 : 2;
+    const derivedTags = deriveTags(participants);
+    return {
+      participants,
+      estimated_rounds: estimatedRounds,
+      reasoning: `${count}-person deliberation via keyword-based (embedding model unavailable) for [${derivedTags.join(", ")}] topic (${complexity} complexity): ${roles.join(", ")}.`,
+      tags: derivedTags,
+      complexity,
+    };
+  }
+  const tokens = question.toLowerCase().split(/\W+/).filter((t) => t.length > 1);
 
   for (const tier of roles) {
     const tierPool = personas[tier] ?? [];
@@ -281,15 +292,16 @@ function scorePersonaForQuestion(persona, tokens, questionText = "") {
   // Domain vocabulary boost (audit 13 PC4): domains.json is now wired into the
   // keyword fallback — personas tagged for a domain whose keywords appear in
   // the question get a relevance bump instead of the file being dead weight.
-  const vocab = loadDomainVocabulary();
+    const vocab = loadDomainVocabulary();
   if (questionText) {
-    const lowerQ = questionText.toLowerCase();
     for (const tag of tags) {
       const keywords = vocab[String(tag).toLowerCase()];
       if (!Array.isArray(keywords)) continue;
       let hits = 0;
       for (const kw of keywords) {
-        if (lowerQ.includes(kw)) hits++;
+        const esc = kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const re = new RegExp(`\\b${esc}\\b`, "i");
+        if (re.test(questionText)) hits++;
         if (hits >= 2) break;
       }
       if (hits >= 2) score += 3;

@@ -3,11 +3,51 @@ import {
   listMeetings,
 } from "./api.js";
 import { join, resolve, sep } from "node:path";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { getMetricsSnapshot } from "../metrics.js";
 import { getRecentLogs } from "../logger.js";
 import { getConfig } from "../config.js";
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_QUANT } from "../services/model-manager.js";
+
+// Route table helper — centralizes method guards and documents API surface.
+// Each entry declares allowed methods; fetch handler checks before dispatch.
+const ROUTE_TABLE = [
+  { path: "/", methods: ["GET"] },
+  { path: "/index.html", methods: ["GET"] },
+  { path: "/api/meetings", methods: ["GET"] },
+  { path: "/api/session", methods: ["GET"] },
+  { path: "/api/meeting", methods: ["GET"] },
+  { path: "/api/artifact", methods: ["GET"] },
+  { path: "/api/contribution_context", methods: ["GET"] },
+  { path: "/api/orchestrator_messages", methods: ["GET"] },
+  { path: "/api/state", methods: ["GET"] },
+  { path: "/api/state_stats", methods: ["GET"] },
+  { path: "/api/health", methods: ["GET"] },
+  { path: "/api/models", methods: ["GET"] },
+  { path: "/api/models/select", methods: ["POST"] },
+  { path: "/api/metrics", methods: ["GET"] },
+  { path: "/api/logs", methods: ["GET"] },
+  { path: "/api/participants", methods: ["GET"] },
+  { path: "/api/contributions", methods: ["GET"] },
+  { path: "/api/turn_requests", methods: ["GET"] },
+  { path: "/api/agent_errors", methods: ["GET"] },
+  { path: "/api/agent_contexts", methods: ["GET"] },
+  { path: "/api/agent_context", methods: ["GET"] },
+  { path: "/api/export", methods: ["GET"] },
+  { path: "/api/export/stream", methods: ["GET"] },
+  { path: "/api/stream", methods: ["GET"] },
+];
+function isMethodAllowed(pathname, method) {
+  const entry = ROUTE_TABLE.find((r) => r.path === pathname);
+  if (!entry) return true; // allow assets and unknown to fall through 404
+  return entry.methods.includes(method);
+}
+function methodGuard(pathname, method) {
+  if (!isMethodAllowed(pathname, method)) {
+    return Response.json({ error: "method not allowed" }, { status: 405, headers: { Allow: ROUTE_TABLE.find((r) => r.path === pathname)?.methods.join(", ") ?? "" } });
+  }
+  return null;
+}
 
 import {
   embeddingStatus,
@@ -69,6 +109,9 @@ export function startDashboard(directory, port) {
     async fetch(req) {
       try {
         const url = new URL(req.url);
+        // Method guard via route table
+        const guard = methodGuard(url.pathname, req.method);
+        if (guard) return guard;
 
         if (url.pathname === "/" || url.pathname === "/index.html") {
           return new Response(HTML_SHELL, {
@@ -263,7 +306,9 @@ export function startDashboard(directory, port) {
           if (since > 0) {
             let contribs = api.getContributionsSince(since);
             if (!includeContext) contribs = contribs.map((c) => ({ ...c, prompt_context: null }));
-            return Response.json(contribs);
+            // Normalized shape: always return {contributions, total} (total = count of returned slice for since queries)
+            // Clients handle both array and object for backward compat — this ensures consistency.
+            return Response.json({ contributions: contribs, total: contribs.length });
           }
           const limit = clampLimit(url.searchParams.get("limit"));
           const offset = clampOffset(url.searchParams.get("offset"));
@@ -362,8 +407,20 @@ export function startDashboard(directory, port) {
 
           const stream = new ReadableStream({
             start(controller) {
+              const isFirstClient = !sseClients.has(meetingId) || sseClients.get(meetingId).size === 0;
               if (!sseClients.has(meetingId)) {
                 sseClients.set(meetingId, new Set());
+              }
+              // Seed lastContributionId on first SSE connect so first poll is delta-only
+              if (isFirstClient && !lastContributionId.has(meetingId)) {
+                try {
+                  const maxId = api.getMaxContributionId();
+                  lastContributionId.set(meetingId, maxId);
+                } catch {}
+                // Also seed other deltas to avoid replaying full history on first poll
+                try { lastOrchestratorMsgId.set(meetingId, api.getMaxOrchestratorMessageId()); } catch {}
+                try { lastInterjectionId.set(meetingId, api.getMaxTurnRequestId()); } catch {}
+                try { lastErrorId.set(meetingId, api.getMaxErrorId()); } catch {}
               }
               clientEntry = { controller, slowSince: null };
               sseClients.get(meetingId).add(clientEntry);
@@ -400,9 +457,26 @@ export function startDashboard(directory, port) {
           const lastDot = filePath.lastIndexOf(".");
           const ext = lastDot > 0 ? filePath.slice(lastDot) : "";
           const contentType = MIME_TYPES[ext] ?? "application/octet-stream";
-          return new Response(Bun.file(filePath), {
-            headers: { "Content-Type": contentType, ...SECURITY_HEADERS },
-          });
+          const headers = { "Content-Type": contentType, ...SECURITY_HEADERS };
+          if (assetPath === "app.js") {
+            headers["Cache-Control"] = "no-cache";
+            headers["ETag"] = (() => {
+              try {
+                const s = statSync(filePath);
+                return `W/"${s.mtimeMs.toString(36)}-${s.size.toString(36)}"`;
+              } catch { return undefined; }
+            })();
+            // Handle conditional request
+            const inm = req.headers.get("if-none-match");
+            if (inm && headers["ETag"] && inm === headers["ETag"]) {
+              return new Response(null, { status: 304, headers });
+            }
+          } else {
+            headers["Cache-Control"] = "public, max-age=31536000, immutable";
+          }
+          // Remove undefined ETag if stat failed
+          if (!headers["ETag"]) delete headers["ETag"];
+          return new Response(Bun.file(filePath), { headers });
         }
 
         return new Response("Not found", { status: 404, headers: SECURITY_HEADERS });
