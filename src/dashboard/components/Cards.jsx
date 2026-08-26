@@ -637,8 +637,6 @@ export const ORCHESTRATOR_TYPE_META = {
   summary: { emoji: "📝", label: "Round Summary" },
   moderation: { emoji: "🛡️", label: "Moderation" },
   convergence: { emoji: "🎯", label: "Convergence Check" },
-  compaction: { emoji: "📦", label: "Context Compaction" },
-  domain: { emoji: "🔍", label: "Domain Detection" },
   orchestrator: { emoji: "🎛️", label: "Orchestrator" },
 };
 

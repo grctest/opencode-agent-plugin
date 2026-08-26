@@ -3,53 +3,6 @@ import { TIER_ORDER, LENGTH_LIMITS } from "./constants.js";
 import { QUERY_MODES } from "./query-modes.js";
 import { getRecentContributionsBlock, buildEvidenceGuidance, buildSeniorityContext, buildRoundContext } from "./blocks.js";
 
-/** Builds a prompt asking a listener to reflect on a speaker's contribution. */
-export function buildReflectionPrompt(listener, triggerParticipant, contribution, roundContributions, currentRound, maxRounds) {
-  const safeSpeaker = sanitizeForDisplay(triggerParticipant.config.name);
-  const safeContribution = sanitizeForDisplay(contribution);
-  const guidance = listener.config.reflection_guidance || "Apply your domain lens; end with Position: [held|revised|expanded] because …";
-
-  const previousReflection = listener.reflection || "";
-  const listenerTierLevel = TIER_ORDER[listener.config.tier] ?? 1;
-  const triggerTierLevel = TIER_ORDER[triggerParticipant.config.tier] ?? 1;
-
-  const seniorityContext = buildSeniorityContext(
-    listener.config.name, listener.config.tier,
-    triggerParticipant.config.name, triggerParticipant.config.tier,
-    listenerTierLevel, triggerTierLevel
-  );
-  const roundContext = buildRoundContext(currentRound, maxRounds);
-  const toolSection = buildEvidenceGuidance("reflection");
-
-  const compressedPrior = previousReflection
-    ? `Your prior position (1 sentence): "${sanitizeForDisplay(previousReflection.slice(0, 280))}" — keep what holds, revise what changed, add what’s new.`
-    : "You have no prior reflection — take a clear initial position.";
-
-  const recentMine = getRecentContributionsBlock(roundContributions, listener.config.id);
-
-  return `## Reflection — ${listener.config.name} (${listener.config.tier})
-
-Your agenda: ${sanitizeForDisplay(listener.config.agenda, 400)}
-
-${recentMine ? recentMine + "\n\n" : ""}${compressedPrior}
-
-**Trigger — ${safeSpeaker} (${triggerParticipant.config.tier}) said:**
-"${safeContribution}"
-
-## Lens
-${guidance}
-
-## How to Weigh
-- Seniority: ${seniorityContext}
-- Round: ${roundContext}
-
-## Task
-Write a concise reflection (${LENGTH_LIMITS.reflectionWords} words) visible to all participants.
-Structure: 1) What the trigger gets right/wrong with citation or scenario, 2) How your lens changes the view, 3) Closing line: Position: [held|revised|expanded] because {one falsifiable cause}.
-If you cite deliberation content, use [#id]; if you cite external fact, use Source: URL. Do not re-emit <<< >>> boundaries.
-${toolSection}`;
-}
-
 /** Builds a prompt for a queried agent to respond to a direct question from another agent.
  * mode: one of QUERY_MODES keys (clarify | perspective | evidence | critique | risks | assumptions | alternatives). */
 export function buildQueryPrompt(sourceAgent, targetAgent, sourceContribution, question, roundContributions, currentRound, maxRounds, stateOfPlay = "", mode = "clarify") {

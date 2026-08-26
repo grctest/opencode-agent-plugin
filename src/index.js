@@ -110,6 +110,5 @@ export { formatRoomPreview } from "./composer.js";
 export {
   getTierConfig,
   splitModel,
-  getPromptForTier,
   getRightsForTier,
 } from "./shared.js";

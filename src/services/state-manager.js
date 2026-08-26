@@ -184,7 +184,7 @@ export class StateManager {
    */
   static TRANSITIONS = {
     initializing: ["weaving", "cancelled", "aborted", "timeout"],
-    weaving: ["converged", "cancelled", "timeout", "max_rounds_reached", "aborted", "deadlocked"],
+    weaving: ["converged", "cancelled", "timeout", "max_rounds_reached", "aborted"],
     // Extension entry point: a converged/terminal meeting explicitly re-opened
     // by extendMeeting() passes through forceTransitionTo, documented below.
     converged: [],
@@ -192,7 +192,6 @@ export class StateManager {
     timeout: [],
     max_rounds_reached: [],
     aborted: [],
-    deadlocked: [],
   };
 
   transitionTo(status) {

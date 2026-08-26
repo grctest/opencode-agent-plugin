@@ -10,7 +10,6 @@ const TOOL_REQUIRED_OVERRIDES = {
   knit: ["question"],
   loom_viz: [],
   loom_debug: ["loom_id"],
-  loom_type: ["type"],
   loom_vector_search: ["query"],
   // loom_query, loom_evidence, loom_vote, loom_summon, loom_request_next, loom_status, loom_cancel etc. already correct
 };

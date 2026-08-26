@@ -541,7 +541,6 @@ input {
 .loom-badge-turn-request { background: #be185d; color: white; }
 .loom-badge-weaving { background: #ca8a04; color: white; }
 .loom-badge-converged { background: #16a34a; color: white; }
-.loom-badge-deadlocked { background: #dc2626; color: white; }
 .loom-badge-max_rounds_reached { background: #ea580c; color: white; }
 .loom-badge-initializing { background: var(--color-muted); color: var(--color-muted-foreground); }
 .loom-badge-aborted { background: #6b7280; color: white; }

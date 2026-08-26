@@ -211,13 +211,12 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
         });
                   const cap = getPriorityCap(participant.config.tier);
         const reqNext = extractRequestNextFromToolResults(finalToolResults);
-        const declaredForStub = extractDeclaredType(finalToolResults);
         this._recordModelSuccess(model);
         ephemeralSessionIdToDelete = null;
         return {
           participant_id: participant.config.id,
           content: "[TOOL-ONLY TURN — no text produced; tool evidence preserved]",
-          type: declaredForStub ?? "question",
+          type: "question",
           request_next: reqNext ? { priority: Math.min(reqNext.priority, cap), reason: reqNext.reason } : null,
           query: null,
           evidence: null,

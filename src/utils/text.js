@@ -125,9 +125,7 @@ export function extractAgentResponse(data) {
       case "snapshot":
       case "agent":
       case "retry":
-      case "compaction":
-        // Log for observability, don't include in extracted text
-        break;
+
 
       case "subtask":
         // Subtask result — capture text if available

@@ -293,7 +293,7 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
                 const cfg = config.get();
                 const warnings = config.getWarnings();
                 const source = config.getSource();
-                result.config = { values: cfg, warnings, source, dormantNote: "maxTurnRequestsPerRound was removed from the schema (never enforced — ordering is planTurnOrder)" };
+                result.config = { values: cfg, warnings, source, dormantNote: "maxTurnRequestsPerRound and loom_type were removed — ordering is planTurnOrder, primary turns are untyped" };
               } catch {}
             }
             return JSON.stringify(result, null, 2);
@@ -356,7 +356,7 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
               if (include.includes('config')) {
                 try {
                                     const cfgInst = createConfig(directory);
-                  result.config = { values: cfgInst.get(), warnings: cfgInst.getWarnings(), source: cfgInst.getSource(), dormantNote: "maxTurnRequestsPerRound was removed from the schema (never enforced — ordering is planTurnOrder)" };
+                  result.config = { values: cfgInst.get(), warnings: cfgInst.getWarnings(), source: cfgInst.getSource(), dormantNote: "maxTurnRequestsPerRound and loom_type were removed — ordering is planTurnOrder, primary turns are untyped" };
                 } catch {}
               }
               result._source = "db-fallback";

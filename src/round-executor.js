@@ -6,7 +6,7 @@ import { extractAgentResponse, mapToolResults, truncate, extractFileBlockTools, 
 import { getPersonas } from "./composer.js";
 import { Logger, extractErrorInfo } from "./logger.js";
 import { sanitizeForPrompt, sanitizeForDisplay, sanitizeAgentOutput } from "./utils/sanitize.js";
-import { withRetry, isRetryableError, CircuitBreaker } from "./utils/retry.js";
+import { CircuitBreaker } from "./utils/retry.js";
 import { selectFallbackModel } from "./services/model-service.js";
 import { incrementKeyedCounter, recordLatency } from "./metrics.js";
 import { extractVoteLetter, buildTally } from "./utils/vote-tally.js";
@@ -214,11 +214,6 @@ export class RoundExecutor {
 
     const truncated = truncate(result.content, 120);
     this._options.onProgress?.(`${p.config.name} (${p.config.tier}) — ${result.type}: "${truncated}"`);
-  }
-
-  // Reflections now happen mid-round in runPromptPhase — no separate phase needed
-  async runReflectionPhase(round, activeParticipants) {
-    // No-op
   }
 
   /**

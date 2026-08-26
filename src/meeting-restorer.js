@@ -6,7 +6,7 @@ import { Logger, LoomError } from "./logger.js";
 const restorerLogger = new Logger();
 
 /** Terminal statuses that must never silently reopen as mid-deliberation (audit 05 LS1). */
-const TERMINAL_STATUSES = new Set(["converged", "cancelled", "timeout", "max_rounds_reached", "aborted", "deadlocked", "exhausted"]);
+const TERMINAL_STATUSES = new Set(["converged", "cancelled", "timeout", "max_rounds_reached", "aborted"]);
 
 /**
  * Restores in-memory meeting state from the database.

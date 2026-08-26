@@ -18,7 +18,6 @@ export function buildToolsMap(config) {
     if (loom.loom_vote) toolsMap.loom_vote = true;
     if (loom.loom_summon) toolsMap.loom_summon = true;
     if (loom.loom_request_next) toolsMap.loom_request_next = true;
-    if (loom.loom_type) toolsMap.loom_type = true;
   }
   return toolsMap;
 }
@@ -38,7 +37,6 @@ export function buildToolsMapWithoutLoom(config) {
     const loom = resolveLoomTools(agentToolsConfig);
     if (loom.loom_vector_search) toolsMap.loom_vector_search = true;
     if (loom.loom_request_next) toolsMap.loom_request_next = true;
-    if (loom.loom_type) toolsMap.loom_type = true;
   }
   return toolsMap;
 }

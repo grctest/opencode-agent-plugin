@@ -16,7 +16,6 @@ export const DEFAULT_CONFIG = {
   defaultMeetingTimeoutMs: 900000,
   stallTimeoutMs: 300000,
   maxTotalTokens: 0,
-  modelDiversity: true,
   dashboard: { host: "127.0.0.1" },
   composition: { maxCosineDistance: 0.85 },
   circuitBreaker: {
@@ -76,7 +75,6 @@ export const CONFIG_SCHEMA = {
   maxTotalTokens: { type: 'number', min: 0, max: 100000000 },
   maxSummonsPerRound: { type: 'number', min: 0, max: 5 },
   maxSummonsPerAgent: { type: 'number', min: 0, max: 3 },
-  modelDiversity: { type: 'boolean' },
   synthesisMaxRetries: { type: 'number', min: 0, max: 5 },
 };
 

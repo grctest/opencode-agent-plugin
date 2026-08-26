@@ -69,7 +69,7 @@ export async function _promptOrchestrator(system, model, message, type = "orches
       }
       return null;
     })() : null);
-    const useModel = (fastPathModel && (type === "moderation" || type === "compaction" || type === "summary"))
+    const useModel = (fastPathModel && (type === "moderation" || type === "summary"))
       ? fastPathModel
       : model;
 

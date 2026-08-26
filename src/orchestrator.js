@@ -57,7 +57,7 @@ export class MeetingOrchestrator {
   _logger = null;
   _orchestratorMessages = [];
   _resume = false;
-  _callStats = { orchestrator: 0, compaction: 0, moderation: 0, summary: 0, synthesis: 0, input_tokens: 0, output_tokens: 0 };
+  _callStats = { orchestrator: 0, moderation: 0, summary: 0, synthesis: 0, input_tokens: 0, output_tokens: 0 };
   _personaIndex = null;
   _availableModels = [];
   _maxTotalTokens = 0;

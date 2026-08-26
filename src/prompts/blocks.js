@@ -13,11 +13,6 @@ export function getRecentContributionsBlock(contributions, participantId) {
   return `Your last contributions:\n${mine.map((c) => `- "${c.slice(0, 300)}"`).join("\n")}`;
 }
 
-export function getReflectionBlock(reflection) {
-  if (!reflection) return "";
-  return `Your current position:\n"${sanitizeForDisplay(reflection.slice(0, 500))}"`;
-}
-
 export function buildEvidenceGuidance(kind) {
   const cfg = getConfig()?.agentTools ?? {};
   const toolsDisabled = !cfg?.enabled;

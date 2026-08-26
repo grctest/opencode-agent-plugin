@@ -1,6 +1,6 @@
 # The Loom Orchestration Architecture
 
-**Schema version:** `meetings.status ∈ {initializing,weaving,converged,exhausted,timeout,cancelled,aborted,deadlocked}` (`exhausted`/`deadlocked` are reserved values not produced by current orchestration paths — see §Lifecycle) — file pattern `.opencode/loom/meetings/<uuid>.db` — last verified `0.1.0`.
+**Schema version:** `meetings.status ∈ {initializing,weaving,converged,timeout,cancelled,aborted}` — file pattern `.opencode/loom/meetings/<uuid>.db` — last verified `0.1.0`.
 
 A complete technical reference for how the Loom multi-agent deliberation system works, from user input to final output. Every LLM prompt, every data structure, every decision point. Written for someone who cannot read the source code.
 
@@ -690,7 +690,7 @@ The meeting terminates when any of these hold after a round:
 
 The old `convergence` argument (`consensus` / `majority` / `moderator_forces`) was removed from the `/knit` contract entirely; the `meetings.convergence` column persists only as a display label (see `docs/removing-convergence-system.md`). Termination is deterministic (see table above). Hard timeouts (absolute meeting timeout, stall watchdog) and user cancellation also stop the weave loop and proceed to synthesis.
 
-Terminal statuses: `converged`, `cancelled`, `timeout`, `max_rounds_reached`, `aborted`, `deadlocked` (the last two surface via the state machine but are not produced by the current orchestration paths; `max_rounds_reached` and `deadlocked` are reserved).
+Terminal statuses: `converged`, `cancelled`, `timeout`, `max_rounds_reached`, `aborted` (the last two surface via the state machine but are not produced by the current orchestration paths; `max_rounds_reached` is reserved).
 
 ---
 
@@ -1000,7 +1000,7 @@ If the draft is accurate, grounded, and complete, respond with exactly: [NO_CHAN
   current_round: 3,
   max_rounds: 6,
   current_speaker_idx: 0,
-  status: "weaving",   // initializing | weaving | converged | cancelled | timeout | max_rounds_reached | aborted | deadlocked
+  status: "weaving",   // initializing | weaving | converged | cancelled | timeout | max_rounds_reached | aborted
   artifact: null,      // set after synthesis
   objections: [],      // collected at synthesis time
   tags: ["engineering", "security"],
@@ -1025,7 +1025,7 @@ stateManager.reorderForNextSpeaker(id)          // established for next round
 stateManager.addParticipantReflection(id, text)
 ```
 
-`transitionTo` validates against the state machine (`initializing → weaving; weaving → converged/cancelled/timeout/max_rounds_reached/aborted/deadlocked`; terminal states are absorbing). `forceTransitionTo` bypasses validation and is reserved for the extension escape hatch.
+`transitionTo` validates against the state machine (`initializing → weaving; weaving → converged/cancelled/timeout/max_rounds_reached/aborted`; terminal states are absorbing). `forceTransitionTo` bypasses validation and is reserved for the extension escape hatch.
 
 ### Persistence
 
@@ -1314,7 +1314,7 @@ Orchestrator calls can use a cheaper/faster model instead of the highest-tier ag
 `#promptOrchestrator` routes to the fast-path model when `fastPathModel` is set:
 
 ```javascript
-const useModel = (fastPathModel && (type === "moderation" || type === "compaction" || type === "summary"))
+const useModel = (fastPathModel && (type === "moderation" || type === "summary"))
   ? fastPathModel
   : model;
 ```
@@ -1323,7 +1323,6 @@ const useModel = (fastPathModel && (type === "moderation" || type === "compactio
 |-----------|-----------|---------|
 | `moderation` | Yes | Moderator rulings (Section 8) |
 | `summary` | Yes | LLM round summaries (Section 13) |
-| `compaction` | Yes (legacy) | Reserved — compaction removed |
 | `turn_order` | No (via planner) | `planTurnOrder` selects `fastPathModel` itself (Section 9) |
 
 Note: turn-order planning is special — `#promptOrchestrator` doesn't fast-path `turn_order`, but `planTurnOrder` picks `fastPathModel || getHighestTierModel()` as its model before calling the orchestrator, so it still benefits when configured.
@@ -1563,11 +1562,11 @@ Explicit configuration always wins over automatic assignment:
 
 ### 4. Orchestrator & Fallback Model Safeguards
 
-- **Fast-path routing** (`fastPathModel`): cheap models for moderation/summary/compaction orchestrator calls; turn-order planning selects it itself (Section 21).
+- **Fast-path routing** (`fastPathModel`): cheap models for moderation/summary orchestrator calls; turn-order planning selects it itself (Section 21).
 - **Model fallback** (`modelFallback.*`): a failed agent turn is retried on its model, then on a healthy fallback selected by `selectFallbackModel()` (Section 16).
 - `getHighestTierModel()` acts as a safety net: `#getParticipantModel(participant, fallbackOnError)` substitutes the highest-tier healthy model whenever a participant's own model is missing or unhealthy (used by directives, votes, and synthesis).
 
-The appendix table lists every model-related configuration key (`modelDiversity`, `fastPathModel`, `circuitBreaker.*`, `modelFallback.*`).
+The appendix table lists every model-related configuration key (`fastPathModel`, `circuitBreaker.*`, `modelFallback.*`).
 
 ---
 

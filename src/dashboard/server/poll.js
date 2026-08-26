@@ -55,7 +55,7 @@ export function createPollSystem(directory) {
   let pollTimer = null;
   let consecutiveIdlePolls = 0;
 
-  const TERMINAL_STATUSES = new Set(["converged", "cancelled", "timeout", "max_rounds_reached", "aborted", "deadlocked"]);
+  const TERMINAL_STATUSES = new Set(["converged", "cancelled", "timeout", "max_rounds_reached", "aborted"]);
 
   const pollMeetings = () => {
     let hadActivity = false;

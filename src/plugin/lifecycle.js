@@ -9,7 +9,7 @@ export function createLifecycleHandlers(activeLooms) {
         const state = engine.getState();
         if (state.status !== "converged" && state.status !== "cancelled" &&
             state.status !== "timeout" && state.status !== "max_rounds_reached" &&
-            state.status !== "aborted" && state.status !== "deadlocked") {
+            state.status !== "aborted") {
           engine.cancel();
           logger.warn("process_exit", `Marking meeting ${id} as aborted due to process exit`);
         }
@@ -23,7 +23,7 @@ export function createLifecycleHandlers(activeLooms) {
         const state = engine.getState();
         if (state.status !== "converged" && state.status !== "cancelled" &&
             state.status !== "timeout" && state.status !== "max_rounds_reached" &&
-            state.status !== "aborted" && state.status !== "deadlocked") {
+            state.status !== "aborted") {
           engine.cancel();
           logger.warn("process_exit", `Marking meeting ${id} as aborted due to process exit`);
         }

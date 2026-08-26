@@ -83,7 +83,7 @@
  * @property {Round[]} rounds
  * @property {number} current_round
  * @property {number} max_rounds
- * @property {'initializing'|'weaving'|'converged'|'cancelled'|'timeout'|'max_rounds_reached'|'aborted'|'deadlocked'} status
+ * @property {'initializing'|'weaving'|'converged'|'cancelled'|'timeout'|'max_rounds_reached'|'aborted'} status
  * @property {Object|null} artifact
  * @property {Object[]} objections
  * @property {string[]} tags
