@@ -6,32 +6,38 @@ The Loom lets you convene a circle of AI agents with different expertise, senior
 
 ## How It Works
 
-You ask a question. The Loom uses embedding-based similarity search (no LLM domain detection) to compose a team of AI agents with relevant expertise — each persona's description is embedded and matched against your question via `PersonaIndex` cosine similarity. Each agent runs in its own isolated session with its own model.
+You ask a question. The Loom uses embedding-based similarity search (no LLM domain detection) to compose a team of AI agents with relevant expertise — every persona's description is embedded, your question is embedded, and the closest match per role tier wins via `PersonaIndex` cosine similarity. Each agent runs in its own ephemeral session with its own model.
 
-Agents deliberate in structured rounds: proposing ideas, challenging weak arguments, refining positions, and pushing back on assumptions. They can request turns with priority when they have something urgent to say. When agents stall or go in circles, a **moderator** — a separate LLM call using the strongest available model — steps in to break the deadlock, redirect the conversation, or wrap the deliberation up. Deliberation ends when participants all pass, the round limit is reached, or a hard timeout fires. Once it ends, a **synthesizer** produces the final artifact: decisions, action items, unresolved dissent, and a confidence level.
+Agents deliberate in structured rounds. During a turn an agent isn't limited to writing prose — it interacts with peers directly through real tool calls: `loom_query` queries specific peers (with seven answer modes: factual clarify, stance-taking perspective, forced-research evidence, adversarial critique, risk analysis, assumption surfacing, alternatives), `loom_vote` polls everyone on lettered options, `loom_summon` brings in a guest expert persona, and `loom_request_next` claims speaking priority for the next round. Peer answers, ballots, and tallies are returned **inline within the same turn**, so the speaker synthesizes them into their contribution immediately instead of waiting for future rounds.
+
+Termination is deterministic: everyone passes or fails, the round limit is reached, or a hard timeout or token budget fires. A lightweight moderator acts only as a safety net — consulted just when a round shows repeated challenges/dissents — to direct the next speaker or end the deliberation early (never before the minimum round count). Once the meeting ends, a neutral **synthesizer** produces the final artifact: decisions, action items, unresolved dissent, and a confidence level, then self-critiques its draft against the transcript.
 
 A real-time web dashboard shows every agent contributing as it happens. If you run `/knit` again in the same session, it extends the existing deliberation rather than starting fresh.
 
 ## Features
 
-- **Structured turn-taking** with priority turn requests
-- **Tier-based roles** — junior to principal, each with escalating expectations
-- **Moderator agent** — spawned on demand to break deadlocks and drive the deliberation to a close
-- **Deterministic termination** — participants all pass, round limit reached, or hard timeout
-- **Minority report** — unresolved dissenting views are preserved in the output
+- **Auto-composed expert rooms** — personas embedded and matched to your question via local embedding similarity; custom rooms also supported
+- **Structured rounds** — sequential turn-taking with tier-based expectations and priority turn requests
+- **Inline peer interactions** — query peers in seven modes, call votes, summon guest experts; results return within the same turn
+- **Tool-using agents** — web search/fetch, project file inspection, and semantic recall over prior deliberation context
+- **Deterministic termination** — pass/fail exhaustion, round limit, hard timeout, or token budget
+- **Minority-report synthesis** — neutral synthesizer emits decisions, reasoning, action items, dissent, and confidence, then self-critiques its draft
+- **Model discovery** — finds available models from your opencode providers, assigns them per tier, restrictable per session
+- **Real-time dashboard** — live timeline with a full prompt/tool audit trail; Markdown export
 - **Meeting extension** — re-run `/knit` to continue a deliberation with new input
-- **Auto-composed rooms** — persona selection based on your question's domain
-- **Model discovery** — finds available models from your opencode providers, assigns per tier
-- **Custom rooms** — bring your own participants, models, and round limits
-- **Real-time dashboard** — tabs for Overview, Timeline, and Output
-- **Markdown export** — download the full transcript from the dashboard
-- **Configurable** — tune timeouts, retry behavior, and tool access via config
 
 ## Installation
 
 ```bash
-npm run install:plugin    # first install — detects your opencode config, builds and installs everything
-npm run update:plugin     # update to latest version
+npm install             # 1. install dependencies
+npm run bundle          # 2. build the plugin bundle (dist/loom.js)
+npm run install:plugin  # 3. detect your opencode config and install everything
+```
+
+To update an existing install:
+
+```bash
+npm run update:plugin
 ```
 
 No manual configuration needed. The plugin is auto-discovered from your `plugins/` directory.
@@ -40,7 +46,7 @@ The installer automatically downloads the default embedding model (`snowflake-ar
 
 ## Embedding Models
 
-The Loom uses vector embeddings for RAG-based context retrieval during deliberations. Embedding models are downloaded separately from the plugin and stored in `~/.config/opencode/loom/models/`.
+The Loom uses vector embeddings for two things: composing the room at meeting start, and RAG-based context retrieval during deliberations. Embedding models are downloaded separately from the plugin and stored in `~/.config/opencode/loom/models/`.
 
 ### Downloading Models
 
@@ -83,11 +89,11 @@ Models are stored globally at:
 
 ### How Embedding Models Are Used
 
-1. **RAG Context Retrieval** — Round summaries and contributions are chunked, embedded, and indexed. When prompting agents, the system retrieves relevant prior context using cosine similarity.
+1. **Room composition** — At meeting creation, every persona's text (`persona`, `agenda`, `tags`, `expertise`) is embedded into the meeting database. Your `/knit` question is embedded too, and compared against each persona by cosine similarity: for each role slot, the most similar not-yet-used persona in that tier is picked (`PersonaIndex.search`). A finance question gets finance experts; an engineering question gets engineers.
 
-2. **Semantic Drift Detection** — Embeddings are available for computing semantic drift between rounds, but drift is not currently computed or visualized (the feature was removed as dead code; see `ORCHESTRATION_ARCHITECTURE.md` §24 for the revival path).
+2. **RAG context retrieval** — Round summaries and contributions are chunked, embedded, and indexed. When prompting agents, the system retrieves relevant prior context using cosine similarity, and agents can query the same index directly via `loom_vector_search`.
 
-The embedding model is initialized at plugin startup (`ensureEmbedderInitialized` in `src/index.js:48`), so `/knit` meetings use real embeddings. If the model is unavailable (e.g., ONNX load fails or model not downloaded), semantic features (vector search, reflection targeting, room composition) degrade visibly via a keyword-based fallback and warnings rather than silent placeholder noise — the meeting otherwise proceeds.
+The embedding model is initialized at plugin startup (`ensureEmbedderInitialized` in `src/index.js:48`), so `/knit` meetings use real embeddings. If the model is unavailable (e.g., ONNX load fails or model not downloaded), semantic features (room composition, vector search) degrade visibly via a keyword-based fallback and warnings rather than silent placeholder noise — the meeting otherwise proceeds.
 
 ### Where Meetings Live
 
@@ -101,12 +107,9 @@ Meetings are stored per-project (or globally when no workspace):
 # Without workspace:
 ~/.config/opencode/loom/meetings/<uuid>.db
 ~/.config/opencode/loom/meetings/<uuid>.md
-
-# Top-level index (legacy):
-~/.config/opencode/loom/loom/session-index.json  # May be empty — per-meeting DBs are authoritative
 ```
 
-Retention is manual — `session.deleted` event cleans up (`src/index.js:580`), or delete `meetings/<uuid>.db*` yourself. `fresh:true` on `/knit` unlinks `""`, `"-wal"`, `"-shm"` for the current session's loom before starting fresh.
+Retention is manual — deleting a session cleans up its meetings (`session.deleted` event), or delete `meetings/<uuid>.db*` yourself. `fresh:true` on `/knit` removes the current session's meeting files before starting fresh.
 
 ## Quick Start
 
@@ -154,8 +157,10 @@ loom_viz
 |----------|-------------|---------|
 | `question` | The question or task to deliberate on | _(required)_ |
 | `context` | Additional context, background files, or constraints | — |
-| `participants` | Custom participant list (name, persona, agenda, tier) | auto-composed from domain |
+| `participants` | Custom participant list (name, persona, agenda, tier) | auto-composed via embedding similarity |
 | `max_rounds` | Maximum deliberation rounds (1–10) | `3` |
+| `models` | Explicit per-tier model assignments (`[{tier, provider_id, model_id}]`) | auto-assigned by capability score |
+| `dry_run` | Preview the composed room without deliberating | `false` |
 | `meeting_timeout` | Maximum meeting duration in ms (60000–1800000) | `900000` (15 min) |
 | `fresh` | Force a fresh loom even if a previous meeting exists | `false` |
 
@@ -200,8 +205,6 @@ The Loom ships with 89 personas organized into five tiers (including `civilian` 
 | **Total** | **89** |
 <!-- CENSUS-END -->
 
-This table is generated by `npm run census` (scripts/persona-census.mjs) — run it after adding or removing personas.
-
 When you ask a question, the Loom uses **embedding similarity** (not LLM domain detection) to select personas — the question is embedded and the most similar personas per tier are chosen via `PersonaIndex.search` (cosine similarity against `persona_embeddings`). For example, a finance question gets finance experts; an engineering question gets engineers.
 
 | Question Type | Tags Matched |
@@ -210,7 +213,7 @@ When you ask a question, the Loom uses **embedding similarity** (not LLM domain 
 | "How do we design our API?" | engineering, creative |
 | "What's our go-to-market strategy?" | business, operations |
 
-Each tier has different behavioral guidance defined in each persona's `tier_guidance` field. Personas also include a `reflection_guidance` field that specifies how they should approach reflections. Personas can be customized by editing the JSON files in the `personas/` directory. The `civilian` tier maps to `mid` seniority/temperature via `utils/tier.js`.
+Each tier has different behavioral guidance defined in each persona's `tier_guidance` field, blended with a per-tier doctrine line in the agent system prompt. Personas also include a `reflection_guidance` field used when peers solicit their stance via `loom_query mode=perspective`. Personas can be customized by editing the JSON files in the `personas/` directory. The `civilian` tier maps to `mid` seniority/temperature via `utils/tier.js`.
 
 ## Dashboard
 
@@ -252,31 +255,7 @@ Project-level equivalent in `.loomrc.json` (same keys, no `"loom"` wrapper):
 
 Environment overrides: `LOOM_<KEY>` applies on top of files for scalar schema keys (e.g. `LOOM_AGENT_TIMEOUT_MS=180000`, `LOOM_MODEL_DIVERSITY=false`). Log verbosity is controlled by `LOOM_LOG_LEVEL` (`DEBUG`|`INFO`|`WARN`|`ERROR`|`FATAL`, default `INFO`). The dashboard binds `127.0.0.1` by default for safety; set `dashboard.host` in config to expose it to your LAN deliberately.
 
-Other available options include agent and synthesis timeouts, moderator triggers, retry policy, max tool calls, meeting timeout, stall detection (`stallTimeoutMs`, default 5 min), composition relevance floor (`composition.maxCosineDistance`, default 0.85), token budget (`maxTotalTokens`, `0` = unlimited — a runaway meeting ends early and still synthesizes), and embedding model selection (`embeddingModel`/`embeddingQuant`).
-
-## Mid-Meeting Steering
-
-While a deliberation is running, you can type into the parent chat between rounds:
-
-- Any plain message is injected as steering for the next round (participants are told the owner interjected).
-- `/mute <name>` removes a participant from the rotation for the rest of the meeting.
-- `/release <name>` returns a muted participant to the rotation.
-
-The dashboard also exposes recent in-process logs at `GET /api/logs?limit=100&level=WARN` (ring buffer, last 500 lines).
-
-## Known Limitations
-
-- Desktop-only webapp — not optimized for mobile viewports (responsive floor at 768px single-column, not full mobile)
-- No authentication or authorization on the dashboard API
-- SQLite-based persistence — not suitable for horizontal scaling
-- Per-meeting metrics are persisted to DB (including degradation/retry/breaker counters and derived deliberation-quality stats); process-wide latency samples in `metrics.js` are lost on restart (see `ORCHESTRATION_ARCHITECTURE.md` §25)
-- SSE reconnection uses exponential backoff but falls back to polling after 10 attempts
-- State of play is rule-based derived from full weave (no LLM fabric compaction); round summaries use LLM only when conflict exists (`moderator_forces` mode)
-- Dashboard defaults to the most recent meeting (`created_at DESC`); URL deep link `?meeting=<uuid>` / `#<uuid>` preserves selection via history
-- No PDF export capability — Markdown (and JSON) only, now fully paginated (no 500-cap)
-- If the embedding model is unavailable at startup, room composition / vector search degrade to keyword fallback with visible warnings (not silent noise)
-
-**Schema version:** `meetings.status ∈ {initializing,weaving,converged,exhausted,timeout,cancelled,aborted,deadlocked}` (`exhausted`/`deadlocked` are reserved schema values not produced by current orchestration paths) — file pattern `.opencode/loom/meetings/<uuid>.db` — last verified `0.1.0`.
+Other available options include agent and synthesis timeouts, moderator triggers, retry policy, max tool calls, meeting timeout, stall detection (`stallTimeoutMs`, default 5 min), composition relevance floor (`composition.maxCosineDistance`, default 0.85), token budget (`maxTotalTokens`, `0` = unlimited — a runaway meeting ends early and still synthesizes), same-turn synthesis for inline loom tool results (`agentTools.sameTurnSynthesis`), and embedding model selection (`embeddingModel`/`embeddingQuant`).
 
 ## License
 

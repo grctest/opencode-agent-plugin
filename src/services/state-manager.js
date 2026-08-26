@@ -91,32 +91,6 @@ export class StateManager {
     return this.#state.participants.filter(p => p.status === "passed").length;
   }
 
-  /**
-   * Mutes a participant for the remainder of the meeting (audit 14 PV3).
-   * Muted participants keep their history but are skipped by turn planning.
-   */
-  muteParticipant(participantId) {
-    const p = this.getParticipant(participantId);
-    if (p && p.status !== "failed" && p.status !== "passed") {
-      p.status = "muted";
-      this.#logger.info("participant_muted", `Participant ${participantId} muted`);
-      return true;
-    }
-    if (!p) this.#logger.warn("participant_not_found", `muteParticipant: unknown participant "${participantId}"`);
-    return false;
-  }
-
-  /** Returns a muted participant to the listening rotation (audit 14 PV3). */
-  releaseParticipant(participantId) {
-    const p = this.getParticipant(participantId);
-    if (p && p.status === "muted") {
-      p.status = "listening";
-      this.#logger.info("participant_released", `Participant ${participantId} released back to rotation`);
-      return true;
-    }
-    return false;
-  }
-
   getActiveCount() {
     return this.getActiveParticipants().length;
   }

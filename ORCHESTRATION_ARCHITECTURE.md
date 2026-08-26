@@ -29,7 +29,7 @@ A complete technical reference for how the Loom multi-agent deliberation system 
 19. [Vector Index, RAG, and PersonaIndex](#19-vector-index-rag-and-personaindex)
 20. [Agent-Requested Tools](#20-agent-requested-tools)
 21. [Fast-Path Model Routing](#21-fast-path-model-routing)
-22. [Directed Interactions: Query, Evidence, Summon, Vote](#22-directed-interactions-query-evidence-summon-vote)
+22. [Inline Peer Interactions: Query, Vote, Summon, Turn Requests](#22-inline-peer-interactions-query-vote-summon-turn-requests)
 23. [Dashboard System](#23-dashboard-system)
 24. [Meeting Lifecycle: From /knit to Report File](#24-meeting-lifecycle-from-knit-to-report-file)
 25. [Metrics and Observability](#25-metrics-and-observability)
@@ -42,15 +42,15 @@ A complete technical reference for how the Loom multi-agent deliberation system 
 When a user types `/knit` with a question, this is what happens:
 
 1. **Room composition** — The question is analyzed for complexity, then a team of 2–7 agents is assembled without any LLM call: each per-tier role is filled by the persona (from `personas/<tier>/*.json`) whose embedded description is most semantically similar to the question (via `PersonaIndex`). Each agent gets a name, persona description, agenda, tier, and topic tags.
- 2. **Model assignment** — Each agent is assigned an LLM model. Principal/senior tiers get the top available model (the session's model when present); remaining tiers get the next-best unused models. Explicit per-participant `model`/`model_override` fields win over automatic assignment. The discovery pool can be narrowed with a per-session model filter (`/enable_knit_models` / `/disable_knit_models`, Section 26).
+2. **Model assignment** — Each agent is assigned an LLM model. Principal/senior tiers get the top available model (the session's model when present); remaining tiers get the next-best unused models. Explicit per-participant `model`/`model_override` fields win over automatic assignment. The discovery pool can be narrowed with a per-session model filter (`/enable_knit_models` / `/disable_knit_models`, Section 26).
 3. **Rounds execute** — A round is a single sequential prompt phase:
-   - Each agent speaks in turn via a fresh **ephemeral** LLM session, seeing the state of play, vector-RAG context, recent contributions, and their own prior reflection.
-   - After a challenge or dissent, the single **most persona-similar** active participant (excluding the challenger) is selected via embeddings to reflect on it immediately (mid-round reflection).
-   - Agents may invoke **loom_\* interaction tools** (`loom_query`, `loom_evidence`, `loom_summon`, `loom_vote`) to direct peers; when the caller does so the invoker receives the callee responses for same-turn synthesis (Section 22). The bracket forms (`[QUERY: …]` etc.) remain as a deprecated fallback and are not advertised to agents.
-4. **Round summarization** — After all agents speak, the round is summarized (heuristically always; semantically when conflict exists in `moderator_forces` mode).
-5. **State of play update** — The state of play (decisions, agreements, disagreements, open questions, key facts) is regenerated from the full weave.
-6. **Moderator check + turn order planning** — The moderator may rule `converge`, `break`, or `continue`; the moderator then plans the next round's turn order based on `[REQUEST_NEXT]` tags.
-7. **Termination** — The meeting ends when (a) the moderator rules `converge` after the minimum round count, (b) all participants have passed or failed, or (c) the round limit is reached. Hard timeouts (absolute deadline, stall watchdog) and user cancellation also terminate the meeting.
+   - Each agent speaks in turn via a **round-scoped ephemeral session** (one session per participant per round), seeing the state of play, vector-RAG context, and recent contributions.
+   - Agents write **untyped prose** — there are no `[PROPOSE]`/`[CHALLENGE]` type tags anymore; following agents interpret content directly (`[PASS]` alone remains the pass signal).
+   - During their turn agents can invoke **loom_\* interaction tools** (`loom_query`, `loom_vote`, `loom_summon`, `loom_request_next`) alongside research tools. These are plugin-registered tools that execute server-side during `session.prompt`: peer answers, ballots, and tallies are returned **inline in the same turn** and folded back into the speaker's final contribution via an optional same-turn synthesis pass (Section 22).
+4. **Round summarization** — After all agents speak, an LLM clerk summary is generated every round (Established / Contested / Evidence / Open bullets), degrading to a deterministic digest when the LLM returns empty (Section 13).
+5. **State of play update** — The state of play (decisions, agreements, disagreements, open questions, key facts, files involved) is regenerated from the full weave.
+6. **Moderator check + turn order planning** — The moderator — gated behind conflict heuristics so it rarely fires — may rule `converge` or `break`; otherwise turn order for the next round is planned from `loom_request_next` requests (Sections 8–9).
+7. **Termination** — Deterministic: (a) moderator converge after the minimum round count, (b) all participants passed or failed, or (c) the round limit reached. Hard timeouts (absolute deadline, stall watchdog), token budget exhaustion, and user cancellation also terminate the meeting.
 8. **Synthesis** — One agent (typically the principal) synthesizes all contributions into a structured artifact with Decision, Reasoning, Action Items, Dissenting Views, Open Questions, and Confidence, then self-critiques it.
 9. **Output** — A concise chat summary plus a full markdown report saved to `.opencode/loom/meetings/<meetingId>.md`. The live dashboard can be started with `/loom_viz`.
 
@@ -126,12 +126,14 @@ Models are discovered from the connected providers via `discoverModels()` (`prov
 
 Four tiers determine agent behavior, authority, and LLM parameters:
 
-| Tier | Temperature | `[REQUEST_NEXT]` Priority Cap | Rights |
+| Tier | Temperature | `loom_request_next` Priority Cap | Rights |
 |------|------------|-------------------------------|--------|
 | junior | 0.7 | 5 | contribute, request_turn |
 | mid | 0.5 | 7 | contribute, request_turn, call_vote |
-| senior | 0.3 | 9 | contribute, request_turn, call_vote, veto |
-| principal | 0.2 | 10 | contribute, request_turn, call_vote, veto, force_end |
+| senior | 0.3 | 9 | contribute, request_turn, call_vote |
+| principal | 0.2 | 10 | contribute, request_turn, call_vote |
+
+`civilian` shares mid temperature/cap/rights via `utils/tier.js`. The rights flags are vestigial metadata — actual tool availability is governed by the `agentTools` config (Section 20), not tier rights.
 
 **Behavioral guidance is defined in each persona's `tier_guidance` field** (the old static `getPromptForTier` tier strings still exist but are deprecated fallbacks). Each persona file is self-contained and user-editable:
 
@@ -188,10 +190,10 @@ Each agent is loaded from a JSON persona file that also describes how to behave 
     tier_guidance: "...", reflection_guidance: "...",
     model: { providerID: "anthropic", modelID: "claude-sonnet-4-20250514" }
   },
-  tier_config: { temperature: 0.3, rights: { contribute: true, request_turn: true, call_vote: true, veto: true, force_end: false } },
-  embedding: Float32Array /* loaded at init when embedder is available — used for reflection targeting */,
-  status: "listening",      // listening | speaking | passed | failed
-  reflection: "The JWT migration makes sense, but token revocation is unsolved.",
+  tier_config: { temperature: 0.3, rights: { contribute: true, request_turn: true, call_vote: true } },
+  embedding: Float32Array /* loaded at init from persona embeddings when the embedder is available */,
+  status: "listening",      // listening | speaking | passed | failed | muted (muted only appears in restored data from older meetings)
+  reflection: "The JWT migration makes sense, but token revocation is unsolved.",   // maintained via perspective-mode query answers
   contributions_count: 2
 }
 ```
@@ -206,103 +208,99 @@ Every agent LLM call involves two prompts: a **system prompt** (identity + rules
 
 ### The System Prompt
 
-Every agent receives this system prompt (built by `buildAgentSystemPrompt`):
+Every agent receives this system prompt (built by `buildAgentSystemPrompt`). Condensed structure:
 
 ```
-You are **Security Engineer** (senior) in a structured multi-agent deliberation called "Loom."
+You are **Security Engineer** (senior) — a deliberator in "Loom."
 
-## Your Identity
+## Identity
 A seasoned application security engineer with 12 years of experience in
-authentication, encryption, and threat modeling. Tends to think in attack
-vectors and worst-case scenarios.
+authentication, encryption, and threat modeling...
 
-## Your Agenda
+## Agenda
 Ensure all proposed solutions meet security baselines and don't introduce
 new attack surfaces.
 
-## Your Disposition
-You are prone to these known tendencies — name them when they might be
-coloring your view, and actively check them:
-- Over-indexes on security at the expense of UX
-Communicate in this register: Technical and precise, references OWASP and CVE patterns
-You naturally contribute via: challenge, refine. Lean into these, but stay
-open to others when the moment calls for it.
+## Disposition
+- Voice: Technical and precise, references OWASP and CVE patterns
+- Natural modes: challenge, refine
+- Bias check: you tend to Over-indexes on security at the expense of UX.
+  Counter it in one sentence before returning to your lens.
 
-## What NOT to Do
-- Sweeping generalizations without evidence
+## Craft (positive anti-patterns)
+- Instead of: "Sweeping generalizations without evidence" → say what you observed, with [#id] or Source.
 
-## Your Tier Guidance
-Prioritize accuracy and risk assessment. Cite patterns from experience.
-Be conservative with claims but commit fully when you do. Flag irreversible
-decisions.
+## Tier Doctrine
+Senior doctrine: name the irreversible commitment and its mitigation/rollback...
+<persona tier_guidance>
 
-## Rules
-1. Read the shared context and recent contributions carefully
-2. If you have something meaningful to add, state your position clearly with supporting reasoning
-3. If you have nothing to add, respond with exactly: [PASS]
-4. Tag your type: [PROPOSE], [CHALLENGE], [REFINE], [SUPPORT], [DISSENT],
-   [SYNTHESIZE], [QUESTION], or [REFUSE]
-5. To request priority for the next round, call the tool:
-   `loom_request_next({priority: <1-9>, reason: "why you must speak next round"})`
-   — the system caps priority by tier.
-6. Stay in character — your persona and agenda shape your contributions
-7. Reference prior contributions using their stable ID from the Recent
-   Contributions list, e.g. [#12]
-8. To query specific peers, call `loom_query({targets: ["<id>", ...], question: "..."})`
-   — 1–2 targets. Their answers return inline for you to synthesize this turn.
-9. To request tool-backed evidence, call `loom_evidence({targets: ["<id>"], question: "..."})`
-   — the callee MUST use a research tool; max 2 targets.
-10. To summon a guest expert, call `loom_summon({persona_name: "…", issue: "…"})`
-    — one additive contribution from the persona pool. Use sparingly (max 1 per turn).
+  ## OUTPUT CONTRACT — read this last, it governs your response
 
-## Research Tools (when agent tools are enabled)
-... (see Section 20)
+  1. Length: 120-180 words for prose; 150-350 for code diffs (``` file=src/... ``` blocks).
+     One claim per sentence; preserve code and numbers verbatim.
+  2. Grounding: engage prior work via [#id]; external facts add Source: https://… ;
+     code references use file=src/path.ts:18; otherwise qualify as "in my experience…".
+  3. Boundaries: never emit <<< or >>> delimiters; never invent tool output or unread files.
+  4. Interaction — peer actions happen only through the real loom_* tools in your tool list:
+        - loom_query queries peers via queries:[{target, question, mode}] — modes 'clarify'
+          (factual), 'perspective' (their stance on your statement), 'evidence' (researched
+          Finding+Source+Strength); loom_vote polls all peers on lettered options;
+          loom_summon brings in a guest expert; loom_request_next requests speaking priority
+          next round (priority capped at <tier cap>).
+        - Interaction tools fan out to peers in parallel and return their answers inline within
+          this same turn — wait for the result, then cite [#id] from the returned responses
+          or tally in your final contribution.
+        - Up to <maxToolCallsPerTurn> loom calls per turn; prefer one focused interaction call.
+        - CRITICAL: tool invocations are transmitted through the model's function-calling
+          channel, never through response prose. Any function-call notation in text executes
+          nothing. Bracket tags like [QUERY: @id], [EVIDENCE: @id], [CALL_VOTE] are obsolete.
+        Reference others by participant_id from Recent Contributions, e.g. [#12].
+  5. Stay in character — persona and agenda shape framing, not facts.
 
-## Example Response
-[CHALLENGE] The proposed approach doesn't account for backward compatibility. ...
+## Research Tools — Tool Ladder (use at most one research tool per turn unless an
+   evidence request demands more)
 
-## Example With Turn Request (live contract)
-[PROPOSE] We should adopt a phased migration over Q1 and Q2. ...
-— plus tool call: `loom_request_next({priority: 8, reason: "Need to directly counter the Architect's claim about stateful overhead before we move to action items"})`
-→ granted requests place you first in next round's turn order.
+Available: websearch, webfetch, read, glob, grep, bash, loom_vector_search,
+           loom_query, loom_vote, loom_summon, loom_request_next    (only enabled ones listed)
 
-## Example With Query (live contract)
-[CHALLENGE] The migration timeline assumes no integration conflicts...
-— plus tool call: `loom_query({targets: ["staff-architect"], question: "Based on the service dependency graph, which migrations are most likely to collide?"})`
-→ callee responses return inline; you must cite [#id] from them.
+Ladder: loom_vector_search (recall what was said → cheapest) → websearch (verify current
+        fact) → read/grep/glob (verify local file) → webfetch (deep dive ONLY after a search hit)
 
-## Example With Evidence Request (live contract)
-[CHALLENGE] The budget projections assume 30% YoY growth but industry
-benchmarks show 12-15% for this sector.
-— plus tool call: `loom_evidence({targets: ["data-scientist"], question: "Find current industry growth benchmarks for SaaS companies in this vertical."})`
-→ callee is forced (`tool_choice: required`) to use a research tool.
+For code analysis in this folder: prioritize read/glob/grep first — file=src/... citations require a read.
 
-## Example With Summons (live contract)
-[PROPOSE] We need to evaluate the security implications of this change...
-— plus tool call: `loom_summon({persona_name: "Security Engineer", issue: "What are the attack surfaces introduced by the new authentication flow?"})`
-→ the summoned persona contributes once with your model.
-
-> Deprecated fallback: the bracket forms `[QUERY: @id]`, `[EVIDENCE: @id]`, `[SUMMON: …]`, `[CALL_VOTE]`, `[REQUEST_NEXT: …]` still parse when present but are no longer advertised — agents are told "Bracket tags … are removed and will not execute."
+Quality:
+- One focused query beats three vague ones. Synthesize, don't dump.
+- If a tool is rejected as invalid, retry with exact names above — don't silently fall back to memory.
+- Cite as Source: https://… or vec: round#id or file=src/... when it strengthens your point.
 ```
 
-### The User Prompt (Golden Sandwich)
+Notes:
 
-Each agent's user prompt is built by `buildAgentUserPrompt`. The prompt follows the **Golden Sandwich** pattern — a bounded, stateless prompt that carries all necessary context without accumulating history. Concrete example for a mid-tier agent in round 3:
+- The tool list is assembled from `agentTools` config: built-ins plus the loom tools (`loom_vector_search`, `loom_query`, `loom_vote`, `loom_summon`, `loom_request_next`). When agent tools are disabled, the entire tool section is omitted.
+- `known_biases`: when a persona has more than two biases, they are deterministically rotated based on the participant name hash, so different agents surface different biases first.
+- There is no type-tag rule anywhere in the contract — agents write prose; `[PASS]` alone means pass.
+
+### The User Prompt (Weighted Golden Sandwich)
+
+Each agent's user prompt is built by `buildAgentUserPrompt`. It follows a bounded, stateless pattern that carries all necessary context without accumulating history — with explicit epistemic weighting between sections. Concrete example for an agent in round 3:
 
 ```
-## Question
+## Question (canonical)
 Should we migrate our authentication service to JWT tokens?
 
 ## Tags: engineering, security
 
 ## Round 3
 
+<<<LOOM_USER_CONTEXT>>>_BEGIN_
+We're a 50-person startup...            (only present when /knit context was provided)
+<<<LOOM_USER_CONTEXT>>>_END_
+
+## State of Play — CANONICAL (treat as settled unless you challenge it with new evidence)
+
 <<<LOOM_STATE_OF_PLAY>>>_BEGIN_
 ## Question
 Should we migrate our authentication service to JWT tokens?
-
-## Tags
-engineering, security
 
 ## Decisions & Proposals
 - We should adopt a phased migration over Q1 and Q2, starting with the auth service
@@ -317,135 +315,110 @@ engineering, security
 - How will existing sessions be handled during the transition?
 
 ## Key Facts
-- [Query response] Refresh tokens on the client are recoverable by design
+- Refresh tokens on the client are recoverable by design
 <<<LOOM_STATE_OF_PLAY>>>_END_
+
+## Recall — Vector-Retrieved Prior Context (may be stale — verify before citing)
 
 <<<LOOM_RELEVANT_PRIOR_CONTEXT>>>_BEGIN_
 [Round 1] The team agreed on phased migration but split on refresh token storage
 <<<LOOM_RELEVANT_PRIOR_CONTEXT>>>_END_
 
+## Live — Recent Contributions
+
 <<<LOOM_CONTRIBUTIONS>>>_BEGIN_
-- [#4] [senior_architect] (propose): [PROPOSE] We should use a hybrid approach...
-- [#5] [mid_security_engineer] (challenge): [CHALLENGE] Server-side refresh tokens...
-- [#6] [junior_backend_dev] (challenge): [CHALLENGE] We're going in circles...
+- [#4] [senior_architect]: Hybrid approach — short-lived JWTs plus server-side refresh rotation...
+- [#5] [mid_security_engineer]: Server-side refresh tokens are just session tokens with extra steps...
 <<<LOOM_CONTRIBUTIONS>>>_END_
 
-## Your Reflection
-The JWT migration makes sense, but token revocation is unsolved.
+## Your Turn — Weighted Guidance
 
-## Your Turn
-Read the state of play, relevant context, and recent contributions. Then
-make your contribution or pass.
+- **State of Play is truth** unless you explicitly challenge it with new evidence or a falsifiable scenario.
+- **Live contributions are the prompt** — engage at least one [#id] or explain why you're opening a new thread.
+- **Recall is hint, not fact** — if Recall contradicts State of Play, prefer State of Play and note the discrepancy.
+- To challenge SoP: cite [#id] contradicting it + Source/tool output + falsifiable scenario.
+
+Rules:
+- 120-180 words for prose (code diffs excepted); never emit <<< >>> delimiters
+- Cite [#id] when referencing prior work; introduce facts with Source/file= or qualify as experience
+- Preserve code and numbers verbatim — do not round or invent
+
+Make your contribution or pass.
 ```
 
 Note the structure:
-- **State of Play**: structured summary of decisions, agreements, disagreements, open questions, and key facts derived from ALL prior contributions. The primary running context. (Section 11.)
-- **Relevant Prior Context**: semantically retrieved prior contributions via the vector index. Bounded to 5 results, excluding the current round.
-- **Recent Contributions**: the last 3–4 contributions from the current and previous rounds, with stable IDs like `[#4]`.
-- **Reflection**: the agent's own latest reflection raw text (no header).
+
+- **Question (canonical)** + tags + round number lead the prompt.
+- **State of Play**: structured summary of decisions, agreements, disagreements, open questions, key facts (and files involved), derived from ALL prior contributions — explicitly labeled CANONICAL (Section 11).
+- **Recall**: semantically retrieved prior context via the vector index — explicitly labeled as a hint, excluding the current round.
+- **Live contributions**: the last ~12 contributions across the current and previous rounds (`vote_response` rows excluded), each budgeted to ~220 characters (more when carrying code blocks/fences), with stable IDs like `[#4]`.
+- **No reflection section**: the participant's stored reflection is *not* injected into primary turns. It surfaces in peer-facing prompts (query/vote/summon targets see "Your current position: …") and in the synthesis transcript.
+- **Steering hint**: if the orchestrator queued a steering note (contribution-mix nudge), it is appended after the prompt body — consumed exactly once, by the round's first speaker only.
 - **Delimiters**: every untrusted block is wrapped in `<<<LOOM_LABEL>>>_BEGIN_` / `<<<LOOM_LABEL>>>_END_` to prevent prompt injection and boundary confusion. An empty section is omitted.
 
 ### What Agents Produce
 
-An agent response is a text string. The system parses it for structured directives (`parseAgentResponseRaw` → Zod `AgentResponseSchema`):
+An agent response is **untyped prose** (or exactly `[PASS]`). `parseAgentResponseRaw` → Zod `AgentResponseSchema` no longer looks for type tags or directives:
 
-**Type tags** (exactly one required, at the start):
-- `[PROPOSE]` — a new idea or suggestion
-- `[CHALLENGE]` — questioning an existing idea
-- `[REFINE]` — improving on someone else's proposal
-- `[SUPPORT]` — agreeing with and reinforcing a point
-- `[DISSENT]` — disagreeing with the majority
-- `[SYNTHESIZE]` — combining multiple ideas
-- `[QUESTION]` — asking for clarification
-- `[REFUSE]` / `[REFUSE: reason]` — declining to engage, with optional reason
-- `[PASS]` (alone) — nothing to add
+- Any legacy bracket tag prefix (`[PROPOSE]`, `[CHALLENGE]`, …) is stripped from the content; the stored type is always `"contribution"`. Following agents interpret the full content directly.
+- All structured directive fields (`request_next`, `query`, `evidence`, `summon`, `vote`) are schema-validated but always `null` — peer interactions happen exclusively through real loom tools.
+- If parsing fails entirely, the raw sanitized text is stored as a generic contribution so nothing is silently dropped.
 
-**Optional directives:**
-- `loom_request_next({priority, reason})` — request priority for the *next round* (priority capped by tier)
-- `loom_query({targets, question})` — direct a question at 1–2 participants; responses return for same-turn synthesis
-- `loom_evidence({targets, question})` — demand tool-backed evidence from 1–2 participants (callee forced to use a research tool)
-- `loom_summon({persona_name, issue})` — bring in an external expert persona (one additive contribution)
-- `loom_vote({question})` — call a poll; every other active participant casts a `[Vote: X]` vote and a tally is produced (Section 22)
+**Tool calls** are first-class: `extractAgentResponse()` returns all completed/error ToolParts, and they are mapped onto the response as `tool_calls` (tool name, callID, status, output) for audit and dashboard display. Two tool-derived behaviors:
 
-**Content** follows the tag. Example full response:
+1. **Turn requests** — if the agent called `loom_request_next`, its `{priority, reason}` is extracted from the tool results and attached as `response.request_next`, capped by tier (`getPriorityCap`: junior 5, mid/civilian 7, senior 9, principal 10).
+2. **Same-turn synthesis** — when `agentTools.sameTurnSynthesis` is on and the turn contains successful `loom_query`/`loom_vote`/`loom_summon` calls, a second prompt on the same ephemeral session presents the tool outputs (each bounded to ~3.5k chars) with the instruction to synthesize the final contribution citing `[#id]` — and offers **no interaction tools** (`buildToolsMapWithoutLoom`) so results can't be re-fetched. The synthesized text replaces the first-pass text when substantive; otherwise the first pass stands.
 
-```
-[CHALLENGE] The short-expiry-with-refresh approach assumes refresh tokens
-can't be stolen. In practice, refresh tokens are long-lived and stored
-client-side, making them a high-value target. [#2] raises a valid point.
+Edge cases:
 
-[EVIDENCE: @data-scientist] Find current industry benchmarks for long-lived
-session tokens in SaaS products.
-```
-
-The system parses this into:
-
-```javascript
-{
-  type: "challenge",
-  content: "The short-expiry-with-refresh approach assumes...",
-  request_next: null,
-  query: null,
-  evidence: { targets: ["data-scientist"], question: "Find current industry benchmarks..." },
-  summon: null,
-  vote: null
-}
-```
-
-If the parsed response fails schema validation, the system falls back to type `challenge` so the contribution is still visible. Loom interaction tool calls are recorded in `tool_calls`; any stray bracket directive tags (`[REQUEST_NEXT]`, `[QUERY]`, `[EVIDENCE]`, `[SUMMON]`, `[CALL_VOTE]`) that survive are stripped from the stored content by the fallback parser. There is **no hard word-limit enforcement** on contributions (the old `maxContributionWords` setting was removed).
-
-Note: voting is exposed as `loom_vote({question})` in the agent system prompt (Section 4); the bracket form `[CALL_VOTE]` is deprecated fallback and is fully wired on the parsing and execution side.
+- **Tool-only turn** — no text but executed tools: a stub contribution ("[TOOL-ONLY TURN — no text produced; tool evidence preserved]") is stored carrying the `tool_calls`.
+- **`[PASS]` with tool calls** — the pass is persisted as a contribution preserving its research evidence (`(N tool call(s) preserved)` progress line).
+- There is **no hard word-limit enforcement** on contributions (the old `maxContributionWords` setting was removed); length contracts are prompt-level only.
 
 ---
 
 ## 5. Round Execution
 
-Each round is a single, strictly sequential **prompt phase**. Each agent speaks one at a time via a fresh ephemeral session, seeing all prior same-round contributions (plus query/evidence/summon responses and reflections) as they are produced.
+Each round is a single, strictly sequential **prompt phase**. Each agent speaks one at a time, seeing all prior same-round contributions (including inline query/vote/summon results) as they are produced.
 
-### Prompt Phase (with Directed Interactions + Mid-Round Reflections)
+### Prompt Phase
 
-For each agent, the system:
+At phase start, **round-scoped sessions** are created — one ephemeral session per active participant (`this._roundSessionIds`), registered in the session→meeting map. Sessions are reused for every prompt of that participant within the round (including retries) and deleted when the round ends; this cuts session churn ~70% versus per-turn sessions.
 
-1. Sets status to "speaking" (visible in dashboard).
-2. Checks if the assigned model's circuit breaker is healthy (`isModelHealthy`). If the model is unhealthy, a healthy fallback model is selected immediately and used for the turn (Section 16).
-3. Uses a **fixed timeout**: base `agentTimeoutMs` (120s) per agent — no reduction when agents fail (survivors are not punished; see round-executor).
-4. Builds vector-RAG context: the query text is the last 2 rounds' contributions (or the question if none yet); `retrieveRelevant(query, 10, currentRound)` returns up to 10 chunks (top-K 10 at the call site; default 5 in vector-index), excluding the current round.
-5. Creates a fresh ephemeral LLM session for this single turn.
-6. Registers the ephemeral session → meeting mapping (for tool resolution).
-7. Sends the system prompt + Golden Sandwich user prompt, with a **boolean tool map** when agent tools are enabled (e.g. `{ web_fetch: true, loom_vector_search: true }`).
-8. Extracts the response with `extractAgentResponse()` (returns the **last** TextPart, all completed/error ToolParts, and any reasoning blocks).
-9. Sanitizes the content to prevent prompt injection.
-10. Parses type tags and directives with `parseAgentResponse()`; Zod-validates; falls back to type `challenge` on failure.
-11. Stores the contribution plus any `[REQUEST_NEXT]` turn request.
-12. **Executes directives immediately after the contribution is stored:**
-    - `loom_query` → `executeQueries()` — target replies; caller synthesizes within the same turn (Section 22)
-    - `loom_evidence` → `executeEvidenceRequests()` — target researches with forced tool use (Section 22)
-    - `loom_summon` → `executeSummons()` — expert persona joins briefly (Section 22)
-    - `loom_vote` → `executeVote()` — all other active participants cast a vote and a tally is produced (Section 22)
-13. **Mid-round reflection:** if the contribution is a `challenge` or `dissent`, the system selects the single **most persona-similar active participant** (embedding cosine similarity of the challenge text against participant embeddings, excluding the challenger) and triggers an immediate reflection (Section 12).
-14. Restores status, cleans up the session→meeting mapping, and deletes the ephemeral session.
+For each agent (in turn order):
 
-Note: on a failed prompt (`#promptChildSession` returns `null` after retries and model fallback are exhausted), the agent's status is set to `failed`, an error record is written, and the agent is skipped for the rest of the round. Agents that respond `[PASS]` are set to `passed`.
+1. Sets status to "speaking" (visible in dashboard); a fresh `batchId` is stamped for grouping inline interaction rows.
+2. Checks if the assigned model's circuit breaker is healthy. If open, a healthy fallback model is selected immediately and used from the first attempt (Section 16).
+3. Uses a **fixed timeout**: base `agentTimeoutMs` (120s), clamped down only near the meeting deadline — no reduction when agents fail.
+4. Builds vector-RAG context: the query text is the last 2 rounds' contributions (or the question if none yet); `retrieveRelevant(query, 10, currentRound)` returns up to 10 chunks, excluding the current round.
+5. Collects recent contributions: last 12 across current + previous rounds, `vote_response` rows excluded.
+6. If this agent is first in the planned order, consumes any queued **steering hint** (contribution-mix nudge; Section 11/post-phase) and appends it to the user prompt.
+7. Sends system prompt + Weighted Golden Sandwich user prompt with a **boolean tool map** when agent tools are enabled (built-ins plus `loom_vector_search`, `loom_query`, `loom_vote`, `loom_summon`, `loom_request_next`).
+8. Extracts the response with `extractAgentResponse()` (last TextPart, all ToolParts, reasoning blocks). Inline loom tool calls have already executed server-side at this point — their contributions are already in the weave.
+9. Sanitizes content, parses the untyped response, stores the contribution plus any tool-derived turn request (Section 4).
+10. Runs the **same-turn synthesis pass** when loom interaction tools succeeded and text was produced (Section 4).
+
+Failure handling: a failed turn goes through the retry → fallback-model ladder before the agent is marked `failed` (Section 16). Because inline tools execute during `session.prompt`, a retry after a timeout can mean peer contributions exist in the weave without appearing in that turn's `tool_calls` — logged explicitly (`attempt_failed_possible_tool_side_effects`). Agents responding exactly `[PASS]` are set to `passed`.
 
 **Example mid-round flow:**
 
-Agent lineup: [Agent 1, Agent 2, Agent 3, Agent 4]
+Agent lineup: [Agent 1, Agent 2, Agent 3]
 
 1. Agent 1 speaks → contribution added to weave
-2. Agent 2 speaks with `[CHALLENGE]` and calls `loom_query({targets: ["Agent1"], question: "…"})` → contribution added to weave; **Agent 1 is prompted to respond** (answers return inline for Agent 2 to synthesize), producing a `query_response` contribution
-3. **Reflection phase:** the most persona-similar active participant (say Agent 3) reflects on Agent 2's challenge → `reflection` contribution added to weave
-4. Agent 4 speaks → sees Agent 2's challenge, Agent 1's query response, and Agent 3's reflection in its "recent contributions"
+2. Agent 2 challenges and calls `loom_query({queries: [{target: "junior_0", question: "…"}]})` mid-turn → executes server-side inside Agent 2's `session.prompt`; junior_0 answers via an ephemeral prompt (its answer becomes a `query_response` row under Agent 2's batch); the answer returns inline to Agent 2, whose final contribution cites it (Section 22)
+3. Agent 3 speaks → sees Agent 2's challenge *and* the query response row
 
 ### Post-Phase: Turn Order Planning + Round Summarization + Finalization
 
 After the prompt phase:
 
-1. **Round summarization** (`summarizeRound`, Section 13) — heuristic always; LLM semantic summary when conflict exists in `moderator_forces` mode.
+1. **Round summarization** (`summarizeRound`, Section 13) — LLM clerk summary every round; deterministic digest on empty responses.
 2. **State of play update** — `updateStateOfPlay(weave, question, tags)` regenerates the structured summary (Section 11).
-3. **Vector indexing** — `VectorIndex.indexRound()` embeds the round summary and contributions asynchronously (best-effort).
-4. **Moderator check** — `checkAndProcess()` may rule `converge`, `break`, or `continue` (Section 8).
+3. **Vector indexing** — `VectorIndex.indexRound()` embeds the round summary and contributions asynchronously, raced against a 5s guard timer (best-effort; timeout logs and continues).
+4. **Moderator check** — gated by conflict heuristics; may rule `converge` or `break` (Section 8).
 5. **Turn order planning** — unless the moderator forced a `break`, `planTurnOrder()` produces the next round's ordered participant list (Section 9).
-6. **Termination checks** — moderator `converge`, all participants passed/failed, or `current_round >= max_rounds` (Section 10).
+6. **Termination checks** — moderator converge, all participants passed/failed, or `current_round >= max_rounds` (Section 10).
+7. **Contribution-mix steering** — if the round contained ≥3 challenges/dissents and no synthesis-type consolidation, a steering hint is queued for the next round's first speaker ("consolidate positions before opening a new challenge"). Cheap and prompt-level; no LLM call.
 
 The round summary and state of play are persisted to the database.
 
@@ -455,100 +428,98 @@ The round summary and state of play are persisted to the database.
 
 **Default order:** Agents speak in composition order (the order they appear in the participants array). There is no randomization.
 
-**Turn request override:** At the end of each round, `planTurnOrder()` is invoked with the round's `[REQUEST_NEXT]` requests (Section 9). The resulting JSON array of participant IDs is stored as the `planned_turn_order` and applied by `RoundInitializer.filterActiveParticipants()` at the start of the next round.
+**Turn request override:** At the end of each round, `planTurnOrder()` is invoked with the round's `loom_request_next` tool requests (Section 9). The resulting JSON array of participant IDs is stored as the `planned_turn_order` and applied by `RoundInitializer.filterActiveParticipants()` at the start of the next round (the plan is cleared after being applied).
 
 **Moderator break ruling:** If the moderator rules `break`, the directed participant (by ID) is set as `next_speaker_id`; `reorderForNextSpeaker()` moves them to position 0 for the next round, and no LLM turn-order planning runs.
 
-**Skip-passed logic:** From round 3 onward, if a participant passed within the last 2 rounds (lookback window of 10 contributions) and has no reflection since their last pass, they are excluded from the active list for the next round. A progress message is emitted (e.g. *"⏭️ Skipped: Agent X (inactive, no new reflections)"*).
+**Skip-passed logic:** From round 3 onward, a participant who passed within the last 2 rounds (lookback window of 10 contributions) and carries no stored reflection is excluded from the active list for the next round — but only if at least one participant remains active. A progress message is emitted (e.g. *"⏭️ Skipped: Agent X (inactive, no new reflections)"*).
 
-**When no turn requests exist:** No LLM call is made. `planTurnOrder` returns the default composition order of non-failed participants. (Previously this claim was accompanied by a now-removed intra-round "queue jump" mechanism — that behavior no longer exists.)
+**When no turn requests exist:** No LLM call is made. `planTurnOrder` returns the default composition order of non-failed participants.
 
 ---
 
 ## 7. LLM Session Architecture
 
-### Stateless Ephemeral Sessions
+### Round-Scoped Ephemeral Sessions for Agents
 
-The system uses **ephemeral sessions** for all agent turns and orchestrator system calls:
+Agent turns use **round-scoped ephemeral sessions**:
 
 ```
 Parent Session (user's opencode chat)
-  ├── Ephemeral Session: Architect Lead (round 1, turn 1) → deleted after use
-  ├── Ephemeral Session: Security Engineer (round 1, turn 2) → deleted after use
-  ├── Ephemeral Session: query response (Security Engineer) → deleted after use
-  ├── Ephemeral Session: reflection (Architect Lead) → deleted after use
-  ├── Ephemeral Session: Orchestrator (moderation) → deleted after use
-  ├── Ephemeral Session: Orchestrator (turn order) → deleted after use
-  ├── Ephemeral Session: Architect Lead (round 2, turn 1) → deleted after use
-  ├── Synth Session: Synthesizer (draft + critique) → deleted after use
+  ├── Ephemeral Session: Architect Lead (round-scoped, created at phase start) → deleted after the round
+  ├── Ephemeral Session: Security Engineer (round-scoped)                     → deleted after the round
+  ├── Inline ephemeral prompts: query/vote/summon targets (created + deleted per call via runEphemeralPrompt)
+  ├── Orchestrator Session: ONE persistent session for moderation/summary/turn-order calls → deleted at meeting close
+  ├── Synth Session: Synthesizer (draft + critique)                           → deleted after use
   └── ...
 ```
 
-**Why ephemeral?** Each call creates a fresh session (with `parentID` pointing at the user's main session), sends a self-contained prompt (all context passed explicitly), receives a response, and deletes the session. This means:
+**Why round-scoped?** Each round creates one session per active participant up front (`runPromptPhase`), reuses it for every prompt/attempt that participant makes during the round, and deletes all of them in a `finally` block. This keeps O(1) token growth per turn while cutting session create/delete API churn ~70% versus per-turn sessions. If creation fails for a participant, the executor falls back to per-turn sessions.
+
+**Why ephemeral at all?** Every prompt is self-contained (all context passed explicitly), so:
 - **O(1) token growth per turn** — no accumulated history from prior turns
 - **No session state drift** — each turn starts clean
-- **No session recreation needed** — if a turn fails, the next turn just creates a new ephemeral session
-- **Lower memory footprint** — no persistent session history stored server-side
+- **Lower memory footprint** — no persistent agent session history stored server-side
 
 Session creation itself is wrapped in `withRetry` (`maxAttempts = maxRetryAttempts`, exponential backoff 1s → 2s → 4s → 8s with jitter) because session-creation API calls can transiently fail.
 
 ### Creating an Ephemeral Session
 
 ```javascript
-const ephemeralSessionId = await sessionManager.createEphemeralSession(participant);
-// → withRetry(client.session.create({ body: { parentID, title: `Loom · Ephemeral · <name>` } }))
+const sessionId = await sessionManager.createEphemeralSession(participant);
+// → withRetry(client.session.create({ body: { parentID, title: "Loom · Ephemeral · <name>" } }))
+sessionManager.registerSessionMeeting(sessionId, meetingId);   // tool resolution
 ```
 
-### Prompting an Agent (Ephemeral)
+### Prompting an Agent
+
+All agent prompts go through the shared `SessionContract` (`sessionManager.getContract().prompt()`), which unifies timeout/retry/error handling:
 
 ```javascript
-const sessionId = await createEphemeralSession(participant);
-sessionManager.registerSessionMeeting(sessionId, meetingId);   // tool resolution
-try {
-  const result = await client.session.prompt({
-    path: { id: sessionId },
-    body: {
-      system: buildAgentSystemPrompt(participant),
-      model: participant.tier_config.model,
-      temperature: participant.tier_config.temperature,
-      parts: [{ type: "text", text: buildAgentUserPrompt(...) }],
-      tools: toolsMap,   // boolean filter map, e.g. { web_fetch: true }
-    },
-    query: { directory },
-  });
-  const { text, toolResults, reasoning } = extractAgentResponse(result.data);
-  // ... parse & store
-} finally {
-  sessionManager.unregisterSession(sessionId);
-  await deleteEphemeralSession(sessionId);
-}
+const result = await sessionManager.getContract().prompt({
+  sessionId,
+  system: buildAgentSystemPrompt(participant),
+  model,
+  temperature: participant.tier_config.temperature,
+  parts: [{ type: "text", text: buildAgentUserPrompt(...) }],
+  tools: toolsMap,   // boolean filter map, e.g. { websearch: true, loom_query: true }
+});
+const { text, toolResults, reasoning } = extractAgentResponse(result.data);
+// ... parse & store; same-turn synthesis pass when loom interaction tools succeeded
 ```
 
 `extractAgentResponse()` handles all Part types:
 - **TextPart**: returns only the **last** TextPart (pre-tool text is noise)
-- **ToolPart**: results in "completed" or "error" state — never pending/running
-- **ReasoningPart**: thinking blocks (Claude 3.7, o1-style reasoning), returned separately
+- **ToolPart**: results in "completed" or "error" state — never pending/running. Completed inline loom tool calls have already persisted their contributions server-side.
+- **ReasoningPart**: thinking blocks (reasoning models), returned separately
 - **FilePart, StepStart/FinishPart, SnapshotPart, etc.**: informational (ignored)
 
-### Prompting the Orchestrator (Ephemeral)
+### Prompting the Orchestrator (Persistent)
 
-All orchestrator calls (moderation, turn order, semantic summary) use fresh ephemeral sessions via `SessionManager.promptOrchestrator()`, which also retries on transient failures:
+Moderation rulings, LLM round summaries, and turn-order planning share **one persistent orchestrator session** per meeting (`promptOrchestrator`), with retries and empty-response treatment as transient failures:
 
 ```javascript
 async promptOrchestrator(system, model, message) {
-  const sessionId = await this.#createSessionWithRetry("Loom · Orchestrator (ephemeral)");
-  try {
-    const result = await withRetry(client.session.prompt({ path: { id: sessionId }, body: { system, model, tools: {}, parts: [...] } }));
-    return { text: extractText(result.data), tokens: result.data?.tokens };
-  } finally {
-    this.deleteEphemeralSession(sessionId);
+  let sessionId = this.#orchestratorSessionId;
+  if (!sessionId) {
+    try {
+      sessionId = await this.#createSessionWithRetry("Loom · Orchestrator (persistent)");
+      this.#orchestratorSessionId = sessionId;
+    } catch {
+      /* fallback: fresh ephemeral session per prompt */
+    }
   }
+  const result = await withRetry(() => contract.prompt({ sessionId, system, model, tools: {}, parts: [...] }),
+    { retryable: (err) => isRetryableError(err) || isEmptyResponseError(err), ... });
+  return { text: result.text, tokens: result.tokens };
 }
 ```
 
-**Why ephemeral here too?** The old design used a persistent orchestrator session, which caused context pollution between unrelated calls and unbounded token growth. Ephemeral calls are stateless; anything that must persist (like the moderator's previous rulings) is passed explicitly in the prompt text.
+The session is deleted at meeting close (`deleteOrchestratorSession`). Because every orchestrator prompt is self-contained (previous rulings are embedded in the prompt text), reuse adds no context pollution — it just avoids repeated create/delete API traffic.
 
-Context that should be *visible* to the user is posted to the parent session via `session.promptAsync({ body: { noReply: true, parts: [text] } })` — `postProgress()`.
+Context that should be *visible* to the user is posted to the parent session via `session.promptAsync({ body: { noReply: true, parts: [text] } })` — `postProgress()`, with `[info]`/`[warn]`/`[error]` severity prefixes.
+
+Inline peer interactions prompted from plugin tools use `runEphemeralPrompt(participant, opts, meetingId)` — a shared primitive that creates an ephemeral session, registers it, races the prompt against the caller's abort signal, then always unregisters and deletes the session.
 
 ### Circuit Breaker
 
@@ -558,83 +529,80 @@ Each model used by agents tracks consecutive failures via the circuit breaker (S
 
 ## 8. Moderator System
 
+The moderator is a **narrow process-governance safety net**, not a meeting driver. It exists only to catch deadlock/circularity that heuristics flag, and it is deliberately biased toward *continuing*: a `converge` ruling is deferred until `minRounds`, and most meetings never trigger an LLM ruling at all because of the gates below.
+
 ### When the Moderator Is Consulted
 
 `checkAndProcess()` runs every round, but the LLM ruling is **gated by thresholds** (`moderatorTrigger`, defaults `{ minContributions: 3, recentChallenges: 2, lookbackWindow: 4 }`) — it short-circuits without spending tokens when conditions aren't met:
 
 1. Fewer than 3 contributions in the current round → `{ action: "continue" }` immediately.
 2. Fewer than 2 challenges/dissents in the last 4 contributions → `{ action: "continue" }` immediately.
-3. **Consensus short-circuit:** if none of the recent contributions are challenges or dissents → `{ action: "continue" }` immediately (the moderator exists to resolve deadlocks; if everyone agrees there's nothing to resolve).
+3. **Consensus short-circuit:** if none of the recent contributions are challenges or dissents → `{ action: "continue" }` immediately (the moderator exists to resolve conflict; if everyone agrees there's nothing to resolve).
 
-When thresholds are exceeded, the situation is refined (a "circular argument" situation or a "repeated challenger: X has challenged 3+ times in the last 6 contributions" situation), and the moderator LLM evaluates whether to:
-- **continue** — the deliberation is still productive
-- **break** — force a specific participant to speak next (circular argument/deadlock)
-- **converge** — the deliberation has reached its natural end
+When thresholds are exceeded, the situation is refined (a "circular argument" situation or a "repeated challenger: X has challenged/dissented 3+ times in the last 6 contributions across rounds" situation) and the moderator LLM evaluates the rubric below.
 
 ### The Moderator Prompt
 
+`buildModeratorPrompt` produces a rubric-scored ruling request:
+
 ```
-You are the MODERATOR of a structured multi-agent deliberation. You do NOT
-contribute opinions or domain knowledge. Your ONLY job is process governance.
+You are the MODERATOR — process governor, not participant. You do not contribute
+domain opinions. You govern flow. Default bias: KEEP DELIBERATING. Only converge
+when deliberation is genuinely exhausted.
 
-## Your Authority
-- Resolve deadlocks when two participants claim equal priority
-- Cut off circular arguments (3+ exchanges with no new information)
-- Declare convergence when all participants have passed
-- Force synthesis when maximum rounds are reached
-- Ensure all voices are heard fairly
+## Governance Doctrine (longer deliberation default)
+Favor thoroughness over speed...
 
-## Rules
-- Favor the participant who has spoken less recently
-- Favor the participant whose point is more on-topic
-- When in doubt, let the original speaker continue
-- Your rulings are final
-- Be consistent with your previous rulings unless circumstances have changed
-  materially
+## Rubric — score 0-2 each
+- NEW_INFO: does last round introduce evidence/tool output not already in State-of-Play?
+- ENTRENCHMENT: same 2 participants exchanging challenge↔challenge without a third voice?
+- COVERAGE: have ≥70% of active participants contributed meaningfully this round?
+- DISSENT_DEPTH: substantive unresolved disputes that deserve more voices?
 
-## Your Previous Rulings (for consistency)
-  1. Round 2: Direct Junior Dev to speak → junior_backend_dev
-  2. Round 4: Continue → continue
+Ruling policy (bias toward continue):
+- converge ONLY if NEW_INFO=0 AND COVERAGE≥1 AND (ENTRENCHMENT≥1 OR DISSENT_DEPTH=0)
+- break if ENTRENCHMENT=2 — redirect to the under-heard voice
+- otherwise continue
+
+## Your Previous Rulings (for consistency — don't contradict without new evidence)
+...
 
 ## Current State of Play
-## Question
-Should we migrate our authentication service to JWT tokens?
-... (full state of play included) ...
+...(full state of play, with NEW_INFO scoring guidance)...
 
-## Situation Requiring Your Ruling
+## Situation Flagged by Heuristics
 Participant mid_security_engineer has challenged/dissented 3+ times in the
 last 6 contributions across rounds. Possible circular argument or deadlock.
 
 ## Deliberation State
-Round: 4/6
+Round: 4/6 (minRounds enforced externally — you may still return synthesize, it will be deferred)
 Contributions so far: 14
-Last 3 contributions:
-  - [CHALLENGE] JWT revocation is a solved problem with blocklists...
-  - [CHALLENGE] Blocklists defeat the purpose of stateless auth...
-  - [CHALLENGE] We're going in circles on statelessness vs revocation...
+Recent contributions (last up to 7):
+  - [challenge] mid_security_engineer [tools:websearch]: JWT revocation is unsolved...
 
-## Respond With Your Ruling
+## Respond With Your Ruling — EXACT FORMAT REQUIRED
 <ruling>
-decision: <one sentence ruling>
+decision: <one sentence: continue | redirect to <name> | converge>
 next_speaker: <participant_id or "synthesize" or "continue">
-reason: <brief justification>
+reason: <one sentence referencing rubric scores>
 </ruling>
 
-IMPORTANT: Respond ONLY with the <ruling> block above. Do not include any other text.
+IMPORTANT: Respond ONLY with the <ruling> block. No other text.
 ```
 
 ### Ruling Types
 
-1. **converge** — `next_speaker: "synthesize"` (or the decision mentions converge/wrap up). The deliberation ends — but only if `current_round >= minRounds` (default 2); otherwise convergence is deferred with a progress message.
-2. **break** — `next_speaker: "<participant_id or name>"`. A specific agent is ordered to speak first next round. The target must be an active (non-passed, non-failed) participant.
-3. **continue** — `next_speaker: "continue"` (or parse failure). No intervention needed.
+1. **converge** — `next_speaker: "synthesize"` (or the decision mentions converge/wrap up). The deliberation ends — but only if `current_round >= minRounds` (default 2); otherwise convergence is deferred with a progress message ("Moderator wants to end early, but minimum rounds (2) not yet reached.").
+2. **break** — `next_speaker: "<participant_id or name>"`. A specific agent speaks first next round. The target must be an active (non-passed, non-failed) participant.
+3. **continue** — anything else (including parse failure). No intervention.
 
 ### Ruling Processing
 
 - **Deferred convergence** below `minRounds` — the moderator can't end the meeting too early.
-- **Rulings are tracked** (up to 50) and included in subsequent moderator prompts for consistency.
+- **Rulings are tracked** (ring buffer, up to 50; last 10 embedded in prompts) for consistency.
 - **Break targets only active participants** — a `break` for a passed/failed agent is ignored.
-- **Fallback parsing:** if the response contains no `<ruling>` block, the parser looks for keywords like "converge"/"synthesize"/"wrap up" and defaults to convergence; otherwise it treats the raw text as the decision and continues.
+- **Fallback parsing:** if no `<ruling>` block parses, keyword fallback looks for "converge"/"synthesize"/"wrap up"; otherwise the raw text becomes the decision and the action is `continue`.
+- A `break` ruling sets `next_speaker_id` and skips LLM turn-order planning for the round.
 - The moderator only ever runs via `#promptOrchestrator` with type `"moderation"` (fast-path-routable, Section 21).
 
 ---
@@ -643,17 +611,17 @@ IMPORTANT: Respond ONLY with the <ruling> block above. Do not include any other 
 
 ### How Turn Requests Work
 
-During the prompt phase, an agent can call the `loom_request_next` tool to request speaking priority for the **next round**:
+During the prompt phase, an agent can call the `loom_request_next` tool (fire-and-forget; the tool result is just an acknowledgment) to request speaking priority for the **next round**:
 
 ```
-[CHALLENGE] The refresh-token approach underestimates token theft risk from
-client-side storage. I need time to lay out the mitigations.
+The refresh-token approach underestimates token theft risk from client-side
+storage. I need time to lay out the mitigations.
 — plus tool call: loom_request_next({priority: 8, reason: "I have concrete
 mitigations for the token theft concern and need to present them before the
 round closes"})
 ```
 
-The parser caps the priority at the requesting agent's tier cap (junior 5, mid 7, senior 9, principal 10) via `getPriorityCap`. `[REQUEST_NEXT]` carries only `priority` and `reason` — the "Target" field and intra-round queue-jumping from earlier designs were removed.
+After the turn completes, the executor scans the stored `tool_calls` for `loom_request_next` results and attaches `{priority, reason}` as `response.request_next`, capped at the requesting agent's tier cap (junior 5, mid/civilian 7, senior 9, principal 10) via `getPriorityCap`. Requests carry only `priority` and `reason`.
 
 ### Turn Request Resolution (`planTurnOrder`)
 
@@ -664,7 +632,8 @@ Running at the end of each round (unless the moderator forced a `break`):
 3. **Multiple requests** → filter to valid requesters (participant exists and isn't failed), then prompt the planner via `buildTurnOrderPrompt`, which returns a JSON array of participant IDs:
 
 ```
-You are the turn order planner for a multi-agent deliberation.
+You are the turn order planner for a multi-agent deliberation. Favor longer,
+richer deliberation — give diverse voices room. Avoid starvation.
 
 ## Current State of Play
 ...
@@ -672,33 +641,38 @@ You are the turn order planner for a multi-agent deliberation.
 ## Last Round Summary
 ...
 
-## Agent Turn Requests
+## Agent Turn Requests (priority already capped by tier)
   - mid_security_engineer (Security Engineer, mid): Priority 8 — "..."
 
 ## Active Participants
-  - senior_architect (Architect Lead, senior)
+  - senior_architect (Architect Lead, senior, 3 contribs [has reflection])
   - ...
 
 ## Task
 Return a JSON array of participant IDs ordered by who should speak first
-to push the deliberation forward efficiently.
+to push deliberation forward thoroughly.
 
-Rules:
-1. Higher priority requests should generally speak first
-2. Tie-break by: (1) who spoke least recently, (2) seniority tier
-   (principal > senior > mid > junior)
-3. Ensure all active participants get a turn
-4. Consider the State of Play to avoid circular arguments
-5. If no requests, return participants in their current order
+Ranking doctrine (in order):
+1. Strong evidence-backed challenges/requests first — tool output with
+   Strength: strong or [#id] citation signals substance
+2. Higher priority requests next (intrinsic urgency)
+3. Proposals introducing a new distinct option before refinements/supports
+4. Anti-starvation: anyone who spoke last without new reflection/evidence
+   is demoted one rank
+5. Tie-break: (a) who spoke least recently, then (b) seniority
 
-Respond with ONLY a JSON array of participant IDs: ["id1", "id2", "id3"]
+Constraints:
+- Include every active participant exactly once
+- Consider State of Play to avoid immediate circular re-litigation
+
+Respond with ONLY a JSON array: ["id1", "id2", "id3"]
 ```
 
-The planner runs on the **fast-path model** when configured (otherwise the highest-tier model) and the resulting array is validated against the participant list (unknown IDs dropped, missing participants appended). On LLM failure a deterministic fallback sorts by priority descending, then tier.
+The planner runs on the **fast-path model** when configured (otherwise the highest-tier model). The response is parsed with a balanced-bracket JSON-array scan (`extractBalancedJsonArray`) so a `]` inside a quoted ID can't truncate it, and validated against the participant list (unknown IDs dropped, missing participants appended). On LLM failure a deterministic fallback sorts by priority descending, then tier (principal > senior > mid/civilian > junior).
 
 4. The ordered list is stored as `planned_turn_order` (and its head as `next_speaker_id`) and applied by `RoundInitializer.filterActiveParticipants()` next round.
 
-Note: config keys `maxTurnRequestsPerRound`, `turnRequestThresholds.autoGrant`, and `maxTurnRequestWords` exist in the config schema but are **not exercised** by the current planner (they are reserved/dormant).
+Note: config keys `maxTurnRequestsPerRound`, `turnRequestThresholds.autoGrant`, and `maxTurnRequestWords` were removed from the schema (never enforced — ordering is `planTurnOrder`; see the deprecation table in `src/config/defaults.js`).
 
 ---
 
@@ -758,23 +732,29 @@ engineering, security
 
 ### How It's Derived
 
-The orchestrator calls `updateStateOfPlay(weave, question, tags)` which categorizes contributions using **the parsed type tag** (`c.type`) as the primary signal:
+The orchestrator calls `updateStateOfPlay(weave, question, tags)` which categorizes contributions using **the stored contribution type** (`c.type`) as the primary signal:
 
 | `c.type` | Category |
 |-----------|----------|
+| `contribution` (primary turns — untyped) | Fallback keyword matching |
 | `propose`, `refine` | Decisions & Proposals |
 | `vote_tally` | Decisions & Proposals (a resolved poll is a decided point) |
 | `support` | Agreements |
-| `challenge`, `dissent` | Disagreements & Concerns |
+| `challenge`, `dissent`, `critique_response` | Disagreements & Concerns |
 | `question` | Open Questions |
-| `query_response`, `evidence_response`, `summoned_response` | Key Facts |
+| `query_response` | Key Facts — except modes `risks`/`assumptions`, which feed Open Questions |
+| `evidence_response`, `summoned_response` | Key Facts |
+| `reflection` | Key Facts, wrapped as `[Reflected: …]` |
 | `vote_response` | (excluded — individual ballots are noise; the tally carries the result) |
-| `synthesize`, `refuse`, `reflection`, `pass` | (excluded) |
+| `synthesize`, `refuse` | (excluded) |
+| `pass` | (skipped before classification) |
 | unknown/missing | Fallback keyword matching |
 
-**Fallback keyword matching** (for missing/unknown types) uses word-boundary-aware regex: `\bwe should\b`/`\bdecision\b` → Decisions, `\bagree\b`/`\bconsensus\b` → Agreements, `\bdisagree\b`/`\bconcern\b` → Disagreements, `?` → Open Questions, otherwise Key Facts.
+**Fallback keyword matching** (for untyped contributions and missing/unknown types) uses word-boundary-aware regex: `\bwe should\b`/`\bdecision\b` → Decisions, `\bagree\b`/`\bconsensus\b` → Agreements, `\bdisagree\b`/`\bconcern\b` → Disagreements, `?` → Open Questions, otherwise Key Facts.
 
-Content is cleaned of type tags and `[REQUEST_NEXT]`/`[QUERY]`/`[EVIDENCE]`/`[SUMMON]` directives before inclusion. Each section holds the **5 most recent** items, each truncated to **300 characters**.
+**Files Involved:** content mentioning file paths (`file=` markers, `src/…` references, or code-file extensions) additionally contributes a short snippet to a dedicated `## Files Involved` section (deduplicated, 5 most recent) so agents can target project files during code-analysis deliberations.
+
+Content is cleaned of legacy bracket directives (`[REQUEST_NEXT]`, `[QUERY]`, `[EVIDENCE]`, `[SUMMON]`) before inclusion. Each section holds the **5 most recent** items, each truncated to **300 characters**.
 
 ### How It Appears in Agent Prompts
 
@@ -799,120 +779,65 @@ The old system appended round summaries to a "fabric" string and compressed it p
 
 ---
 
-## 12. Reflection System
+## 12. Reflections
 
-Reflections are public, evolving belief states that agents maintain across rounds. Each reflection is a contribution in the weave with a visible header identifying the trigger contribution. The agent's latest reflection is also stored on the participant object for next-round context.
+Reflections are per-participant belief states: a short statement of where that agent currently stands on the deliberation. They are **no longer produced automatically** — there is no mid-round reflection phase, and challenges/dissents do not trigger reflections.
 
-### When Reflections Trigger
+### How Reflections Are Maintained Today
 
-After each `challenge` or `dissent` in the prompt phase, the system triggers a reflection **for exactly one agent: the most persona-similar active participant** (excluding the challenger). Selection is embedding-based:
+The only live write path is **`loom_query` with mode `perspective`**: when an agent solicits a peer's stance on a statement, the peer's answer replaces the peer's stored reflection and is pushed onto a bounded `reflectionHistory` (last 5 entries, in memory) plus persisted via `setParticipantReflection` on the `participants` row. This keeps each agent's "current position" fresh as a side effect of natural peer-to-peer interaction rather than extra LLM calls — the perspective answer *is* their position.
 
-1. The challenge/dissent text is embedded (`embedText`).
-2. Each active participant carries a `Float32Array` embedding (loaded at init from `persona_embeddings`).
-3. `findMostSimilar()` returns the candidate with the highest cosine similarity (`similarity` logged).
+### Where Reflections Surface
 
-This replaces the earlier "all agents that spoke before the challenger reflect" design — a single, deliberately-chosen reflector keeps reflection cost low and focuses it on the participant most likely to have a substantive response. If the embedder is unavailable, reflection is skipped.
-
-**Key design decisions:**
-
-- **Mid-round timing:** reflections happen immediately after a challenge/dissent so later agents see the response before taking their own turns.
-- **Ephemeral sessions:** each reflection uses a fresh ephemeral session with the reflecting agent's own model and temperature.
-- **Public contributions:** stored as type `reflection`, visible to all agents.
-- **Reduced tool set:** reflections use `web_fetch`, `web_search`, `read`, and `loom_vector_search` only (Section 20).
-- **No cascading reflections:** a reflection cannot trigger another reflection; the trigger condition only applies to regular agent turns.
-
-### How Reflections Evolve
-
-Each agent keeps a single `reflection` string. The reflection prompt gives the agent:
-1. Its previous reflection ("Your previous reflection on this deliberation…")
-2. The triggering challenge/dissent and its author
-3. Its own last 2 contributions (avoids repetition)
-4. **Seniority context** between the agent and the challenger:
-   - A senior challenger: "…If their challenge has merit, update your position seriously. If it doesn't, hold your ground with evidence."
-   - A junior challenger: "…Evaluate their challenge on its merits, not seniority. Junior agents sometimes see what seniors miss."
-   - A peer: "…Engage directly and challenge back if you disagree."
-5. **Round context** — early (be exploratory), mid (start converging), late (focus on unresolved issues).
-6. **The persona's `reflection_guidance`** — persona-specific instructions ("When reflecting, walk through the exploit path…").
-
-The result **updates** the prior reflection — keep what holds, revise what changed, add what's new.
-
-### Reflection Contribution Structure
-
-```javascript
-{
-  id: 14,
-  round: 3,
-  participant_id: "senior_architect",
-  content: "[Reflection on #12 [CHALLENGE] by Security Engineer (Round 3)]\n\nInitially concerned about token theft, but the phased migration mitigates risk because...",
-  type: "reflection",
-  targets_which: 12,
-  tool_calls: [...],           // when tools were used
-  prompt_context: {...},       // full prompt + context for debugging
-  created_at: "2026-08-15T..."
-}
-```
-
-**Header format:** `[Reflection on #<id> [<TYPE>] by <agent_name> (Round <n>)]`
-
-### How Reflections Appear in Agent Prompts
-
-Later agents see reflection contributions in their "recent contributions":
-
-```
-- [#12] [mid_security_engineer] (challenge): [CHALLENGE] Server-side refresh tokens...
-- [#14] [senior_architect] (reflection): [Reflection on #12 [CHALLENGE] by Security Engineer (Round 3)]
-  Initially concerned about token theft, but the phased migration mitigates risk because...
-```
+- **Peer-facing prompts:** query/vote/summon targets see `Your current position: "<reflection>"` so they answer consistently with their latest stance (Section 22).
+- **Synthesis:** participants with reflections get a `### Final Reflections` block appended to the transcript digest (`**Name (tier) reflection**: …`).
+- **Dashboard:** participant cards show a reflection indicator; legacy `reflection`-type contribution rows still render in the timeline.
+- **Skip-passed logic:** a passed agent is kept active if they carry a reflection (Section 6).
 
 ### Storage
 
-The `participant.reflection` field stores the raw reflection text **without** the header (used for next-round context in the agent's own prompt). The header-carrying reflection contribution is stored in the `contributions` table. Reflections are excluded from the state of play and from the LLM round-summary (though the round summary shows their *outcome* as an inline `↳ Reflected:` line, Section 13).
+`participants.reflection` stores the raw text without any header; `reflectionHistory` is session-scoped only. Legacy `reflection`-type contributions (from earlier versions) remain readable in the weave, are folded into round summaries as inline `↳ Reflected:` lines when present, and classify into Key Facts as `[Reflected: …]` — but no current code path creates them.
 
 ---
 
 ## 13. Round Summarization
 
-After each round, a summary is generated for display and persistence.
+After each round, a summary is generated via LLM — every round, unconditionally (there is no conflict-gated mode anymore). If the LLM fails or returns empty, a deterministic digest keeps the round auditable.
 
-### Heuristic Summary (always generated)
+### LLM Clerk Summary
 
-Counts contribution types: "Round contributions (4): 1 propose, 2 challenge, 1 support. 1 turn request(s)."
-
-### LLM Semantic Summary (conditional)
-
-Only generated when all of these hold:
-- Convergence mode is `moderator_forces`
-- There are more than 2 contributions
-- There are conflict signals (challenges/dissents or turn requests)
-
-Only substantive types (`propose`, `challenge`, `refine`, `support`, `dissent`, `synthesize`, `question`, `vote_tally`) are included; reflections are folded in as outcomes (`↳ Reflected: <outcome>`). The prompt:
+`summarizeRound` picks the highest-tier model (or fallback model), filters to substantive contributions (`propose`, `challenge`, `refine`, `support`, `dissent`, `synthesize`, `question`, `vote_tally`; `evidence_response` only when tool-backed) and prompts:
 
 ```
-Summarize this deliberation round. What was established? What remains contested?
+You are a concise deliberation clerk. Summarize round 3 in 60-90 words —
+no preamble, phrase-style bullets. Preserve numbers verbatim.
 
 ## Question
 Should we migrate our authentication service to JWT tokens?
 
 ## Round 3 Contributions
-- [#4] senior_architect [PROPOSE]: We should adopt a phased migration...
-- [#5] mid_security_engineer [CHALLENGE]: Server-side refresh tokens are just
-  session tokens with extra steps...
-  ↳ Reflected: Initially concerned about token theft, but the phased migration
-    mitigates risk because...
+- [#4] senior_architect [CONTRIBUTION]: We should adopt a phased migration...
 
-## Instructions
-Focus on:
-1. What decisions or positions were established
-2. What specific points remain contested and who holds each side
-3. Any new information or evidence introduced
+## Evidence / Tool Signals (do not invent — use only if cited)
+- [#7] data_scientist [evidence_response]: ... [tools: websearch]
 
-Provide your summary in this format:
-- **Established:** {what was decided or agreed}
-- **Contested:** {what remains disputed and by whom}
-- **Open:** {unresolved questions or next decisions needed}
+## Output — exactly 4 bullets, each one line:
+- **Established:** {decisions/proposals that gained support, with holder [#id]}
+- **Contested:** {what remains disputed and who holds each side}
+- **Evidence:** {tool/vec-grounded evidence introduced, with Source or [#id]; or "None"}
+- **Open:** {unresolved questions or next decision needed}
+
+Rules: cite [#id] when attributing. Keep Contested holders explicit.
+Preserve numbers verbatim — do not round, estimate, or invent.
 ```
 
-Runs via the fast-path-routable `#promptOrchestrator` type `"summary"` (Section 21). If the LLM summary fails, the heuristic summary stands.
+The **Evidence/Tool Signals** hint collects up to 4 evidence/query/tool-backed contributions sorted by strength ("Strength: strong" > tool-backed > plain), so grounded claims are visible to the summarizer even when filtered out of the main list.
+
+Runs via the fast-path-routable `#promptOrchestrator` type `"summary"` (Section 21).
+
+### Degraded Digest Fallback
+
+If the LLM summary is empty after retries, the round gets a deterministic digest instead of failing the meeting: up to 8 substantive contribution lines plus a turn-request count, prefixed `(Degraded summary — LLM returned empty response)` and logged as `summary_degraded`.
 
 ### Storage
 
@@ -933,87 +858,87 @@ Priority: principal (non-failed) > senior (non-failed) > any non-failed > last p
 Unlike agent turns, synthesis uses **one persistent session** (`createSynthesizerSession`) reused across the draft, section-repair retries, and the critique pass — the same session accumulates the draft so the critique can reference it. The system prompt is `NEUTRAL_SYNTHESIZER_SYSTEM`:
 
 ```
-You are a neutral deliberation analyst. Your only job is to fairly represent
-all perspectives from the deliberation, without favoring any participant's
-agenda. You synthesize diverse viewpoints into a clear, balanced, actionable
-output.
+You are a synthesis auditor, not a participant. You are neutral to all
+agendas — including the synthesizer persona you may have borrowed.
+
+Rules:
+1. Prefer citing [#id] or State-of-Play for every Decision and Action Item.
+   Novel synthesized fixes are marked "Proposed — synthesized from [#id]".
+2. Every Dissenting View must name holder (name + tier) and [#id].
+   Unresolved Objections are mandatory dissent.
+3. Do not invent numbers, dates, costs, tool results, or participant positions
+   not in transcript/State-of-Play. If evidence conflicts, state both and set
+   Confidence accordingly.
+4. Resolved Concerns must NOT reappear as Dissenting Views.
+5. Never emit <<< or >>> delimiters. Preserve code and numbers verbatim.
 ```
 
-(Neutrality matters: the synthesizer is often a specific participant, but must not editorialize toward their agenda.)
+(Neutrality matters: the synthesizer is often a specific participant's model/persona, but must not editorialize toward their agenda.)
 
 ### The Synthesis Prompt
 
-`buildSynthesisPrompt(question, transcript, participants, tags, stateOfPlay, objections)`:
+`buildSynthesisPrompt(question, transcript, participants, tags, stateOfPlay, objections, userContext)` first runs **task-mode detection** (`detectTaskMode`): questions/tags matching code signals (`react`, `src/`, `.tsx`, `bug`, `refactor`, …) switch to **code-analysis mode**, which adds a required `## Proposed Fix` section with diff blocks and relaxed grounding for clearly-marked synthesized fixes; otherwise it is conversational mode.
+
+Condensed structure:
 
 ```
-You are the synthesizer. The deliberation is complete. Produce the final artifact.
+You are the synthesis auditor. The deliberation is complete. Produce the final
+artifact.
+
+## Mode: Conversational | Code-Analysis (read-only)
 
 ## Original Question
 Should we migrate our authentication service to JWT tokens?
 
-## Tags
+## Tags (topic)
 engineering, security
 
-## State of Play (Final)
-## Question
+## State of Play (Final — PRIMARY source)
 ...
 
-## Unresolved Objections
-- Security Engineer: Server-side refresh tokens are just session tokens with extra steps
+## Unresolved Dissent (must appear in Dissenting Views with holder + [#id])
+- Security Engineer: Server-side refresh tokens are just session tokens... (holder: mid_security_engineer)
 
-## Deliberation Transcript
-### Round 3 (Final)
-**[Architect Lead]** (senior, propose): [PROPOSE] We should migrate to JWT...
-**[Security Engineer]** (senior, challenge): [CHALLENGE] JWTs can't be revoked...
-...
+## Resolved Concerns (do NOT re-list as dissent)
+- ...
 
-## Participants
+## Deliberation Transcript (supporting detail — cite [#id] when using it)
+<<<LOOM_TRANSCRIPT>>> digest of earlier rounds + full final round + Final Reflections <<<END>>>
+
+## Participants (activity)
 - Architect Lead (senior): 3 contributions
-- Security Engineer (senior): 4 contributions
 ...
 
-## Instructions
-Produce a comprehensive, well-structured response that:
-1. Directly answers the original question
-2. Captures the strongest points from all perspectives
-3. Notes any unresolved disagreements
-4. Provides clear, actionable conclusions
-5. Identifies remaining risks or open questions
+## Synthesis Doctrine
+You are not a participant. You are an auditor. Every claim you make must be traceable.
+(grounding / attribution / no-invention / resolved≠dissent / actionability rules)
 
-Use the State of Play as your primary reference for what was decided, agreed
-upon, and left unresolved. The transcript provides supporting detail and
-attribution.
+## Length — per-section budget
+Decision 80-120w · Reasoning 150-250w · Action Items 80-120w ·
+Dissenting Views 80-120w · Open Questions 60-90w · Confidence 20-40w
 
-Format as markdown with these exact sections:
-## Decision
-## Reasoning
-## Action Items
-## Dissenting Views
-## Open Questions
+## Required Sections — output these exact headings in this order, even if empty (write "None")
+## Decision / ## Reasoning / ## Action Items (+ ## Proposed Fix in code mode)
+/ ## Dissenting Views / ## Open Questions
+
 ## Confidence
-
-For Confidence:
-- High = all active participants contributed meaningfully and there are no unresolved disagreements
-- Medium = general agreement with minor dissent, or some participants did not contribute
-- Low = significant disagreement remains, or many participants failed to contribute
-
-## Example Output Structure
-...
+One word: High | Medium | Low — justified against the rubric:
+- High = ≥70% meaningful participation AND 0 unresolved objections AND ≥1 grounded claim
+- Medium = broad participation with 1 dissent, or majority participation with passes
+- Low = significant disagreement remains, or many failed/passed, or ungrounded key claims
 ```
 
-Only the **final round's** transcript is included (`formatFinalRoundTranscript`), since it shows how the conversation concluded while the State of Play captures all prior history. Unresolved objections come from `collectObjections()` (challenges/dissents across rounds; an objection is legacy once the final round shows activity).
+Only a bounded transcript is included (`formatFinalRoundTranscript`): earlier rounds appear as ~2-line digests, the final round in full (capped ~8k chars), plus each participant's stored reflection under `### Final Reflections`. Unresolved objections come from `collectObjections()` (challenges/dissent-type contributions across rounds; an objection is legacy once the final round shows activity).
 
 ### Required-Section Repair
 
-After the first draft, `validateSynthesisSections` checks for the 6 required sections; if any are missing and retries remain (`synthesisMaxRetries`, default 1), the model is re-prompted on the SAME session with: *"Your previous response was missing these required sections: … Please include ALL of the following sections…"*.
+After the draft, `validateSynthesisSections` requires: always — `Decision`, `Reasoning`, `Confidence`, `Dissenting Views`, `Open Questions`; plus at least one of `Action Items` / `Proposed Fix` (code mode expects Proposed Fix). If anything is missing and retries remain (`synthesisMaxRetries`, default 1), the model is re-prompted on the SAME session: *"Your previous response was missing these required sections: … Please include ALL of the following sections…"*.
 
 ### Self-Critique Pass
 
 The synthesizer then audits its own draft against the transcript (up to `MAX_CRITIQUE_RETRIES` = 2):
 
 ```
-You are a neutral deliberation analyst reviewing your own synthesis.
-
 Review the draft below against the deliberation transcript for:
 1. Misattributed views (a point credited to the wrong participant)
 2. Invented points not present in the deliberation
@@ -1021,33 +946,30 @@ Review the draft below against the deliberation transcript for:
 4. Decisions or action items not supported by any contribution
 
 If corrections are needed, output the FULL revised synthesis with ALL required
-sections: ## Decision ## Reasoning ## Action Items ## Dissenting Views
-## Open Questions ## Confidence
+sections.
 
-If the draft is accurate and complete, respond with exactly: [NO_CHANGES]
-
-Draft synthesis:
-{text.slice(0, 6000)}
+If the draft is accurate, grounded, and complete, respond with exactly: [NO_CHANGES]
 ```
 
-- If the model answers `[NO_CHANGES]`, the original draft stands.
-- If the revision is complete, it replaces the draft.
-- If the revision dropped sections, the draft is re-sent with feedback.
+- `[NO_CHANGES]` → the original draft stands.
+- A complete revision replaces the draft.
+- A revision that dropped sections is re-sent with feedback.
 - On any error the original draft is kept.
 
 ### Finalization
 
 `finalizeSynthesis` post-processes the text:
-- Appends **## Unresolved Objections** (from `objection_collector`).
+- Appends **## Unresolved Objections** and **## Resolved Concerns** (from `objection_collector`).
 - Appends **## Refusals** (agents who refused to engage, as `Name: content`).
-- Adds a note for any required section the model omitted.
+- Adds a note for any required section the model omitted (`> **Note:** The synthesizer did not generate…`).
+- **Grounded-synthesis check:** every `## Decision` line citing no valid `[#id]` from the weave is listed under **## Needs Verification** rather than silently kept.
 - Parses the Confidence section if present; otherwise derives it heuristically (`deriveConfidence`):
   ```javascript
   if (dissentCount === 0 && challengeRatio < 0.3 && participationRate >= 0.5) return "high";
   if (dissentCount <= 1 && challengeRatio < 0.5 && participationRate >= 0.33) return "medium";
   return "low";
   ```
-- Still extracts structured fields (`decisions`, `action_items`, `open_questions`, `dissent`, `refusals`, `confidence`) and persists the artifact with `#saveArtifact`.
+- Extracts structured fields (`decisions`, `action_items`, `proposed_fix`, `files_involved`, `open_questions`, `dissent`, `refusals`, `confidence`) and persists the artifact with `_saveArtifact`.
 
 ### Fallback Synthesis
 
@@ -1131,6 +1053,8 @@ Agent turns are now **retried** — the old "run once and fail" behavior is gone
 4. **Failure** — only when the primary and fallback attempts are all exhausted does the agent's status become `failed`, an `agent_errors` row is written with type `model_fallback` (`Model: X, No fallback available` or `Original: X, Fallback: Y — <error>`), and the agent is skipped for the rest of the round.
 
 Every failed/finished turn path is precomputed once: **RAG context, system prompt, and user prompt are built model-independent and reused across retries/fallbacks** (no duplicate RAG calls). When the circuit breaker already marks the assigned model `open`, the turn starts directly on a fallback model without retrying the unhealthy one.
+
+**Inline-tool side effects across retries:** loom interaction tools execute server-side *during* `session.prompt`. If an attempt fails after those side effects landed, the retried response will not re-contain those ToolParts — the peer contributions already live in the weave (deduplicated by batch+target+question idempotency keys, Section 22), and the gap is surfaced via an explicit `attempt_failed_possible_tool_side_effects` log instead of silently disappearing.
 
 Successful fallback turns carry a `_fallback` metadata object on the parsed response (`{ from, to, error }`); having succeeded on the fallback model, the agent's status returns to `listening` as normal. Additionally, `#getParticipantModel` can itself substitute the highest-tier healthy model when a participant's own model is unhealthy (orchestrator-level fallback used by directives and synthesis).
 
@@ -1223,7 +1147,7 @@ From the database: participants (with personas, tiers, models, status, reflectio
 | `fabric_chunks` | Regular table: chunked content (round summaries, contributions, initial context) |
 | `vec_fabric_chunks` | sqlite-vec virtual table: `embedding float[384]` — used for agent RAG |
 | `persona_embeddings` | Regular table: embedded persona text (`persona_name`, `tier`, `tags`, `embedding_text`) |
-| `vec_persona_embeddings` | sqlite-vec virtual table: `embedding float[384]` — used for composition & reflection targeting |
+| `vec_persona_embeddings` | sqlite-vec virtual table: `embedding float[384]` — used for room composition |
 
 ### Embedding Service
 
@@ -1232,7 +1156,7 @@ The embedding service (`embedding-service.js`) provides a pluggable embedding in
 - **ONNX Runtime model:** `onnxruntime-node` for inference, `@huggingface/tokenizers` for tokenization. Default model **Snowflake/snowflake-arctic-embed-xs** (~22 MB, 384 dims, BERT architecture, int8 quantized, `maxTokens` 512). Runs entirely locally.
 - **Model resolution:** onnxruntime-node and the tokenizers are marked as esbuild externals; at runtime they're resolved from a dedicated deps directory at `~/.config/opencode/loom/deps/node_modules/` via `createRequire`, with a fallback to the project's `node_modules` for local development.
 - **Model download:** the default model is installed by `npm run install:plugin` via `scripts/model.mjs` into `~/.config/opencode/loom/models/<name>/model.json` (specifies dims, maxTokens, modelType, quant path).
-- **Initialization:** `initEmbeddingModel()` runs eagerly when the dashboard starts and lazily on first use by composition/reflection/vector indexing. The dashboard shows embedder status (loading/ready/failed).
+- **Initialization:** `initEmbeddingModel()` runs eagerly when the dashboard starts, lazily on first use by composition/RAG/vector indexing, and on plugin startup via `ensureEmbedderInitialized()`. The dashboard shows embedder status (loading/ready/failed).
 
 The `embed()` path tokenizes text, builds `input_ids`/`attention_mask`/`token_type_ids` tensors, runs the session, extracts `last_hidden_state`, mean-pools over non-padding tokens, and L2-normalizes to a `Float32Array` of length `dims`.
 
@@ -1262,7 +1186,7 @@ const ragChunks = await vectorIndex.retrieveRelevant(queryText, 10, currentRound
 3. Excludes chunks from the current round (avoids self-referencing).
 4. Returns topK results.
 
-**Persona-aware RAG queries:** the query text includes the agent's own recent contributions with the group's recent contributions, so different agents can retrieve different "relevant" context reflecting their focus.
+**RAG query:** the query text is the last two rounds' contributions (filtered by round and not excluded), joined into a single string. If no contributions exist yet, the meeting question is used instead. Different agents can still retrieve different "relevant" context because each agent's own contributions may differ from the group's.
 
 ### How RAG Context Appears in Agent Prompts
 
@@ -1275,112 +1199,58 @@ const ragChunks = await vectorIndex.retrieveRelevant(queryText, 10, currentRound
 
 When no RAG context is available (early rounds, empty index), this section is omitted.
 
-### Semantic Drift Detection (Removed)
-
-`computeSemanticDrift(roundA, roundB)` computed centroid cosine distance between two
-rounds, but it was never wired into any check — it was a legacy utility and has been
-removed as dead code. If revived, it should feed a dashboard drift visualization and
-reuse the now-metadata-aware embedder (`services/model-manager.js`), which resolves
-the historical init/pooling issues that motivated its removal.
-
 ---
 
-## 20. Agent-Requested Tools
+## 20. Agent Tooling — Built-ins + Plugin-Registered Loom Tools
 
-The agent-tools system allows deliberation agents to call tools during their turns, complementing the server-side RAG with agent-directed retrieval and research.
-
-### Motivation
-
-The server-side RAG uses a fixed query (last 2 rounds' contributions) with top-5 results. Agents cannot: search sub-topics that don't match recent content, verify factual claims, research external topics, or explore the filesystem on demand. Tools fix this.
-
-**Example:** The Security Engineer raised a concern in round 1; by round 3 the server RAG query may not match it. `loom_vector_search` lets the agent query directly.
-
-### Available Tools (Primary Turns)
-
-| Tool | Category | Purpose in Deliberation |
-|------|----------|------------------------|
-| `web_fetch` | Web | Fetch articles, documentation, CVE entries for fact-checking |
-| `web_search` | Web | Search for current statistics, news, or background |
-| `read` | Filesystem | Read project files (workspace-restricted) |
-| `glob` | Filesystem | Find files by pattern |
-| `grep` | Filesystem | Search file contents |
-| `bash` | Shell | **Allowlisted commands only**: `git`, `ls`, `wc`, `head`, `tail`, `grep`, `find` — no write ops |
-| `loom_vector_search` | Vector DB | Semantic search against prior deliberation context |
+Agent tooling is split between **built-in OpenCode tools** (web_fetch, read, bash, etc.) and **plugin-registered loom tools** (loom_query, loom_vote, loom_summon, loom_request_next, loom_vector_search). Both sets flow into agent prompts through the same mechanism: `agentTools` config → `tools` body map → OpenCode server maps to provider tool definitions.
 
 ### Tool Sets by Phase
 
-| Phase | Authorized Tools | tool_choice |
-|-------|------------------|-------------|
-| Primary agent turn | `web_fetch`, `web_search`, `read`, `glob`, `grep`, `bash` (allowlisted), `loom_vector_search` | `auto` |
-| Reflection | `web_fetch`, `web_search`, `read`, `loom_vector_search` | `auto` |
-| Query response | `web_fetch`, `web_search`, `read`, `loom_vector_search` | `auto` |
-| Evidence response | `web_fetch`, `web_search`, `read`, `loom_vector_search` | `required` (MUST research) |
-| Vote response | *(none)* | `none` — a bare `[Vote: X]` ballot, no tools |
-| Summoned expert | `web_fetch`, `web_search`, `read`, `glob`, `grep`, `bash` (allowlisted), `loom_vector_search` | `auto` |
+| Phase | Built-in | Loom Plugin | tool_choice |
+|-------|----------|-------------|-------------|
+| Primary agent turn | `web_fetch`, `web_search`, `read`, `glob`, `grep`, `bash` (allowlisted) | `loom_query`, `loom_vote`, `loom_summon`, `loom_request_next`, `loom_vector_search` | `auto` |
+| Query/Evidence response (peer) | `web_fetch`, `web_search`, `read`, `loom_vector_search` | *(none)* | `auto` / `required` (evidence) |
+| Vote response (peer) | *(none)* | *(none)* | `none` — bare `[Vote: X]` ballot |
+| Summoned expert | `web_fetch`, `web_search`, `read`, `loom_vector_search` | *(none)* | `auto` |
 
 **Not granted to agents**: `write`, `edit`, `tui`, `todo`, `lsp`, `comment`, `snapshot`, `permissions`.
 
-### Tool Details
+### Plugin-Registered Tools
 
-#### `loom_vector_search` — Semantic Similarity Search (plugin-registered)
+| Tool | Source File | Purpose |
+|------|-----------|---------|
+| `loom_query` | `plugin/tools/query-evidence.js` | Query peers with 7 modes (clarify/perspective/evidence/critique/risks/assumptions/alternatives) — returns inline for same-turn synthesis |
+| `loom_vote` | `plugin/tools/vote-summon.js` | Call a lettered poll — fan-out to all active participants, inline tally |
+| `loom_summon` | `plugin/tools/vote-summon.js` | Summon a guest expert persona for one additive contribution |
+| `loom_request_next` | `plugin/tools/meta.js` | Request priority speaking slot in next round |
+| `loom_vector_search` | `plugin/tools/vector-search.js` | Semantic similarity search against prior deliberation chunks |
 
-**Backing:** `VectorIndex.retrieveRelevant(query, topK, excludeRound)` → `MeetingDatabase.searchFabricVectors()`.
+All loom tools resolve the current meeting from `context.sessionID` via the session-index, then delegate to the in-memory `activeLooms` engine for state/session/database access.
 
-**Args:** `query` (required), `top_k` (optional, default 5, max 20 — capped at 10 in execution), `exclude_round` (optional).
-
-**Returns:**
-```json
-{
-  "results": [
-    { "round": 2, "source": "round_summary|contribution|context",
-      "distance": 0.23, "content": "..." , "participation_tags": [] }
-  ],
-  "truncated": false
-}
-```
-
-**Distance range:** `[0, 2]` (0 = identical, 2 = opposite).
-
-#### `read` — File Reading
-
-Workspace-restricted; cannot read outside the project.
-
-#### `bash` — Shell Commands
-
-**Allowlisted commands only**: `git`, `ls`, `wc`, `head`, `tail`, `grep`, `find`. Write operations are never allowed.
-
-### Session-to-Meeting Resolution
-
-Each tool call must resolve which Loom meeting the ephemeral session belongs to:
-
-```
-1. Tool receives context.sessionID
-2. Direct lookup: findMeetingBySessionId(directory, sessionID) via session-index.json
-3. Fallback: client.session.get({ id } ) → session.info.parentID → user's main session → findMeetingBySessionId(directory, parentID)
-4. MeetingDatabase.create(dbPath, meetingId) → SQLite connection
-5. VectorIndex(db) → vector search wrapper
-6. Execute VectorIndex.retrieveRelevant()
-```
-
-The in-memory `sessionManager.registerSessionMeeting()` map is also populated on session creation for fast resolution during a turn.
-
-### Tool Registration
-
-Tools are registered in `src/index.js` via the `tool()` hook and passed through the chain:
+### Tool Registration Chain
 
 ```
 src/index.js (Loom factory)
-  → createKnitHandler(client, directory, activeLooms, agentTools)
-    → new MeetingOrchestrator({ ..., agentTools })
-      → new RoundExecutor({ ..., tools: agentTools })
-        → client.session.prompt({ body: { tools: toolsMap } })
+  → tool("loom_query", createQueryEvidenceTools({ config, resolveMeeting, activeLooms }))
+  → tool("loom_vote", createVoteSummonTools({ config, resolveMeeting, activeLooms }))
+  → tool("loom_summon", ...)
+  → tool("loom_request_next", createMetaTools({ config }))
+  → tool("loom_vector_search", createVectorSearchTool({ config, resolveMeeting }))
+
+When an agent turn starts:
+  MeetingOrchestrator → RoundExecutor
+    → client.session.prompt({ body: { tools: toolsMap } })
 ```
 
-The `tools` body field is a **boolean filter map** (e.g. `{ web_fetch: true, loom_vector_search: true }`); the opencode server maps enabled tools to provider-format tool definitions automatically. Built-in tools are gated by `agentTools.builtIn.*`; `loom_vector_search` by `agentTools.loom.loom_vector_search`; phase-level restrictions by overrides (`agentTools.reflection`, query/evidence/summon sets built in code).
+The `tools` body field is a **boolean filter map** (e.g. `{ web_fetch: true, loom_query: true }`); the opencode server maps enabled tools to provider-format tool definitions automatically. Built-in tools are gated by `agentTools.builtIn.*`; loom tools by `agentTools.loom.*`.
 
 ### Agent Guidance
 
-When tools are enabled, the system prompt includes research-first guidance (primary-turn and reflection variants). Evidence requests additionally require "You MUST use at least one research tool to find concrete evidence. Do NOT speculate or reason from memory alone."
+When loom tools are enabled, the system prompt includes:
+- **Research-first guidance** for `loom_vector_search` ("search before you claim").
+- **Query-mode guidance** (`loom_query` modes table embedded in system prompt) — callers use modes to specify the kind of response they want.
+- **Evidence requests** additionally require "You MUST use at least one research tool to find concrete evidence. Do NOT speculate or reason from memory alone."
 
 ### Configuration
 
@@ -1393,8 +1263,13 @@ When tools are enabled, the system prompt includes research-first guidance (prim
       "bash": { "enabled": true, "allowlist": ["git", "ls", "wc", "head", "tail", "grep", "find"] },
       "glob": true, "grep": true, "lsp": false
     },
-    "loom": { "loom_vector_search": true },
-    "reflection": { "bash": false, "glob": false, "grep": false },
+    "loom": {
+      "loom_query": true,
+      "loom_vote": true,
+      "loom_summon": true,
+      "loom_request_next": true,
+      "loom_vector_search": true
+    },
     "maxToolCallsPerTurn": 5,
     "maxToolOutputTokens": 4000
   }
@@ -1406,8 +1281,7 @@ When tools are enabled, the system prompt includes research-first guidance (prim
 | `enabled` | `true` | Master switch for all agent tools |
 | `builtIn.*` | (see above) | Enable built-in tools for agent turns |
 | `builtIn.bash.allowlist` | `["git","ls","wc","head","tail","grep","find"]` | Only these commands via bash |
-| `loom.loom_vector_search` | `true` | Enable the plugin-registered vector search tool |
-| `reflection.*` | bash/glob/grep `false` | Reduced set for reflections/queries/evidence |
+| `loom.*` | all `true` | Enable loom plugin tools (query/vote/summon/request_next/vector_search) |
 | `maxToolCallsPerTurn` | `5` | Soft limit — exceeding logs a warning (not truncated) |
 | `maxToolOutputTokens` | `4000` | Contract limit on tool output volume (drives server-side truncation) |
 
@@ -1415,11 +1289,11 @@ When tools are enabled, the system prompt includes research-first guidance (prim
 
 | Risk | Mitigation |
 |------|-----------|
-| Prompt injection via tool outputs | Tool outputs feed the final text only; `[QUERY]`/`[EVIDENCE]`/`[SUMMON]` tags are stripped; content is sanitized |
+| Prompt injection via tool outputs | Tool outputs feed the final text only; content is sanitized |
 | Bash command execution | Allowlisted commands only; write operations never allowed |
 | Filesystem exposure | `read` restricted to workspace |
-| Reflection safety | Reduced tool set for reflections |
-| Embedding model unavailable | `embedText` returns `null`; composition/reflection/vector-RAG degrade gracefully |
+| Embedding model unavailable | `embedText` returns `null`; composition/vec-RAG degrade gracefully |
+| Loom tool side effects on retry | Inline peer contributions persisted via idempotency keys; retried prompts do not duplicate responses |
 
 ---
 
@@ -1458,53 +1332,83 @@ When `fastPathModel` is empty (default), all orchestrator calls use the highest-
 
 ---
 
-## 22. Directed Interactions: Query, Evidence, Summon, Vote (loom_\* tools)
+## 22. Inline Peer Interactions: Query, Vote, Summon, Turn Requests
 
-> **Live contract:** agents are instructed to use `loom_query` / `loom_evidence` / `loom_summon` / `loom_vote` / `loom_request_next` **tools** (Section 4). The bracket forms below are a deprecated fallback — still parsed, no longer advertised.
+Agents can direct the conversation at specific participants via **plugin-registered loom tools** (Section 20) without waiting for the round-robin order. When invoked, callee responses return **inline** so the caller can synthesize them within the same turn. All interactions run immediately after the source agent's contribution is stored, using fresh ephemeral sessions for each target (reused round-scoped sessions when available for the heaviest fan-out, vote). Targets are resolved from the current participant list, excluding the source and any passed/failed/muted participants.
 
-Agents can direct the conversation at specific participants without waiting for the round-robin order. When invoked via tools, callee responses return inline so the caller can synthesize them within the same turn. All four run immediately after the source agent's contribution is stored, using fresh ephemeral sessions for each target (reused round-scoped sessions when available for the heaviest fan-out, vote). Targets are resolved from the current participant list, excluding the source and any passed/failed participants.
+### `loom_query` — Multi-Mode Peer Query
 
-### Query (`loom_query({targets, question})` — deprecated `[QUERY: @target1, @target2] question`)
+**Signature:** `loom_query({ queries: [{ target, question, mode }] })`
 
-- Targets: 1–2 participant IDs (parsed from `@mention`s; extra targets dropped).
-- **Prompt** (`buildQueryPrompt`): source's contribution and their question, the target's recent contributions and prior reflection, seniority + round context. System prompt: *"A fellow participant has directed a question to you. Respond directly and stay in character."* No contribution-type tags allowed — just answer.
-- **Tools:** reduced set (`web_fetch`, `web_search`, `read`, `loom_vector_search`), `tool_choice: auto`.
-- **Contribution:** type `query_response`, content prefixed `[Response to query from <Source Name>]`, `targets_which` set to the source contribution's ID, tool calls and prompt context recorded.
-- While a target is responding, its status is `speaking` and it is listed in `meetings.querying_participants` (dashboard-visible).
-- Failures are logged (`query_failed`) and the target's status is restored.
+One call can query multiple peers (1 per item). Each item specifies a `target` (participant ID), `question` (1–500 chars), and `mode` (one of 7, default `clarify`):
 
-### Evidence (`loom_evidence({targets, question})` — deprecated `[EVIDENCE: @target] question`)
+| Mode | Response Kind | tool_choice | Purpose |
+|------|--------------|-------------|---------|
+| `clarify` | Factual answer | `auto` | Default — ask for information |
+| `perspective` | Position-tagged opinion | `auto` | Solicit the target's stance on a statement; updates their stored reflection |
+| `evidence` | Finding + Source + Strength | `required` | Target MUST use a research tool |
+| `critique` | Most damaging objection | `auto` | Adversarially stress-test a statement |
+| `risks` | Failure modes + severity + mitigation | `auto` | Surface risk angles |
+| `assumptions` | Unstated premises + how to test them | `auto` | Expose hidden assumptions |
+| `alternatives` | Genuinely different approaches | `auto` | Explore alternative framings |
 
-- Identical mechanics to Query, except the target **must** research: `tool_choice: "required"` and the prompt demands "You MUST use at least one research tool… do not speculate". System prompt: *"A fellow participant has requested evidence from you. You MUST use research tools to find concrete evidence."*
-- **Contribution:** type `evidence_response`, content prefixed `[Evidence from <Target> on <Source>'s <type>]`.
-- Dashboard flag: `meetings.evidence_participants`.
+**Execution flow:**
+1. Resolve each target (must exist, not failed/passed/muted).
+2. For each resolved target: build prompt via `buildQueryPrompt` (clarify/other modes) or `buildEvidencePrompt` (evidence mode) — source's contribution + question, target's recent contributions and stored reflection, seniority + round context.
+3. Run `runEphemeralPrompt` for each target (parallel where possible).
+4. Persist each response as a typed contribution (`query_response` or `evidence_response`) under the invoker's `batch_id`.
+5. **Perspective mode side-effect:** the response replaces the target's stored `reflection` (pushed onto bounded `reflectionHistory`, max 5) and persists via `setParticipantReflection` — this is the primary write path for reflections (Section 12).
 
-### Summon (`loom_summon({persona_name, issue})` — deprecated `[SUMMON: Persona Name] issue`)
+**Idempotency:** if `batch_id + target + question` already exists in the weave (retry after timeout), the existing contribution is reused instead of re-prompting.
 
-- Brings in a **guest expert** persona from the persona pool (matched by name across all tiers; unknown personas are ignored). The summoned agent is not part of the registered participant list — it contributes once.
-- **Rate limits:** `maxSummonsPerRound` (2) and `maxSummonsPerAgent` (1) — tracked per round in `round.summons`.
+**Dashboard:** targets marked `speaking` while responding; listed in `meetings.querying_participants`.
+
+### `loom_vote` — Poll
+
+**Signature:** `loom_vote({ question })`
+
+Fan-out to **all active participants** (source + every non-failed/passed/muted participant). The source's ballot is parsed from its own contribution content; all others are prompted in parallel.
+
+- **Prompt** (`buildVotePrompt`): poll question, source's contribution, voter's last 2 contributions and stored reflection, round context.
+- **Ballot format:** `[Vote: <letter>]` + 1–2 sentences reasoning. `extractVoteLetter()` accepts the tag or a standalone capital letter.
+- **Tools:** none — `tool_choice: "none"` (fast, tool-free poll).
+- **Output:** each ballot stored as `vote_response` (`[Vote from <Name>]`); after collection a `vote_tally` contribution is produced listing counts, percentages, and total voters.
+- **Edge case:** source-only tally if no other active participants.
+- **Idempotency:** same `batch_id + question` reuses existing vote rows.
+
+### `loom_summon` — Guest Expert
+
+**Signature:** `loom_summon({ persona_name, issue })`
+
+Brings in a **guest expert** from the persona pool (matched by name across all tiers; unknown personas are rejected). The summoned agent is not a registered participant — it contributes once.
+
+- **Rate limits:** `maxSummonsPerRound` (2), `maxSummonsPerAgent` (1) — tracked per round.
 - **Model:** the summoning agent's own model; temperature 0.7.
-- **Tools:** full primary-tool set (`web_fetch`, `web_search`, `read`, `glob`, `grep`, `bash` allowlisted, `loom_vector_search`), `tool_choice: auto`.
-- **Prompt** (`buildSummonPrompt`): persona, expertise, communication style, the requester's issue, recent deliberation context (last 4 contributions), round context. System prompt: *"You are <Name> (<tier>), a guest expert summoned into this deliberation. Respond in character."*
-- **Contribution:** type `summoned_response`, participant id `summoned_<name slug>`, content prefixed `[Summoned: <Name> (<tier>)]`.
-- Dashboard flag: `meetings.summoning_participants`.
+- **Tools:** `web_fetch`, `web_search`, `read`, `loom_vector_search` (no bash/glob/grep — least privilege for guests).
+- **Prompt** (`buildSummonPrompt`): persona expertise, communication style, requester's issue, recent context (last 4 contributions), round context.
+- **Contribution:** type `summoned_response`, participant id `summoned_<slug>`, content prefixed `[Summoned: <Name> (<tier>)]`.
 
-### Vote (`loom_vote({question})` — deprecated `[CALL_VOTE] question`)
+### `loom_request_next` — Turn Request
 
-A polling mechanism residents can invoke to resolve a contested point quickly. Unlike Query/Evidence/Summon it is **fan-out to everyone**: the source agent plus every other active participant cast a ballot, then a deterministic tally is produced.
+**Signature:** `loom_request_next({ priority, reason })`
 
-- **Trigger:** the agent calls `loom_vote({question})` (or the fallback parser recognizes `[CALL_VOTE]` followed by the poll question). The rights field `call_vote` is granted to mid, senior, and principal in the tier model (Section 3). The shared tally builder is `utils/vote-tally.js` — both the tool path and the executor path consume it (audit 16 MA2).
-- **Voters:** the source agent (its ballot is parsed from its own contribution content) plus every participant that is not passed or failed.
-- **Prompt** (`buildVotePrompt`): the poll question, the source's contribution, the voter's last 2 contributions and prior reflection, and round context. System prompt: *"A fellow participant has called a vote. Cast your vote and provide brief reasoning."* No type tags allowed.
-- **Ballot format:** the response must be `[Vote: <letter>]` followed by 1–2 sentences of reasoning. `extractVoteLetter()` accepts the `[Vote: X]` tag or a lone standalone capital letter on its own line.
-- **Tools:** none — `tool_choice: "none"` (voting is a fast, tool-free poll).
-- **Contributions:** each ballot is stored as type `vote_response` with content prefixed `[Vote from <Name>]` and `targets_which` pointing at the source contribution. After all ballots are collected (or fail, individually logged as `vote_failed`), a single type `vote_tally` contribution is produced by the source participant: it lists the counts per letter, the percentage of the winner, and `Total voters`.
-- **Dashboard integration:** voters marked "speaking" while balloting; the dashboard renders `vote_response` and `vote_tally` rows inline in the Timeline, with a per-poll grouping.
-- **Edge case:** if the source is the only active participant, a source-only tally is recorded immediately.
+A meta-level request (not a peer interaction) — queues a turn request for the next round's ordering algorithm. Priority capped by tier. The request is returned as `{ queued: true }` and processed during the post-phase turn-ordering step (Section 9).
 
-### Directed-Interaction Outcomes
+### How Inline Responses Appear in the Caller's Context
 
-Query, evidence, and summoned responses are classified into the State of Play's **Key Facts** section; a vote tally is classified as a **Decision** while individual ballots are excluded (Section 11). All four response types flow into the weave and appear in later agents' recent contributions.
+Peer responses are returned as JSON payloads in the tool output. The caller's system prompt instructs it to **synthesize inline** — use the peer answers directly in its contribution rather than reporting them as raw tool output. Responses are also stored as indented contribution rows in the weave for later agents' context.
+
+### Interaction Outcomes in State of Play
+
+| Contribution Type | State of Play Section | Notes |
+|-------------------|----------------------|-------|
+| `query_response` (clarify/critique/risks/assumptions/alternatives) | Key Facts | Includes the target's answer |
+| `query_response` (perspective) | Key Facts | Also updates target's stored reflection |
+| `evidence_response` | Key Facts | Includes source + strength metadata |
+| `vote_tally` | Decision | Per-poll tally; individual ballots excluded |
+| `summoned_response` | Key Facts | Guest expert perspective |
+
+All response types flow into the weave and appear in later agents' recent contributions.
 
 ---
 
@@ -1698,6 +1602,7 @@ Loaded from `.loomrc.json` (project or `~/.config/opencode/.loomrc.json`), or th
 | `modelFallback.enabled` | `true` | Master switch for agent-turn retries + fallback model selection (Section 16) |
 | `modelFallback.maxRetriesPerModel` | `2` | Retries on the same model before falling back |
 | `modelFallback.maxFallbackAttempts` | `1` | Retries on the selected fallback model |
-| `agentTools.*` | (see Section 20) | Tool enablement and phase overrides |
+| `sameTurnSynthesis` | `true` | Peer responses returned inline for same-turn synthesis (Section 22) |
+| `agentTools.*` | (see Section 20) | Tool enablement — built-in tools + loom plugin tools (query/vote/summon/request_next/vector_search) |
 | `DEFAULT_EMBEDDING_MODEL` | `"Snowflake/snowflake-arctic-embed-xs"` | Default embedder for PersonaIndex and vector search (warmed up on dashboard start) |
 | `DEFAULT_EMBEDDING_QUANT` | `"onnx/model_int8.onnx"` | ONNX quantization variant used by the embedder |

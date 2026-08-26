@@ -1,15 +1,6 @@
-import { getConfig } from "../config.js";
-import { extractErrorInfo } from "../logger.js";
 
 export async function runMeeting() {
     await this.initialize();
-
-    // Baseline the parent-message marker (audit 14 PV2): only messages the user
-    // sends AFTER meeting start become steering — never the original question.
-    try {
-      const prior = await this._sessionManager.getParentUserMessages(null);
-      if (prior.length > 0) this._lastSeenParentMessageId = prior[prior.length - 1].id;
-    } catch { /* best-effort */ }
 
     const participantItems = this._stateManager.getParticipants()
       .map((p) => `  - ${p.config.name} (${p.config.tier}${p.config.tags?.length ? ", " + p.config.tags.join(", ") : ""})`)
@@ -87,65 +78,16 @@ export async function _runWeavingLoop() {
         await this._sessionManager.postProgress(`💰 Token budget reached (${spent} ≥ ${this._maxTotalTokens}) — ending deliberation and generating output.`, "warn");
         break;
       }
-      if (continueWeaving) {
-        await this._collectUserSteering();
-      }
     }
   }
 
-export function _tokenBudgetExceeded() {
+  export function _tokenBudgetExceeded() {
     if (!this._maxTotalTokens || this._maxTotalTokens <= 0) return false;
     const spent = (this._callStats.input_tokens ?? 0) + (this._callStats.output_tokens ?? 0);
     return spent >= this._maxTotalTokens;
   }
 
-export async function _collectUserSteering() {
-    try {
-      const newMsgs = await this._sessionManager.getParentUserMessages(this._lastSeenParentMessageId);
-      if (newMsgs.length === 0) return;
-      this._lastSeenParentMessageId = newMsgs[newMsgs.length - 1].id;
-      const steeringParts = [];
-      const notes = [];
-      for (const m of newMsgs) {
-        const text = (m.text ?? "").trim();
-        const muteMatch = text.match(/^\/mute\s+(.+)$/i);
-        const releaseMatch = text.match(/^\/release\s+(.+)$/i);
-        if (muteMatch || releaseMatch) {
-          const name = (muteMatch?.[1] ?? releaseMatch?.[1] ?? "").trim().replace(/^["']|["']$/g, "");
-          const p = this._stateManager.getParticipants().find(
-            (x) => x.config.name.toLowerCase() === name.toLowerCase() || x.config.id.toLowerCase() === name.toLowerCase(),
-          );
-          if (!p) {
-            notes.push(`⚠️ No participant matching "${name}".`);
-            continue;
-          }
-          if (muteMatch) {
-            const ok = this._stateManager.muteParticipant(p.config.id);
-            notes.push(ok ? `🔇 ${p.config.name} muted for the rest of the meeting.` : `⚠️ Could not mute ${p.config.name}.`);
-          } else {
-            const ok = this._stateManager.releaseParticipant(p.config.id);
-            notes.push(ok ? `🔊 ${p.config.name} released back into the rotation.` : `⚠️ ${p.config.name} was not muted.`);
-          }
-        } else if (text) {
-          steeringParts.push(text);
-        }
-      }
-      if (steeringParts.length > 0) {
-        const combined = steeringParts.join(" | ").slice(0, 500);
-        this._stateManager.setNextRoundSteering(
-          `📌 The meeting owner interjected mid-deliberation: "${combined}" — factor this into your next contribution.`,
-        );
-        notes.push(`ℹ️ Owner input received — steering injected: ${combined.slice(0, 120)}${combined.length > 120 ? "…" : ""}`);
-      }
-      for (const note of notes) {
-        await this._sessionManager.postProgress(note);
-      }
-    } catch (err) {
-      this._logger.debug("steering_check_failed", "Parent-message steering check failed", extractErrorInfo(err));
-    }
-  }
-
-export function _remainingMs() {
+  export function _remainingMs() {
     return this._startTime + this._meetingTimeoutMs - Date.now();
   }
 

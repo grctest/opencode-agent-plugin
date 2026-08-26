@@ -60,7 +60,6 @@ export class MeetingOrchestrator {
   _callStats = { orchestrator: 0, compaction: 0, moderation: 0, summary: 0, synthesis: 0, input_tokens: 0, output_tokens: 0 };
   _personaIndex = null;
   _availableModels = [];
-  _lastSeenParentMessageId = null;
   _maxTotalTokens = 0;
 
   constructor(options) {
@@ -214,17 +213,6 @@ export class MeetingOrchestrator {
    */
   _tokenBudgetExceeded(...args) {
     return weavingHelpers._tokenBudgetExceeded.apply(this, args);
-  }
-
-  /**
-   * Human-in-the-loop checkpoint (audit 14 PV2): between rounds, check the
-   * parent session for new user messages and inject them as next-round
-   * steering. `/mute <name>` and `/release <name>` commands manage
-   * participants mid-meeting (audit 14 PV3). Best-effort — a failed check
-   * never breaks the loop.
-   */
-  async _collectUserSteering(...args) {
-    return weavingHelpers._collectUserSteering.apply(this, args);
   }
 
   /**

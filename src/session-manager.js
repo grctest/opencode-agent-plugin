@@ -52,29 +52,6 @@ export class SessionManager {
   }
 
   /**
-   * Fetches user messages posted to the parent session after `sinceId`
-   * (audit 14 PV2 human-in-the-loop). Best-effort — returns [] on failure.
-   * @param {string|null} sinceId
-   * @returns {Promise<Array<{id: string, role: string, text: string}>>}
-   */
-  async getParentUserMessages(sinceId = null) {
-    if (!this.#parentSessionId) return [];
-    const { ok, messages } = await this.#contract.messages(this.#parentSessionId);
-    if (!ok) return [];
-    let seen = false;
-    return messages.filter((m) => {
-      if (m.role !== "user") return false;
-      if (sinceId == null) return true;
-      if (seen) return true;
-      if (m.id === sinceId) {
-        seen = true;
-        return false;
-      }
-      return false;
-    });
-  }
-
-  /**
    * Maps an ephemeral session ID to its meeting ID for fast lookup
    * during tool execution. Populated when sessions are created for a meeting.
    */
