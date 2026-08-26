@@ -256,7 +256,6 @@ export class MeetingOrchestrator {
    */
   _remainingMs(...args) {
     if (this._timeBudget) {
-      this._timeBudget.syncFrom(this);
       return this._timeBudget.remainingMs(...args);
     }
     return weavingHelpers._remainingMs.apply(this, args);
@@ -271,7 +270,6 @@ export class MeetingOrchestrator {
   }
   _checkTimeout(...args) {
     if (this._timeBudget) {
-      this._timeBudget.syncFrom(this);
       if (this._timeBudget.checkTimeout()) {
         this._stateManager.transitionTo("timeout");
         this._logger.warn("timeout", "Meeting timed out", { elapsed: Date.now() - this._startTime, limit: this._meetingTimeoutMs });

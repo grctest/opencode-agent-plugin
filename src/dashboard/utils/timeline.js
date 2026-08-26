@@ -61,9 +61,11 @@ export function buildFlatItems(groupedContributions, opts) {
     if (!isCollapsed) {
       const roundTurnRequests = turnRequests.filter((tr) => {
         if (contribs.length === 0) return false;
-        const contribTimes = contribs.map((c) => c.created_at);
+        const contribTimes = contribs.map((c) => c.created_at ? new Date(c.created_at).getTime() : 0).filter(Boolean);
+        if (contribTimes.length === 0) return true;
         const roundStart = Math.min(...contribTimes);
-        return tr.created_at >= roundStart;
+        const trTime = tr.created_at ? new Date(tr.created_at).getTime() : 0;
+        return trTime >= roundStart;
       });
 
       const regularByAgent = new Map();

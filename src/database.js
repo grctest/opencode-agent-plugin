@@ -77,7 +77,8 @@ export class MeetingDatabase {
     const DatabaseClass = getDatabaseClass();
     const db = new DatabaseClass(dbPath);
     this.#db = db;
-    this.#db.exec("PRAGMA journal_mode = WAL");
+    const jm = this.#db.prepare("PRAGMA journal_mode = WAL").get();
+    if (jm?.journal_mode !== "wal") dbLogger.warn("pragma_journal_mode_fallback", `journal_mode WAL not achieved (got ${jm?.journal_mode ?? "unknown"}) — concurrency reduced`, { journal_mode: jm?.journal_mode });
     this.#db.exec("PRAGMA foreign_keys = ON");
     this.#db.exec("PRAGMA busy_timeout = 5000");
     this.#db.exec("PRAGMA synchronous = NORMAL");

@@ -66,7 +66,7 @@ If tool returns error or 0 hits, write “evidence unavailable — searched X”
 
 You MUST call at least one tool. No speculation.
 
-Tool ladder: websearch → webfetch/read/loom_vector_search. One focused query, then synthesize.
+Tool ladder: ${TOOL_LADDER_LINE}. One focused query, then synthesize.
 
 Report: Finding (1 sentence) + Source (URL or [#id]) + Strength: strong | weak | inconclusive
 If inconclusive: state why — “0 hits” vs “contradictory sources” — and what would resolve it.

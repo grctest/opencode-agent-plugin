@@ -27,7 +27,7 @@ export class TimeBudget {
     if (meetingTimeoutMs !== undefined) this.meetingTimeoutMs = meetingTimeoutMs;
   }
 
-  /** Sync from orchestrator fields — keeps TimeBudget authoritative without requiring call-sites to remember reset(). */
+  /** @deprecated — TimeBudget is now authoritative after init/extend reset. Kept for compat. */
   syncFrom(orchestrator) {
     if (orchestrator._startTime !== undefined) this.startTime = orchestrator._startTime;
     if (orchestrator._meetingTimeoutMs !== undefined) this.meetingTimeoutMs = orchestrator._meetingTimeoutMs;

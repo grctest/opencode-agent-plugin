@@ -161,7 +161,7 @@ loom_viz
 | `max_rounds` | Maximum deliberation rounds (1–10) | `3` |
 | `models` | Explicit per-tier model assignments (`[{tier, provider_id, model_id}]`) | auto-assigned by capability score |
 | `dry_run` | Preview the composed room without deliberating | `false` |
-| `meeting_timeout` | Maximum meeting duration in ms (60000–1800000) | `900000` (15 min) |
+| `meeting_timeout` | Maximum meeting duration in ms (`0` = no limit, max 3600000) | `0` (no limit — runs until `max_rounds`/stall/token budget) |
 | `fresh` | Force a fresh loom even if a previous meeting exists | `false` |
 
 ### `list_knit_models` arguments

@@ -6,8 +6,6 @@ import { SUMMARY_TRUNCATE_LEN } from "./constants.js";
 // TimeBudget is owned by MeetingOrchestrator; round helpers use this._timeBudget when available (Phase 3 centralization)
 
 export async function runRound() {
-    // Centralized deadline logic via TimeBudget (Phase 3)
-    if (this._timeBudget) this._timeBudget.syncFrom(this);
     const timeBudget = this._timeBudget;
 
     if (timeBudget ? timeBudget.checkTimeout() : this._checkTimeout()) {

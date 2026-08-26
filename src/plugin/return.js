@@ -7,10 +7,8 @@ import { getDatabasesBySessionId, deleteMeetingFiles, deleteMeetingsBySessionId,
 import { resolveLoomBaseDir } from "../paths.js";
 import { createConfig } from "../config.js";
 import { startDashboard } from "../dashboard/server.js";
-import { createEventHandlers } from "./hooks.js";
-
-const PROGRESS_PATTERN =
-  /^🎬|^⚠️|^ℹ️|is thinking\.\.\.|— synthesize:|— critique:|Round \d+ (complete|starting)|Synthesizing final output|✅ Completed|❌ Error:/;
+import { createEventHandlers, PROGRESS_PATTERN } from "./hooks.js";
+export { PROGRESS_PATTERN };
 
 export function createPluginReturn({ activeLooms, activeDashboardRef, directory, config, handleKnit, handleListKnitModels, handleEnableKnitModels, handleDisableKnitModels, handleResetKnitModels, agentTools }) {
   return {
@@ -85,10 +83,10 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
           meeting_timeout: tool.schema
             .number()
             .int()
-            .min(60000)
-            .max(1800000)
+            .min(0)
+            .max(3600000)
             .optional()
-            .describe("Maximum meeting duration in ms. Default: 900000 (15 min)"),
+            .describe("Maximum meeting duration in ms (0 = no limit, default 0)"),
           fresh: tool.schema
             .boolean()
             .optional()
@@ -415,5 +413,3 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
     ...createEventHandlers({ directory }),
   };
 }
-
-export { PROGRESS_PATTERN };

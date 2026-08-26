@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { getDatabasesBySessionId, deleteMeetingFiles, deleteMeetingsBySessionId } from "../database.js";
 import { resolveLoomBaseDir } from "../paths.js";
 
-const PROGRESS_PATTERN =
+export const PROGRESS_PATTERN =
   /^🎬|^⚠️|^ℹ️|is thinking\.\.\.|— synthesize:|— critique:|Round \d+ (complete|starting)|Synthesizing final output|✅ Completed|❌ Error:/;
 
 const TOOL_REQUIRED_OVERRIDES = {
@@ -80,5 +80,3 @@ event: async ({ event }) => {
     },
   };
 }
-
-export { PROGRESS_PATTERN };

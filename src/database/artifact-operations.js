@@ -112,6 +112,8 @@ export function getTranscriptData(db, meetingId, getRoundSummariesFn) {
     if (!roundMap.has(c.round)) {
       roundMap.set(c.round, { number: c.round, contributions: [], turn_requests: [], summary: summaries[c.round] ?? "" });
     }
+    let toolCalls = null;
+    if (c.tool_calls) { try { toolCalls = JSON.parse(c.tool_calls); } catch { toolCalls = null; } }
     roundMap.get(c.round).contributions.push({
       id: c.id,
       participant_id: c.participant_id,
@@ -120,7 +122,7 @@ export function getTranscriptData(db, meetingId, getRoundSummariesFn) {
       round: c.round,
       targets_which: c.target_which != null ? Number(c.target_which) : null,
       batch_id: c.batch_id ?? null,
-      tool_calls: c.tool_calls ? JSON.parse(c.tool_calls) : null,
+      tool_calls: toolCalls,
       created_at: c.created_at,
     });
   }

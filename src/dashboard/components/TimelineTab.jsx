@@ -36,7 +36,7 @@ const ModelFallbackItem = memo(({ error, participantName }) => {
 
   return (
     <div className="loom-card loom-fallback-card">
-      <div className="loom-fallback-header" onClick={() => setExpanded(!expanded)}>
+      <div className="loom-fallback-header" role="button" tabIndex={0} onClick={() => setExpanded(!expanded)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setExpanded(!expanded); } }} aria-expanded={expanded}>
         <span className="loom-fallback-icon" aria-hidden="true">🔄</span>
         <span className="loom-text loom-text-sm">
           <strong>{name}</strong> switched models — {modelInfo}
@@ -520,7 +520,7 @@ const TimelineTabBase = ({
   }, []);
   const sumHeights = useMemo(() => flatItems.reduce((sum, item) => sum + getRowHeight(item), 0), [flatItems]);
   const listHeight = useMemo(() => {
-    return Math.max(400, Math.min(window.innerHeight - 300, sumHeights));
+    return Math.max(400, Math.min(viewportHeight - 300, sumHeights));
   }, [sumHeights, viewportHeight]);
 
   const rowProps = useMemo(() => ({

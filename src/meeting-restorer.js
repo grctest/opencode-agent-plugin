@@ -1,7 +1,7 @@
 import { getTierConfig } from "./shared.js";
 import { parseReflections, parseStats } from "./shared.js";
 import { indexMeeting } from "./database.js";
-import { Logger, LoomError } from "./logger.js";
+import { Logger, LoomError, extractErrorInfo } from "./logger.js";
 
 const restorerLogger = new Logger();
 

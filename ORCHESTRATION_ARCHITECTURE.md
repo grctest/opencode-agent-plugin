@@ -62,7 +62,7 @@ When a user types `/knit` with a question, this is what happens:
 4. **Round summarization** — After all agents speak, an LLM clerk summary is generated every round (Established / Contested / Evidence / Open bullets), degrading to a deterministic digest when the LLM returns empty (Section 13).
 5. **State of play update** — The state of play (decisions, agreements, disagreements, open questions, key facts, files involved) is regenerated from the full weave.
 6. **Moderator check + turn order planning** — The moderator — gated behind conflict heuristics so it rarely fires — may rule `converge` or `break`; otherwise turn order for the next round is planned from `loom_request_next` requests (Sections 8–9).
-7. **Termination** — Deterministic: (a) moderator converge after the minimum round count, (b) all participants passed or failed, or (c) the round limit reached. Hard timeouts (absolute deadline, stall watchdog), token budget exhaustion, and user cancellation also terminate the meeting.
+7. **Termination** — Deterministic: (a) moderator converge after the minimum round count, (b) all participants passed or failed, or (c) the round limit reached. The wall-clock hard timeout is disabled by default (`defaultMeetingTimeoutMs: 0` = no limit); stall watchdog (inactivity), token budget exhaustion, and user cancellation still terminate the meeting.
 8. **Synthesis** — One agent (typically the principal) synthesizes all contributions into a structured artifact with Decision, Reasoning, Action Items, Dissenting Views, Open Questions, and Confidence, then self-critiques it.
 9. **Output** — A concise chat summary plus a full markdown report saved to `.opencode/loom/meetings/<meetingId>.md`. The live dashboard can be started with `/loom_viz`.
 
@@ -401,7 +401,7 @@ For each agent (in turn order):
 
 1. Sets status to "speaking" (visible in dashboard); a fresh `batchId` is stamped for grouping inline interaction rows.
 2. Checks if the assigned model's circuit breaker is healthy. If open, a healthy fallback model is selected immediately and used from the first attempt (Section 16).
-3. Uses a **fixed timeout**: base `agentTimeoutMs` (120s), clamped down only near the meeting deadline — no reduction when agents fail.
+3. Uses a **fixed timeout**: base `agentTimeoutMs` (240s), clamped down only near the meeting deadline — no reduction when agents fail.
 4. Builds vector-RAG context: the query text is the last 2 rounds' contributions (or the question if none yet); `retrieveRelevant(query, 10, currentRound)` returns up to 10 chunks, excluding the current round.
 5. Collects recent contributions: last 12 across current + previous rounds, `vote_response` rows excluded.
 6. If this agent is first in the planned order, consumes any queued **steering hint** (contribution-mix nudge; Section 11/post-phase) and appends it to the user prompt.
@@ -700,7 +700,7 @@ The meeting terminates when any of these hold after a round:
 | All participants have passed or failed (`activeCount === 0`) | early termination |
 | `current_round >= max_rounds` | guaranteed termination |
 
-The old `convergence` argument (`consensus` / `majority` / `moderator_forces`) was removed from the `/knit` contract entirely; the `meetings.convergence` column persists only as a display label (see `docs/removing-convergence-system.md`). Termination is deterministic (see table above). Hard timeouts (absolute meeting timeout, stall watchdog) and user cancellation also stop the weave loop and proceed to synthesis.
+The old `convergence` argument (`consensus` / `majority` / `moderator_forces`) was removed from the `/knit` contract entirely; the `meetings.convergence` column persists only as a display label (see `docs/removing-convergence-system.md`). Termination is deterministic (see table above). The absolute wall-clock timeout is disabled by default (stall watchdog, token budget, and user cancellation remain as extrinsic stops) and proceeds to synthesis.
 
 Terminal statuses: `converged`, `cancelled`, `timeout`, `max_rounds_reached`, `aborted` (the last two surface via the state machine but are not produced by the current orchestration paths; `max_rounds_reached` is reserved).
 
@@ -1059,7 +1059,7 @@ Retryable errors (`isRetryableError`): `ECONNREFUSED`, `ETIMEDOUT`, `ENOTFOUND`,
 
 Agent turns are now **retried** — the old "run once and fail" behavior is gone. `#promptChildSession` runs a staged recovery ladder before an agent is marked `failed`:
 
-1. **Fixed timeout:** base `agentTimeoutMs` (120s) per agent call — deliberately NOT reduced when agents fail ("previously punished survivors").
+1. **Fixed timeout:** base `agentTimeoutMs` (240s) per agent call — deliberately NOT reduced when agents fail ("previously punished survivors").
 2. **Retry on the assigned model** — up to `modelFallback.maxRetriesPerModel` (default 2) retries *after* the first attempt, with exponential backoff (1000ms · 2^attempt + jitter, capped at 8s). Each failure increments the model's circuit-breaker counter.
 3. **Fallback model** — when the primary model's retries are exhausted (and `modelFallback.enabled`, default true), `selectFallbackModel()` picks a healthy model from the discovered pool that is *not* the failing model (random among the healthy candidates) and the turn is attempted on it (up to `modelFallback.maxFallbackAttempts` retries after the first fallback attempt), with the same backoff. A progress message announces the switch ("⚠️ Model X failed — retrying with Y").
 4. **Failure** — only when the primary and fallback attempts are all exhausted does the agent's status become `failed`, an `agent_errors` row is written with type `model_fallback` (`Model: X, No fallback available` or `Original: X, Fallback: Y — <error>`), and the agent is skipped for the rest of the round.
@@ -1471,7 +1471,7 @@ On dashboard start, the embedding model is initialized eagerly (status tracked: 
 
 Exposed as a plugin tool (`knit`) — invoked when the user types `/knit <question>`.
 
-**Args:** `question`, `context`, `participants` (custom room), `max_rounds` (default from config: 3), `models` (explicit per-tier assignment, e.g. `[{ tier: "senior", provider_id: "anthropic", model_id: "claude-sonnet-4-..." }]`), `meeting_timeout` (ms, default 900000), `dry_run` (preview room without deliberating), `fresh` (replace an existing meeting for the session).
+**Args:** `question`, `context`, `participants` (custom room), `max_rounds` (default from config: 3), `models` (explicit per-tier assignment, e.g. `[{ tier: "senior", provider_id: "anthropic", model_id: "claude-sonnet-4-..." }]`), `meeting_timeout` (ms, `0` = no limit, max 3600000, default `0`), `dry_run` (preview room without deliberating), `fresh` (replace an existing meeting for the session).
 
 ### Handler Flow (`createKnitHandler`)
 

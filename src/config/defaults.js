@@ -14,7 +14,7 @@ export const DEFAULT_CONFIG = {
   retryMaxDelayMs: 8000,
   synthesisMaxRetries: 1,
   defaultMeetingTimeoutMs: 0,
-  stallTimeoutMs: 300000,
+  stallTimeoutMs: 600000,
   maxTotalTokens: 0,
   dashboard: { host: "127.0.0.1" },
   composition: { maxCosineDistance: 0.85 },

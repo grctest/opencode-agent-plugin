@@ -45,7 +45,8 @@ function stripUnsafeChars(text) {
   return text
     // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
-    .replace(/<[^>]*>/g, "");
+    // Preserve generics like Array<string> — only strip script/style/iframe tags
+    .replace(/<\s*\/?\s*(script|style|iframe|object|embed|form)[^>]*>/gi, "");
 }
 
 /**

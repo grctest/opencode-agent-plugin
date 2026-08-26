@@ -90,7 +90,6 @@ export async function _runWeavingLoop() {
 
   export function _remainingMs() {
     if (this._timeBudget) {
-      this._timeBudget.syncFrom(this);
       return this._timeBudget.remainingMs();
     }
     if (!this._meetingTimeoutMs || this._meetingTimeoutMs <= 0) return Infinity;
@@ -106,9 +105,8 @@ export function _raceWithGuardTimer(promise, timeoutMs, label) {
     return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timer));
   }
 
-export function _checkTimeout() {
+ export function _checkTimeout() {
     if (this._timeBudget) {
-      this._timeBudget.syncFrom(this);
       if (this._timeBudget.checkTimeout()) {
         this._stateManager.transitionTo("timeout");
         this._logger.warn("timeout", "Meeting timed out", { elapsed: Date.now() - this._startTime, limit: this._meetingTimeoutMs });
