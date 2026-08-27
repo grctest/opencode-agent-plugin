@@ -15,8 +15,14 @@ export async function _synthesize() {
       return output;
     }
 
-    const totalContributions = this._stateManager.getWeave().length;
-    if (totalContributions === 0) {
+    const weave = this._stateManager.getWeave();
+    const substantiveForSynthesis = weave.filter((c) => {
+      const t = String(c.type ?? "");
+      if (t === "pass") return false;
+      const txt = String(c.content ?? "").trim();
+      return txt !== "" && txt !== "[PASS]";
+    });
+    if (substantiveForSynthesis.length === 0) {
       const output = `_ Deliberation Output\n\n__ Decision\nNo output could be generated — all participants passed without contributing.\n\n__ Reasoning\nAll ${this._stateManager.getParticipants().length} participants chose to pass. This may indicate the question was unclear or participants had nothing to add.\n\n__ Action Items\n- Rephrase the question with more specific context\n- Add participants with more targeted expertise\n\n__ Confidence\nLow (no contributions received)`;
       this._saveArtifact({ content: output, format: "markdown", decisions: [], action_items: [], dissent: [], open_questions: [], confidence: "low" });
       await this._sessionManager.postProgress("ℹ️ All participants passed — no contributions to synthesize.");

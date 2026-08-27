@@ -56,7 +56,11 @@ export class RoundInitializer {
           (c) => c.participant_id === p.config.id && c.type === "pass"
         );
         if (recentPasses.length === 0) return true;
-        const lastPassRound = recentPasses[recentPasses.length - 1].round;
+        // Pass with tool evidence is not a skip — participant still contributing
+        const lastPass = recentPasses[recentPasses.length - 1];
+        const hasToolEvidence = lastPass.tool_calls && Array.isArray(lastPass.tool_calls) && lastPass.tool_calls.length > 0;
+        if (hasToolEvidence) return true;
+        const lastPassRound = lastPass.round;
         const roundsSincePass = round.number - lastPassRound;
         if (roundsSincePass > SKIP_PASSED_WINDOW) return true;
         const hasReflection = !!p.reflection;

@@ -93,7 +93,7 @@ Models are stored globally at:
 
 2. **RAG context retrieval** — Round summaries and contributions are chunked, embedded, and indexed. When prompting agents, the system retrieves relevant prior context using cosine similarity, and agents can query the same index directly via `loom_vector_search`.
 
-The embedding model is initialized at plugin startup (`ensureEmbedderInitialized` in `src/index.js:48`), so `/knit` meetings use real embeddings. If the model is unavailable (e.g., ONNX load fails or model not downloaded), semantic features (room composition, vector search) degrade visibly via a keyword-based fallback and warnings rather than silent placeholder noise — the meeting otherwise proceeds.
+The embedding model is initialized at plugin startup (`ensureEmbedderInitialized` in `src/index.js:65`, async with 5s race) and separately in the dashboard (`initEmbeddingModel` in `src/dashboard/server/helpers.js:17` with build default). Both use real embeddings; if unavailable, semantic features degrade via keyword fallback with warnings.
 
 ### Where Meetings Live
 
@@ -231,8 +231,12 @@ The Loom resolves configuration from multiple layers, **deep-merged with more-sp
 
 1. `~/.config/opencode/opencode.json` — `"loom"` key (legacy)
 2. `~/.config/opencode/.loomrc.json` — top-level keys
-3. `<project>/opencode.json` — `"loom"` key
-4. `<project>.loomrc.json` — top-level keys
+3. `~/.config/opencode/opencode.jsonc` — `"loom"` key (JSONC with `//`/`/* */` supported)
+4. `~/.config/opencode/.loomrc.jsonc` — top-level keys
+5. `<project>/opencode.json` — `"loom"` key
+6. `<project>/opencode.jsonc` — `"loom"` key
+7. `<project>.loomrc.json` — top-level keys
+8. `<project>.loomrc.jsonc` — top-level keys (project wins; only top-level scalars honor `LOOM_*` env)
 
 A project-level `opencode.json` **is** consulted — partial overrides of your home config from a project work as expected.
 
@@ -255,7 +259,7 @@ Project-level equivalent in `.loomrc.json` (same keys, no `"loom"` wrapper):
 
 Environment overrides: `LOOM_<KEY>` applies on top of files for scalar schema keys (e.g. `LOOM_AGENT_TIMEOUT_MS=180000`, `LOOM_MODEL_DIVERSITY=false`). Log verbosity is controlled by `LOOM_LOG_LEVEL` (`DEBUG`|`INFO`|`WARN`|`ERROR`|`FATAL`, default `INFO`). The dashboard binds `127.0.0.1` by default for safety; set `dashboard.host` in config to expose it to your LAN deliberately.
 
-Other available options include agent and synthesis timeouts, moderator triggers, retry policy, max tool calls, meeting timeout, stall detection (`stallTimeoutMs`, default 5 min), composition relevance floor (`composition.maxCosineDistance`, default 0.85), token budget (`maxTotalTokens`, `0` = unlimited — a runaway meeting ends early and still synthesizes), same-turn synthesis for inline loom tool results (`agentTools.sameTurnSynthesis`), and embedding model selection (`embeddingModel`/`embeddingQuant`).
+Other available options include agent and synthesis timeouts, moderator triggers, retry policy, max tool calls, meeting timeout, stall detection (`stallTimeoutMs`, default 10 min (600000 ms)), composition relevance floor (`composition.maxCosineDistance`, default 0.85), token budget (`maxTotalTokens`, `0` = unlimited — a runaway meeting ends early and still synthesizes), same-turn synthesis for inline loom tool results (`agentTools.sameTurnSynthesis`), and embedding model selection (`embeddingModel`/`embeddingQuant`).
 
 ## License
 

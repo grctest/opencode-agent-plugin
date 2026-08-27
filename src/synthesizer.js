@@ -8,7 +8,7 @@ export function deriveConfidence(weave, dissentCount, totalParticipants = 0, act
   const totalContribs = weave.length;
   if (totalContribs === 0) return "low";
 
-  const challengeWordsRe = /\b(challenge|dissent|disagree|concern|oppose|object|critique|dispute|contradict|refuse|risk|flaw|weakness|however|concerned)\b/i;
+  const challengeWordsRe = /\b(challenge|dissent|disagree|concern|oppose|object|critique|dispute|contradict|refuse|risk|flaw|weakness)\b/i;
   function isChallengeLike(c) {
     if (c.type === "challenge" || c.type === "dissent" || c.type === "critique_response") return true;
     const content = (c.content || "").toLowerCase();
@@ -25,11 +25,10 @@ export function deriveConfidence(weave, dissentCount, totalParticipants = 0, act
   return "low";
 }
 
-/** Parses the Confidence section as a single High/Medium/Low value — anchored to heading, avoids "Highly". */
+/** Parses the Confidence section — accepts ## or ###, avoids stopping at [#id] cites. */
 export function parseConfidence(text) {
-  const match = text.match(/##\s*Confidence\b[^#]*?\b(High|Medium|Low)\b/i);
-  if (match) return match[1].toLowerCase();
-  return null;
+  const m = text.match(/^#{2,}\s*Confidence\b[\s\S]*?\b(High|Medium|Low)\b/im);
+  return m ? m[1].toLowerCase() : null;
 }
 
 /** Validates that all required sections exist in the synthesis output (case-insensitive). Returns warnings for missing ones.
@@ -43,7 +42,7 @@ export function validateSynthesisSections(text) {
   const warnings = [];
   function hasSection(section) {
     const esc = section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const re = new RegExp(`^##\\s*${esc}\\s*$`, "im");
+    const re = new RegExp(`^#{2,}\\s*${esc}\\b`, "im");
     return re.test(text);
   }
   for (const section of coreRequired) {

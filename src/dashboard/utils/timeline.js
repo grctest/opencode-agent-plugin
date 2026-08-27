@@ -41,10 +41,18 @@ export function buildFlatItems(groupedContributions, opts) {
 
   const out = [];
 
+  // Extra rounds per extension derived same as MeetingExtender#deriveExtraRounds
+  const extraPerExtension = (() => {
+    try {
+      const cfg = globalThis.__loomConfig?.defaultMaxRounds;
+      if (Number.isFinite(cfg)) return Math.max(2, Math.min(6, Math.ceil(cfg / 2)));
+    } catch {}
+    return 4;
+  })();
   for (const [round, contribs] of groupedContributions) {
     const isCollapsed = collapsedRounds.includes(round);
     const roundErrors = agentErrors.filter((e) => e.round === round);
-    const showExtensionMarker = extensions.length > 0 && round === (maxRounds ? maxRounds - (extensions.length * 4) : 0) + 1;
+    const showExtensionMarker = extensions.length > 0 && round === (maxRounds ? maxRounds - (extensions.length * extraPerExtension) : 0) + 1;
 
     const visibleContribsCount = contribs.filter(c => c.type !== "vote_tally").length;
     const segItems = [];

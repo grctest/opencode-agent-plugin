@@ -33,12 +33,16 @@ export class PersistenceService {
    async persistState(sharedState, nextSpeakerId, stats, maxRounds = null) {
     await this.#db.transaction(async (db) => {
       const now = isoNow();
+      let result;
       if (maxRounds != null) {
-        db.prepare("UPDATE meetings SET fabric = ?, round = ?, status = ?, next_speaker_id = ?, stats = ?, max_rounds = ?, updated_at = ? WHERE id = ?")
+        result = db.prepare("UPDATE meetings SET fabric = ?, round = ?, status = ?, next_speaker_id = ?, stats = ?, max_rounds = ?, updated_at = ? WHERE id = ?")
           .run(sharedState.fabric, sharedState.round, sharedState.status, nextSpeakerId ?? null, stats ? JSON.stringify(stats) : null, maxRounds, now, this.#meetingId);
       } else {
-        db.prepare("UPDATE meetings SET fabric = ?, round = ?, status = ?, next_speaker_id = ?, stats = ?, updated_at = ? WHERE id = ?")
+        result = db.prepare("UPDATE meetings SET fabric = ?, round = ?, status = ?, next_speaker_id = ?, stats = ?, updated_at = ? WHERE id = ?")
           .run(sharedState.fabric, sharedState.round, sharedState.status, nextSpeakerId ?? null, stats ? JSON.stringify(stats) : null, now, this.#meetingId);
+      }
+      if (result.changes === 0) {
+        throw new Error(`persistState: no meeting row updated for id ${this.#meetingId} — stale or missing meeting`);
       }
     });
    }

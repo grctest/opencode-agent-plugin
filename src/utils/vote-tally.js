@@ -10,14 +10,12 @@
  */
 export function extractVoteLetter(text) {
   if (!text) return null;
-  // Look for [Vote: X] where X is letter or number (1-2 chars)
-  const tagMatch = text.match(/\[Vote:\s*([A-Za-z0-9]+)\]/i);
+  const tagMatch = text.match(/\[Vote:\s*([A-Za-z0-9])\]/i);
   if (tagMatch) return tagMatch[1].toUpperCase();
-  // Fallback: first standalone capital letter or number on its own line
   const lines = text.split("\n");
   for (const line of lines) {
     const trimmed = line.trim();
-    if (/^[A-Za-z0-9]$/.test(trimmed) || /^[A-Za-z0-9]{1,2}$/.test(trimmed)) return trimmed.toUpperCase();
+    if (/^[A-Za-z0-9]$/.test(trimmed)) return trimmed.toUpperCase();
   }
   return null;
 }
@@ -53,7 +51,7 @@ export function buildTally({ question, sourceLetter = null, sourceLabel = "sourc
     }
   }
 
-  const totalVoters = 1 + responses.length;
+  const totalVoters = (sourceLetter ? 1 : 0) + responses.length;
   lines.push(`Total voters: ${totalVoters}`);
 
   const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);

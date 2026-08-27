@@ -23,8 +23,6 @@ export const DEFAULT_RETRY_CONFIG = {
 export function isRetryableError(err) {
   if (!err) return false;
 
-  // Network errors (audit 09 R5: ECONNRESET/EPIPE are common transient faults that
-  // previously fell through to a full fallback-model attempt instead of a cheap retry)
   if (
     err.code === 'ECONNREFUSED' ||
     err.code === 'ETIMEDOUT' ||
@@ -32,8 +30,7 @@ export function isRetryableError(err) {
     err.code === 'ECONNRESET' ||
     err.code === 'EPIPE' ||
     err.code === 'SQLITE_BUSY' ||
-    err.code === 'SQLITE_BUSY_SNAPSHOT' ||
-    err.code === 'SQLITE_READONLY'
+    err.code === 'SQLITE_BUSY_SNAPSHOT'
   ) {
     return true;
   }
@@ -109,7 +106,7 @@ export async function withRetry(fn, options = {}) {
       
       onRetry(err, attempt, delay);
       
-      await new Promise(resolve => setTimeout(resolve, delay));
+      await new Promise(resolve => { const t = setTimeout(resolve, delay); if (t.unref) t.unref(); });
     }
   }
   
@@ -164,11 +161,17 @@ export class CircuitBreaker {
       // Breaker transitions are observable (audit 07 EH3)
       incrementKeyedCounter('breaker_events', `${key}:open`);
     }
+    // Refresh recency for LRU — delete+re-set moves to end
+    if (this.#states.has(key)) this.#states.delete(key);
     this.#states.set(key, state);
-    // LRU eviction: bound Map to maxSize (50) to avoid unbounded growth
     if (this.#states.size > this.maxSize) {
-      const oldestKey = this.#states.keys().next().value;
-      this.#states.delete(oldestKey);
+      // Evict oldest non-open entry first; keep open breakers until reset
+      let oldest = null;
+      for (const [k, v] of this.#states) {
+        if (v.status !== "open") { oldest = k; break; }
+      }
+      if (oldest == null) oldest = this.#states.keys().next().value;
+      if (oldest !== key) this.#states.delete(oldest);
     }
     return state;
   }

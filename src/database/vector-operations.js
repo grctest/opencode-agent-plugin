@@ -98,14 +98,21 @@ export function storePersonaEmbedding(db, meetingId, personaName, tier, tags, em
   }
   try {
     initPersonaVectorTable(db, safeDim);
-    const result = db.prepare(
-      `INSERT INTO persona_embeddings (meeting_id, persona_name, tier, tags, embedding_text, created_at) VALUES (?, ?, ?, ?, ?, ?)`
-    ).run(meetingId, personaName, tier, JSON.stringify(tags), embeddingText, isoNow());
-    const rowId = result.lastInsertRowid;
-    db.prepare(
-      `INSERT INTO vec_persona_embeddings_${safeDim}(rowid, embedding, tier) VALUES (?, vec_f32(?), ?)`
-    ).run(rowId, embedding, tier);
-    return rowId;
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const result = db.prepare(
+        `INSERT INTO persona_embeddings (meeting_id, persona_name, tier, tags, embedding_text, created_at) VALUES (?, ?, ?, ?, ?, ?)`
+      ).run(meetingId, personaName, tier, JSON.stringify(tags), embeddingText, isoNow());
+      const rowId = result.lastInsertRowid;
+      db.prepare(
+        `INSERT INTO vec_persona_embeddings_${safeDim}(rowid, embedding, tier) VALUES (?, vec_f32(?), ?)`
+      ).run(rowId, embedding, tier);
+      db.exec("COMMIT");
+      return rowId;
+    } catch (err) {
+      try { db.exec("ROLLBACK"); } catch {}
+      throw err;
+    }
   } catch (err) {
     dbLogger.debug("store_persona_embedding_failed", "Failed to store persona embedding", extractErrorInfo(err));
     return null;
@@ -121,6 +128,17 @@ export function searchPersonaEmbeddings(db, meetingId, queryEmbedding, tier, top
   try {
     initPersonaVectorTable(db, safeDim);
     const limit = Math.max(1, Math.floor(Number(topK) || 5));
+    // Push tier filter to SQL (avoids missing relevant tier beyond top 50)
+    try {
+      const rowsTiered = db.prepare(`
+        SELECT v.rowid, v.distance, p.persona_name, p.tier, p.tags, p.embedding_text
+        FROM vec_persona_embeddings_${safeDim} v
+        JOIN persona_embeddings p ON p.id = v.rowid AND p.meeting_id = ?
+        WHERE v.embedding MATCH ? AND k = ? AND v.tier = ?
+        ORDER BY v.distance
+      `).all(meetingId, queryEmbedding, limit, tier);
+      if (rowsTiered.length > 0) return rowsTiered.slice(0, limit);
+    } catch {}
     const fetchK = Math.max(limit * 10, 50);
     const rows = db.prepare(`
         SELECT v.rowid, v.distance, p.persona_name, p.tier, p.tags, p.embedding_text
@@ -161,23 +179,30 @@ export function countPersonaVecEmbeddings(db, dim = 384) {
 }
 
 export function clearPersonaEmbeddings(db, meetingId) {
-  // Enumerate vec persona tables so vec rows don't orphan when dim changes
   let dims = [];
   try {
     const rows = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'vec_persona_embeddings_%'`).all();
     for (const r of rows) { const m = r.name.match(/vec_persona_embeddings_(\d+)$/); if (m) dims.push(Number(m[1])); }
   } catch {}
   if (dims.length === 0) dims = [384];
-  for (const d of dims) {
-    try {
-      const safeDim = Math.floor(Number(d));
-      if (!Number.isFinite(safeDim) || safeDim < 64 || safeDim > 2048) continue;
-      db.prepare(`DELETE FROM vec_persona_embeddings_${safeDim} WHERE rowid IN (SELECT id FROM persona_embeddings WHERE meeting_id = ?)`).run(meetingId);
-    } catch {}
-  }
+  db.exec("BEGIN IMMEDIATE");
   try {
-    db.prepare(`DELETE FROM persona_embeddings WHERE meeting_id = ?`).run(meetingId);
-  } catch { /* table may not exist yet */ }
+    for (const d of dims) {
+      try {
+        const safeDim = Math.floor(Number(d));
+        if (!Number.isFinite(safeDim) || safeDim < 64 || safeDim > 2048) continue;
+        db.prepare(`DELETE FROM vec_persona_embeddings_${safeDim} WHERE rowid IN (SELECT id FROM persona_embeddings WHERE meeting_id = ?)`).run(meetingId);
+      } catch {}
+    }
+    try {
+      db.prepare(`DELETE FROM persona_embeddings WHERE meeting_id = ?`).run(meetingId);
+    } catch { /* table may not exist yet */ }
+    db.exec("COMMIT");
+  } catch {
+    try { db.exec("ROLLBACK"); } catch {}
+    // Fallback: best-effort without transaction
+    try { db.prepare(`DELETE FROM persona_embeddings WHERE meeting_id = ?`).run(meetingId); } catch {}
+  }
 }
 
 export function getPersonaEmbeddingByName(db, meetingId, personaName, dim = 384) {

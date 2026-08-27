@@ -56,7 +56,10 @@ export function buildConfig(directory) {
   let primarySource = null;
 
   const candidates = collectConfigCandidates(directory);
-  for (const { path, config } of candidates) {
+  // Candidates are collected directory-first, home-last. Project must win,
+  // so apply home→project (reverse) so directory overwrites home.
+  const ordered = [...candidates].reverse();
+  for (const { path, config } of ordered) {
     userConfig = deepMerge(userConfig, config);
     primarySource = path;
     for (const leafPath of collectLeafPaths(config)) {
@@ -106,6 +109,18 @@ export function buildConfig(directory) {
   validateAllowlistEntries(merged, userConfig, warnings);
 
   applyEnvOverrides(merged, warnings);
+  // Re-validate after env overrides — env can bypass file validation (e.g. LOOM_AGENT_TIMEOUT_MS=5)
+  for (const key of Object.keys(CONFIG_SCHEMA)) {
+    if (process.env['LOOM_' + key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase()] !== undefined) {
+      const result = validateConfigKey(key, merged[key]);
+      if (!result.valid) {
+        warnings.push(`Env LOOM_${key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase()} invalid: ${result.error}. Using default: ${DEFAULT_CONFIG[key]}`);
+        merged[key] = DEFAULT_CONFIG[key];
+      }
+    }
+  }
+  // Re-validate nested env overrides (strip prefix for nested keys is not auto; only top-level env handled today)
+  validateCrossField(merged, warnings);
 
   if (merged.fastPathModel && typeof merged.fastPathModel === 'string' && merged.fastPathModel.includes('/') === false && merged.fastPathModel.trim() !== '') {
     warnings.push(`Config "fastPathModel" should be "provider/model" format or empty, got "${merged.fastPathModel}". Ignoring.`);

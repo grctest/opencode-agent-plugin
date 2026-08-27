@@ -13,7 +13,15 @@ export function deepMerge(target, source) {
       !Array.isArray(target[key]) &&
       'enabled' in target[key]
     ) {
-      result[key] = { ...target[key], enabled: source[key] };
+      // Only agentTools family supports boolean shorthand (agentTools: false → {enabled:false})
+      const isAgentToolsFamily = key === 'agentTools' || key === 'builtIn' || key === 'loom' || key === 'reflection' || key === 'bash';
+      if (isAgentToolsFamily) {
+        result[key] = { ...target[key], enabled: source[key] };
+        continue;
+      }
+      // For other objects (circuitBreaker, composition, etc.) boolean is invalid — replace wholesale
+      // Validation will warn and restore default via validateNestedConfig if needed
+      result[key] = source[key];
       continue;
     }
     if (

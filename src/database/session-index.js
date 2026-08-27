@@ -26,42 +26,46 @@ const LOCK_STEAL_MS = 30000;
  */
 function acquireLock(lockPath) {
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  let attempt = 0;
   for (;;) {
     try {
-      // Write our PID so other processes can detect a dead holder
       const fd = openSync(lockPath, "wx");
       writeSync(fd, String(process.pid));
       closeSync(fd);
       return true;
     } catch (err) {
       if (err.code !== "EEXIST") return false;
-      // Check for staleness — a lock older than LOCK_STEAL_MS belongs to a dead process
       try {
         const content = readFileSync(lockPath, "utf-8");
         const pid = parseInt(content, 10);
         let mtimeMs = null;
         try { mtimeMs = statSync(lockPath).mtimeMs; } catch { /* vanished */ }
         const staleByAge = mtimeMs != null && Date.now() - mtimeMs > LOCK_STEAL_MS;
-        const staleByPid = Number.isInteger(pid) && pid !== process.pid && !processExists(pid);
+        const staleByPid = Number.isInteger(pid) && pid !== process.pid && pid > 0 && !processExists(pid);
         if (staleByAge || staleByPid) {
           unlinkSync(lockPath);
-          continue; // retry acquisition immediately
+          continue;
         }
       } catch {
         // Lock vanished between checks — retry below
       }
       if (Date.now() >= deadline) return false;
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+      const jitter = Math.floor(Math.random() * 10);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25 + jitter);
+      attempt++;
     }
   }
 }
 
 function processExists(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
     return true;
   } catch (err) {
-    return err.code === "EPERM"; // EPERM means the process exists but is not ours
+    if (err.code === "EPERM") return true;
+    if (err.code === "ESRCH") return false;
+    return false;
   }
 }
 
@@ -146,7 +150,9 @@ export function indexMeeting(dbPath, meetingId, sessionId) {
   const entries = sessionIndex.get(sessionId);
   if (!entries.some((e) => e.dbPath === dbPath)) {
     entries.push({ meetingId, dbPath });
-    persistSessionIndex();
+    // Compact periodically — keep index file bounded
+    if (sessionIndex.size > 100) persistSessionIndex({ compact: true });
+    else persistSessionIndex();
   }
 }
 
@@ -160,6 +166,10 @@ export function unindexMeeting(dbPath) {
     }
   }
   persistSessionIndex();
+}
+
+export function compactSessionIndex() {
+  persistSessionIndex({ compact: true });
 }
 
 export function getDatabasesBySessionId(sessionId) {

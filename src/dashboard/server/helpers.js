@@ -47,20 +47,14 @@ export function getPackageVersion() {
 
 export function findAssetsDir() {
   const candidates = [
-    // Standalone server bundle (dist/dashboard/server.js or the copy deployed
-    // to plugins/loom/dashboard/server.js) — assets sit next to the running file.
     resolve(import.meta.dir, "."),
-    // Bundled into dist/loom.js and installed as plugins/loom.js —
-    // import.meta.dir is ~/.config/opencode/plugins and install.mjs deploys
-    // dashboard assets to plugins/loom/dashboard.
     resolve(import.meta.dir, "loom", "dashboard"),
-    // Dev: running from src/dashboard/server/ — resolve to the repo's build output.
     resolve(import.meta.dir, "../../dist/dashboard"),
   ];
   for (const dir of candidates) {
     if (existsSync(join(dir, "app.js"))) return dir;
   }
-  return candidates[0];
+  throw new Error(`[Loom dashboard] Assets not found — searched: ${candidates.join(", ")}`);
 }
 
 export const MIME_TYPES = {
@@ -74,15 +68,24 @@ export const MIME_TYPES = {
 };
 
 export function isAssetPathSafe(assetPath, assetsDir) {
-  if (assetPath.includes("..") || assetPath.includes("\0")) return false;
-  const lastDot = assetPath.lastIndexOf(".");
+  let decoded = assetPath;
+  for (let i = 0; i < 3; i++) {
+    try {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) break;
+      decoded = next;
+    } catch { break; }
+  }
+  if (decoded.includes("..") || decoded.includes("\0") || decoded.includes("%00")) return false;
+  if (assetPath.includes("\0")) return false;
+  const lastDot = decoded.lastIndexOf(".");
   if (lastDot <= 0) return false;
-  const ext = assetPath.slice(lastDot);
+  const ext = decoded.slice(lastDot);
   if (!MIME_TYPES[ext]) return false;
-  const resolved = resolve(assetsDir, assetPath);
+  const resolved = resolve(assetsDir, decoded);
   if (!resolved.startsWith(assetsDir + sep)) return false;
   try {
-    return realpathSync(resolved).startsWith(realpathSync(assetsDir) + sep) && existsSync(resolved);
+    return realpathSync(resolved).startsWith(realpathSync(assetsDir) + sep);
   } catch {
     return false;
   }

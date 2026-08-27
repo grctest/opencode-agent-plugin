@@ -14,24 +14,11 @@ const validationLogger = new Logger();
 export function parseAgentResponse(participantId, response, tier) {
   const text = response.trim();
 
-  if (!text || text.length < 3) {
-    // Very short text is likely a model glitch — fall back to a visible challenge rather than hard-failing the turn
-    // (prevents "Failed to parse agent response" retries that exhaust all models)
-    const fallback = text.length > 0 ? text : "[No content — model returned empty]";
-    return {
-      participant_id: participantId,
-      content: fallback,
-      type: "challenge",
-      request_next: null,
-      query: null,
-      evidence: null,
-      summon: null,
-      vote: null,
-    };
-  }
+  if (!text || text.trim().length < 3) return null;
+  if (text.length < 10 && /^[.\s]+$/.test(text)) return null;
 
   if (text === "[PASS]") {
-    return { participant_id: participantId, content: "[PASS]", type: "propose", request_next: null, query: null, evidence: null, summon: null, vote: null };
+    return { participant_id: participantId, content: "[PASS]", type: "pass", request_next: null, query: null, evidence: null, summon: null, vote: null };
   }
 
   // Parse raw response (extracts type prefix and request_next directive)
@@ -64,7 +51,7 @@ export function parseAgentResponse(participantId, response, tier) {
   return {
     participant_id: participantId,
     content: parsed.content,
-    type: "challenge",
+    type: "contribution",
     request_next: null,
     query: null,
     evidence: null,

@@ -7,6 +7,9 @@
 
 const counters = {
   llm_calls_by_type: {},
+  retry_events: {},
+  breaker_events: {},
+  degradation_events: {},
 };
 
 const latencies = {
@@ -48,8 +51,10 @@ function latencyStats(samples) {
 export function getMetricsSnapshot() {
   return {
     counters: {
-      ...counters,
       llm_calls_by_type: { ...counters.llm_calls_by_type },
+      retry_events: { ...counters.retry_events },
+      breaker_events: { ...counters.breaker_events },
+      degradation_events: { ...counters.degradation_events },
     },
     latencies: Object.fromEntries(
       Object.entries(latencies).map(([k, v]) => [k, latencyStats(v)])

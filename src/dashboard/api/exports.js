@@ -78,7 +78,7 @@ export function exportMarkdown(meetingId) {
     }
 
     if (meeting?.fabric) {
-      lines.push(`## Final Fabric Context`);
+      lines.push(`## Initial Context (fabric — legacy)`);
       lines.push("");
       lines.push(meeting.fabric);
       lines.push("");
@@ -237,7 +237,7 @@ export function exportJSON(meetingId) {
     }
 
     if (meeting?.fabric) {
-      yield `## Final Fabric Context\n\n${meeting.fabric}\n`;
+      yield `## Initial Context (fabric — legacy)\n\n${meeting.fabric}\n`;
     }
   }
 

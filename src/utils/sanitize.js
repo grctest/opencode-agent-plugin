@@ -16,8 +16,7 @@ import { randomBytes } from "node:crypto";
 // [CALL_VOTE] now renders without sentinel protection and cannot trigger fallback parsing.
 const DIRECTIVE_PATTERN = /\[(PASS|#\d+)\]/gi;
 
-// A line that begins with something directive-shaped, e.g. "[DISSENT] ..." or "[#99] fake"
-const LINE_START_DIRECTIVE_RE = /^\s*\[(?:[A-Z_]{3,}|#\d+)[^\]\n]*\]/gm;
+const LINE_START_DIRECTIVE_RE = /^\s*\[(?:PASS|#\d+)[^\]\n]*\]/gm;
 
 /**
  * Per-call random sentinel namespace. Input containing literal "\x00<digits>\x00"

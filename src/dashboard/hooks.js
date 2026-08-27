@@ -229,22 +229,26 @@ export function useMeetingApi(meetingId, resetKey) {
       let all = [...(data.contributions ?? [])];
       let pageFailure = null;
       if (typeof total === "number" && all.length < total) {
-        let nextOffset = (offset ?? 0) + (limit ?? all.length);
-        while (all.length < total && nextOffset < total) {
+        let afterId = all.length > 0 ? Math.max(...all.map((c) => c.id ?? 0)) : 0;
+        let guard = 0;
+        while (all.length < total && guard < 100) {
           if (signal.aborted) break;
+          guard++;
           try {
-            const pres = await fetch(`/api/contributions?meeting=${id}&limit=${limit ?? 500}&offset=${nextOffset}&include_context=1`, { signal });
+            const pres = await fetch(`/api/contributions?meeting=${id}&limit=${limit ?? 100}&after=${afterId}&include_context=1`, { signal });
             if (!pres.ok) {
-              pageFailure = `Failed to load contributions page at offset ${nextOffset} (HTTP ${pres.status})`;
+              pageFailure = `Failed to load contributions page after ${afterId} (HTTP ${pres.status})`;
               break;
             }
             const pdata = await pres.json();
             const batch = pdata.contributions ?? [];
+            if (batch.length === 0) break;
             all = all.concat(batch);
-            nextOffset += batch.length || (limit ?? 500);
+            afterId = Math.max(...batch.map((c) => c.id ?? 0), afterId);
+            if (batch.length < (limit ?? 100)) break;
           } catch (err) {
             if (err.name === "AbortError") break;
-            pageFailure = `Failed to load contributions page at offset ${nextOffset}: ${err.message}`;
+            pageFailure = `Failed to load contributions page after ${afterId}: ${err.message}`;
             break;
           }
         }

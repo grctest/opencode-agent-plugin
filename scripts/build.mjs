@@ -15,8 +15,11 @@ mkdirSync(DASHBOARD_DIST, { recursive: true });
 
 async function buildStyles() {
   const cssPath = join(ROOT, "src/styles/globals.css");
-  const css = readFileSync(cssPath, "utf-8");
-  const result = await postcss((await import("@tailwindcss/postcss")).default()).process(css, { from: cssPath, to: join(DASHBOARD_DIST, "styles.css") });
+  let css;
+  try { css = readFileSync(cssPath, "utf-8"); } catch (err) { throw new Error(`Failed to read ${cssPath}: ${err.message}`); }
+  let plugin;
+  try { plugin = (await import("@tailwindcss/postcss")).default(); } catch (err) { throw new Error(`@tailwindcss/postcss not found — run npm install: ${err.message}`); }
+  const result = await postcss(plugin).process(css, { from: cssPath, to: join(DASHBOARD_DIST, "styles.css") });
   for (const w of result.warnings()) console.warn("[postcss]", w.text);
   writeFileSync(join(DASHBOARD_DIST, "styles.css"), result.css);
   // cleanup legacy pure.css artifacts (no longer used after shadcn migration)
@@ -30,17 +33,13 @@ async function buildStyles() {
   return true;
 }
 
-// esbuild alias plugin for @/* -> src/*
 function aliasPlugin() {
   return {
     name: "alias",
     setup(build) {
       build.onResolve({ filter: /^@\/.*/ }, args => {
-        let rel = args.path.slice(2); // strip @/
-        // handle @/src/... -> should map to ROOT/src/... but rel already includes src/
-        // so if rel starts with src/, join ROOT + rel directly, else join ROOT/src + rel
+        let rel = args.path.slice(2);
         const base = rel.startsWith("src/") ? join(ROOT, rel) : join(ROOT, "src", rel);
-        // try extensionless and .tsx/.ts handling, also handle .js -> .tsx
         const tryPaths = [];
         if (base.endsWith(".js")) {
           const noExt = base.slice(0, -3);
@@ -51,12 +50,10 @@ function aliasPlugin() {
         for (const c of tryPaths) {
           if (existsSync(c)) return { path: c };
         }
-        // also try index
         for (const idx of [join(base, "index.ts"), join(base, "index.tsx")]) {
           if (existsSync(idx)) return { path: idx };
         }
-        // fallback
-        return { path: base };
+        throw new Error(`[aliasPlugin] Could not resolve '${args.path}' (tried ${tryPaths.join(", ")}) — check components.json alias or file exists`);
       });
     },
   };

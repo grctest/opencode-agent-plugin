@@ -139,12 +139,13 @@ export function buildSummonPrompt(summonedPersona, requester, issue, roundContri
   const safeIssue = sanitizeForDisplay(issue);
   const safePersonaName = sanitizeForDisplay(summonedPersona.name);
 
-  const issueTokens = safeIssue.toLowerCase().split(/\W+/).filter(t => t.length > 3);
+  const issueTokens = safeIssue.toLowerCase().split(/\W+/).filter(t => t.length > 2);
   const scored = (roundContributions || []).map((c) => {
     const hay = `${c.content || ""} ${c.participant_id || ""} ${c.type || ""}`.toLowerCase();
     let score = 0;
     for (const tok of issueTokens) if (hay.includes(tok)) score += 1;
-    if (c.tool_calls && c.tool_calls.length > 0) score += 0.5;
+    const hasRealTool = c.tool_calls && c.tool_calls.some(t => t.tool !== "write" && !t.metadata?.synthetic);
+    if (hasRealTool) score += 0.5;
     return { c, score };
   }).sort((a,b) => b.score - a.score || (b.c.id||0) - (a.c.id||0));
   const selected = scored.length > 0 ? scored.slice(0, 4).map(s=>s.c).sort((a,b)=>(a.id||0)-(b.id||0)) : [];

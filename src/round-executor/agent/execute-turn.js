@@ -127,7 +127,24 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
 
     const loomSynthesisCalls = effective1.filter(t => isSynthesisLoom(t.tool) && t.status === "completed" && t.output);
     const sameTurnEnabled = !!agentToolsConfig?.sameTurnSynthesis;
-    const needsSynthesis = sameTurnEnabled && loomSynthesisCalls.length > 0 && agentText1 && agentText1.trim() !== "[PASS]";
+    const needsSynthesis = sameTurnEnabled && loomSynthesisCalls.length > 0 && agentText1 != null && String(agentText1).trim() !== "[PASS]" && String(agentText1).trim().length > 0;
+    // Total synthesis budget: 12k chars across all loom outputs
+    const cappedLoomCalls = (() => {
+      let total = 0;
+      const out = [];
+      for (const tc of loomSynthesisCalls) {
+        const raw = typeof tc.output === "string" ? tc.output : JSON.stringify(tc.output);
+        const slice = raw.slice(0, 3500);
+        if (total + slice.length > 12000) {
+          const remaining = 12000 - total;
+          if (remaining > 500) out.push({ ...tc, output: slice.slice(0, remaining) + " …[truncated for budget]" });
+          break;
+        }
+        total += slice.length;
+        out.push(tc);
+      }
+      return out;
+    })();
 
     let finalText = agentText1;
     let finalToolResults = effective1;
@@ -137,16 +154,19 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
       let synthRan = false;
       if (this._deadline) {
         const remaining = this._deadline - Date.now();
-        remainingMs = Math.max(5000, Math.min(timeoutMs, remaining - 1000));
-        if (remainingMs < 5000) {
-          this._logger.warn("synthesis_deadline_skipped", `Skipping same-turn synthesis for ${participant.config.name} — deadline ${remainingMs}ms remaining`);
+        if (remaining < 6000) {
+          this._logger.warn("synthesis_deadline_skipped", `Skipping same-turn synthesis for ${participant.config.name} — deadline ${remaining}ms remaining`);
         } else {
+          remainingMs = Math.min(timeoutMs, remaining - 1000);
           const synthesisToolsMap = buildToolsMapWithoutLoom(config);
-          const loomOutputs = loomSynthesisCalls.map(tc => {
+          const loomOutputs = cappedLoomCalls.map(tc => {
             const out = typeof tc.output === "string" ? tc.output : JSON.stringify(tc.output);
             return `Tool ${tc.tool} (${tc.callID}) returned:\n${out.slice(0, 3500)}`;
           }).join("\n\n");
-          const synthesisInstruction = `Loom tool results:\n${loomOutputs}\n\nNow synthesize your final contribution incorporating these responses. Cite [#id] when referencing peer answers. Do not re-call loom_query/loom_vote/loom_summon — you have the results. Stay in character and follow OUTPUT CONTRACT.`;
+          const synthesisInstruction = `Loom tool results (budget ${loomOutputs.length} chars):\n${loomOutputs}\n\nNow synthesize your final contribution incorporating these responses. Cite [#id] when referencing peer answers. Do not re-call loom_query/loom_vote/loom_summon — you have the results. Stay in character and follow OUTPUT CONTRACT.`;
+          if (!loomOutputs.trim()) {
+            this._logger.warn("synthesis_empty_outputs", `Skipping synthesis for ${participant.config.name} — loom outputs empty after budget cap`);
+          } else {
           this._logger.info("synthesis_prompt", `Same-turn synthesis for ${participant.config.name} with ${loomSynthesisCalls.length} loom result(s)`, { tools: loomSynthesisCalls.map(t=>t.tool), remainingMs });
           const synthStart = Date.now();
           synthRan = true;
@@ -179,7 +199,9 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
               this._logger.info("synthesis_tool_results", `${participant.config.name} synthesis used ${toolResults2.length} tool(s)`, { tools: tools2 });
             }
             const effective2 = truncateToolResults(toolResults2, agentToolsConfig);
-            finalToolResults = [...effective1, ...effective2, ...extractFileBlockTools(agentText2 ?? "")];
+            const writeSynthetic2 = extractFileBlockTools(agentText2 ?? "");
+            const deduped2 = writeSynthetic2.filter(s => !effective1.some(e => e.title === s.title));
+            finalToolResults = [...effective1, ...effective2, ...deduped2];
             finalToolResults = truncateToolResults(finalToolResults, agentToolsConfig);
             if (agentText2 && agentText2.trim().length >= 10) {
               finalText = agentText2;
@@ -189,6 +211,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
           } else {
             this._logger.warn("synthesis_failed", `Synthesis prompt failed for ${participant.config.name}: ${result2.error?.message ?? "unknown"}`);
             finalToolResults = [...effective1, ...extractFileBlockTools(agentText1 ?? "")];
+          }
           }
         }
       }
@@ -212,11 +235,12 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
                   const cap = getPriorityCap(participant.config.tier);
         const reqNext = extractRequestNextFromToolResults(finalToolResults);
         this._recordModelSuccess(model);
+        if (consumedHint) this._stateManager.setNextRoundSteering(consumedHint);
         ephemeralSessionIdToDelete = null;
         return {
           participant_id: participant.config.id,
           content: "[TOOL-ONLY TURN — no text produced; tool evidence preserved]",
-          type: "question",
+          type: "contribution",
           request_next: reqNext ? { priority: Math.min(reqNext.priority, cap), reason: reqNext.reason } : null,
           query: null,
           evidence: null,
@@ -283,6 +307,9 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
     return response;
   } finally {
     if (!isRoundScoped) this._sessionManager.unregisterSession(ephemeralSessionId);
+    else {
+      // Round-scoped sessions are bulk-cleaned in runPromptPhase; don't double-unregister
+    }
     if (ephemeralSessionIdToDelete) {
       this._options.deleteEphemeralSession(ephemeralSessionIdToDelete).catch((err) => {
         this._logger.warn("ephemeral_session_delete_failed", "Failed to clean up ephemeral session", extractErrorInfo(err));

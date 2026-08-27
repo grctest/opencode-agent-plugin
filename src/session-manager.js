@@ -131,25 +131,24 @@ export class SessionManager {
    */
   async runEphemeralPrompt(participant, promptOpts, meetingId = null) {
     let sessionId = null;
+    let abortHandler = null;
+    let effectiveSignal = null;
     try {
       sessionId = await this.createEphemeralSession(participant);
       if (meetingId) this.registerSessionMeeting(sessionId, meetingId);
-      // Honor context.abort if provided in promptOpts.signal/abort (guide: pass context.abort)
       const { signal, abort, ...restOpts } = promptOpts;
-      const effectiveSignal = signal ?? abort ?? null;
-      // SessionContract currently ignores signal (PromptInput has no tool_choice/signal), but we forward for future compat
-      // and use it to race the prompt if abort fires
+      effectiveSignal = signal ?? abort ?? null;
       let res;
       if (effectiveSignal) {
+        if (effectiveSignal.aborted) throw new DOMException("Aborted", "AbortError");
         const abortPromise = new Promise((_, reject) => {
-          if (effectiveSignal.aborted) reject(new DOMException("Aborted", "AbortError"));
-          else effectiveSignal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+          abortHandler = () => reject(new DOMException("Aborted", "AbortError"));
+          effectiveSignal.addEventListener("abort", abortHandler, { once: true });
         });
         res = await Promise.race([
           this.getContract().prompt({ sessionId, ...restOpts }),
           abortPromise.then(() => { throw new DOMException("Aborted", "AbortError"); }),
         ]).catch((err) => ({ ok: false, data: null, error: err }));
-        // If abort raced, ensure we still clean up
         if (res && res.error && res.error.name === "AbortError") throw res.error;
       } else {
         res = await this.getContract().prompt({ sessionId, ...restOpts });
@@ -158,6 +157,9 @@ export class SessionManager {
     } catch (err) {
       return { ok: false, data: null, error: err };
     } finally {
+      if (effectiveSignal && abortHandler) {
+        try { effectiveSignal.removeEventListener("abort", abortHandler); } catch {}
+      }
       if (sessionId) {
         this.unregisterSession(sessionId);
         await this.deleteEphemeralSession(sessionId).catch(() => {});
@@ -278,12 +280,12 @@ export class SessionManager {
       } else {
         this.#logger?.warn("progress_post_failed", "Failed to post progress message", extractErrorInfo(err));
       }
-      // Reset failure count after a successful interval to allow recovery
       if (this.#progressFailureCount >= MAX_PROGRESS_FAILURES_BEFORE_ALERT) {
-        setTimeout(() => {
+        const t = setTimeout(() => {
           this.#progressFailureCount = 0;
           this.#progressAlerted = false;
         }, 60000);
+        if (t.unref) t.unref();
       }
     });
   }

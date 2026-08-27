@@ -12,15 +12,22 @@ function truncateAtSentence(text, limit) {
   if (!text || typeof text !== "string") return "";
   if (text.length <= limit) return text;
   const sliced = text.slice(0, limit);
-  const last = sliced.lastIndexOf(". ");
-  if (last !== -1) return sliced.slice(0, last + 1);
-  return sliced;
+  const markers = [". ", "? ", "! ", "。", ".\n", "?\n", "!\n"];
+  let last = -1;
+  for (const m of markers) {
+    const idx = sliced.lastIndexOf(m);
+    if (idx > last) last = idx;
+  }
+  if (last > 0) return sliced.slice(0, last + 1).trimEnd() + " …";
+  const wordBoundary = sliced.lastIndexOf(" ");
+  if (wordBoundary > limit * 0.5) return sliced.slice(0, wordBoundary) + " …";
+  return sliced + " …";
 }
 
 function hashConfig(cfg) {
-  const str = JSON.stringify(cfg);
+  const key = `${cfg.id ?? ""}|${cfg.tier ?? ""}|${cfg.tier_guidance ?? ""}|${(cfg.known_biases ?? []).join("|")}`;
   let h = 0;
-  for (let i = 0; i < str.length; i++) h = ((h << 5) - h + str.charCodeAt(i)) | 0;
+  for (let i = 0; i < key.length; i++) h = ((h << 5) - h + key.charCodeAt(i)) | 0;
   return String(h);
 }
 
@@ -194,7 +201,7 @@ export function buildAgentUserPrompt(participant, stateOfPlay, ragContext, recen
   const ragDelimited = ragContext ? delimitContext(ragContext, "RELEVANT_PRIOR_CONTEXT") : "";
   const stateOfPlayDelimited = stateOfPlay ? delimitContext(stateOfPlay, "STATE_OF_PLAY") : "";
   const transcriptDelimited = delimitContext(transcript, "CONTRIBUTIONS");
-  const safeQuestion = sanitizeForDisplay(question);
+  const safeQuestion = delimitContext(escapeDelimiters(sanitizeForDisplay(question, 5000)), "QUESTION");
   const tagContext = tags?.length > 0 ? escapeDelimiters(sanitizeForDisplay(tags.join(", "), 500)) : null;
 
   const ragHeader = ragContext
@@ -220,8 +227,7 @@ ${delimitContext(sanitizeForDisplay(userContext), "USER_CONTEXT")}
 `
     : "";
 
-  return `## Question (canonical)
-${safeQuestion}
+  return `${safeQuestion}
 ${tagContext ? `\n## Tags: ${tagContext}\n` : ""}
 ## Round ${round}
 

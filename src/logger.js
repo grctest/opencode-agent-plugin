@@ -11,7 +11,9 @@ let ringSeq = 0;
 export function getRecentLogs(limit = 100, minLevel = null) {
   const minIdx = minLevel ? LEVEL_LABELS.indexOf(String(minLevel).toUpperCase()) : -1;
   const rows = logRing.filter((e) => (minIdx < 0 || LEVEL_LABELS.indexOf(e.level) >= minIdx));
-  return rows.slice(-Math.max(1, Math.min(limit, RING_BUFFER_SIZE)));
+  const n = Math.max(1, Math.min(limit, RING_BUFFER_SIZE));
+  if (rows.length <= n) return rows;
+  return rows.slice(rows.length - n);
 }
 
 function resolveMinLevel() {
@@ -51,7 +53,9 @@ export class Logger {
   }
 
   forMeeting(meetingId) {
-    return new Logger(meetingId);
+    const child = new Logger(meetingId);
+    child.#correlationId = this.#correlationId;
+    return child;
   }
 
   /**
@@ -69,6 +73,10 @@ export class Logger {
     const last = this.#throttleMap.get(key) ?? 0;
     if (now - last < throttleMs) return;
     this.#throttleMap.set(key, now);
+    if (this.#throttleMap.size > 200) {
+      const oldest = this.#throttleMap.keys().next().value;
+      this.#throttleMap.delete(oldest);
+    }
     this.warn(context, message, details);
   }
 

@@ -65,12 +65,30 @@ export function initPersonaVectorTable(db, dim = 384) {
 
 export function checkIntegrity(db) {
   try {
-    const result = db.prepare("PRAGMA integrity_check").get();
-    if (result.integrity_check !== "ok") {
-      dbLogger.warn("integrity_check_failed", "Database integrity check failed", { result: result.integrity_check });
+    const rows = db.prepare("PRAGMA integrity_check").all();
+    const bad = rows.filter(r => r.integrity_check !== "ok");
+    if (bad.length > 0) {
+      dbLogger.warn("integrity_check_failed", "Database integrity check failed", { result: bad.map(r=>r.integrity_check).join("; ") });
     }
   } catch (err) {
     dbLogger.debug("integrity_check_error", "Integrity check could not run", extractErrorInfo(err));
+  }
+}
+
+export function checkpointWal(db) {
+  try { db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch {}
+}
+
+export function vacuumIfNeeded(db) {
+  try {
+    const pageCount = db.prepare("PRAGMA page_count").get()?.page_count ?? 0;
+    const freelist = db.prepare("PRAGMA freelist_count").get()?.freelist_count ?? 0;
+    if (pageCount > 0 && freelist / pageCount > 0.3) {
+      db.exec("VACUUM");
+      dbLogger.info("vacuum_completed", `Vacuum completed: ${freelist}/${pageCount} pages freed`);
+    }
+  } catch (err) {
+    dbLogger.debug("vacuum_failed", "Vacuum check failed", extractErrorInfo(err));
   }
 }
 
@@ -81,5 +99,24 @@ export function cleanupOldErrors(db) {
     db.prepare("DELETE FROM error_log WHERE created_at < ?").run(cutoff);
   } catch (err) {
     dbLogger.warn("old_errors_cleanup_failed", "Failed to clean up old error rows", extractErrorInfo(err));
+  }
+}
+
+export function cleanupOldVectors(db) {
+  try {
+    const countRow = db.prepare("SELECT COUNT(*) as c FROM fabric_chunks").get();
+    const count = countRow?.c ?? 0;
+    if (count <= 200) return;
+    // Keep most recent 200 chunks (by id), delete older
+    const cutoffRow = db.prepare("SELECT id FROM fabric_chunks ORDER BY id DESC LIMIT 1 OFFSET 200").get();
+    if (!cutoffRow) return;
+    const cutoffId = cutoffRow.id;
+    db.prepare("DELETE FROM fabric_chunks WHERE id < ?").run(cutoffId);
+    // Also prune vec tables for deleted ids (best effort)
+    for (const d of [384, 512, 768, 1024]) {
+      try { db.prepare(`DELETE FROM vec_fabric_chunks_${d} WHERE rowid < ?`).run(cutoffId); } catch {}
+    }
+  } catch (err) {
+    dbLogger.debug("cleanup_vectors_failed", "Vector cleanup failed", extractErrorInfo(err));
   }
 }

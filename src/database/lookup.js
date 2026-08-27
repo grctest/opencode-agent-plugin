@@ -47,7 +47,12 @@ export async function findMeetingBySessionId(directory, sessionId) {
   const files = readdirSync(meetingsDir)
     .filter((f) => f.endsWith(".db"))
     .map((f) => join(meetingsDir, f))
-    .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
+    .sort((a, b) => {
+      let am = 0, bm = 0;
+      try { am = statSync(a).mtimeMs; } catch {}
+      try { bm = statSync(b).mtimeMs; } catch {}
+      return bm - am;
+    });
   for (const filePath of files) {
     let conn = null;
     try {

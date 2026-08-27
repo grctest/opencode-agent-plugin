@@ -169,8 +169,10 @@ export function initSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_turn_requests_meeting ON turn_requests(meeting_id);
     CREATE INDEX IF NOT EXISTS idx_turn_requests_participant ON turn_requests(participant_id);
     CREATE INDEX IF NOT EXISTS idx_agent_errors_meeting ON agent_errors(meeting_id);
+    CREATE INDEX IF NOT EXISTS idx_agent_errors_created ON agent_errors(created_at);
     CREATE INDEX IF NOT EXISTS idx_participants_meeting ON participants(meeting_id);
     CREATE INDEX IF NOT EXISTS idx_error_log_meeting ON error_log(meeting_id);
+    CREATE INDEX IF NOT EXISTS idx_error_log_created ON error_log(created_at);
     CREATE INDEX IF NOT EXISTS idx_orchestrator_messages_meeting ON orchestrator_messages(meeting_id);
     CREATE INDEX IF NOT EXISTS idx_meetings_opencode_session_id ON meetings(opencode_session_id);
 
@@ -246,7 +248,7 @@ export function runMigrations(rawDb, opts = {}) {
       MIGRATIONS[v](rawDb);
       if (log.info) log.info("db_migration_applied", `Applied database migration v${v} → v${v + 1}`);
     }
-    rawDb.prepare(`PRAGMA user_version = ${LATEST_SCHEMA_VERSION}`).run();
+    rawDb.exec(`PRAGMA user_version = ${LATEST_SCHEMA_VERSION}`);
     rawDb.exec("COMMIT");
   } catch (err) {
     rawDb.exec("ROLLBACK");

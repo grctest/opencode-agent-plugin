@@ -15,14 +15,22 @@ export function extractDecisionSummary(artifact) {
 }
 
 /**
- * Filters the full list of discovered models by the enabled-models set.
- * When enabledModels is null, all models are allowed (no filter).
+ * Filters the full list of discovered models by the disabled-models deny list.
+ * When disabledModels is null/empty, all models are allowed (no filter).
+ * Disabled models are excluded; future models are enabled by default.
  */
-export function applyModelFilter(allAvailable, enabledModels) {
-  if (enabledModels === null) return allAvailable;
-  if (enabledModels.size === 0) return [];
+export function applyModelFilter(allAvailable, disabledModels) {
+  if (!disabledModels || disabledModels.size === 0) return allAvailable;
   return allAvailable.filter((m) => {
     const key = `${m.providerID}/${m.modelID}`;
-    return enabledModels.has(key);
+    return !disabledModels.has(key);
   });
+}
+
+/**
+ * Backward compat alias - old callers used enabledModels allow-list.
+ * If the set looks like an allow list (size < available/2), treat as such? No, we force deny.
+ */
+export function applyModelFilterAllowList(allAvailable, enabledModels) {
+  return applyModelFilter(allAvailable, enabledModels ? new Set(allAvailable.map(m => `${m.providerID}/${m.modelID}`).filter(k => !enabledModels.has(k))) : null);
 }

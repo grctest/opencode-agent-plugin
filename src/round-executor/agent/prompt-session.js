@@ -11,18 +11,24 @@ import { buildToolsMap, buildToolsMapWithoutLoom } from "../tools.js";
 import { delimitContext } from "../../prompts/delimiters.js";
 
 export async function promptChildSession(participant) {
+  const prevStatus = participant.status;
   participant.status = "speaking";
+  let localSucceeded = false;
+  try {
 
   const model = this._getParticipantModel(participant);
   const config = getConfig();
   const fallbackConfig = config.modelFallback;
 
-  const baseTimeoutMs = config.agentTimeoutMs;
+  const baseTimeoutMsRaw = config.agentTimeoutMs;
+  const baseTimeoutMs = Number.isFinite(baseTimeoutMsRaw) ? Math.max(10000, Math.min(600000, baseTimeoutMsRaw)) : 240000;
   const timeoutMsBase = baseTimeoutMs;
   let timeoutMs = timeoutMsBase;
   if (this._deadline) {
     const remaining = this._deadline - Date.now();
-    if (remaining < 10000) {
+    if (remaining <= 2000) {
+      timeoutMs = 5000;
+    } else if (remaining < 10000) {
       timeoutMs = Math.max(5000, Math.min(timeoutMsBase, remaining - 1000));
     } else {
       timeoutMs = Math.min(timeoutMsBase, remaining - 1000);
@@ -31,10 +37,11 @@ export async function promptChildSession(participant) {
 
   const currentRound = this._stateManager.getCurrentRound();
 
-  const recentContribs = this._stateManager.getWeave().filter((c) => c.round != null && c.round >= currentRound - 1);
-  const queryText = recentContribs.length > 0
+  let recentContribs = this._stateManager.getWeave().filter((c) => c.round != null && c.round >= currentRound - 1);
+  let queryText = recentContribs.length > 0
     ? recentContribs.map((c) => c.content).join("\n")
     : this._stateManager.getQuestion();
+  if (queryText.length > 4000) queryText = queryText.slice(0, 4000);
   const ragChunks = this._vectorIndex
     ? await this._vectorIndex.retrieveRelevant(queryText, 10, currentRound)
     : [];
@@ -43,15 +50,17 @@ export async function promptChildSession(participant) {
     : "";
 
   const recentForPrompt = this._stateManager.getWeave().filter(
-    (c) => c.round != null && c.round >= currentRound - 1 && c.type !== "vote_response",
+    (c) => c.round != null && c.round >= currentRound - 1 && c.type !== "vote_response" && c.type !== "vote_tally" && c.type !== "reflection",
   ).slice(-12);
 
   const systemPrompt = buildAgentSystemPrompt(participant);
   let steeringHint = "";
+  let consumedHint = "";
   try {
     const plannedFirst = this._stateManager.getPlannedTurnOrder?.()?.[0] ?? this._stateManager.getNextSpeakerId?.();
     const isFirstSpeaker = !plannedFirst || plannedFirst === participant.config.id;
-    if (isFirstSpeaker) steeringHint = this._stateManager.consumeNextRoundSteering();
+    if (isFirstSpeaker) consumedHint = this._stateManager.consumeNextRoundSteering();
+    steeringHint = consumedHint;
   } catch {}
   const userPromptBase = buildAgentUserPrompt(
     participant,
@@ -109,22 +118,36 @@ export async function promptChildSession(participant) {
     });
   };
 
+  let succeeded = false;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       const response = await this._executeAgentTurn(participant, activeModel, timeoutMs, promptContext);
+      succeeded = true;
+      if (consumedHint) consumedHint = "";
       return response;
     } catch (err) {
       lastError.value = err;
       const info = extractErrorInfo(err);
-      this._recordModelFailure(activeModel);
+      if (isRetryableError(err)) this._recordModelFailure(activeModel);
       if (attempt > 0 || err?.message === "Empty agent response") warnPossibleSideEffects(err);
 
       if (attempt < maxRetries) {
-        const delay = Math.min(1000 * Math.pow(2, attempt) + Math.random() * 500, 8000);
+        let delay = Math.min(1000 * Math.pow(2, attempt) + Math.random() * 500, 8000);
+        if (this._deadline) {
+          const remaining = this._deadline - Date.now();
+          delay = Math.min(delay, Math.max(0, remaining - 2000));
+          if (delay <= 0) {
+            this._logger.warn("prompt_retry_skipped_deadline", `${participant.config.name} — skipping retry, deadline imminent`);
+            break;
+          }
+        }
         this._logger.warn("prompt_retry", `${participant.config.name} — attempt ${attempt + 1}/${maxRetries + 1} failed on ${this._modelKey(activeModel)}, retrying in ${Math.round(delay)}ms`, info);
-        await new Promise((r) => setTimeout(r, delay));
+        await new Promise((r) => { const t = setTimeout(r, delay); if (t.unref) t.unref(); });
       }
     }
+  }
+  if (!succeeded && consumedHint) {
+    this._stateManager.setNextRoundSteering(consumedHint);
   }
 
   if (!fallbackConfig.enabled) {
@@ -153,6 +176,8 @@ export async function promptChildSession(participant) {
       if (lastError.value && isRetryableError(lastError.value)) {
         this._circuitBreaker.recordSuccess(activeModel);
       }
+      localSucceeded = true;
+      if (consumedHint) consumedHint = "";
       return response;
     } catch (err) {
       lastError.value = err;
@@ -161,15 +186,23 @@ export async function promptChildSession(participant) {
       warnPossibleSideEffects(err);
 
       if (attempt + 1 < fallbackAttempts) {
-        const delay = Math.min(1000 * Math.pow(2, attempt) + Math.random() * 500, 8000);
+        let delay = Math.min(1000 * Math.pow(2, attempt) + Math.random() * 500, 8000);
+        if (this._deadline) {
+          const remaining = this._deadline - Date.now();
+          delay = Math.min(delay, Math.max(0, remaining - 2000));
+          if (delay <= 0) break;
+        }
         this._logger.warn("fallback_retry", `${participant.config.name} — fallback attempt ${attempt + 1}/${fallbackAttempts} failed on ${this._modelKey(fallbackModel)}, retrying in ${Math.round(delay)}ms`, info);
-        await new Promise((r) => setTimeout(r, delay));
+        await new Promise((r) => { const t = setTimeout(r, delay); if (t.unref) t.unref(); });
       }
     }
   }
 
   this._recordFallbackFailure(participant, activeModel, fallbackModel, lastError.value);
   return null;
+  } finally {
+    if (!localSucceeded && participant.status === "speaking") participant.status = prevStatus;
+  }
 }
 
 export function recordFallbackFailure(participant, originalModel, fallbackModel, error) {

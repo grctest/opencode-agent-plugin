@@ -11,6 +11,7 @@ import { z } from 'zod';
 // peer responses retain their specific types for timeline grouping.
 export const ContributionTypeSchema = z.enum([
   'contribution',
+  'pass',
   'query_response',
   'perspective_response',
   'critique_response',
@@ -59,7 +60,7 @@ export function parseAgentResponseRaw(response, tier) {
   }
 
   if (text === '[PASS]') {
-    return { content: '[PASS]', type: 'contribution', request_next: null, query: null, evidence: null, summon: null, vote: null };
+    return { content: '[PASS]', type: 'pass', request_next: null, query: null, evidence: null, summon: null, vote: null };
   }
 
   const content = text;

@@ -61,8 +61,8 @@ export const Loom = async (input) => {
   const startupValues = config.get();
   const resolvedModel = startupValues.embeddingModel ?? DEFAULT_EMBEDDING_MODEL;
   const resolvedQuant = startupValues.embeddingQuant ?? DEFAULT_EMBEDDING_QUANT;
-  const { ensureEmbedderInitialized, getEmbeddingDim } = await import("./services/embedding-service.js");
-  ensureEmbedderInitialized(resolvedModel, resolvedQuant)
+  const { ensureEmbedderInitialized, getEmbeddingDim, isEmbedderInitialized } = await import("./services/embedding-service.js");
+  const embedInitPromise = ensureEmbedderInitialized(resolvedModel, resolvedQuant)
     .then(() => {
       logger.info("embedder_initialized", `Embedding model loaded: ${resolvedModel} (${getEmbeddingDim()}d)`);
     })
@@ -72,6 +72,17 @@ export const Loom = async (input) => {
         `Failed to initialize embedding model — semantic features (vector search, reflection targeting, room composition) will be unavailable: ${err.message}`,
       );
     });
+  // Expose for handlers to await when composition is imminent
+  const awaitEmbedderReady = async (timeoutMs = 5000) => {
+    if (isEmbedderInitialized()) return true;
+    try {
+      await Promise.race([
+        embedInitPromise,
+        new Promise((_, rej) => setTimeout(() => rej(new Error("embedder init timeout")), timeoutMs)),
+      ]);
+      return isEmbedderInitialized();
+    } catch { return isEmbedderInitialized(); }
+  };
 
   const activeLooms = new Map();
   let activeDashboard = null;

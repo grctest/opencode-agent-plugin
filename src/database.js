@@ -4,7 +4,7 @@ import { Logger, extractErrorInfo } from "./logger.js";
 import { initSchema, runMigrations } from "./database/schema.js";
 import { resolveLoomBaseDir, getMeetingDbPath } from "./paths.js";
 import { ensureDb, getDatabaseClass, isoNow, resolveVecPath } from "./database/connection.js";
-import { maintenanceDue, markMaintained, checkIntegrity, cleanupOldErrors, initVectorTable } from "./database/maintenance.js";
+import { maintenanceDue, markMaintained, checkIntegrity, cleanupOldErrors, cleanupOldVectors, initVectorTable, checkpointWal, vacuumIfNeeded } from "./database/maintenance.js";
 import * as meetingOps from "./database/meeting-operations.js";
 import * as contribOps from "./database/contribution-operations.js";
 import * as vectorOps from "./database/vector-operations.js";
@@ -30,6 +30,9 @@ export class MeetingDatabase {
     const DatabaseClass = getDatabaseClass();
     const db = new DatabaseClass(dbPath);
     try {
+      db.exec('PRAGMA foreign_keys = ON');
+      db.exec('PRAGMA busy_timeout = 5000');
+      db.exec('PRAGMA wal_autocheckpoint = 1000');
       db.exec('BEGIN IMMEDIATE');
       const result = await fn(db);
       db.exec('COMMIT');
@@ -107,19 +110,27 @@ export class MeetingDatabase {
       : false;
     if (shouldMaintain) {
       cleanupOldErrors(this.#db);
-      checkIntegrity(this.#db);
+      cleanupOldVectors(this.#db);
+      if (existedBefore) {
+        checkIntegrity(this.#db);
+        checkpointWal(this.#db);
+        vacuumIfNeeded(this.#db);
+      }
       markMaintained(this.#db);
     }
   }
 
   async transaction(fn) {
-    this.#db.exec('BEGIN IMMEDIATE');
+    // Use SAVEPOINT to allow nesting inside existing TX (prevents cannot start within TX)
+    const inTx = (() => { try { return this.#db.prepare("SELECT 1").get() && false; } catch { return false; } })();
+    // Simpler: check if already in transaction via pragma? Use try SAVEPOINT
+    try { this.#db.exec('SAVEPOINT loom_txn'); } catch { this.#db.exec('BEGIN IMMEDIATE'); }
     try {
       const result = await fn(this.#db);
-      this.#db.exec('COMMIT');
+      try { this.#db.exec('RELEASE loom_txn'); } catch { this.#db.exec('COMMIT'); }
       return result;
     } catch (err) {
-      try { this.#db.exec('ROLLBACK'); } catch {}
+      try { this.#db.exec('ROLLBACK TO loom_txn'); this.#db.exec('RELEASE loom_txn'); } catch { try { this.#db.exec('ROLLBACK'); } catch {} }
       throw err;
     }
   }

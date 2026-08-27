@@ -9,9 +9,6 @@ export function createResolveMeeting(directory, meetingResolveCache) {
     if (cached && (Date.now() - cached.at) < RESOLVE_CACHE_TTL_MS) {
       return cached.meeting;
     }
-    if (cached && (Date.now() - cached.at) < 1000) {
-      return cached.meeting;
-    }
     const meeting = await findMeetingBySessionId(directory, sessionID);
     if (meeting) {
       if (meetingResolveCache.size >= RESOLVE_CACHE_MAX) {

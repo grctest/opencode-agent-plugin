@@ -1,5 +1,5 @@
 import { buildSynthesisPrompt } from "./prompts/synthesis.js";
-import { formatFinalRoundTranscript } from "./fabric-manager.js";
+import { formatFinalRoundTranscript } from "./state-of-play.js";
 import { finalizeSynthesis, validateSynthesisSections, NEUTRAL_SYNTHESIZER_SYSTEM } from "./synthesizer.js";
 import { getConfig } from "./config.js";
 import { extractErrorInfo } from "./logger.js";
@@ -36,17 +36,21 @@ export class SynthesisCoordinator {
     await this.#sessionManager.postProgress("🔄 Synthesizing final output...");
 
     let artifactText;
+    let synthSessionId = null;
     try {
-      const synthSessionId = await this.#sessionManager.createSynthesizerSession(synthesizer);
+      synthSessionId = await this.#sessionManager.createSynthesizerSession(synthesizer);
       const model = getParticipantModel(synthesizer);
       const transcript = formatFinalRoundTranscript(transcriptData, participants);
       artifactText = await this.#promptWithRetry(synthSessionId, synthesizer, transcriptData, transcript, model, participants, stateOfPlay, objections, userContext);
-      // Second pass: have the synthesizer audit its own work against the transcript (most-contested slice, not head).
       artifactText = await this.#critique(synthSessionId, artifactText, transcript, transcriptData, model, synthesizer, participants);
     } catch (err) {
       const info = extractErrorInfo(err);
       await this.#sessionManager.postProgress(`Synthesis session failed: ${info.message}`, "error");
       artifactText = this.fallbackSynthesis(transcriptData, stateOfPlay);
+    } finally {
+      if (synthSessionId) {
+        try { await this.#sessionManager.deleteEphemeralSession(synthSessionId); } catch {}
+      }
     }
 
     const result = finalizeSynthesis(artifactText, transcriptData, participants, objections);

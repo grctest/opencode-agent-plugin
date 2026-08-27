@@ -1,4 +1,5 @@
 import { Logger, extractErrorInfo } from "./logger.js";
+import { isPassContribution } from "./utils/contribution-types.js";
 
 // Compat: bracket directives (PROPOSE/CHALLENGE etc.) were removed from the live protocol
 // (all peer interactions now use loom_* tools). These regexes remain only for stored
@@ -28,7 +29,7 @@ function cleanContent(content) {
  * signal. Falls back to keyword matching only when c.type is missing or unknown.
  */
 function hasFileMention(content) {
-  return /(?:file\s*=\s*[^\s]+\.\w+|src\/[^\s]+\.\w+|\b\w+\.(?:tsx|ts|js|jsx|py|rs|go)\b|```.*file=)/i.test(content);
+  return /(?:file\s*=\s*[^\s]+\.\w+|src\/[^\s]+\.\w+|\b\w+\.(?:tsx|ts|js|jsx|py|rs|go)\b|```[^`]*file=)/i.test(content);
 }
 
 export function updateStateOfPlay(weave, question, tags) {
@@ -42,7 +43,7 @@ export function updateStateOfPlay(weave, question, tags) {
   const filesInvolved = [];
 
   for (const c of weave) {
-    if (c.type === "pass") continue;
+    if (isPassContribution(c)) continue;
     const raw = (c.content ?? "").trim();
     if (!raw) continue;
     let content = cleanContent(raw);
@@ -61,6 +62,7 @@ export function updateStateOfPlay(weave, question, tags) {
     }
 
     const bucket = classifyContribution(c.type, content, c.prompt_context?.mode ?? "");
+    if (bucket === null) continue;
     switch (bucket) {
       case "decisions": decisions.push(content); break;
       case "agreements": agreements.push(content); break;
@@ -70,15 +72,10 @@ export function updateStateOfPlay(weave, question, tags) {
     }
   }
 
-  // Deduplicate filesInvolved preserving order, keep most recent 5
-  const seenFiles = new Set();
-  const dedupedFiles = [];
-  for (const f of filesInvolved) {
-    if (!seenFiles.has(f.toLowerCase())) {
-      seenFiles.add(f.toLowerCase());
-      dedupedFiles.push(f);
-    }
-  }
+  // Deduplicate keep most recent occurrence, then take last 5
+  const dedupMap = new Map();
+  for (const f of filesInvolved) dedupMap.set(f.toLowerCase(), f);
+  const dedupedFiles = [...dedupMap.values()];
 
   return formatStateOfPlay({ decisions, agreements, disagreements, openQuestions, keyFacts, filesInvolved: dedupedFiles.slice(-5) }, question, tags);
 }
@@ -89,6 +86,8 @@ export function updateStateOfPlay(weave, question, tags) {
  */
 function classifyContribution(type, content, mode = "") {
   switch (type) {
+    case "contribution":
+      return classifyByKeywords(content);
     case "propose":
     case "refine":
       return "decisions";
@@ -101,7 +100,6 @@ function classifyContribution(type, content, mode = "") {
     case "question":
       return "openQuestions";
     case "query_response":
-      // Mode-aware: risks/assumptions analyses feed open questions, not key facts
       if (mode === "risks" || mode === "assumptions") return "openQuestions";
       return "keyFacts";
     case "evidence_response":
@@ -110,9 +108,9 @@ function classifyContribution(type, content, mode = "") {
     case "vote_tally":
       return "decisions";
     case "vote_response":
-      return null;
     case "synthesize":
     case "refuse":
+    case "pass":
       return null;
     case "reflection":
       return "keyFacts";
@@ -126,12 +124,12 @@ function classifyContribution(type, content, mode = "") {
  * Uses word-boundary-aware matching to avoid substring false positives.
  */
 function classifyByKeywords(content) {
-  const lower = content.toLowerCase();
-
+  const withoutUrls = content.replace(/https?:\/\/\S+/g, "");
+  const lower = withoutUrls.toLowerCase();
   if (/\bwe should\b/.test(lower) || /\bdecision\b/.test(lower)) return "decisions";
   if (/\bagree\b/.test(lower) || /\bconsensus\b/.test(lower)) return "agreements";
   if (/\bdisagree\b/.test(lower) || /\bconcern\b/.test(lower)) return "disagreements";
-  if (/\?/.test(content)) return "openQuestions";
+  if (/\?/.test(withoutUrls)) return "openQuestions";
   return "keyFacts";
 }
 
@@ -182,7 +180,8 @@ function formatRoundLines(round, participants) {
     lines.push(`  **Turn Requests:**`);
     for (const tr of round.turn_requests) {
       const name = participants.find((p) => p.config.id === tr.participant_id)?.config.name ?? tr.participant_id;
-      lines.push(`  - [${name}] P${tr.priority} → ${tr.target}: ${tr.reason}`);
+      const target = tr.target ?? tr.target_participant_id ?? tr.targetId ?? "next";
+      lines.push(`  - [${name}] P${tr.priority} → ${target}: ${tr.reason}`);
     }
   }
 

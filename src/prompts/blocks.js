@@ -8,7 +8,7 @@ export function getRecentContributionsBlock(contributions, participantId) {
   const mine = contributions
     .filter((c) => c.participant_id === participantId && c.type !== "pass")
     .slice(-2)
-    .map((c) => sanitizeForDisplay(c.content));
+    .map((c) => sanitizeForDisplay(c.content, 600).slice(0, 600));
   if (mine.length === 0) return "";
   return `Your last contributions:\n${mine.map((c) => `- "${c.slice(0, 300)}"`).join("\n")}`;
 }

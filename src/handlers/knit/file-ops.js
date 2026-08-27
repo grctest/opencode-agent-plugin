@@ -12,7 +12,7 @@ export function writeReportFile(directory, meetingId, report, logger) {
     mkdirSync(dir, { recursive: true });
     const filePath = join(dir, `${meetingId}.md`);
     tmpPath = `${filePath}.tmp.${tmpSuffix}`;
-    writeFileSync(tmpPath, report, "utf-8");
+    writeFileSync(tmpPath, report, { encoding: "utf-8", mode: 0o600 });
     try {
       const fd = openSync(tmpPath, "r+");
       fsyncSync(fd);

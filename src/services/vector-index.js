@@ -47,6 +47,7 @@ export class VectorIndex {
 
     // Batch embed with concurrency 4
     const concurrency = 4;
+    let failedEmbeds = 0;
     for (let i = 0; i < pending.length; i += concurrency) {
       const batch = pending.slice(i, i + concurrency);
       const embeddings = await Promise.all(batch.map((p) => embedText(p.text).catch((e) => { vectorLogger.warn("embed_failed", `Failed to embed chunk for round ${roundNumber}`, extractErrorInfo(e)); return null; })));
@@ -55,8 +56,11 @@ export class VectorIndex {
         if (emb) {
           this.#database.storeFabricEmbedding(batch[j].chunkId, emb, dim);
           indexed++;
-        }
+        } else { failedEmbeds++; }
       }
+    }
+    if (failedEmbeds > 0 && pending.length > 0 && failedEmbeds === pending.length) {
+      try { this.#database.setSemanticDegraded?.(true); } catch {}
     }
 
     vectorLogger.debug("round_indexed", `Indexed ${indexed} chunks for round ${roundNumber}`);
@@ -106,7 +110,8 @@ export class VectorIndex {
       const dim = getEmbeddingDim();
       const queryEmbedding = await embedText(queryText, { isQuery: true });
       const hasExclude = excludeRound != null && excludeRound !== -1;
-      const fetchK = hasExclude ? topK * 2 : topK;
+      // DB already WHERE round != ? when hasExclude, no need to overfetch
+      const fetchK = topK;
       const results = this.#database.searchFabricVectors(queryEmbedding, fetchK, dim, hasExclude ? excludeRound : -1);
       return results.slice(0, topK).map((r) => ({
         content: r.content,
@@ -129,8 +134,10 @@ export class VectorIndex {
    */
   #chunkText(text, sourceLabel = "") {
     const maxTokens = getEmbeddingMaxTokens();
-    // Reserve headroom for the tokenizer's special tokens and estimation error.
-    const maxChunkChars = Math.max(64, (maxTokens - 8) * 4);
+    // Heuristic: dense tokens (CJK/code) need tighter chars per token
+    const isDense = /[\u3040-\u9FFF\uAC00-\uD7AF]/.test(text) || (text.match(/[A-Za-z]{30,}/) != null);
+    const charsPerToken = isDense ? 2 : 4;
+    const maxChunkChars = Math.max(64, (maxTokens - 8) * charsPerToken);
     const paragraphs = text.split(/\n\n+/).filter((p) => p.trim().length > 0);
     const chunks = [];
     let current = "";
@@ -170,7 +177,6 @@ export class VectorIndex {
       buf = "";
     };
     for (const sentence of sentences) {
-      // A single sentence longer than the budget is split on word boundaries
       if (sentence.length > maxChunkChars) {
         pushBuf();
         let words = sentence.split(/\s+/);
@@ -182,7 +188,7 @@ export class VectorIndex {
           }
           line += (line ? " " : "") + word;
         }
-        pushBuf();
+        if (line.trim().length > 0) pieces.push(line.trim());
         continue;
       }
       if (buf.length + sentence.length + 1 > maxChunkChars && buf.length > 0) {

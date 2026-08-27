@@ -11,10 +11,12 @@ export class TimeBudget {
   /**
    * @param {number} startTime - epoch ms when meeting (or extension) started
    * @param {number} meetingTimeoutMs - total budget in ms
+   * @param {() => number} clock - injectable clock for determinism (default Date.now)
    */
-  constructor(startTime, meetingTimeoutMs) {
+  constructor(startTime, meetingTimeoutMs, clock = Date.now) {
     this.startTime = startTime;
     this.meetingTimeoutMs = meetingTimeoutMs;
+    this.clock = clock;
   }
 
   /**
@@ -36,7 +38,7 @@ export class TimeBudget {
   /** ms remaining until deadline (Infinity if disabled, negative if expired). */
   remainingMs() {
     if (!this.meetingTimeoutMs || this.meetingTimeoutMs <= 0) return Infinity;
-    return this.startTime + this.meetingTimeoutMs - Date.now();
+    return this.startTime + this.meetingTimeoutMs - this.clock();
   }
 
   /**
@@ -75,4 +77,7 @@ export class TimeBudget {
     if (mins > 0) return `${mins}m ${secs}s remaining`;
     return `${secs}s remaining`;
   }
+
+  /** Allow tests to freeze/drift clock without global mock. */
+  setClock(clock) { this.clock = typeof clock === "function" ? clock : Date.now; }
 }

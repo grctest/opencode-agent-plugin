@@ -1,4 +1,4 @@
-import { memo, useState } from "react";
+import { memo, useState, useMemo } from "react";
 import { renderMarkdown } from "./Cards.jsx";
 import { Card, CardContent, CardFooter } from "./ui/card.tsx";
 import { Button } from "./ui/button.tsx";
@@ -31,7 +31,7 @@ function OutputTabBase({ artifact }) {
     );
   }
 
-  const html = renderMarkdown(artifact.content ?? "");
+  const html = useMemo(() => renderMarkdown(artifact.content ?? ""), [artifact.content]);
 
   return (
     <div className="flex flex-col gap-3">

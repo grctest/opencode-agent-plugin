@@ -143,7 +143,7 @@ export class SessionContract {
       return { ok: true, error: null };
     } catch (error) {
       this.#logger?.warnThrottled(
-        `session-delete:${sessionId}`,
+        `session-delete`,
         "session_delete_failed",
         `Failed to delete session ${sessionId}`,
         extractErrorInfo(error),

@@ -1,12 +1,10 @@
 import { getConfig } from "./config.js";
 import { truncate } from "./shared.js";
 import { Logger, extractErrorInfo } from "./logger.js";
+import { SUBSTANTIVE_TYPES } from "./utils/contribution-types.js";
 
 const summarizerLogger = new Logger();
-
-// Only include contributions that represent actual positions in the deliberation
-// evidence_response included when tool-backed; reflections / query_response handled via hint
-const SUMMARY_TYPES = new Set(["propose", "challenge", "refine", "support", "dissent", "synthesize", "question", "vote_tally", "evidence_response"]);
+const SUMMARY_TYPES = SUBSTANTIVE_TYPES;
 
 // Strip the reflection header: "[Reflection on #N [TYPE] by Name (Round M)]\n\n"
 const REFLECTION_HEADER_RE = /^\[Reflection on #\d+ \[[\w]+\] by .+?\]\s*/m;
@@ -66,8 +64,9 @@ export async function summarizeRound(round, state, promptOrchestrator, getHighes
   const model = getHighestTierModel() ?? (getFallbackModel ? getFallbackModel() : null);
   if (!model) throw new Error("No model available for semantic summary — check model assignment");
 
-  // Filter to only substantive contributions; keep evidence_response only when tool-backed
+  // Filter to only substantive contributions; keep evidence_response only when tool-backed; exclude passes
   const summaryContributions = round.contributions.filter((c) => {
+    if (String(c.content ?? "").trim() === "[PASS]") return false;
     if (!SUMMARY_TYPES.has(c.type)) return false;
     if (c.type === "evidence_response" && !(c.tool_calls && c.tool_calls.length > 0)) return false;
     return true;

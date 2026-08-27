@@ -58,6 +58,11 @@ export function createPollSystem(directory) {
   const TERMINAL_STATUSES = new Set(["converged", "cancelled", "timeout", "max_rounds_reached", "aborted"]);
 
   const pollMeetings = () => {
+    // Global cap: too many concurrent meetings force idle interval to reduce WAL QPS
+    if (sseClients.size > 10 && currentPollInterval !== IDLE_POLL_INTERVAL) {
+      currentPollInterval = IDLE_POLL_INTERVAL;
+      restartPollTimer();
+    }
     let hadActivity = false;
     for (const [meetingId, clients] of sseClients) {
       if (clients.size === 0) continue;

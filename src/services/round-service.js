@@ -36,13 +36,16 @@ export class RoundService {
     const { round, activeParticipants, promptOrchestrator, getHighestTierModel, getFallbackModel, deadline } = params;
 
     this.#roundExecutor.resetRoundStats();
-    if (deadline) this.#roundExecutor.setDeadline(deadline);
+    if (Number.isFinite(deadline)) this.#roundExecutor.setDeadline(deadline);
 
     await this.#roundExecutor.runPromptPhase(round, activeParticipants);
-    // Reflections now happen mid-round in runPromptPhase — no separate phase needed
 
-    // Summarize the round
-    round.summary = await summarizeRound(round, params.state, promptOrchestrator, getHighestTierModel, getFallbackModel);
+    try {
+      round.summary = await summarizeRound(round, params.state, promptOrchestrator, getHighestTierModel, getFallbackModel);
+    } catch (err) {
+      this.#logger.warn("round_summary_failed", `Round ${round.number} summary failed — using digest fallback`, { error: err?.message ?? String(err) });
+      round.summary = "";
+    }
 
     return { round };
   }

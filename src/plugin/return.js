@@ -265,7 +265,7 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
                 contentPreview: c.content.slice(0, 2000),
                 tool_calls: c.tool_calls ?? null,
                 prompt_context_hash: c.prompt_context ? String(JSON.stringify(c.prompt_context).length) : null,
-                timestamp: new Date(c.created_at ?? c.timestamp).toISOString(),
+                timestamp: c.created_at ? new Date(c.created_at).toISOString() : (c.timestamp ? new Date(c.timestamp).toISOString() : new Date().toISOString()),
               }));
             }
             if (include.includes('rounds')) {
@@ -284,7 +284,7 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
                 type: m.type,
                 role: m.role,
                 contentPreview: m.content.slice(0, 2000),
-                timestamp: new Date(m.timestamp).toISOString(),
+                timestamp: m.timestamp ? new Date(m.timestamp).toISOString() : new Date().toISOString(),
               }));
             }
             if (include.includes('config')) {
@@ -292,7 +292,7 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
                 const cfg = config.get();
                 const warnings = config.getWarnings();
                 const source = config.getSource();
-                result.config = { values: cfg, warnings, source, dormantNote: "maxTurnRequestsPerRound and loom_type were removed — ordering is planTurnOrder, primary turns are untyped" };
+                result.config = { values: cfg, warnings, source, dormantNote: "maxTurnRequestsPerRound/maxTurnRequestWords/turnRequestThresholds.autoGrant/agentTools.loom.loom_evidence/agentTools.loom.loom_type removed — ordering is planTurnOrder, primary turns are untyped, loom_query mode evidence covers evidence" };
               } catch {}
             }
             return JSON.stringify(result, null, 2);
@@ -355,7 +355,7 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
               if (include.includes('config')) {
                 try {
                                     const cfgInst = createConfig(directory);
-                  result.config = { values: cfgInst.get(), warnings: cfgInst.getWarnings(), source: cfgInst.getSource(), dormantNote: "maxTurnRequestsPerRound and loom_type were removed — ordering is planTurnOrder, primary turns are untyped" };
+                  result.config = { values: cfgInst.get(), warnings: cfgInst.getWarnings(), source: cfgInst.getSource(), dormantNote: "maxTurnRequestsPerRound/maxTurnRequestWords/turnRequestThresholds.autoGrant/agentTools.loom.loom_evidence/agentTools.loom.loom_type removed — ordering is planTurnOrder, primary turns are untyped" };
                 } catch {}
               }
               result._source = "db-fallback";
@@ -371,8 +371,8 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
       list_knit_models: tool({
         description: "List all discovered models with their exact identifiers, cost, context window, reasoning capability, current enabled/disabled status, and proposed tier assignments.",
         args: {},
-        execute: async () => {
-          return handleListKnitModels();
+        execute: async (args, context) => {
+          return handleListKnitModels(args, context);
         },
       }),
 
@@ -383,8 +383,8 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
             .array(tool.schema.string())
             .describe("Exact 'provider/model' identifiers to enable (e.g. 'openai/gpt-4.1')"),
         },
-        execute: async (args) => {
-          return handleEnableKnitModels(args);
+        execute: async (args, context) => {
+          return handleEnableKnitModels(args, context);
         },
       }),
 
@@ -395,16 +395,16 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
             .array(tool.schema.string())
             .describe("Exact 'provider/model' identifiers to disable (e.g. 'openai/gpt-4.1')"),
         },
-        execute: async (args) => {
-          return handleDisableKnitModels(args);
+        execute: async (args, context) => {
+          return handleDisableKnitModels(args, context);
         },
       }),
 
       reset_knit_models: tool({
         description: "Reset the model filter to default — all discovered models become available for Loom agents.",
         args: {},
-        execute: async () => {
-          return handleResetKnitModels();
+        execute: async (args, context) => {
+          return handleResetKnitModels(args, context);
         },
       }),
 

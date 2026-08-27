@@ -8,6 +8,7 @@ export function detectTaskMode(question, tags = []) {
   const codeSignals = [
     /\breact\b/, /\bnext\.js\b/, /\btsx\b/, /\btypescript\b/,
     /\bsrc\//, /\.tsx\b/, /\.ts\b/, /\.js\b/, /\.jsx\b/,
+    /\bfile\s*=\s*src\//, /\bfile\s*=\s*\w+\//,
     /in this folder/, /in my project/, /how would you.*fix/, /propose.*fix/,
     /\bbug\b/, /\berror\b/, /\bstack\b/, /\brepro\b/, /\brefactor\b/, /\bhook\b/, /\bhydration\b/
   ];
@@ -22,7 +23,9 @@ export function buildSynthesisPrompt(question, transcript, participants = [], ta
   const mode = detectTaskMode(question, tags);
   const isCode = mode === "code-analysis";
   const safeQuestion = escapeDelimiters(sanitizeForDisplay(question, 20000));
-  const safeTranscript = delimitContext(escapeDelimiters(sanitizeForDisplay(transcript, 8000)), "TRANSCRIPT");
+  let safeTranscript = sanitizeForDisplay(transcript, 8000);
+  const wasTruncated = transcript && transcript.length > 8000;
+  safeTranscript = delimitContext(escapeDelimiters(safeTranscript + (wasTruncated ? "\n…[transcript truncated — earliest rounds summarized, latest rounds full]" : "")), "TRANSCRIPT");
   const participantsSection = participants.length > 0
     ? `\n## Participants (activity)\n${participants.map((p) => `- ${escapeDelimiters(sanitizeForDisplay(p.config.name, 80))} (${p.config.tier}): ${p.contributions_count} contributions${p.status === "failed" ? " [failed]" : p.status === "passed" ? " [passed late]" : ""}`).join("\n")}\n`
     : "";

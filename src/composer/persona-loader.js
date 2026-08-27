@@ -1,4 +1,4 @@
-import { readFileSync, existsSync, readdirSync, watch } from "node:fs";
+import { readFileSync, existsSync, readdirSync, watch, statSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -39,58 +39,73 @@ function userPersonasPath() {
   return null;
 }
 
-// domains.json domain vocabulary (audit 13 PC4/PC5): loaded once, used to boost
-// persona scores in the keyword composition fallback.
 let domainVocabCache = null;
+let domainVocabMtime = 0;
 export function loadDomainVocabulary() {
-  if (domainVocabCache !== null) return domainVocabCache;
-  domainVocabCache = {};
   try {
     const base = personasBasePath();
     const file = join(base, "domains.json");
     if (existsSync(file)) {
+      let mtime = 0;
+      try { mtime = statSync(file).mtimeMs; } catch {}
+      if (domainVocabCache !== null && mtime !== 0 && mtime === domainVocabMtime) return domainVocabCache;
       const parsed = JSON.parse(readFileSync(file, "utf-8"));
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
         domainVocabCache = Object.fromEntries(
           Object.entries(parsed).map(([k, v]) => [k.toLowerCase(), Array.isArray(v) ? v.map(String) : []]),
         );
-      }
+      } else domainVocabCache = {};
+      domainVocabMtime = mtime;
+      return domainVocabCache;
     }
   } catch (err) {
     composerLogger.warn("domain_vocab_load_failed", "Failed to load domains.json — keyword fallback runs without domain boosts", extractErrorInfo(err));
     domainVocabCache = {};
   }
+  if (domainVocabCache !== null) return domainVocabCache;
+  domainVocabCache = {};
   return domainVocabCache;
 }
 
+const VALID_TIERS = new Set(["junior", "mid", "senior", "principal", "civilian"]);
 function validatePersona(persona) {
   const errors = [];
   if (!persona.name || typeof persona.name !== "string") errors.push("name required");
+  else if (persona.name.length > 80) errors.push("name must be ≤80 chars");
   if (!persona.persona || typeof persona.persona !== "string") errors.push("persona description required");
   else if (persona.persona.length < 50) errors.push("persona description must be >50 chars");
+  else if (persona.persona.length > 4000) errors.push("persona description must be ≤4000 chars");
   if (!persona.agenda || typeof persona.agenda !== "string") errors.push("agenda required");
   else if (persona.agenda.length < 20) errors.push("agenda must be >20 chars");
+  else if (persona.agenda.length > 2000) errors.push("agenda must be ≤2000 chars");
   const hasTags = persona.tags || persona.domains || persona.domain;
   if (!hasTags || (typeof hasTags !== "string" && !Array.isArray(hasTags))) errors.push("tags required");
+  if (persona.tier && !VALID_TIERS.has(persona.tier)) errors.push(`tier must be one of ${[...VALID_TIERS].join(",")}`);
+  if (persona.expertise && !Array.isArray(persona.expertise) && typeof persona.expertise !== "string") errors.push("expertise must be string or array");
   return errors;
 }
 
 function normalizePersona(persona) {
-  if (typeof persona.domain === "string" && !persona.tags) {
-    persona.tags = [persona.domain];
-    delete persona.domain;
-  } else if (Array.isArray(persona.domains) && !persona.tags) {
-    persona.tags = persona.domains;
-    delete persona.domains;
-  } else if (typeof persona.domains === "string" && !persona.tags) {
-    persona.tags = [persona.domains];
-    delete persona.domains;
+  const out = { ...persona };
+  if (typeof out.domain === "string" && !out.tags) {
+    out.tags = [out.domain];
+    delete out.domain;
+  } else if (Array.isArray(out.domains) && !out.tags) {
+    out.tags = out.domains;
+    delete out.domains;
+  } else if (typeof out.domains === "string" && !out.tags) {
+    out.tags = [out.domains];
+    delete out.domains;
   }
-  if (typeof persona.tags === "string") {
-    persona.tags = [persona.tags];
+  if (typeof out.tags === "string") {
+    out.tags = [out.tags];
   }
-  persona.version = persona.version || "1.0";
-  return persona;
+  if (Array.isArray(out.tags)) {
+    const seen = new Set();
+    out.tags = out.tags.map(t => String(t).trim().toLowerCase()).filter(t => t && !seen.has(t) && seen.add(t));
+  }
+  out.version = out.version || "1.0";
+  return out;
 }
 
 function loadPersonasFromPath(base) {
@@ -177,14 +192,22 @@ let personaWatchSetup = false;
 function setupPersonaWatch() {
   if (personaWatchSetup) return;
   personaWatchSetup = true;
+  const watchers = [];
   try {
     const base = personasBasePath();
-    watch(base, { recursive: true }, () => { personaCache = null; });
+    const w = watch(base, { recursive: true }, () => { personaCache = null; });
+    if (w && w.unref) w.unref();
+    watchers.push(w);
     const userPath = userPersonasPath();
     if (userPath) {
-      try { watch(userPath, { recursive: true }, () => { personaCache = null; }); } catch {}
+      try {
+        const uw = watch(userPath, { recursive: true }, () => { personaCache = null; });
+        if (uw && uw.unref) uw.unref();
+        watchers.push(uw);
+      } catch {}
     }
   } catch {}
+  // Watchers are unref'd so they don't keep process alive; leak bounded to 2 handles
 }
 
 function loadPersonas() {

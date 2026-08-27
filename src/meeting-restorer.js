@@ -91,7 +91,7 @@ export function restoreStateFromDb({ db, stateManager, meetingId, options }) {
       targets_which: c.targets_which ?? null,
       created_at: c.created_at,
     })),
-    next_contribution_id: db.getMaxContributionId(),
+    next_contribution_id: Math.max(db.getMaxContributionId() ?? 0, ...contributions.map(c=>c.id ?? 0), 0) + 1,
     state_of_play: meeting.state_of_play ?? "",
   });
 

@@ -3,18 +3,16 @@
  * Used for similarity-based persona selection at meeting start.
  */
 
-import { embedText, getEmbeddingDim } from "./embedding-service.js";
+import { embedText, getEmbeddingDim, getEmbeddingMaxTokens } from "./embedding-service.js";
 import { Logger, extractErrorInfo } from "../logger.js";
 import { createHash } from "node:crypto";
 
 const personaIndexLogger = new Logger();
 
-// Cross-meeting persona embedding cache (audit 11 PF6): personas rarely change
-// within a process, so re-embedding all of them per meeting is pure waste.
-// Key = (name | dim | content fingerprint) — a persona edit or model switch
-// invalidates naturally because the key changes.
 const embeddingCache = new Map();
 const EMBEDDING_CACHE_MAX = 512;
+
+export function clearEmbeddingCache() { embeddingCache.clear(); }
 
 function cacheKey(personaName, tier, embeddingText) {
   const fingerprint = createHash("sha256").update(embeddingText).digest("hex").slice(0, 16);
@@ -141,6 +139,10 @@ export class PersonaIndex {
       ...(persona.tags || []),
       ...(persona.expertise || []),
     ];
-    return parts.filter(Boolean).join(" ");
+    const text = parts.filter(Boolean).join(" ");
+    let maxTokens = 512;
+    try { maxTokens = getEmbeddingMaxTokens(); } catch {}
+    const maxChars = maxTokens * 4;
+    return text.length > maxChars ? text.slice(0, maxChars) : text;
   }
 }

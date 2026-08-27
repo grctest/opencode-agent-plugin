@@ -4,7 +4,7 @@ function makeDelimiter(label) {
 
 function escapeDelimiters(text) {
   if (!text) return text;
-  return text.replace(/<<</g, '\uFF3C\uFF3C\uFF3C').replace(/>>>/g, '\uFF3E\uFF3E\uFF3E');
+  return text.replace(/<<</g, '\uFF3C\uFF3C\uFF3C').replace(/>>>/g, '\uFF3E\uFF3E\uFF3E').replace(/<</g, '\uFF3C\uFF3C').replace(/>>/g, '\uFF3E\uFF3E');
 }
 
 /**

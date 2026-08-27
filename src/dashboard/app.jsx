@@ -44,9 +44,11 @@ function useSSE(meetingId, onEvent) {
           pollingRef.current = setTimeout(poll, POLLING_FALLBACK_INTERVAL);
           return;
         }
+        const controller = new AbortController();
+        const t = setTimeout(() => controller.abort(), 8000);
         try {
           const timestamp = new Date().toISOString();
-          const cRes = await fetch(`/api/contributions?meeting=${meetingId}&since=${lastPollIdRef.current}&include_context=1`);
+          const cRes = await fetch(`/api/contributions?meeting=${meetingId}&since=${lastPollIdRef.current}&include_context=0`, { signal: controller.signal });
           if (cRes.ok) {
             const contribs = await cRes.json();
             const arr = Array.isArray(contribs) ? contribs : (contribs.contributions ?? []);
@@ -55,32 +57,25 @@ function useSSE(meetingId, onEvent) {
               onEventRef.current({ type: "contributions", data: arr, timestamp });
             }
           }
-          const sRes = await fetch(`/api/state?meeting=${meetingId}`);
+          const [sRes, pRes] = await Promise.all([
+            fetch(`/api/state?meeting=${meetingId}`, { signal: controller.signal }),
+            fetch(`/api/participants?meeting=${meetingId}`, { signal: controller.signal }),
+          ]);
           if (sRes.ok) {
             const sData = await sRes.json();
             onEventRef.current({ type: "state", data: sData, timestamp });
           }
-          const pRes = await fetch(`/api/participants?meeting=${meetingId}`);
           if (pRes.ok) {
             const pData = await pRes.json();
             onEventRef.current({ type: "participants", data: pData, timestamp });
           }
-          try {
-            const mRes = await fetch(`/api/meeting?meeting=${meetingId}&include_context=1&limit=1`);
-            if (mRes.ok) {
-              const mData = await mRes.json();
-              if (mData.round_summaries) onEventRef.current({ type: "round_summaries", data: mData.round_summaries, timestamp });
-              if (mData.artifact) onEventRef.current({ type: "artifact", data: mData.artifact, timestamp });
-              if (mData.orchestrator_messages) onEventRef.current({ type: "orchestrator_messages", data: mData.orchestrator_messages, timestamp });
-              if (mData.turn_requests) onEventRef.current({ type: "turn_requests", data: mData.turn_requests, timestamp });
-              if (mData.agent_errors) {
-                for (const err of mData.agent_errors) onEventRef.current({ type: "agent_error", data: err, timestamp });
-              }
-            }
-          } catch {}
         } catch (err) {
-          setLastError(err.message);
-          window.dispatchEvent(new CustomEvent("loom-sse-error", { detail: { message: err.message, phase: "polling" } }));
+          if (err.name !== "AbortError") {
+            setLastError(err.message);
+            window.dispatchEvent(new CustomEvent("loom-sse-error", { detail: { message: err.message, phase: "polling" } }));
+          }
+        } finally {
+          clearTimeout(t);
         }
         if (!cancelled && fallbackPoll) {
           pollingRef.current = setTimeout(poll, POLLING_FALLBACK_INTERVAL);
@@ -97,7 +92,7 @@ function useSSE(meetingId, onEvent) {
       esRef.current = es;
       es.onopen = () => {
         if (cancelled) return;
-        fetch(`/api/contributions?meeting=${meetingId}&since=${lastPollIdRef.current}&include_context=1`).then(async (r) => {
+        fetch(`/api/contributions?meeting=${meetingId}&since=${lastPollIdRef.current}&include_context=0`).then(async (r) => {
           if (r.ok) {
             const data = await r.json().catch(() => null);
             const arr = Array.isArray(data) ? data : (data?.contributions ?? []);
@@ -309,10 +304,14 @@ export function App() {
     if (!state?.fabric) return;
     const fabric = state.fabric;
     if (!fabric.includes("**Original Question:**")) return;
-    const extensionRegex = /\*\*User Input:\*\*\s*([^\n]+(?:\n(?!\*\*User Input:\*\*)[^\n]*)*)/g;
+    const extensionRegex = /\*\*User Input:\*\*\s*([^\n]*(?:\n(?!\*\*User Input:\*\*)[^\n]*)*)/;
     const found = [];
-    let match;
-    while ((match = extensionRegex.exec(fabric)) !== null) found.push(match[1].trim());
+    for (const part of fabric.split("**User Input:**").slice(1)) {
+      const end = part.indexOf("**");
+      const chunk = end >= 0 ? part.slice(0, end) : part;
+      const trimmed = chunk.trim();
+      if (trimmed) found.push(trimmed);
+    }
     if (found.length > extensions.length) {
       const newExtension = found[found.length - 1];
       setExtensions(found);

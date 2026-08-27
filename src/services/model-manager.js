@@ -42,32 +42,33 @@ let cachedTokenizer = null;
  * vec probing). Falls back to a bare import so local/dev resolution from project
  * node_modules keeps working.
  */
+let depInFlight = new Map();
 async function resolveDep(dep) {
+  if (depInFlight.has(dep)) return depInFlight.get(dep);
   const spec = `"${dep}"`;
-  for (const dir of getDepsDirs()) {
-    try {
-      const req = createRequire(join(dir, ".pkg.js"));
-      return req(dep);
-    } catch {}
-    try {
-      const req2 = createRequire(join(dir, "package.json"));
-      return req2(dep);
-    } catch {}
-  }
-  try {
-    return await import(dep);
-  } catch (importErr) {
-    // Try explicit node_modules fallback for the two known layouts
+  const p = (async () => {
     for (const dir of getDepsDirs()) {
       try {
-        const abs = join(dir, "node_modules", dep);
-        return await import(abs);
+        const req2 = createRequire(join(dir, "package.json"));
+        return req2(dep);
       } catch {}
     }
-    throw new Error(
-      `Cannot load native dependency ${spec}. Install the Loom runtime deps with: npm run install:plugin (details: ${importErr.message})`
-    );
-  }
+    try {
+      return await import(dep);
+    } catch (importErr) {
+      for (const dir of getDepsDirs()) {
+        try {
+          const abs = join(dir, "node_modules", dep);
+          return await import(abs);
+        } catch {}
+      }
+      throw new Error(
+        `Cannot load native dependency ${spec}. Install the Loom runtime deps with: npm run install:plugin (details: ${importErr.message})`
+      );
+    }
+  })();
+  depInFlight.set(dep, p);
+  try { return await p; } catch (e) { depInFlight.delete(dep); throw e; }
 }
 
 async function resolveOnnx() {
@@ -89,11 +90,9 @@ async function resolveTokenizer() {
  * and allow GC or re-init with a different dep dir.
  */
 export function disposeCachedDeps() {
-  // onnxruntime-node and tokenizers have no explicit .dispose(); dropping
-  // the cached module reference is sufficient to let GC reclaim and forces
-  // resolveDep to re-probe on next load.
   cachedOrt = null;
   cachedTokenizer = null;
+  depInFlight.clear();
 }
 
 export const DEFAULT_EMBEDDING_MODEL = "Snowflake/snowflake-arctic-embed-xs";
@@ -134,7 +133,8 @@ export class ModelManager {
       const path = join(this.#modelDir, name, "model.json");
       const data = await readFile(path, "utf-8");
       return JSON.parse(data);
-    } catch {
+    } catch (err) {
+      modelLogger.warn("read_model_json_failed", `Failed to read model.json for ${name}`, extractErrorInfo(err));
       return null;
     }
   }
@@ -230,11 +230,17 @@ export class ModelManager {
 
     const session = await ort.InferenceSession.create(modelPath);
 
-    // Load tokenizer using Bun-native file reading
-    const tokenizerData = await Bun.file(tokenizerPath).json();
+    let tokenizerData;
+    try {
+      if (globalThis.Bun?.file) tokenizerData = await Bun.file(tokenizerPath).json();
+      else tokenizerData = JSON.parse(await readFile(tokenizerPath, "utf-8"));
+    } catch (err) {
+      throw new Error(`Failed to load tokenizer ${tokenizerPath}: ${err.message}`);
+    }
     let tokenizerConfig = {};
     try {
-      tokenizerConfig = await Bun.file(tokenizerConfigPath).json();
+      if (globalThis.Bun?.file) tokenizerConfig = await Bun.file(tokenizerConfigPath).json();
+      else tokenizerConfig = JSON.parse(await readFile(tokenizerConfigPath, "utf-8"));
     } catch {
       // tokenizer_config.json is optional
     }
@@ -245,11 +251,15 @@ export class ModelManager {
     // files keep working.
     const meta = normalizeModelMeta(modelJson, name);
 
+    const dims = Number.isFinite(modelJson.dims) && modelJson.dims >=64 && modelJson.dims <=2048 && Math.floor(modelJson.dims)===modelJson.dims ? modelJson.dims : 384;
+    const maxTokens = Number.isFinite(modelJson.maxTokens) && modelJson.maxTokens >=32 && modelJson.maxTokens <=8192 && Math.floor(modelJson.maxTokens)===modelJson.maxTokens ? modelJson.maxTokens : 512;
+    if (dims !== modelJson.dims) modelLogger.warn("model_dims_clamped", `Invalid dims ${modelJson.dims} → ${dims} for ${name}`);
+    if (maxTokens !== modelJson.maxTokens) modelLogger.warn("model_max_tokens_clamped", `Invalid maxTokens ${modelJson.maxTokens} → ${maxTokens} for ${name}`);
     return {
       session,
       tokenizer,
-      dims: modelJson.dims,
-      maxTokens: modelJson.maxTokens,
+      dims,
+      maxTokens,
       meta,
     };
   }

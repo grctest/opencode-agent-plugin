@@ -1,18 +1,15 @@
 /**
- * MeetingOrchestrator — composition root (Phase 3 audit).
+ * MeetingOrchestrator — composition root (Phase 4).
  *
- * Composition: this class is the single owner of meeting state/services and
- * delegates behavior to focused helpers under src/orchestrator/ (weaving,
- * round, synthesis, models, init) plus services/. Helpers are currently
- * mixed in via thin `apply(this)` forwarders so `this` stays the orchestrator
- * instance (explicit dependency injection via args is the intended future —
- * see weaving/round helpers receiving stateManager/database/etc. directly).
- * This header documents the intended decomposition; the forwarder pattern is
- * retained for minimal-risk Phase 3.
+ * Delegates to focused helpers under src/orchestrator/* and services/*. Thin
+ * forwarders use explicit `this` binding; helpers are pure functions imported
+ * and called with orchestrator context. Future explicit DI (passing services
+ * as args) remains documented but current forwarder is minimal-risk.
  *
- * Constants (SUMMARY_TRUNCATE_LEN / MAX_ORCHESTRATOR_MESSAGES) are now
- * canonical here; src/orchestrator/constants.js re-exports them for
- * backward compat. Deadline logic is centralized in TimeBudget.
+ * Constants (SUMMARY_TRUNCATE_LEN / MAX_ORCHESTRATOR_MESSAGES) are canonical
+ * here; src/orchestrator/constants.js re-exports them for backward compat.
+ * Deadline logic is centralized in TimeBudget; legacy _remainingMs fallback is
+ * deprecated and delegates to TimeBudget when present.
  */
 
 import { getTierConfig } from "./shared.js";
@@ -32,7 +29,7 @@ import { PersistenceService } from "./services/persistence-service.js";
 import { ModeratorService } from "./services/moderator-service.js";
 
 import { SynthesisCoordinator } from "./synthesis-coordinator.js";
-import { updateStateOfPlay } from "./fabric-manager.js";
+import { updateStateOfPlay } from "./state-of-play.js";
 import { RoundService } from "./services/round-service.js";
 import { RoundExecutor } from "./round-executor.js";
 import { StallWatchdog } from "./services/stall-watchdog.js";
@@ -190,6 +187,8 @@ export class MeetingOrchestrator {
   }
 
     async close() {
+    this._cancelled = true;
+    try { this._stallWatchdog?.stop(); } catch {}
     try {
       if (this._sessionManager) {
         try { await this._sessionManager.deleteOrchestratorSession(); } catch {}
@@ -200,8 +199,6 @@ export class MeetingOrchestrator {
       }
     } catch (err) {
       this._logger.error("close_failed", "Failed to close database", extractErrorInfo(err));
-    } finally {
-      try { this._stallWatchdog?.stop(); } catch {}
     }
   }
 

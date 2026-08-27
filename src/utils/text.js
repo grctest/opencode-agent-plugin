@@ -190,9 +190,9 @@ export function extractAgentResponse(data) {
 export function extractFileBlockTools(text) {
   if (!text || typeof text !== "string") return [];
   const tools = [];
-  // Matches ```<lang> file=<path>  up to newline, then code until ```
-  // Example: ```js file=src/fizzbuzz-classic.js\nfunction ...``` 
-  const fenceRe = /```[^\n]*\bfile\s*=\s*([^\s`"\n]+)[^\n]*\n([\s\S]*?)```/g;
+  // Matches ```<lang> file=<path> up to newline, then code until ```
+  // Example: ```js file=src/fizzbuzz-classic.js\nfunction ...``` — strip trailing :42 line suffix
+  const fenceRe = /```[^\n]*\bfile\s*=\s*([^\s`"\n:]+)(?::\d+)?[^\n]*\n([\s\S]*?)```/g;
   let m;
   let idx = 0;
   const seen = new Set();
@@ -221,16 +221,16 @@ export function truncate(text, max) {
   return cleaned.slice(0, max - 3) + "...";
 }
 
-/** Safe JSON.stringify — never throws; falls back to inspected string on circular/BigInt. */
+/** Safe JSON.stringify — never throws; handles BigInt in nested objects. */
 function safeStringify(value) {
   if (value == null) return null;
   try {
-    return JSON.stringify(value);
+    return JSON.stringify(value, (k, v) => typeof v === "bigint" ? String(v) : v);
   } catch {
     try {
-      return String(value);
+      return JSON.stringify(value, (k, v) => typeof v === "bigint" ? String(v) : v);
     } catch {
-      return "[unserializable]";
+      try { return String(value); } catch { return "[unserializable]"; }
     }
   }
 }

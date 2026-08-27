@@ -38,8 +38,6 @@ export class StateManager {
   }
 
   getState() {
-    // Deep-freeze projections — callers must never mutate meeting state (audit 05 LS4).
-    // Copies are frozen, not the live internals, so internal mutation paths keep working.
     const deepFreeze = (value) => {
       if (value === null || typeof value !== "object") return value;
       if (Object.isFrozen(value)) return value;
@@ -50,6 +48,11 @@ export class StateManager {
         }
       }
       return Object.freeze(value);
+    };
+    const frozenParticipant = (p) => {
+      const cfg = p.config && typeof p.config === "object" ? deepFreeze(structuredClone(p.config)) : p.config;
+      const tierCfg = p.tier_config && typeof p.tier_config === "object" ? Object.freeze({ ...p.tier_config }) : p.tier_config;
+      return Object.freeze({ ...p, config: cfg, tier_config: tierCfg });
     };
     const frozenCopy = (v) => {
       if (v === null || typeof v !== "object") return v;
@@ -63,7 +66,7 @@ export class StateManager {
     };
     return Object.freeze({
       ...this.#state,
-      participants: Object.freeze(this.#state.participants.map((p) => Object.freeze({ ...p }))),
+      participants: Object.freeze(this.#state.participants.map((p) => frozenParticipant(p))),
       weave: Object.freeze([...this.#state.weave]),
       rounds: Object.freeze(this.#state.rounds.map((r) => Object.freeze({ ...r }))),
       artifact: this.#state.artifact ? frozenCopy(this.#state.artifact) : this.#state.artifact,
@@ -133,6 +136,10 @@ export class StateManager {
 
   getContext() {
     return this.#state.context;
+  }
+
+  setContext(ctx) {
+    this.#state.context = ctx ?? "";
   }
 
   getTags() {

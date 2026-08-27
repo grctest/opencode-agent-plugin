@@ -40,7 +40,7 @@ export function createVectorSearchTool({ config, resolveMeeting }) {
       const vectorIndex = new VectorIndex(db);
 
       try {
-        const topK = Math.min(args.top_k || 5, 10);
+        const topK = Math.min(args.top_k || 5, 20);
         const results = await vectorIndex.retrieveRelevant(args.query, topK, args.exclude_round);
 
         const formattedResults = results.map((r) => ({

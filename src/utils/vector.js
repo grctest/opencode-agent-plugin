@@ -11,14 +11,16 @@
  * @returns {number}
  */
 export function cosineSimilarity(a, b) {
-  if (!a || !b || a.length !== b.length) return -1;
+  if (!a || !b || a.length !== b.length) return NaN;
   let dot = 0;
   let normA = 0;
   let normB = 0;
   for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
+    const av = a[i], bv = b[i];
+    if (!Number.isFinite(av) || !Number.isFinite(bv)) return NaN;
+    dot += av * bv;
+    normA += av * av;
+    normB += bv * bv;
   }
   const denom = Math.sqrt(normA) * Math.sqrt(normB);
   return denom === 0 ? 0 : dot / denom;
@@ -37,6 +39,7 @@ export function findMostSimilar(query, candidates, excludeId = null) {
   for (const c of candidates) {
     if (c.id === excludeId || !c.embedding) continue;
     const sim = cosineSimilarity(query, c.embedding);
+    if (!Number.isFinite(sim)) continue;
     if (!best || sim > best.similarity) {
       best = { id: c.id, similarity: sim };
     }

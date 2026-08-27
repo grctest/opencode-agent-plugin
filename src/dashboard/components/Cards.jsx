@@ -10,6 +10,7 @@ import { Spinner } from "./ui/spinner.tsx";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./ui/dialog.tsx";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip.tsx";
 import { ScrollArea } from "./ui/scroll-area.tsx";
+import { ChevronRightIcon } from "lucide-react";
 
 marked.setOptions({ breaks: true, gfm: true });
 
@@ -20,11 +21,12 @@ export function renderMarkdown(content) {
   const cached = mdCache.get(content);
   if (cached !== undefined) return cached;
   const raw = marked.parse(content, { async: false });
-  const sanitized = DOMPurify.sanitize(raw, { USE_PROFILES: { html: true } });
+  const sanitized = DOMPurify.sanitize(raw, { FORBID_TAGS: ["svg", "math", "style", "script", "iframe", "object", "embed"] });
   mdCache.set(content, sanitized);
-  if (mdCache.size > 200) {
+  while (mdCache.size > 200) {
     const firstKey = mdCache.keys().next().value;
     mdCache.delete(firstKey);
+    if (mdCache.size <= 150) break;
   }
   return sanitized;
 }
@@ -227,30 +229,22 @@ export const ReflectionInline = memo(({ reflection, contributions, participantNa
 });
 
 export const BaseResponseRow = memo(({ contribution, header, badgeLabel, badgeVariant, strippedRegex, borderClass, onDialogOpen, dialogPayload }) => {
-  const content = contribution.content ?? "";
-  const stripped = useMemo(() => content.replace(strippedRegex, ""), [content, strippedRegex]);
-  const isLong = stripped.length > 300;
-  const html = useMemo(() => renderMarkdown(stripped), [stripped]);
   const openDialog = () => onDialogOpen?.({ contribution, ...dialogPayload });
   return (
     <Card
-      className={cn("py-2 px-3 gap-2 border-l-2 cursor-pointer hover:bg-accent/50", borderClass)}
+      className={cn("py-2.5 px-3 gap-0 border-l-2 cursor-pointer hover:bg-accent/50 flex flex-col justify-center", borderClass)}
       onClick={openDialog}
       role="button"
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDialog(); } }}
     >
-      <div className="flex flex-wrap gap-2 items-center">
-        <span className="text-xs">{header}</span>
-        <span className="ml-auto"><Badge variant={badgeVariant}>{badgeLabel}</Badge></span>
+      <div className="flex flex-wrap gap-2 items-center w-full">
+        <span className="text-xs leading-none flex-1 min-w-0 truncate">{header}</span>
+        <span className="ml-auto flex items-center gap-2 shrink-0">
+          <Badge variant={badgeVariant} className="text-[10px] px-1.5 py-0 h-4">{badgeLabel}</Badge>
+          <ChevronRightIcon className="size-3 text-muted-foreground/60" />
+        </span>
       </div>
-      {isLong ? (
-        <p className="text-sm text-muted-foreground line-clamp-3">{stripped.slice(0, 300)}...</p>
-      ) : (
-        <div className="typeset typeset-docs max-w-none w-full">
-          <div dangerouslySetInnerHTML={{ __html: html }} />
-        </div>
-      )}
     </Card>
   );
 });
@@ -361,32 +355,22 @@ export const VoteResponseRow = memo(({ voteResponse, contributions, participantN
 
 export const VoteTallyRow = memo(({ tally, participantName, onDialogOpen }) => {
   const orchestratorName = participantName(tally.participant_id);
-  const content = tally.content ?? "";
-  const stripped = useMemo(() => content.replace(/^\[Vote Tally\]\s*/m, ""), [content]);
-  const isLong = stripped.length > 300;
-  const hasTools = (tally.tool_calls ?? []).length > 0;
-  const clickable = isLong || hasTools;
-  const html = useMemo(() => renderMarkdown(stripped), [stripped]);
   const openDialog = () => onDialogOpen?.({ contribution: tally, participantName: orchestratorName, isVoteTally: true });
   return (
     <Card
-      className={cn("py-2 px-3 gap-2 border-l-2 border-l-[var(--badge-orange-light)] bg-[color-mix(in_oklch,var(--badge-orange-light)_4%,var(--card))]", clickable && "cursor-pointer hover:bg-accent/50")}
-      onClick={clickable ? openDialog : undefined}
-      role={clickable ? "button" : undefined}
-      tabIndex={clickable ? 0 : undefined}
-      onKeyDown={clickable ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDialog(); } } : undefined}
+      className={cn("py-2.5 px-3 gap-0 border-l-2 border-l-[var(--badge-orange-light)] bg-[color-mix(in_oklch,var(--badge-orange-light)_4%,var(--card))] cursor-pointer hover:bg-accent/50 flex flex-col justify-center")}
+      onClick={openDialog}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDialog(); } }}
     >
-      <div className="flex flex-wrap gap-2 items-center">
-        <span className="text-xs"><span className="font-bold">{orchestratorName}</span> <span className="text-muted-foreground">tally</span></span>
-        <span className="ml-auto"><Badge variant="vote_tally">tally</Badge></span>
+      <div className="flex flex-wrap gap-2 items-center w-full">
+        <span className="text-xs leading-none flex-1 min-w-0 truncate"><span className="font-bold">{orchestratorName}</span> <span className="text-muted-foreground">tally</span></span>
+        <span className="ml-auto flex items-center gap-2 shrink-0">
+          <Badge variant="vote_tally" className="text-[10px] px-1.5 py-0 h-4">tally</Badge>
+          <ChevronRightIcon className="size-3 text-muted-foreground/60" />
+        </span>
       </div>
-      {isLong ? (
-        <p className="text-sm text-muted-foreground line-clamp-3">{stripped.slice(0, 300)}...</p>
-      ) : (
-        <div className="typeset typeset-docs max-w-none w-full">
-          <div dangerouslySetInnerHTML={{ __html: html }} />
-        </div>
-      )}
     </Card>
   );
 });

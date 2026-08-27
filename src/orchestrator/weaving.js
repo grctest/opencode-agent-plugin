@@ -35,38 +35,52 @@ export async function runMeeting() {
       sessionManager: this._sessionManager,
       newPrompt,
     });
-
+    // Also index the extension prompt itself for RAG (otherwise next round's retrieve misses it)
+    try {
+      const { sanitizeForPrompt } = await import("../utils/sanitize.js");
+      const safe = sanitizeForPrompt(newPrompt ?? "", 8000);
+      if (safe) await this._vectorIndex.indexContext(safe).catch(()=>{});
+    } catch {}
+    // Ensure watchdog is (re)started even if extend threw — finally guarantees stop/start symmetry
     this._stallWatchdog.start(
       () => this._stateManager.getStatus(),
       () => this._cancelled,
     );
+    let output;
     try {
       await this._runWeavingLoop();
+      output = await this._synthesize();
     } finally {
       this._stallWatchdog.stop();
     }
-    const output = await this._synthesize();
     return output;
   }
 
 export async function _runWeavingLoop() {
     let continueWeaving = true;
+    let iterations = 0;
+    const MAX_ITERATIONS = 100;
     while (continueWeaving) {
+      if (++iterations > MAX_ITERATIONS) {
+        this._logger.error("weaving_loop_guard", `Weaving loop exceeded ${MAX_ITERATIONS} iterations — forcing timeout (possible max_rounds corruption)`);
+        this._stateManager.transitionTo("timeout");
+        break;
+      }
       if (this._cancelled) {
         const terminal = this._stallWatchdog.stallCancelled ? "timeout" : "cancelled";
         this._stateManager.transitionTo(terminal);
-        await this._sessionManager.postProgress(
+        try { await this._sessionManager.postProgress(
           this._stallWatchdog.stallCancelled
             ? "⏱️ Loom stopped due to no activity — generating output from collected contributions."
             : "🛑 Loom cancelled by user."
-        );
+        ); } catch {}
         this._logger.info(this._stallWatchdog.stallCancelled ? "stall_timeout" : "cancelled", "Meeting stopped before weaving loop completed");
         break;
       }
 
       if (this._remainingMs() <= 0) {
         this._stateManager.transitionTo("timeout");
-        await this._sessionManager.postProgress("⏱️ Loom timed out — generating output from collected contributions.", "warn");
+        try { await this._sessionManager.postProgress("⏱️ Loom timed out — generating output from collected contributions.", "warn"); } catch {}
         this._logger.warn("timeout", "Meeting timed out", { elapsed: Date.now() - this._startTime, limit: this._meetingTimeoutMs });
         break;
       }
@@ -76,9 +90,10 @@ export async function _runWeavingLoop() {
       if (continueWeaving && this._tokenBudgetExceeded()) {
         this._stateManager.transitionTo("timeout");
         const spent = (this._callStats.input_tokens ?? 0) + (this._callStats.output_tokens ?? 0);
-        await this._sessionManager.postProgress(`💰 Token budget reached (${spent} ≥ ${this._maxTotalTokens}) — ending deliberation and generating output.`, "warn");
+        try { await this._sessionManager.postProgress(`💰 Token budget reached (${spent} ≥ ${this._maxTotalTokens}) — ending deliberation and generating output.`, "warn"); } catch {}
         break;
       }
+      if (continueWeaving) await new Promise((r) => setImmediate(r));
     }
   }
 
@@ -90,13 +105,18 @@ export async function _runWeavingLoop() {
 
   export function _remainingMs() {
     if (this._timeBudget) {
-      return this._timeBudget.remainingMs();
+      try { return this._timeBudget.remainingMs(); } catch { /* fallback */ }
+      // Fallback to clock-aware if timeBudget clock differs
+      if (typeof this._timeBudget.clock === "function") {
+        try { return this._timeBudget.remainingMs(); } catch {}
+      }
     }
     if (!this._meetingTimeoutMs || this._meetingTimeoutMs <= 0) return Infinity;
     return this._startTime + this._meetingTimeoutMs - Date.now();
   }
 
 export function _raceWithGuardTimer(promise, timeoutMs, label) {
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error(`${label}: invalid timeout ${timeoutMs}`);
     let timer;
     const timeoutPromise = new Promise((_, reject) => {
       timer = setTimeout(() => reject(new Error(`${label} timeout after ${timeoutMs}ms`)), timeoutMs);

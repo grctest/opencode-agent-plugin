@@ -10,7 +10,8 @@ function analyzeQuestionComplexity(question) {
   if (typeof question !== 'string' || question.trim().length === 0) return "low";
   const wordCount = question.trim().split(/\s+/).filter(Boolean).length;
   const questionMarks = (question.match(/\?/g) || []).length;
-  const hasMultipleDimensions = /\b(and|or|vs|versus|compare|tradeoff|pros\.?cons|advantages\.?disadvantages)\b/i.test(question);
+  const andCount = (question.match(/\band\b/gi) || []).length;
+  const hasMultipleDimensions = andCount > 2 || /\b(or|vs|versus|compare|tradeoff|pros\.?cons|advantages\.?disadvantages)\b/i.test(question);
   const hasConditionals = /\b(if|when|assuming|given that|depending on|considering)\b/i.test(question);
   const hasStakeholders = /\b(team|customer|user|client|stakeholder|executive|leadership|board)\b/i.test(question);
 
@@ -28,12 +29,12 @@ function analyzeQuestionComplexity(question) {
 
 function generateRolesFromComplexity(count, complexity) {
   const seniorityBoost = complexity === "high" ? 1 : complexity === "medium" ? 0 : -1;
-
-  // Civilian inclusion (audit 03 PC1): low/medium-complexity rooms get one
-  // generalist civilian seat so the 40-persona civilian tier is auto-reachable.
-  // utils/tier.js already ranks civilian as mid-equivalent.
   if (count <= 3) {
-    return applySeniorityBoost(["mid", "civilian", "junior"], seniorityBoost);
+    const base = ["mid", "civilian", "junior"];
+    const boosted = applySeniorityBoost(base, seniorityBoost);
+    // Avoid duplicate junior after downgrade
+    if (boosted[0] === boosted[2]) boosted[0] = "mid";
+    return boosted;
   } else if (count <= 5) {
     return applySeniorityBoost(["senior", "mid", "civilian", "junior", "junior"], seniorityBoost);
   } else {
@@ -57,7 +58,9 @@ function applySeniorityBoost(roles, boost) {
 function deriveTags(participants) {
   const tagCounts = {};
   for (const p of participants) {
-    for (const t of (p.tags || [])) {
+    for (const raw of (p.tags || [])) {
+      const t = String(raw).trim().toLowerCase();
+      if (!t) continue;
       tagCounts[t] = (tagCounts[t] || 0) + 1;
     }
   }
@@ -109,31 +112,30 @@ export async function composeRoomWithSimilarity(question, database) {
   const complexity = analyzeQuestionComplexity(question);
   const count = Math.max(2, Math.min(7, getDefaultCount(complexity)));
   let roles = generateRolesFromComplexity(count, complexity);
-  // Tier availability guard — degrade principals if not enough personas of that tier
+  // Tier availability guard — cascade through fallback chain
+  const originalRoles = [...roles];
   try {
     const tierCounts = Object.fromEntries(Object.entries(personas).map(([t, arr]) => [t, arr.length]));
-    const need = {};
-    for (const r of roles) need[r] = (need[r] || 0) + 1;
-    for (const tier of Object.keys(need)) {
-      if ((tierCounts[tier] ?? 0) < need[tier]) {
-        const deficit = need[tier] - (tierCounts[tier] ?? 0);
-        composerLogger.warn("tier_starved", `Not enough ${tier} personas (${tierCounts[tier] ?? 0} < ${need[tier]}) — degrading ${deficit} to senior/mid`);
-        // Replace deficit occurrences of this tier with fallback tier that has capacity
-        let replaced = 0;
-        for (let i = 0; i < roles.length && replaced < deficit; i++) {
-          if (roles[i] === tier) {
-            const fallbacks = ["principal", "senior", "mid", "junior"];
-            // Find highest tier with remaining capacity not equal to original tier
-            let fallback = tier === "principal" ? "senior" : tier === "senior" ? "mid" : "junior";
-            // Ensure fallback has free slots
-            const fallbackUsed = roles.filter((r) => r === fallback).length;
-            if ((tierCounts[fallback] ?? 0) > fallbackUsed) {
-              roles[i] = fallback;
-              replaced++;
-            }
-          }
+    const chain = ["principal", "senior", "mid", "junior", "civilian"];
+    for (const tier of Object.keys(Object.fromEntries(roles.map(r=>[r,1])))) {
+      const need = roles.filter(r=>r===tier).length;
+      if ((tierCounts[tier] ?? 0) >= need) continue;
+      let deficit = need - (tierCounts[tier] ?? 0);
+      composerLogger.warn("tier_starved", `Not enough ${tier} personas (${tierCounts[tier] ?? 0} < ${need}) — cascading ${deficit} to fallback chain`);
+      // Walk roles and replace one at a time, picking best available fallback with capacity
+      for (let i = 0; i < roles.length && deficit > 0; i++) {
+        if (roles[i] !== tier) continue;
+        let picked = null;
+        for (const fb of chain) {
+          if (fb === tier) continue;
+          const used = roles.filter(r=>r===fb).length;
+          if ((tierCounts[fb] ?? 0) > used) { picked = fb; break; }
         }
+        if (picked) { roles[i] = picked; deficit--; }
       }
+    }
+    if (roles.some((r,i)=>r!==originalRoles[i])) {
+      composerLogger.info("tier_starved_resolved", `Roles degraded ${originalRoles.join(",")} → ${roles.join(",")}`);
     }
   } catch {}
 
@@ -245,6 +247,13 @@ function composeRoomByKeyword(question, personas, roles, complexity, count, used
     };
   }
   const tokens = question.toLowerCase().split(/\W+/).filter((t) => t.length > 1);
+  let maxDistance = 0.85;
+  try {
+    const configured = getConfig()?.composition?.maxCosineDistance;
+    if (Number.isFinite(configured) && configured > 0 && configured < 2) maxDistance = configured;
+  } catch {}
+  // Keyword relevance floor: low-score candidates are off-topic — skip seat (threshold scales with maxDistance)
+  const minScore = Math.max(1, Math.floor(2 * (1 - maxDistance + 0.15)));
 
   for (const tier of roles) {
     const tierPool = personas[tier] ?? [];
@@ -255,10 +264,18 @@ function composeRoomByKeyword(question, personas, roles, complexity, count, used
       }))
       .sort((a, b) => b.score - a.score || a.persona.name.localeCompare(b.persona.name));
 
-    const candidate = scored.find(({ persona }) => !used.has(persona.name));
+    const candidate = scored.find(({ persona, score }) => !used.has(persona.name) && score >= minScore);
     if (candidate) {
       used.add(candidate.persona.name);
       participants.push(buildParticipant(candidate.persona, tier, String(participants.length)));
+    } else {
+      const fallback = scored.find(({ persona }) => !used.has(persona.name));
+      if (fallback && tier !== "civilian") {
+        composerLogger.info("compose_keyword_no_relevant", `No ${tier} candidate with score ≥${minScore} — skipping seat (relevance floor)`);
+      } else if (fallback) {
+        used.add(fallback.persona.name);
+        participants.push(buildParticipant(fallback.persona, tier, String(participants.length)));
+      }
     }
   }
 
@@ -279,14 +296,16 @@ function scorePersonaForQuestion(persona, tokens, questionText = "") {
   const tags = getPersonaTags(persona);
   const expertise = Array.isArray(persona.expertise) ? persona.expertise : [];
   const haystack = [...tags, ...expertise].join(" ").toLowerCase();
+  const personaText = `${persona.persona ?? ""} ${persona.agenda ?? ""}`.toLowerCase();
+  // Cap tokens and pre-escape to avoid ReDoS on 5k-char question
+  const cappedTokens = tokens.length > 200 ? tokens.slice(0, 200) : tokens;
   let score = 0;
-  // Word-boundary matching (audit 13 PC5): a raw `includes(token)` matched
-  // inside unrelated words ("art" in "particle"), inflating weak scores.
-  for (const token of tokens) {
-    const re = new RegExp(`\\b${token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
+  for (const token of cappedTokens) {
+    if (token.length < 2) continue;
+    const esc = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (esc.length > 30) continue;
+    const re = new RegExp(`\\b${esc}\\b`);
     if (re.test(haystack)) score++;
-    // title/agenda matches count double
-    const personaText = `${persona.persona ?? ""} ${persona.agenda ?? ""}`.toLowerCase();
     if (re.test(personaText)) score += 2;
   }
   // Domain vocabulary boost (audit 13 PC4): domains.json is now wired into the

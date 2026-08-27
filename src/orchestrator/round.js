@@ -1,6 +1,6 @@
 import { getConfig } from "../config.js";
 import { LoomError, extractErrorInfo } from "../logger.js";
-import { updateStateOfPlay } from "../fabric-manager.js";
+import { updateStateOfPlay } from "../state-of-play.js";
 import { truncate } from "../shared.js";
 import { SUMMARY_TRUNCATE_LEN } from "./constants.js";
 // TimeBudget is owned by MeetingOrchestrator; round helpers use this._timeBudget when available (Phase 3 centralization)
@@ -164,17 +164,19 @@ export async function _finalizeRound(updatedRound) {
         return false;
       }
 
-      // Contribution-mix steering (audit 01 E3): if last round was pure
-      // conflict with no consolidation, nudge the next round toward synthesis.
-      // Cheap, prompt-level, no new LLM calls — measured by PV5 telemetry.
-      const typeCounts = {};
-      for (const c of (updatedRound.contributions || [])) {
-        typeCounts[c.type] = (typeCounts[c.type] || 0) + 1;
-      }
-      if ((typeCounts.challenge || 0) + (typeCounts.dissent || 0) >= 3 && !typeCounts.synthesize) {
-        this._stateManager.setNextRoundSteering(
-          "Steering note for the next speaker: last round had multiple challenges/dissents with no synthesis. Please consolidate positions above — cite [_id] — before opening a new challenge."
-        );
+      // Unified challenge-like detection that also handles contribution-type prose (keyword fallback)
+      const isChallengeLikeContent = (c) => {
+        if (c.type === "challenge" || c.type === "dissent" || c.type === "critique_response") return true;
+        return /\b(challenge|dissent|disagree|concern|oppose|dispute|contradict|risk|flaw|weakness)\b/i.test(String(c.content ?? ""));
+      };
+      const challengeLikeCount = updatedRound.contributions.filter(isChallengeLikeContent).length;
+      if (challengeLikeCount >= 3) {
+        const hasSynthesis = updatedRound.contributions.some(c => c.type === "synthesize" || /synthesi/i.test(String(c.content ?? "")));
+        if (!hasSynthesis) {
+          this._stateManager.setNextRoundSteering(
+            "Steering note for the next speaker: last round had multiple disagreements with no consolidation. Please synthesize positions — cite [#id] — before opening a new challenge."
+          );
+        }
       }
 
       await this._persistState();
@@ -211,15 +213,16 @@ export async function _finalizeRound(updatedRound) {
 
 export function _isPersistenceError(err) {
     if (!(err instanceof Error)) return false;
+    const code = String(err.code || "");
+    if (code === "SQLITE_BUSY" || code === "SQLITE_BUSY_SNAPSHOT" || code === "SQLITE_READONLY" || code === "EACCES" || code === "SQLITE_IOERR") return true;
     const msg = String(err.message || "").toLowerCase();
     return (
-      msg.includes("sqlite") ||
-      msg.includes("database") ||
+      /^sqlite/.test(msg) ||
+      msg.includes("sqlite_busy") ||
+      msg.includes("database is locked") ||
+      msg.includes("database is busy") ||
       msg.includes("disk i/o") ||
-      msg.includes("readonly") ||
-      err.code === "SQLITE_BUSY" ||
-      err.code === "SQLITE_READONLY" ||
-      err.code === "EACCES"
+      msg.includes("readonly")
     );
   }
 

@@ -16,13 +16,14 @@ export function collectObjections({ rounds, participants }) {
     const challenges = round.contributions.filter((c) => c.type === "challenge" || c.type === "dissent");
     for (const c of challenges) {
       const p = participants.find((pp) => pp.config.id === c.participant_id);
-      const key = `${c.participant_id}:${round.number}`;
-      const existing = objections.find((o) => `${o.participant_id}:${o.round}` === key);
+      const key = `${c.id}`;
+      const existing = objections.find((o) => o.id === c.id);
       if (existing) {
         existing.content = `${p?.config.name ?? c.participant_id}: ${c.content}`;
         existing.unresolved = true;
       } else {
         objections.push({
+          id: c.id,
           participant_id: c.participant_id,
           content: `${p?.config.name ?? c.participant_id}: ${c.content}`,
           round: round.number,

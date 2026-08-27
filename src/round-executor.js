@@ -11,6 +11,7 @@ import { selectFallbackModel } from "./services/model-service.js";
 import { incrementKeyedCounter, recordLatency } from "./metrics.js";
 import { extractVoteLetter, buildTally } from "./utils/vote-tally.js";
 import { degrade } from "./utils/degrade.js";
+import { randomUUID } from "node:crypto";
 import { executeQueries as executeQueriesHelper, executeEvidenceRequests as executeEvidenceRequestsHelper } from "./round-executor/interactions/query-evidence.js";
 import { executeSummons as executeSummonsHelper, executeVote as executeVoteHelper } from "./round-executor/interactions/summon-vote.js";
 import { promptChildSession as promptChildSessionHelper, executeAgentTurn as executeAgentTurnHelper, recordFallbackFailure as recordFallbackFailureHelper } from "./round-executor/agent-turn.js";
@@ -80,6 +81,7 @@ export class RoundExecutor {
   }
 
   _modelKey(model) {
+    if (!model?.providerID || !model?.modelID) return "unknown";
     return `${model.providerID}/${model.modelID}`;
   }
 
@@ -128,8 +130,22 @@ export class RoundExecutor {
       for (const entry of creates) {
         if (entry) this._roundSessionIds.set(entry[0], entry[1]);
       }
-      if (this._roundSessionIds.size === 0) this._roundSessionIds = null;
+       if (this._roundSessionIds.size === 0) {
+        // Clean up any partially created sessions before discarding map
+        for (const sid of this._roundSessionIds.values()) {
+          try { this._sessionManager.unregisterSession(sid); } catch {}
+          try { this._options.deleteEphemeralSession(sid).catch(() => {}); } catch {}
+        }
+        this._roundSessionIds = null;
+      }
     } catch {
+      // Ensure partial sessions are cleaned on exception
+      if (this._roundSessionIds) {
+        for (const sid of this._roundSessionIds.values()) {
+          try { this._sessionManager.unregisterSession(sid); } catch {}
+          try { this._options.deleteEphemeralSession(sid).catch(() => {}); } catch {}
+        }
+      }
       this._roundSessionIds = null;
     }
     try {
@@ -139,7 +155,7 @@ export class RoundExecutor {
         this._options.onProgress?.(`⏱️ Deadline reached — skipping remaining ${remainingSpeakers.length} speakers`);
         break;
       }
-      const batchId = crypto.randomUUID();
+      const batchId = randomUUID();
       const p = remainingSpeakers.shift();
       p.currentBatchId = batchId;
       this._turnOrder.push(p.config.id);
@@ -190,7 +206,7 @@ export class RoundExecutor {
           content: "[PASS]",
           type: "propose",
           targets_which: null,
-          batch_id: p.currentBatchId ?? crypto.randomUUID(),
+          batch_id: p.currentBatchId ?? randomUUID(),
           tool_calls: result.tool_calls,
           prompt_context: result.prompt_context ?? null,
           created_at: new Date().toISOString(),
@@ -260,7 +276,7 @@ export class RoundExecutor {
   _storeContribution(participant, result, round) {
     const id = this._stateManager.nextContributionId();
     const safeContent = sanitizeAgentOutput(result.content);
-    const batchId = participant.currentBatchId ?? crypto.randomUUID();
+    const batchId = participant.currentBatchId ?? randomUUID();
     const contribution = {
       id,
       round: this._stateManager.getCurrentRound(),
@@ -305,6 +321,7 @@ export class RoundExecutor {
     } catch (err) {
       const info = extractErrorInfo(err);
       this._logger.error("contribution_db_failed", `Failed to persist ${result.type} for ${participant.config.name} — visible in memory only this session; meeting continues`, info);
+      try { this._db.setPersistenceDegraded(true); } catch {}
       try {
         this._db.recordAgentError(
           this._stateManager.getMeetingId(), participant.config.id, this._stateManager.getCurrentRound(),

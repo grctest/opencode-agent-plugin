@@ -4,7 +4,7 @@ import { getDatabasesBySessionId, deleteMeetingFiles, deleteMeetingsBySessionId 
 import { resolveLoomBaseDir } from "../paths.js";
 
 export const PROGRESS_PATTERN =
-  /^🎬|^⚠️|^ℹ️|is thinking\.\.\.|— synthesize:|— critique:|Round \d+ (complete|starting)|Synthesizing final output|✅ Completed|❌ Error:/;
+  /^\[info\] (?:🎬|⚠️|ℹ️|is thinking\.\.\.|— synthesize:|— critique:|Round \d+ (?:complete|starting)|Synthesizing final output|✅ Completed|❌ Error:)/;
 
 const TOOL_REQUIRED_OVERRIDES = {
   knit: ["question"],
@@ -39,17 +39,15 @@ event: async ({ event }) => {
 
     "tool.execute.after": async (input, output) => {
       if (input.tool !== "knit") return;
-
       const meetingId = output.metadata?.meeting_id;
       if (!meetingId) return;
-
       if (output.metadata?.loom_status === "error") return;
-
       try {
         const baseDir = resolveLoomBaseDir(directory);
         const filePath = join(baseDir, "meetings", `${meetingId}.md`);
+        if (!existsSync(filePath)) return;
         const fullReport = readFileSync(filePath, "utf-8");
-
+        if (!fullReport) return;
         output.output =
           "Relay the following deliberation output to the user exactly as written. " +
           "Do not summarize, abbreviate, or reformat it. " +

@@ -50,16 +50,18 @@ export async function initializeEmbedder(modelName, quant = "onnx/model_int8.onn
  * @returns {Promise<void>}
  */
 export async function ensureEmbedderInitialized(modelName, quant = "onnx/model_int8.onnx", projectRoot) {
-  if (initInFlight) return initInFlight.promise;
-  // Key-aware init (audit 06 V3): a mismatched already-loaded model must be
-  // reloaded loudly rather than silently no-op'd.
+  if (initInFlight) {
+    if (initInFlight.modelName === modelName && initInFlight.quant === quant) return initInFlight.promise;
+    // Different model requested while another loads — let it finish then reload
+    try { await initInFlight.promise; } catch {}
+  }
   if (currentModel) {
     if (currentModel.name === modelName && currentModel.quant === quant) return;
     embedLogger.warn(
       "embedder_model_mismatch",
       `Embedding service already loaded ${currentModel.name} but ${modelName} was requested — reloading`,
     );
-    currentModel = null;
+    // Keep old model until new one succeeds (no null gap where isEmbedderInitialized() spuriously false)
   }
   return initializeEmbedder(modelName, quant, projectRoot);
 }
@@ -68,12 +70,28 @@ async function doInitialize(modelName, quant, projectRoot) {
   const manager = new ModelManager(projectRoot);
 
   const { session, tokenizer, dims, maxTokens, meta } = await manager.loadModel(modelName, quant);
-  currentModel = { name: modelName, quant, session, tokenizer, manager, dims, maxTokens, meta };
-  currentDim = dims;
-  currentMaxTokens = maxTokens;
+  // Validate dims/maxTokens (defense in depth — ModelManager validates but double-check)
+  const safeDims = Number.isFinite(dims) && dims >= 64 && dims <= 2048 && Math.floor(dims) === dims ? dims : EMBEDDING_DIM;
+  const safeMaxTokens = Number.isFinite(maxTokens) && maxTokens >= 32 && maxTokens <= 8192 && Math.floor(maxTokens) === maxTokens ? maxTokens : 512;
+  if (safeDims !== dims || safeMaxTokens !== maxTokens) {
+    embedLogger.warn("embedder_meta_clamped", `Clamped dims ${dims}→${safeDims}, maxTokens ${maxTokens}→${safeMaxTokens}`);
+  }
+  const newModel = { name: modelName, quant, session, tokenizer, manager, dims: safeDims, maxTokens: safeMaxTokens, meta };
+  // Atomic swap — old model kept until new succeeds
+  const old = currentModel;
+  currentModel = newModel;
+  currentDim = safeDims;
+  currentMaxTokens = safeMaxTokens;
+  // Release old session after swap (don't await to avoid blocking init)
+  if (old?.session && old.session !== session) {
+    try {
+      if (typeof old.session.release === "function") old.session.release().catch(()=>{});
+      else if (typeof old.session.dispose === "function") old.session.dispose().catch(()=>{});
+    } catch {}
+  }
   embedLogger.info(
     "embedder_initialized",
-    `Embedding service initialized with ${modelName} (${dims}d, maxTokens=${maxTokens}, pooling=${meta.pooling}${meta.queryPrefix ? ", queryPrefix set" : ""})`
+    `Embedding service initialized with ${modelName} (${safeDims}d, maxTokens=${safeMaxTokens}, pooling=${meta.pooling}${meta.queryPrefix ? ", queryPrefix set" : ""})`
   );
 }
 
@@ -143,9 +161,9 @@ export function getEmbedderMeta() {
  * tokenizer/ort via model-manager.
  */
 export async function disposeEmbedder() {
+  initInFlight = null;
   if (currentModel?.session) {
     try {
-      // onnxruntime sessions may expose release() or dispose()
       if (typeof currentModel.session.release === "function") await currentModel.session.release();
       else if (typeof currentModel.session.dispose === "function") await currentModel.session.dispose();
     } catch {}
@@ -156,5 +174,9 @@ export async function disposeEmbedder() {
   try {
     const { disposeCachedDeps } = await import("./model-manager.js");
     disposeCachedDeps();
+  } catch {}
+  try {
+    const { clearEmbeddingCache } = await import("./persona-index.js");
+    if (typeof clearEmbeddingCache === "function") clearEmbeddingCache();
   } catch {}
 }

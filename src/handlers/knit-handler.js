@@ -14,7 +14,10 @@ import { createModelHandlers } from "./knit/model-handlers.js";
 export function createKnitHandler(client, directory, activeLooms, agentTools = null) {
   const logger = new Logger();
   const withSessionLock = createSessionLock();
-  const state = { pendingModels: null, enabledModels: null };
+  const state = { pendingModelsBySession: new Map(), disabledModelsBySession: new Map() };
+  // Compat: keep old fields for external inspectors but they are unused
+  state.pendingModels = null;
+  state.enabledModels = null;
 
   const { handleListKnitModels, handleEnableKnitModels, handleDisableKnitModels, handleResetKnitModels } = createModelHandlers({ client, directory, logger, state });
 
@@ -24,12 +27,31 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
 
   async function handleKnit(args, context) {
     const sessionID = context.sessionID;
-    const loomId = crypto.randomUUID();
+    const providedMeetingId = args.meetingId ?? args.meeting_id ?? null;
+    const loomId = providedMeetingId ?? crypto.randomUUID();
     return withSessionLock(sessionID, async () => {
 
     const { available: allAvailable, sessionModel } = await discoverModels(client, directory, sessionID);
-
-    const available = applyModelFilter(allAvailable, state.enabledModels);
+    // Per-session deny-list: reload latest persisted filter for this session (handles external edits / multi-process)
+    let disabledForSession = null;
+    try {
+      const { existsSync: _exists, readFileSync: _read } = await import("node:fs");
+      const { join: _join } = await import("node:path");
+      const { resolveLoomBaseDir: _resolve } = await import("../paths.js");
+      const p = _join(_resolve(directory), `models-filter-${sessionID}.json`);
+      if (_exists(p)) {
+        const data = JSON.parse(_read(p, "utf-8"));
+        if (Array.isArray(data.disabledModels)) disabledForSession = new Set(data.disabledModels);
+      }
+      if (disabledForSession) {
+        if (!state.disabledModelsBySession) state.disabledModelsBySession = new Map();
+        state.disabledModelsBySession.set(sessionID, disabledForSession);
+      } else if (state.disabledModelsBySession?.has(sessionID)) {
+        disabledForSession = state.disabledModelsBySession.get(sessionID);
+      }
+    } catch {}
+    const disabledSet = disabledForSession ?? state.disabledModelsBySession?.get(sessionID) ?? null;
+    const available = applyModelFilter(allAvailable, disabledSet);
 
     if (args.fresh === true) {
       const existingMeeting = await findMeetingBySessionId(directory, sessionID);
@@ -54,9 +76,28 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
     let meetingDb = null;
 
     const modelMap = new Map();
-    const explicitModels = args.models ?? state.pendingModels;
+    const pendingForSession = state.pendingModelsBySession?.get(sessionID) ?? state.pendingModels ?? null;
+    const explicitModels = args.models ?? pendingForSession;
     if (explicitModels && explicitModels.length > 0) {
+      // Validate explicit models against filtered available (deny-list) — don't inject disabled models
+      const allowedKeys = new Set(available.map(m => `${m.providerID}/${m.modelID}`));
+      const filteredExplicit = [];
       for (const m of explicitModels) {
+        const providerId = "provider_id" in m ? m.provider_id : m.providerID;
+        const modelId = "model_id" in m ? m.model_id : m.modelID;
+        const key = `${providerId}/${modelId}`;
+        if (disabledSet && disabledSet.has(key)) {
+          logger.warn("explicit_model_disabled", `Explicit model ${key} for tier ${m.tier} is disabled for this session — ignoring`);
+          continue;
+        }
+        if (!allowedKeys.has(key) && available.length > 0) {
+          // Model not in current available (maybe stale pending from list with different discovery) — skip
+          logger.warn("explicit_model_not_available", `Explicit model ${key} not in current available — ignoring`);
+          continue;
+        }
+        filteredExplicit.push(m);
+      }
+      for (const m of filteredExplicit) {
         const tier = m.tier;
         if (modelMap.has(tier)) {
           logger.warn("duplicate_tier", `Duplicate tier "${tier}" in model map — last wins`);
@@ -65,6 +106,7 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
         const modelId = "model_id" in m ? m.model_id : m.modelID;
         modelMap.set(tier, { providerID: providerId, modelID: modelId });
       }
+      if (state.pendingModelsBySession) state.pendingModelsBySession.delete(sessionID);
       state.pendingModels = null;
     }
 
@@ -76,6 +118,20 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
         return {
           title: "Loom Error",
           output: `Participant #${invalid + 1} is missing required fields (name, persona, agenda, tier).`,
+        };
+      }
+      const ALLOWED_TIERS = new Set(["junior", "mid", "senior", "principal", "civilian"]);
+      const badTier = args.participants.findIndex((p) => !ALLOWED_TIERS.has(p.tier));
+      if (badTier >= 0) {
+        return {
+          title: "Loom Error",
+          output: `Participant #${badTier + 1} has invalid tier "${args.participants[badTier].tier}" — must be one of ${[...ALLOWED_TIERS].join(", ")}.`,
+        };
+      }
+      if (args.participants.length < 2 || args.participants.length > 7) {
+        return {
+          title: "Loom Error",
+          output: `Custom participant count must be 2-7 (got ${args.participants.length}). Auto-compose uses 2-7; custom rooms must match.`,
         };
       }
       const seenIds = new Set();
@@ -104,14 +160,23 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
         };
       });
     } else {
+      const sanitizedQuestion = args.question ? sanitizeForPrompt(args.question, 5000) : '';
+      if (!sanitizedQuestion || sanitizedQuestion.trim().length < 3) {
+        return {
+          title: "Loom Error",
+          output: "Question too short — please provide at least 3 characters of meaningful question text. The loom was not started.",
+          metadata: { loom_id: loomId, loom_status: "error", error: "question too short" },
+        };
+      }
       meetingId = crypto.randomUUID();
       const dbPath = getMeetingDbPath(directory, meetingId);
-      let sanitizedQuestion = args.question ? sanitizeForPrompt(args.question, 5000) : '';
-      let sanitizedContext = args.context ? sanitizeForPrompt(args.context, 8000) : 'No additional context provided.';
+      const sanitizedContext = args.context ? sanitizeForPrompt(args.context, 8000) : 'No additional context provided.';
       const maxRounds = args.max_rounds ?? getConfig().defaultMaxRounds;
+      // Single DB handle for entire compose path — avoid WAL busy races (audit Phase 1)
+      const db = await MeetingDatabase.create(dbPath, meetingId);
+      let composeSucceeded = false;
       try {
-        meetingDb = await MeetingDatabase.create(dbPath, meetingId);
-        meetingDb.initializeMeeting({
+        db.initializeMeeting({
           question: sanitizedQuestion,
           context: sanitizedContext,
           maxRounds,
@@ -122,58 +187,53 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
           embedding_dim: null,
           participants: [],
         });
-        meetingDb.close();
-        meetingDb = null;
-
-        let composeDb = await MeetingDatabase.create(dbPath, meetingId);
-        try {
-          composedRoom = await composeRoomWithSimilarity(args.question, composeDb);
-        } finally {
-          try { composeDb.close(); } catch {}
-        }
+        composedRoom = await composeRoomWithSimilarity(sanitizedQuestion, db);
         participants = composedRoom.participants;
-
+        if (!participants || participants.length === 0) {
+          composedRoom = { participants: [], tags: [], estimated_rounds: 2, reasoning: "No relevant personas — fallback to empty room" };
+          participants = [];
+          logger.warn("empty_room", "No personas matched sanitized question — returning empty room preview");
+        }
+        // Resolve embedding model from config (not hardcoded default)
         try {
           const { isEmbedderInitialized, getEmbeddingDim } = await import("../services/embedding-service.js");
-          const { DEFAULT_EMBEDDING_MODEL } = await import("../services/model-manager.js");
+          const cfg = getConfig();
+          const resolvedModel = cfg.embeddingModel ?? (await import("../services/model-manager.js")).DEFAULT_EMBEDDING_MODEL;
           if (isEmbedderInitialized()) {
             const dim = getEmbeddingDim();
-            const modelName = DEFAULT_EMBEDDING_MODEL;
-            const tmpDb = await MeetingDatabase.create(dbPath, meetingId);
-            try {
-              tmpDb.upsertMeeting({
-                question: sanitizedQuestion,
-                context: sanitizedContext,
-                maxRounds,
-                tags: composedRoom.tags ?? [],
-                parentSessionId: sessionID,
-                opencodeSessionId: sessionID,
-                embedding_model: modelName,
-                embedding_dim: dim,
-                participants: [],
-              });
-            } finally { try { tmpDb.close(); } catch {} }
-          } else if (composedRoom.reasoning && composedRoom.reasoning.includes("keyword-based")) {
+            db.upsertMeeting({
+              question: sanitizedQuestion,
+              context: sanitizedContext,
+              maxRounds,
+              tags: composedRoom.tags ?? [],
+              parentSessionId: sessionID,
+              opencodeSessionId: sessionID,
+              embedding_model: resolvedModel,
+              embedding_dim: dim,
+              participants: [],
+            });
           }
         } catch {}
-
         participants = participants.map((p) =>
           p.model ? p : { ...p, model: modelMap.get(p.tier) ?? undefined }
         );
         if (available.length > 0) {
           participants = assignModelsToParticipants(participants, available, sessionModel);
         }
-
-        meetingDb = await MeetingDatabase.create(dbPath, meetingId);
-        meetingDb.insertParticipants(participants);
+        if (participants.length > 0) {
+          db.insertParticipants(participants);
+        }
+        composeSucceeded = true;
       } catch (err) {
         logger.warn("similarity_composition_failed", "Similarity-based composition failed — using fallback", extractErrorInfo(err));
         composedRoom = { participants: [], tags: [], estimated_rounds: 2, reasoning: "Fallback composition" };
         participants = [];
       } finally {
-        if (meetingDb) {
-          try { meetingDb.close(); } catch { /* cleanup */ }
-        }
+        try { db.close(); } catch {}
+      }
+      // If compose failed, ensure we have fallback values
+      if (!composeSucceeded && !composedRoom) {
+        composedRoom = { participants: [], tags: [], estimated_rounds: 2, reasoning: "Fallback composition" };
       }
     }
 
@@ -189,9 +249,13 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
           ? "Custom room"
           : composedRoom?.reasoning ?? "Custom room",
       };
+      let preview = formatRoomPreview(room);
+      if (available.length === 0) {
+        preview += "\n\n> ⚠️ No models available — loom would fail at runtime. Enable a provider model via /list_knit_models.";
+      }
       return {
         title: "Loom Room Preview",
-        output: formatRoomPreview(room),
+        output: preview,
         metadata: {
           loom_id: loomId,
           loom_preview: true,
@@ -200,7 +264,17 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
       };
     }
 
-    const maxRounds = args.max_rounds ?? getConfig().defaultMaxRounds;
+    if (available.length === 0) {
+      return {
+        title: "Loom Error",
+        output: "No models available — enable at least one provider model via /list_knit_models before starting a deliberation.",
+        metadata: { loom_id: loomId, loom_status: "error", error: "no models available" },
+      };
+    }
+
+    let maxRounds = args.max_rounds ?? getConfig().defaultMaxRounds;
+    if (!Number.isFinite(maxRounds) || maxRounds < 1) maxRounds = getConfig().defaultMaxRounds;
+    if (maxRounds > 10) maxRounds = 10;
 
     const meetingCallbacks = createMeetingCallbacks(context, logger);
 

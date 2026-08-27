@@ -153,6 +153,9 @@ export class DashboardApi {
   getContributions(...args) {
     return queriesHelpers.getContributions.apply(this, args);
   }
+  getContributionsAfter(...args) {
+    return queriesHelpers.getContributionsAfter.apply(this, args);
+  }
   getContributionsCount(...args) {
     return queriesHelpers.getContributionsCount.apply(this, args);
   }

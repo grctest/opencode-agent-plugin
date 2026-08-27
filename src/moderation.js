@@ -54,14 +54,17 @@ export function parseModeratorRuling(text) {
   const lines = content.split("\n");
   for (const line of lines) {
     const trimmed = line.trim();
-    const lower = trimmed.toLowerCase();
-    if (lower.startsWith("decision:")) {
-      decision = trimmed.substring(trimmed.indexOf(":") + 1).trim();
-    } else if (lower.startsWith("next_speaker:")) {
-      next_speaker = trimmed.substring(trimmed.indexOf(":") + 1).trim();
-    } else if (lower.startsWith("reason:")) {
-      reason = trimmed.substring(trimmed.indexOf(":") + 1).trim();
-    }
+    // Accept :  -  –  variants: decision: / decision - / decision – / next_speaker: etc.
+    const norm = trimmed.replace(/[–—]/g, "-").toLowerCase();
+    const mDec = trimmed.match(/^decision\s*[:\-]\s*(.+)$/i);
+    const mNext = trimmed.match(/^next_speaker\s*[:\-]\s*(.+)$/i);
+    const mReason = trimmed.match(/^reason\s*[:\-]\s*(.+)$/i);
+    if (mDec) decision = mDec[1].trim();
+    else if (mNext) next_speaker = mNext[1].trim();
+    else if (mReason) reason = mReason[1].trim();
+    else if (norm.startsWith("decision:")) decision = trimmed.substring(trimmed.indexOf(":") + 1).trim();
+    else if (norm.startsWith("next_speaker:")) next_speaker = trimmed.substring(trimmed.indexOf(":") + 1).trim();
+    else if (norm.startsWith("reason:")) reason = trimmed.substring(trimmed.indexOf(":") + 1).trim();
   }
 
   if (!decision) {
@@ -111,7 +114,8 @@ export async function checkModeratorIntervention(round, participants, weave, cur
     }
     const repeatedChallenger = Object.entries(challengeCounts).find(([, n]) => n >= 3);
     if (repeatedChallenger) {
-      situation = `Participant ${repeatedChallenger[0]} has challenged/dissented 3+ times in the last ${LOOKBACK.SENDER_HISTORY} contributions across rounds. Possible circular argument or deadlock.`;
+      const safeId = String(repeatedChallenger[0]).replace(/[^\w\-]/g, "_").slice(0, 64);
+      situation = `Participant ${safeId} has challenged/dissented 3+ times in the last ${LOOKBACK.SENDER_HISTORY} contributions across rounds. Possible circular argument or deadlock.`;
     }
   }
 
@@ -152,12 +156,15 @@ export async function checkModeratorIntervention(round, participants, weave, cur
     }
 
     if (ruling.next_speaker && ruling.next_speaker !== "continue") {
+      const normTarget = ruling.next_speaker.toLowerCase().replace(/\s+/g, "_");
       const targetIdx = participants.findIndex(
         (p) =>
+          p.config.id.toLowerCase() === normTarget ||
           p.config.id.toLowerCase() === ruling.next_speaker.toLowerCase() ||
-          p.config.name.toLowerCase() === ruling.next_speaker.toLowerCase(),
+          p.config.name.toLowerCase() === ruling.next_speaker.toLowerCase() ||
+          p.config.name.toLowerCase().replace(/\s+/g, "_") === normTarget,
       );
-      if (targetIdx >= 0 && participants[targetIdx].status !== "passed") {
+      if (targetIdx >= 0 && !["passed", "failed", "muted"].includes(participants[targetIdx].status)) {
         return { action: "break", nextSpeakerIdx: targetIdx };
       }
     }
@@ -219,9 +226,8 @@ export async function planTurnOrder({ stateOfPlay, roundSummary, turnRequests, p
     return ordered;
   }
 
-  // Check if fast-path model is available for turn order planning
-  const fastPathModel = config.fastPathModel;
-  const model = fastPathModel || getHighestTierModel();
+  const fastPathModelObj = config.fastPathModelObj ?? (config.fastPathModel ? (() => { const idx = config.fastPathModel.indexOf("/"); if (idx === -1) return null; return { providerID: config.fastPathModel.slice(0, idx), modelID: config.fastPathModel.slice(idx + 1) }; })() : null);
+  const model = fastPathModelObj ?? getHighestTierModel();
   if (!model) {
     // Fallback: sort by priority descending, then by tier
     return fallbackTurnOrder(validRequests, participants);

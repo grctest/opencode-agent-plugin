@@ -302,13 +302,30 @@ export function startDashboard(directory, port) {
           const { api, error } = getMeetingApi(url, directory);
           if (error) return error;
           const includeContext = url.searchParams.get("include_context") !== "0";
-          const since = Number(url.searchParams.get("since")) || 0;
-          if (since > 0) {
-            let contribs = api.getContributionsSince(since);
+          const since = url.searchParams.get("since");
+          if (since !== null) {
+            const sinceId = Number(since);
+            if (!Number.isFinite(sinceId) || sinceId < 0) {
+              return Response.json({ error: "since must be a non-negative number" }, { status: 400 });
+            }
+            const sinceLimit = clampLimit(url.searchParams.get("limit"), 500, 500);
+            let contribs = api.getContributionsSince(sinceId);
+            if (contribs.length > sinceLimit) contribs = contribs.slice(0, sinceLimit);
             if (!includeContext) contribs = contribs.map((c) => ({ ...c, prompt_context: null }));
-            // Normalized shape: always return {contributions, total} (total = count of returned slice for since queries)
-            // Clients handle both array and object for backward compat — this ensures consistency.
             return Response.json({ contributions: contribs, total: contribs.length });
+          }
+          // Keyset pagination: prefer afterId when provided, fallback to offset for compat
+          const afterId = url.searchParams.get("after");
+          if (afterId !== null) {
+            const after = Number(afterId);
+            if (!Number.isFinite(after) || after < 0) {
+              return Response.json({ error: "after must be a non-negative number" }, { status: 400 });
+            }
+            const limit = clampLimit(url.searchParams.get("limit"));
+            let contributions = api.getContributionsAfter(after, limit);
+            if (!includeContext) contributions = contributions.map((c) => ({ ...c, prompt_context: null }));
+            const total = api.getContributionsCount();
+            return Response.json({ contributions, total, limit, after });
           }
           const limit = clampLimit(url.searchParams.get("limit"));
           const offset = clampOffset(url.searchParams.get("offset"));
@@ -458,23 +475,25 @@ export function startDashboard(directory, port) {
           const ext = lastDot > 0 ? filePath.slice(lastDot) : "";
           const contentType = MIME_TYPES[ext] ?? "application/octet-stream";
           const headers = { "Content-Type": contentType, ...SECURITY_HEADERS };
+          const etagVal = (() => {
+            try {
+              const s = statSync(filePath);
+              const ino = s.ino ? `-${s.ino.toString(36)}` : "";
+              return `W/"${s.mtimeMs.toString(36)}-${s.size.toString(36)}${ino}"`;
+            } catch { return undefined; }
+          })();
+          if (etagVal) headers["ETag"] = etagVal;
           if (assetPath === "app.js") {
             headers["Cache-Control"] = "no-cache";
-            headers["ETag"] = (() => {
-              try {
-                const s = statSync(filePath);
-                return `W/"${s.mtimeMs.toString(36)}-${s.size.toString(36)}"`;
-              } catch { return undefined; }
-            })();
-            // Handle conditional request
-            const inm = req.headers.get("if-none-match");
-            if (inm && headers["ETag"] && inm === headers["ETag"]) {
-              return new Response(null, { status: 304, headers });
-            }
+          } else if (assetPath === "styles.css") {
+            headers["Cache-Control"] = "public, max-age=3600, must-revalidate";
           } else {
             headers["Cache-Control"] = "public, max-age=31536000, immutable";
           }
-          // Remove undefined ETag if stat failed
+          const inm = req.headers.get("if-none-match");
+          if (inm && headers["ETag"] && inm === headers["ETag"]) {
+            return new Response(null, { status: 304, headers });
+          }
           if (!headers["ETag"]) delete headers["ETag"];
           return new Response(Bun.file(filePath), { headers });
         }

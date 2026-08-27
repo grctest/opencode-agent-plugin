@@ -145,7 +145,28 @@ export function getContributions(limit = 100, offset = 0) {
         prompt_context: safeParseJson(r.prompt_context),
         created_at: r.created_at,
       }));
-  }
+}
+
+export function getContributionsAfter(afterId, limit = 100) {
+    return this._db
+      .prepare(
+        `SELECT id, participant_id, round, type, content, target_which, batch_id, tool_calls, prompt_context, created_at
+         FROM contributions WHERE id > ? ORDER BY id ASC LIMIT ?`,
+      )
+      .all(afterId, limit)
+      .map((r) => ({
+        id: r.id,
+        participant_id: r.participant_id,
+        round: r.round,
+        type: r.type,
+        content: r.content,
+        targets_which: r.target_which != null ? Number(r.target_which) : null,
+        batch_id: r.batch_id ?? null,
+        tool_calls: safeParseJson(r.tool_calls),
+        prompt_context: safeParseJson(r.prompt_context),
+        created_at: r.created_at,
+      }));
+}
 
 export function getContributionsCount() {
     const row = this._db.prepare(`SELECT COUNT(*) as count FROM contributions`).get();

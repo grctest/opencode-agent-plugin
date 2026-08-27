@@ -23,7 +23,7 @@ export function tokenize(text) {
 }
 
 export function tokenizeMeaningful(text) {
-  const words = text.toLowerCase().replace(/[^a-z0-9\s]/g, "").split(/\s+/);
+  const words = text.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/);
   return words.filter((w) => w.length >= 2 && !STOPWORDS.has(w));
 }
 
@@ -34,15 +34,18 @@ export function tokenizeMeaningful(text) {
  */
 export function computeIdf(corpus) {
   if (!corpus || corpus.length === 0) return {};
-  const docCount = corpus.length;
+  let docCount = 0;
   const docFreq = {};
   for (const doc of corpus) {
     const text = typeof doc === "string" ? doc : doc.content;
+    if (!text || !String(text).trim()) continue;
+    docCount++;
     const terms = new Set(tokenizeMeaningful(text));
     for (const term of terms) {
       docFreq[term] = (docFreq[term] || 0) + 1;
     }
   }
+  if (docCount === 0) return {};
   const idf = {};
   for (const [term, freq] of Object.entries(docFreq)) {
     idf[term] = Math.log((docCount + 1) / (freq + 1)) + 1;

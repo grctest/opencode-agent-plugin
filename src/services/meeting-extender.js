@@ -74,6 +74,17 @@ export class MeetingExtender {
     }
 
     stateManager.setFabric(database.getFabric());
+    // New fabric contains **User Input:** extension marker — also make it visible via context so
+    // next round's Weighted Golden Sandwich sees it (agents read getContext(), not getFabric())
+    try {
+      const newFabric = database.getFabric();
+      if (typeof stateManager.getContext === "function" && typeof stateManager.setContext === "function") {
+        // setContext may not exist on some StateManager versions — fallback to direct fabric
+        stateManager.setContext(newFabric);
+      } else if (stateManager._state) {
+        stateManager._state.context = newFabric;
+      }
+    } catch {}
     stateManager.forceTransitionTo("weaving");
 
     for (const p of stateManager.getParticipants()) {

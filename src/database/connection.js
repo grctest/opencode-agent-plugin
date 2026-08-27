@@ -14,8 +14,21 @@ const VEC_EXTS = ['vec0.so', 'vec0.dylib', 'vec0.node'];
 let cachedVecPath = null;
 let vecPathResolved = false;
 
+export function invalidateVecPathCache() {
+  vecPathResolved = false;
+  cachedVecPath = null;
+}
+
 export function resolveVecPath() {
-  if (vecPathResolved) return cachedVecPath;
+  if (vecPathResolved) {
+    if (cachedVecPath && existsSync(cachedVecPath)) return cachedVecPath;
+    if (cachedVecPath && !existsSync(cachedVecPath)) {
+      vecPathResolved = false;
+      cachedVecPath = null;
+    } else if (vecPathResolved) {
+      return cachedVecPath;
+    }
+  }
   vecPathResolved = true;
   const baseDir = (import.meta.dir ?? import.meta.dirname ?? '.');
   const roots = [

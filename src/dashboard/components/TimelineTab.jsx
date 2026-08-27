@@ -25,12 +25,12 @@ const HEADER_HEIGHT = 48;
 const CONTRIBUTION_HEIGHT = 56;
 const INTERJECTION_HEIGHT = 72;
 const EXTENSION_MARKER_HEIGHT = 32;
-const REFLECTION_HEIGHT = 80;
-const QUERY_RESPONSE_HEIGHT = 80;
-const EVIDENCE_RESPONSE_HEIGHT = 80;
-const SUMMONED_RESPONSE_HEIGHT = 80;
-const VOTE_RESPONSE_HEIGHT = 80;
-const ORCHESTRATOR_ITEM_HEIGHT = 80;
+const REFLECTION_HEIGHT = 44;
+const QUERY_RESPONSE_HEIGHT = 44;
+const EVIDENCE_RESPONSE_HEIGHT = 44;
+const SUMMONED_RESPONSE_HEIGHT = 44;
+const VOTE_RESPONSE_HEIGHT = 44;
+const ORCHESTRATOR_ITEM_HEIGHT = 44;
 
 const ROUND_SUMMARY_HEIGHT = 88;
 
@@ -97,7 +97,10 @@ function getRowHeight(item) {
   if (item.type === "thinking_evidence") return THINKING_EVIDENCE_HEIGHT;
   if (item.type === "thinking_summon") return THINKING_SUMMON_HEIGHT;
   if (item.type === "agent_turn") {
-    return 115;
+    const n = item.contributions?.length ?? 1;
+    const longest = Math.max(0, ...item.contributions.map(c => (c.content ?? "").length));
+    // Base 115, +30 per extra contribution, +20 if any long (>500) content
+    return 115 + Math.max(0, n - 1) * 30 + (longest > 500 ? 25 : 0);
   }
   return 115;
 }

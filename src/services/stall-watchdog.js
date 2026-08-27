@@ -38,11 +38,7 @@ export class StallWatchdog {
   }
 
   start(getStatus, cancelled) {
-    // Idempotent start (audit 05 LS5 / audit 09 R1): a second start() while running
-    // must be a full no-op — the old ordering reset #lastActivityAt and re-read
-    // config BEFORE the timer guard, silently extending the stall deadline.
     if (this.#timer) return;
-    const stallTimeoutMs = getConfig().stallTimeoutMs ?? 300000;
     this.#lastActivityAt = Date.now();
     this.#timer = setInterval(() => {
       try {
@@ -52,6 +48,7 @@ export class StallWatchdog {
           this.stop();
           return;
         }
+        const stallTimeoutMs = getConfig().stallTimeoutMs ?? 300000;
         if (Date.now() - this.#lastActivityAt <= stallTimeoutMs) return;
         this.#logger.warn("stall_detected", `No activity for ${Math.round(stallTimeoutMs / 1000)}s — stopping meeting`, { idleMs: Date.now() - this.#lastActivityAt });
         this.#stallCancelled = true;

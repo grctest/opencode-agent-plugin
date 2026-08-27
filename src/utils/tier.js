@@ -37,7 +37,7 @@ export function getRightsForTier(tier) {
     case "principal":
       return { ...BASE_RIGHTS, call_vote: true };
     default:
-      return { contribute: true, request_turn: false, call_vote: false };
+      return { ...BASE_RIGHTS };
   }
 }
 

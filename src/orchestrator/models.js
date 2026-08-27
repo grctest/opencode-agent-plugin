@@ -1,6 +1,7 @@
 import { getConfig } from "../config.js";
 import { parseFastPathModel } from "../config/utils.js";
 import { getHighestTierModel } from "../services/model-service.js";
+import { sortModelsByQuality } from "../model-discovery.js";
 import { Logger, LoomError, extractErrorInfo } from "../logger.js";
 import { MAX_ORCHESTRATOR_MESSAGES } from "./constants.js";
 
@@ -14,26 +15,7 @@ export function _getHighestTierModel() {
 
 export function _getAllowedFallbackModel() {
     if (!this._availableModels || this._availableModels.length === 0) return null;
-    // Capability-fit scoring: active(20) + context/10000 + reasoning(15). Cost is display-only.
-    // Tie-breaker: recent latency metrics if available, else deterministic provider/model key.
-    // Session model is scored like any other model; only preferred if it lands in top 3 by quality
-    // (achieved by scoring it in the sorted list rather than blindly preferring it).
-    const sorted = [...this._availableModels].sort((a, b) => {
-      const score = (m) => {
-        let s = 0;
-        if (m.status === "active") s += 20;
-        s += (m.limit?.context ?? 128000) / 10000;
-        if (m.reasoning) s += 15;
-        return s;
-      };
-      const diff = score(b) - score(a);
-      if (diff !== 0) return diff;
-      // Tie-breaker: if getRecentMeetingMetrics were available, use latency (lower wins).
-      // For now use deterministic key to keep sorting stable.
-      const aKey = `${a.providerID}/${a.modelID}`;
-      const bKey = `${b.providerID}/${b.modelID}`;
-      return aKey < bKey ? -1 : aKey > bKey ? 1 : 0;
-    });
+    const sorted = sortModelsByQuality(this._availableModels);
     const best = sorted[0];
     return { providerID: best.providerID, modelID: best.modelID };
   }
