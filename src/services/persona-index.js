@@ -16,9 +16,9 @@ const personaIndexLogger = new Logger();
 const embeddingCache = new Map();
 const EMBEDDING_CACHE_MAX = 512;
 
-function cacheKey(personaName, embeddingText) {
+function cacheKey(personaName, tier, embeddingText) {
   const fingerprint = createHash("sha256").update(embeddingText).digest("hex").slice(0, 16);
-  return `${personaName}|${getEmbeddingDim()}|${fingerprint}`;
+  return `${personaName}|${tier}|${getEmbeddingDim()}|${fingerprint}`;
 }
 
 function cachedEmbeddingFor(key) {
@@ -71,7 +71,7 @@ export class PersonaIndex {
       const results = await Promise.all(batch.map(async ({ tier, persona }) => {
         try {
           const embeddingText = this.#buildEmbeddingText(persona);
-          const key = cacheKey(persona.name, embeddingText);
+          const key = cacheKey(persona.name, tier, embeddingText);
           const cached = cachedEmbeddingFor(key);
           if (cached) {
             cacheHits++;

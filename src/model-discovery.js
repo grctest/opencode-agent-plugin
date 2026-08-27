@@ -1,4 +1,13 @@
 /**
+ * Phase 3 note: this file is NOT a barrel — it owns capability-fit scoring
+ * (sortModelsByQuality / assignModelsByTier). Service layer in
+ * src/services/model-service.js consumes it; src/services/model-manager.js is
+ * an unrelated embedding ONNX manager. Consolidation was deemed too invasive;
+ * the model trio is therefore kept distinct. parseFastPathModel dedup is
+ * already complete (single source src/config/utils.js).
+ */
+
+/**
  * @typedef {Object} AvailableModel
  * @property {string} providerID
  * @property {string} modelID
@@ -70,7 +79,7 @@ export function assignModelsByTier(available, sessionModel, roles) {
   if (available.length === 0) return [];
 
   const sorted = sortModelsByQuality(available);
-  const priorityOrder = ["principal", "senior", "mid", "junior"];
+  const priorityOrder = ["principal", "senior", "mid", "civilian", "junior"];
   const sortedRoles = [...roles].sort(
     (a, b) => priorityOrder.indexOf(a) - priorityOrder.indexOf(b),
   );

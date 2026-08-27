@@ -1,5 +1,9 @@
 import { memo, useMemo } from "react";
-import { ParticipationMatrix } from "./Charts.jsx";
+import { ParticipationMatrix, ContributionTypeChart, ContributionTimeline } from "./Charts.jsx";
+import { Card, CardContent, CardHeader, CardTitle } from "./ui/card.tsx";
+import { Alert, AlertTitle, AlertDescription } from "./ui/alert.tsx";
+import { Badge } from "./ui/badge.tsx";
+import { TriangleAlertIcon } from "lucide-react";
 
 const CALL_COUNTER_KEYS = [
   "agent_prompts",
@@ -27,92 +31,55 @@ export const OverviewTab = memo(({
   const totalInputTokens = useMemo(() => Number(stats.input_tokens) || 0, [stats]);
   const totalOutputTokens = useMemo(() => Number(stats.output_tokens) || 0, [stats]);
 
-  const typeCounts = useMemo(() => {
-    const counts = {};
-    for (const c of contributions) {
-      counts[c.type] = (counts[c.type] || 0) + 1;
-    }
-    return Object.entries(counts)
-      .map(([type, count]) => ({ type, count }))
-      .sort((a, b) => b.count - a.count);
-  }, [contributions]);
+  const StatCard = ({ value, label }) => (
+    <Card className="py-4">
+      <CardContent className="text-center py-0">
+        <span className="block text-2xl font-bold">{value}</span>
+        <span className="block text-xs text-muted-foreground mt-1">{label}</span>
+      </CardContent>
+    </Card>
+  );
 
   return (
-    <div className="loom-overview">
-      <div className="loom-stats-grid">
-        <div className="loom-stat-card">
-          <span className="loom-stat-value">{state.round}</span>
-          <span className="loom-stat-label">Rounds</span>
-        </div>
-        <div className="loom-stat-card">
-          <span className="loom-stat-value">{contributions.length}</span>
-          <span className="loom-stat-label">Contributions</span>
-        </div>
-        <div className="loom-stat-card">
-          <span className="loom-stat-value">{turnRequests.length}</span>
-          <span className="loom-stat-label">Turn Requests</span>
-        </div>
-        {totalCalls > 0 && (
-          <div className="loom-stat-card">
-            <span className="loom-stat-value">{totalCalls}</span>
-            <span className="loom-stat-label">LLM Calls</span>
-          </div>
-        )}
-        {totalInputTokens > 0 && (
-          <div className="loom-stat-card">
-            <span className="loom-stat-value">{totalInputTokens.toLocaleString()}</span>
-            <span className="loom-stat-label">Input Tokens</span>
-          </div>
-        )}
-        {totalOutputTokens > 0 && (
-          <div className="loom-stat-card">
-            <span className="loom-stat-value">{totalOutputTokens.toLocaleString()}</span>
-            <span className="loom-stat-label">Output Tokens</span>
-          </div>
-        )}
+    <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <StatCard value={state.round} label="Rounds" />
+        <StatCard value={contributions.length} label="Contributions" />
+        <StatCard value={turnRequests.length} label="Turn Requests" />
+        {totalCalls > 0 && <StatCard value={totalCalls} label="LLM Calls" />}
+        {totalInputTokens > 0 && <StatCard value={totalInputTokens.toLocaleString()} label="Input Tokens" />}
+        {totalOutputTokens > 0 && <StatCard value={totalOutputTokens.toLocaleString()} label="Output Tokens" />}
       </div>
-      {typeCounts.length > 0 && (
-        <div className="loom-card loom-mt-sm">
-          <h3 className="loom-title-sm loom-mb-sm">Contribution Types</h3>
-          <div className="loom-type-stats">
-            {typeCounts.map(({ type, count }) => (
-              <div key={type} className="loom-type-stat-row">
-                <span className="loom-type-stat-name">{type}</span>
-                <span className="loom-type-stat-count">{count}</span>
-                <div className="loom-type-stat-bar-track">
-                  <div
-                    className="loom-type-stat-bar"
-                    style={{ width: `${contributions.length > 0 ? (count / contributions.length) * 100 : 0}%` }}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      <div className="loom-mt-sm">
-        <ParticipationMatrix
-          participants={participants}
-          contributions={contributions}
-          agentErrors={agentErrors}
-          orchestratorMessages={orchestratorMessages}
-          rounds={totalRounds}
-          activeRound={activeRound}
-        />
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <ContributionTypeChart contributions={contributions} />
+        <ContributionTimeline contributions={contributions} />
       </div>
+
+      <ParticipationMatrix
+        participants={participants}
+        contributions={contributions}
+        agentErrors={agentErrors}
+        orchestratorMessages={orchestratorMessages}
+        rounds={totalRounds}
+        activeRound={activeRound}
+      />
+
       {agentErrors.length > 0 && (
-        <div className="loom-card loom-card-error loom-mt-sm">
-          <h3 className="loom-title-sm loom-mb-sm">Agent Errors</h3>
-          <div className="loom-space-xs">
+        <Card className="border-destructive/50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2"><TriangleAlertIcon className="size-4 text-destructive" /> Agent Errors</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-2">
             {agentErrors.map((err, i) => (
-              <div key={i} className="loom-error-summary">
-                <span className="loom-error-participant">{participantName(err.participant_id)}</span>
-                <span className="loom-error-type">{err.error_type}</span>
-                <span className="loom-error-message">{err.error_message}</span>
-              </div>
+              <Alert key={i} variant="destructive" className="py-2">
+                <TriangleAlertIcon />
+                <AlertTitle className="text-xs">{participantName(err.participant_id)} — {err.error_type}</AlertTitle>
+                <AlertDescription className="text-xs">{err.error_message}</AlertDescription>
+              </Alert>
             ))}
-          </div>
-        </div>
+          </CardContent>
+        </Card>
       )}
     </div>
   );

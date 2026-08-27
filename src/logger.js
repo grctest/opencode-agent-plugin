@@ -126,7 +126,21 @@ export class Logger {
 
 export function extractErrorInfo(err) {
   if (err instanceof Error) {
-    return { message: err.message, stack: err.stack, name: err.name };
+    const info = { message: err.message, stack: err.stack, name: err.name };
+    // Cause chain (Node 16+ Error.cause): surface nested causes so root
+    // failures aren't lost behind a generic wrapper.
+    if (err.cause) {
+      try {
+        info.cause = err.cause instanceof Error
+          ? extractErrorInfo(err.cause)
+          : { message: String(err.cause), name: 'Cause' };
+      } catch {}
+      // Preserve top-level cause message for log searchability
+      if (!info.causeMessage) {
+        info.causeMessage = err.cause instanceof Error ? err.cause.message : String(err.cause);
+      }
+    }
+    return info;
   }
   return { message: String(err), stack: null, name: 'Unknown' };
 }

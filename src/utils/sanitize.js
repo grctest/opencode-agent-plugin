@@ -11,10 +11,10 @@
 
 import { randomBytes } from "node:crypto";
 
-// Migration-fallback tags only (audit 12 SEC3): the live contract is loom_* tools;
-// these two remain parseable by the fallback parser path. Dead forms ([YIELD],
-// [CONTEST…], [NEXT:…]) are removed from the whitelist.
-const DIRECTIVE_PATTERN = /\[(PASS|PROPOSE|CHALLENGE|REFINE|SUPPORT|DISSENT|SYNTHESIZE|QUESTION|REFUSE|#\d+|CALL_VOTE|REQUEST_NEXT:[^\]]*)\]/gi;
+// Compat whitelist: live contract is loom_* tools; only PASS and citations survive display.
+// Legacy forms (CALL_VOTE, REQUEST_NEXT, PROPOSE etc.) are intentionally dropped — an injected
+// [CALL_VOTE] now renders without sentinel protection and cannot trigger fallback parsing.
+const DIRECTIVE_PATTERN = /\[(PASS|#\d+)\]/gi;
 
 // A line that begins with something directive-shaped, e.g. "[DISSENT] ..." or "[#99] fake"
 const LINE_START_DIRECTIVE_RE = /^\s*\[(?:[A-Z_]{3,}|#\d+)[^\]\n]*\]/gm;
@@ -45,7 +45,8 @@ function stripUnsafeChars(text) {
   return text
     // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
-    .replace(/<[^>]*>/g, "");
+    // Preserve generics like Array<string> — only strip script/style/iframe tags
+    .replace(/<\s*\/?\s*(script|style|iframe|object|embed|form)[^>]*>/gi, "");
 }
 
 /**

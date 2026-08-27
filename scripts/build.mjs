@@ -2,6 +2,7 @@ import { mkdirSync, existsSync, readFileSync, writeFileSync, watch } from "node:
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
+import postcss from "postcss";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const ROOT = resolve(__dirname, "..");
@@ -12,24 +13,53 @@ const WATCH = process.argv.includes("--watch");
 
 mkdirSync(DASHBOARD_DIST, { recursive: true });
 
-function copyStyles() {
-  const css = readFileSync(join(ROOT, "src/dashboard/app.css"), "utf-8");
-  writeFileSync(join(DASHBOARD_DIST, "styles.css"), css);
+async function buildStyles() {
+  const cssPath = join(ROOT, "src/styles/globals.css");
+  const css = readFileSync(cssPath, "utf-8");
+  const result = await postcss((await import("@tailwindcss/postcss")).default()).process(css, { from: cssPath, to: join(DASHBOARD_DIST, "styles.css") });
+  for (const w of result.warnings()) console.warn("[postcss]", w.text);
+  writeFileSync(join(DASHBOARD_DIST, "styles.css"), result.css);
+  // cleanup legacy pure.css artifacts (no longer used after shadcn migration)
+  for (const legacy of ["pure.css", "pure-grids-responsive.css"]) {
+    try { const p = join(DASHBOARD_DIST, legacy); if (existsSync(p)) { const { unlinkSync } = await import("node:fs"); unlinkSync(p); console.log(`[build] removed legacy ${legacy}`); } } catch {}
+  }
+  const hasBgCard = result.css.includes("bg-card") || result.css.includes("bg-card");
+  const hasFlex = result.css.includes(".flex");
+  console.log(`[build] styles.css ${result.css.length} bytes, hasFlex=${hasFlex} hasBgCard=${hasBgCard} warnings=${result.warnings().length}`);
+  if (!hasFlex) console.warn("[build] WARNING: Tailwind utilities missing — check @source in src/styles/globals.css");
   return true;
 }
 
-function copyPureCSS() {
-  const pureCss = readFileSync(
-    join(ROOT, "node_modules/purecss/build/pure-min.css"),
-    "utf-8"
-  );
-  writeFileSync(join(DASHBOARD_DIST, "pure.css"), pureCss);
-  const responsiveCss = readFileSync(
-    join(ROOT, "node_modules/purecss/build/grids-responsive-min.css"),
-    "utf-8"
-  );
-  writeFileSync(join(DASHBOARD_DIST, "pure-grids-responsive.css"), responsiveCss);
-  return true;
+// esbuild alias plugin for @/* -> src/*
+function aliasPlugin() {
+  return {
+    name: "alias",
+    setup(build) {
+      build.onResolve({ filter: /^@\/.*/ }, args => {
+        let rel = args.path.slice(2); // strip @/
+        // handle @/src/... -> should map to ROOT/src/... but rel already includes src/
+        // so if rel starts with src/, join ROOT + rel directly, else join ROOT/src + rel
+        const base = rel.startsWith("src/") ? join(ROOT, rel) : join(ROOT, "src", rel);
+        // try extensionless and .tsx/.ts handling, also handle .js -> .tsx
+        const tryPaths = [];
+        if (base.endsWith(".js")) {
+          const noExt = base.slice(0, -3);
+          tryPaths.push(noExt + ".tsx", noExt + ".ts", base);
+        } else {
+          tryPaths.push(base + ".ts", base + ".tsx", base + ".js", base, base + ".jsx");
+        }
+        for (const c of tryPaths) {
+          if (existsSync(c)) return { path: c };
+        }
+        // also try index
+        for (const idx of [join(base, "index.ts"), join(base, "index.tsx")]) {
+          if (existsSync(idx)) return { path: idx };
+        }
+        // fallback
+        return { path: base };
+      });
+    },
+  };
 }
 
 const steps = [
@@ -50,6 +80,7 @@ const steps = [
         "onnxruntime-node",
         "@huggingface/tokenizers",
         "sqlite-vec",
+        "zod",
       ],
     },
   },
@@ -77,14 +108,15 @@ const steps = [
       outfile: join(DASHBOARD_DIST, "app.js"),
       jsx: "automatic",
       jsxImportSource: "react",
+      plugins: [aliasPlugin()],
+      loader: { ".ts": "tsx", ".tsx": "tsx" },
     },
   },
   {
-    name: "Dashboard styles (dist/dashboard/styles.css + pure.css)",
+    name: "Dashboard styles (dist/dashboard/styles.css)",
     esbuild: false,
-    run: () => {
-      copyStyles();
-      copyPureCSS();
+    run: async () => {
+      await buildStyles();
       return true;
     },
   },
@@ -110,13 +142,13 @@ if (WATCH) {
   }
 
   if (!failed) {
-    watch(join(ROOT, "src/dashboard/app.css"), () => {
+    watch(join(ROOT, "src/styles/globals.css"), async () => {
       console.log("\n📦 Dashboard styles updated...");
-      copyStyles();
+      await buildStyles();
     });
-    watch(join(ROOT, "node_modules/purecss/build"), () => {
-      console.log("\n📦 Pure.css updated...");
-      copyPureCSS();
+    watch(join(ROOT, "src/dashboard/app.css"), async () => {
+      console.log("\n📦 Dashboard app.css updated...");
+      await buildStyles();
     });
     console.log("\n✅ Watching for changes (Ctrl+C to stop)");
     setInterval(() => {}, 1 << 30);

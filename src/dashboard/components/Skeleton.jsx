@@ -1,21 +1,24 @@
 import { memo } from "react";
-import { cn } from "../utils.js";
+import { Skeleton } from "./ui/skeleton.tsx";
+import { Card } from "./ui/card.tsx";
 
-function SkeletonCard({ className }) {
+function SkeletonCard() {
   return (
-    <div className={cn("loom-skeleton loom-skeleton-card", className)}>
-      <div className="loom-skeleton loom-skeleton-line loom-skeleton-line-short" style={{ marginBottom: "0.5rem" }} />
-      <div className="loom-skeleton loom-skeleton-line loom-skeleton-line-long" />
-    </div>
+    <Card className="py-4">
+      <div className="px-4 space-y-2">
+        <Skeleton className="h-4 w-3/5" />
+        <Skeleton className="h-4 w-[85%]" />
+      </div>
+    </Card>
   );
 }
 
 function SkeletonRound() {
   return (
-    <div className="loom-skeleton-card">
-      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem" }}>
-        <div className="loom-skeleton loom-skeleton-line" style={{ width: 48, height: 16 }} />
-        <div className="loom-skeleton loom-skeleton-line" style={{ width: 80, height: 16 }} />
+    <div className="space-y-3 py-2">
+      <div className="flex gap-2">
+        <Skeleton className="h-4 w-12" />
+        <Skeleton className="h-4 w-20" />
       </div>
       <SkeletonCard />
       <SkeletonCard />
@@ -24,11 +27,11 @@ function SkeletonRound() {
 }
 
 const LoadingSkeleton = memo(({ rounds = 3 }) => (
-  <div className="loom-empty-state">
-    <div className="loom-skeleton" style={{ width: 48, height: 48, borderRadius: "50%", marginBottom: "1rem" }} />
-    <div className="loom-skeleton loom-skeleton-line loom-skeleton-line-short" style={{ width: 200, marginBottom: "0.5rem" }} />
-    <div className="loom-skeleton loom-skeleton-line" style={{ width: 140 }} />
-    <div style={{ marginTop: "1.5rem", width: "100%", maxWidth: 500 }}>
+  <div className="flex flex-col items-center justify-center py-12 text-center">
+    <Skeleton className="size-12 rounded-full mb-4" />
+    <Skeleton className="h-4 w-[200px] mb-2" />
+    <Skeleton className="h-4 w-[140px]" />
+    <div className="mt-6 w-full max-w-[500px] space-y-4">
       {Array.from({ length: rounds }, (_, i) => (
         <SkeletonRound key={i} />
       ))}

@@ -73,12 +73,21 @@ export class VectorIndex {
     let indexed = 0;
     const dim = getEmbeddingDim();
     const chunks = this.#chunkText(context, "User context");
+    const pending = [];
     for (const chunk of chunks) {
       const chunkId = this.#database.storeFabricChunk(chunk, 0, "context");
-      if (chunkId != null) {
-        const embedding = await embedText(chunk);
-        this.#database.storeFabricEmbedding(chunkId, embedding, dim);
-        indexed++;
+      if (chunkId != null) pending.push({ chunkId, text: chunk });
+    }
+    const concurrency = 4;
+    for (let i = 0; i < pending.length; i += concurrency) {
+      const batch = pending.slice(i, i + concurrency);
+      const embeddings = await Promise.all(batch.map((p) => embedText(p.text).catch((e) => { vectorLogger.warn("embed_failed", `Failed to embed chunk for context`, extractErrorInfo(e)); return null; })));
+      for (let j = 0; j < batch.length; j++) {
+        const emb = embeddings[j];
+        if (emb) {
+          this.#database.storeFabricEmbedding(batch[j].chunkId, emb, dim);
+          indexed++;
+        }
       }
     }
     return indexed;
@@ -96,16 +105,15 @@ export class VectorIndex {
     try {
       const dim = getEmbeddingDim();
       const queryEmbedding = await embedText(queryText, { isQuery: true });
-      const results = this.#database.searchFabricVectors(queryEmbedding, topK + 5, dim);
-      return results
-        .filter((r) => r.round !== excludeRound)
-        .slice(0, topK)
-        .map((r) => ({
-          content: r.content,
-          round: r.round,
-          distance: r.distance,
-          source: r.source,
-        }));
+      const hasExclude = excludeRound != null && excludeRound !== -1;
+      const fetchK = hasExclude ? topK * 2 : topK;
+      const results = this.#database.searchFabricVectors(queryEmbedding, fetchK, dim, hasExclude ? excludeRound : -1);
+      return results.slice(0, topK).map((r) => ({
+        content: r.content,
+        round: r.round,
+        distance: r.distance,
+        source: r.source,
+      }));
     } catch (err) {
       vectorLogger.debug("retrieve_failed", "Vector retrieval failed", extractErrorInfo(err));
       return [];

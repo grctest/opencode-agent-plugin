@@ -24,3 +24,15 @@ export function parseStats(raw) {
     return {};
   }
 }
+
+/**
+ * Safe JSON column parse — malformed rows must not 500 the endpoints that read them (audit 10 S4).
+ */
+export function safeParseJson(value, fallback = null) {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}

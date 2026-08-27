@@ -32,19 +32,13 @@ export class PersistenceService {
    */
    async persistState(sharedState, nextSpeakerId, stats, maxRounds = null) {
     await this.#db.transaction(async (db) => {
-      db.prepare("UPDATE meetings SET fabric = ?, updated_at = ? WHERE id = ?")
-        .run(sharedState.fabric, isoNow(), this.#meetingId);
-      db.prepare("UPDATE meetings SET round = ?, updated_at = ? WHERE id = ?")
-        .run(sharedState.round, isoNow(), this.#meetingId);
-      db.prepare("UPDATE meetings SET status = ?, updated_at = ? WHERE id = ?")
-        .run(sharedState.status, isoNow(), this.#meetingId);
-      db.prepare("UPDATE meetings SET next_speaker_id = ? WHERE id = ?")
-        .run(nextSpeakerId ?? null, this.#meetingId);
-      db.prepare("UPDATE meetings SET stats = ? WHERE id = ?")
-        .run(stats ? JSON.stringify(stats) : null, this.#meetingId);
+      const now = isoNow();
       if (maxRounds != null) {
-        db.prepare("UPDATE meetings SET max_rounds = ?, updated_at = ? WHERE id = ?")
-          .run(maxRounds, isoNow(), this.#meetingId);
+        db.prepare("UPDATE meetings SET fabric = ?, round = ?, status = ?, next_speaker_id = ?, stats = ?, max_rounds = ?, updated_at = ? WHERE id = ?")
+          .run(sharedState.fabric, sharedState.round, sharedState.status, nextSpeakerId ?? null, stats ? JSON.stringify(stats) : null, maxRounds, now, this.#meetingId);
+      } else {
+        db.prepare("UPDATE meetings SET fabric = ?, round = ?, status = ?, next_speaker_id = ?, stats = ?, updated_at = ? WHERE id = ?")
+          .run(sharedState.fabric, sharedState.round, sharedState.status, nextSpeakerId ?? null, stats ? JSON.stringify(stats) : null, now, this.#meetingId);
       }
     });
    }

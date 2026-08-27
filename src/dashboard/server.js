@@ -1,57 +1,74 @@
 import {
   DashboardApi,
   listMeetings,
-  getMeetingDbPath,
-  isValidMeetingId,
 } from "./api.js";
 import { join, resolve, sep } from "node:path";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { getMetricsSnapshot } from "../metrics.js";
 import { getRecentLogs } from "../logger.js";
 import { getConfig } from "../config.js";
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_QUANT } from "../services/model-manager.js";
 
-const embeddingStatus = {
-  state: "idle",
-  model: null,
-  dims: null,
-  maxTokens: null,
-  message: null,
-  initializedAt: null,
-};
-
-async function initEmbeddingModel() {
-  if (embeddingStatus.state === "initializing") return;
-  embeddingStatus.state = "initializing";
-  embeddingStatus.message = null;
-  const started = Date.now();
-  try {
-    const { initializeEmbedder, getEmbeddingDim, getEmbeddingMaxTokens } = await import("../services/embedding-service.js");
-    await initializeEmbedder(DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_QUANT);
-    embeddingStatus.state = "ready";
-    embeddingStatus.model = DEFAULT_EMBEDDING_MODEL;
-    embeddingStatus.dims = getEmbeddingDim();
-    embeddingStatus.maxTokens = getEmbeddingMaxTokens();
-    embeddingStatus.initializedAt = new Date().toISOString();
-    console.log(`[Loom dashboard] Embedding model ${DEFAULT_EMBEDDING_MODEL} ready (${embeddingStatus.dims}d) in ${Date.now() - started}ms`);
-  } catch (err) {
-    embeddingStatus.state = "error";
-    embeddingStatus.message = err instanceof Error ? err.message : String(err);
-    console.warn(`[Loom dashboard] Embedding model init failed: ${embeddingStatus.message}`);
+// Route table helper — centralizes method guards and documents API surface.
+// Each entry declares allowed methods; fetch handler checks before dispatch.
+const ROUTE_TABLE = [
+  { path: "/", methods: ["GET"] },
+  { path: "/index.html", methods: ["GET"] },
+  { path: "/api/meetings", methods: ["GET"] },
+  { path: "/api/session", methods: ["GET"] },
+  { path: "/api/meeting", methods: ["GET"] },
+  { path: "/api/artifact", methods: ["GET"] },
+  { path: "/api/contribution_context", methods: ["GET"] },
+  { path: "/api/orchestrator_messages", methods: ["GET"] },
+  { path: "/api/state", methods: ["GET"] },
+  { path: "/api/state_stats", methods: ["GET"] },
+  { path: "/api/health", methods: ["GET"] },
+  { path: "/api/models", methods: ["GET"] },
+  { path: "/api/models/select", methods: ["POST"] },
+  { path: "/api/metrics", methods: ["GET"] },
+  { path: "/api/logs", methods: ["GET"] },
+  { path: "/api/participants", methods: ["GET"] },
+  { path: "/api/contributions", methods: ["GET"] },
+  { path: "/api/turn_requests", methods: ["GET"] },
+  { path: "/api/agent_errors", methods: ["GET"] },
+  { path: "/api/agent_contexts", methods: ["GET"] },
+  { path: "/api/agent_context", methods: ["GET"] },
+  { path: "/api/export", methods: ["GET"] },
+  { path: "/api/export/stream", methods: ["GET"] },
+  { path: "/api/stream", methods: ["GET"] },
+];
+function isMethodAllowed(pathname, method) {
+  const entry = ROUTE_TABLE.find((r) => r.path === pathname);
+  if (!entry) return true; // allow assets and unknown to fall through 404
+  return entry.methods.includes(method);
+}
+function methodGuard(pathname, method) {
+  if (!isMethodAllowed(pathname, method)) {
+    return Response.json({ error: "method not allowed" }, { status: 405, headers: { Allow: ROUTE_TABLE.find((r) => r.path === pathname)?.methods.join(", ") ?? "" } });
   }
+  return null;
 }
 
-function getPackageVersion() {
-  try {
-    const pkgPath = resolve(import.meta.dir, "..", "..", "package.json");
-    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
-    return pkg.version ?? "0.0.0";
-  } catch {
-    return "0.0.0";
-  }
-}
+import {
+  embeddingStatus,
+  initEmbeddingModel,
+  getPackageVersion,
+  findAssetsDir,
+  MIME_TYPES,
+  isAssetPathSafe,
+  sendSSE,
+  clampLimit,
+  clampOffset,
+  SECURITY_HEADERS,
+  HTML_SHELL,
+  PACKAGE_VERSION,
+} from "./server/helpers.js";
+import { createPollSystem } from "./server/poll.js";
+import { getMeetingDbPath, isValidMeetingId } from "./api/free.js";
+import { getDatabasesBySessionId } from "../database/session-index.js";
+import { findMeetingBySessionId } from "../database/lookup.js";
 
-const PACKAGE_VERSION = getPackageVersion();
+const ASSETS_DIR = findAssetsDir();
 
 function getMeetingApi(url, directory) {
   const meetingId = url.searchParams.get("meeting");
@@ -65,322 +82,13 @@ function getMeetingApi(url, directory) {
   return { api: DashboardApi.get(dbPath), meetingId };
 }
 
-const HTML_SHELL = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Loom Dashboard</title>
-  <script>
-    (function() {
-      var t = localStorage.getItem("loom-theme") || "system";
-      if (t !== "system") document.documentElement.setAttribute("data-theme", t);
-    })();
-  </script>
-  <link rel="stylesheet" href="/assets/pure.css" />
-  <link rel="stylesheet" href="/assets/pure-grids-responsive.css" />
-  <link rel="stylesheet" href="/assets/styles.css" />
-</head>
-<body>
-  <div id="root"></div>
-  <script type="module" src="/assets/app.js"></script>
-</body>
-</html>`;
-
-function findAssetsDir() {
-  const candidates = [
-    resolve(import.meta.dir),
-    resolve(import.meta.dir, "loom", "dashboard"),
-    resolve(import.meta.dir, "dashboard"),
-  ];
-  for (const dir of candidates) {
-    if (existsSync(join(dir, "app.js"))) return dir;
-  }
-  return resolve(import.meta.dir);
-}
-
-const ASSETS_DIR = findAssetsDir();
-
-const MIME_TYPES = {
-  ".js": "application/javascript",
-  ".css": "text/css",
-  ".html": "text/html",
-  ".json": "application/json",
-  ".svg": "image/svg+xml",
-  ".ico": "image/x-icon",
-  ".map": "application/json",
-};
-
-function isAssetPathSafe(assetPath) {
-  if (assetPath.includes("..") || assetPath.includes("\0")) return false;
-  const lastDot = assetPath.lastIndexOf(".");
-  if (lastDot <= 0) return false;
-  const ext = assetPath.slice(lastDot);
-  if (!MIME_TYPES[ext]) return false;
-  const resolved = resolve(ASSETS_DIR, assetPath);
-  // Trailing separator guard: a sibling dir like ".../dashboardX" must not pass (audit 10 S6)
-  if (!resolved.startsWith(ASSETS_DIR + sep)) return false;
-  // Symlink escape guard
-  try {
-    return realpathSync(resolved).startsWith(realpathSync(ASSETS_DIR) + sep) && existsSync(resolved);
-  } catch {
-    return false;
-  }
-}
-
-function sendSSE(controller, event) {
-  const data = `data: ${JSON.stringify(event)}\n\n`;
-  controller.enqueue(new TextEncoder().encode(data));
-}
-
-/**
- * Clamp pagination params: reject negatives (SQLite treats LIMIT -1 as unlimited — audit 10 S3),
- * floor offset at zero, coerce non-numeric input to defaults.
- */
-function clampLimit(raw, fallback = 100, max = 500) {
-  const n = Math.floor(Number(raw));
-  if (!Number.isFinite(n)) return fallback;
-  return Math.min(Math.max(n, 0), max);
-}
-
-function clampOffset(raw) {
-  const n = Math.floor(Number(raw));
-  if (!Number.isFinite(n) || n < 0) return 0;
-  return n;
-}
-
-const SECURITY_HEADERS = {
-  "X-Content-Type-Options": "nosniff",
-  "X-Frame-Options": "DENY",
-};
-
 export function startDashboard(directory, port) {
-  const sseClients = new Map();
-  const lastContributionId = new Map();
-  const lastOrchestratorMsgId = new Map();
-  const lastInterjectionId = new Map();
-  const lastErrorId = new Map();
-  const participantStatusCache = new Map();
-  const lastMtime = new Map();
-
   initEmbeddingModel();
 
-  // Slow-consumer policy (audit 10 S5): a client whose queue stays full for this long is dropped.
-  const SLOW_CONSUMER_TIMEOUT_MS = 30000;
-
-  const broadcast = (meetingId, event) => {
-    const clients = sseClients.get(meetingId);
-    if (!clients || clients.size === 0) return;
-    for (const entry of clients) {
-      try {
-        sendSSE(entry.controller, event);
-        entry.slowSince = null;
-      } catch {
-        clients.delete(entry);
-      }
-    }
-  };
-
-  // SSE heartbeat (audit 10 S5): keep idle connections alive through proxies.
-  const pingTimer = setInterval(() => {
-    for (const [meetingId, clients] of sseClients) {
-      if (clients.size === 0) continue;
-      const now = Date.now();
-      for (const entry of clients) {
-        try {
-          if (entry.controller.desiredSize !== undefined && entry.controller.desiredSize <= 0) {
-            if (!entry.slowSince) entry.slowSince = now;
-            else if (now - entry.slowSince > SLOW_CONSUMER_TIMEOUT_MS) clients.delete(entry);
-            continue;
-          }
-          entry.controller.enqueue(new TextEncoder().encode(": ping\n\n"));
-          entry.slowSince = null;
-        } catch {
-          clients.delete(entry);
-        }
-      }
-    }
-  }, 15000);
-  if (pingTimer.unref) pingTimer.unref();
-
-  const ACTIVE_POLL_INTERVAL = 1000;
-  const IDLE_POLL_INTERVAL = 5000;
-  let currentPollInterval = ACTIVE_POLL_INTERVAL;
-  let pollTimer = null;
-  let consecutiveIdlePolls = 0;
-
-  const TERMINAL_STATUSES = new Set(["converged", "cancelled", "timeout", "max_rounds_reached", "aborted", "deadlocked"]);
-
-  const pollMeetings = () => {
-    let hadActivity = false;
-    for (const [meetingId, clients] of sseClients) {
-      if (clients.size === 0) continue;
-      try {
-        const dbPath = getMeetingDbPath(directory, meetingId);
-        if (!dbPath) continue;
-        const api = DashboardApi.get(dbPath);
-        // Mtime gate — skip heavy reads when file unchanged (saves 140 reads/sec)
-        const currentMtime = api.refreshIfStale();
-        const prevMtime = lastMtime.get(meetingId);
-        if (prevMtime !== undefined && currentMtime === prevMtime) {
-          continue;
-        }
-        lastMtime.set(meetingId, currentMtime);
-
-        const currentState = api.getState();
-        if (currentState && TERMINAL_STATUSES.has(currentState.status)) {
-          const wasTerminal = participantStatusCache.get(`terminal:${meetingId}`);
-          if (!wasTerminal) {
-            participantStatusCache.set(`terminal:${meetingId}`, "true");
-            broadcast(meetingId, { type: "state", data: currentState, timestamp: new Date().toISOString() });
-          }
-          const artifact = api.getArtifact();
-          if (artifact && participantStatusCache.get(`artifact:${meetingId}`) !== artifact.created_at) {
-            participantStatusCache.set(`artifact:${meetingId}`, artifact.created_at);
-            broadcast(meetingId, { type: "artifact", data: artifact, timestamp: new Date().toISOString() });
-          }
-          continue;
-        }
-
-        const maxId = api.getMaxContributionId();
-        const prevId = lastContributionId.get(meetingId) ?? 0;
-        if (maxId > prevId) {
-          lastContributionId.set(meetingId, maxId);
-          const newContributions = api.getContributionsSince(prevId);
-          broadcast(meetingId, {
-            type: "contributions",
-            data: newContributions,
-            timestamp: new Date().toISOString(),
-          });
-          hadActivity = true;
-        }
-
-        const maxMsgId = api.getMaxOrchestratorMessageId();
-        const prevMsgId = lastOrchestratorMsgId.get(meetingId) ?? 0;
-        if (maxMsgId > prevMsgId) {
-          lastOrchestratorMsgId.set(meetingId, maxMsgId);
-          const newMessages = api.getOrchestratorMessagesSince(prevMsgId, meetingId);
-          if (newMessages.length > 0) {
-            broadcast(meetingId, {
-              type: "orchestrator_messages",
-              data: newMessages,
-              timestamp: new Date().toISOString(),
-            });
-          }
-          hadActivity = true;
-        }
-
-        const maxIjId = api.getMaxTurnRequestId();
-        const prevIjId = lastInterjectionId.get(meetingId) ?? 0;
-        if (maxIjId > prevIjId) {
-          lastInterjectionId.set(meetingId, maxIjId);
-          const newTurnRequests = api.getTurnRequestsSince(prevIjId);
-          if (newTurnRequests.length > 0) {
-            broadcast(meetingId, {
-              type: "turn_requests",
-              data: newTurnRequests,
-              timestamp: new Date().toISOString(),
-            });
-          }
-          hadActivity = true;
-        }
-
-        const state = currentState;
-        if (state) {
-          const prevState = participantStatusCache.get(`state:${meetingId}`);
-          const stateStr = JSON.stringify({ status: state.status, round: state.round, stats: state.stats });
-          if (prevState !== stateStr) {
-            participantStatusCache.set(`state:${meetingId}`, stateStr);
-            broadcast(meetingId, {
-              type: "state",
-              data: state,
-              timestamp: new Date().toISOString(),
-            });
-            if (state.status === "weaving") hadActivity = true;
-          }
-        }
-
-        const participants = api.getParticipants();
-        const statusKey = meetingId;
-        const prevStatus = participantStatusCache.get(statusKey);
-        const newStatus = JSON.stringify(participants.map((p) => ({ id: p.id, status: p.status })));
-        if (prevStatus !== newStatus) {
-          participantStatusCache.set(statusKey, newStatus);
-          if (prevStatus !== undefined) {
-            broadcast(meetingId, {
-              type: "participants",
-              data: participants,
-              timestamp: new Date().toISOString(),
-            });
-            hadActivity = true;
-          }
-        }
-
-        const maxErrorId = api.getMaxErrorId();
-        const prevErrorId = lastErrorId.get(meetingId) ?? 0;
-        if (maxErrorId > prevErrorId) {
-          lastErrorId.set(meetingId, maxErrorId);
-          // Incremental fetch — WHERE id > ? instead of a full scan per tick (audit 10 S8)
-          const newErrors = api.getAgentErrorsAfter(prevErrorId);
-          for (const err of newErrors) {
-            broadcast(meetingId, {
-              type: "agent_error",
-              data: err,
-              timestamp: new Date().toISOString(),
-            });
-          }
-          hadActivity = true;
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`[Loom dashboard] Poll error for meeting ${meetingId}:`, message);
-        broadcast(meetingId, {
-          type: "error",
-          data: { message, meetingId, phase: "poll" },
-          timestamp: new Date().toISOString(),
-        });
-      }
-    }
-
-    if (hadActivity) {
-      consecutiveIdlePolls = 0;
-      if (currentPollInterval !== ACTIVE_POLL_INTERVAL) {
-        currentPollInterval = ACTIVE_POLL_INTERVAL;
-        restartPollTimer();
-      }
-    } else {
-      consecutiveIdlePolls++;
-      if (consecutiveIdlePolls > 5 && currentPollInterval !== IDLE_POLL_INTERVAL) {
-        currentPollInterval = IDLE_POLL_INTERVAL;
-        restartPollTimer();
-      }
-    }
-
-    // Prune stale entries for meetings with no SSE clients
-    for (const meetingId of [...lastContributionId.keys()]) {
-      const clients = sseClients.get(meetingId);
-      if (!clients || clients.size === 0) {
-        // Also remove the empty Set itself so the registry doesn't grow one dead entry per meeting (audit 10 S7)
-        if (clients) sseClients.delete(meetingId);
-        lastContributionId.delete(meetingId);
-        lastOrchestratorMsgId.delete(meetingId);
-        lastInterjectionId.delete(meetingId);
-        lastErrorId.delete(meetingId);
-        lastMtime.delete(meetingId);
-        participantStatusCache.delete(meetingId);
-        participantStatusCache.delete(`state:${meetingId}`);
-        participantStatusCache.delete(`terminal:${meetingId}`);
-        participantStatusCache.delete(`artifact:${meetingId}`);
-      }
-    }
-  };
-
-  const restartPollTimer = () => {
-    if (pollTimer) clearInterval(pollTimer);
-    pollTimer = setInterval(pollMeetings, currentPollInterval);
-  };
-
-  pollTimer = setInterval(pollMeetings, currentPollInterval);
+  const pollSystem = createPollSystem(directory);
+  const { sseClients, lastContributionId, lastOrchestratorMsgId, lastInterjectionId, lastErrorId, participantStatusCache, lastMtime, broadcast, pingTimer, restartPollTimer } = pollSystem;
+  let pollTimer = pollSystem.getPollTimer();
+  let currentPollInterval = pollSystem.getCurrentPollInterval();
 
   // Bind localhost by default; dashboard.host config restores LAN access deliberately (audit 10 S2).
   let hostname = "127.0.0.1";
@@ -397,9 +105,13 @@ export function startDashboard(directory, port) {
   const server = Bun.serve({
     port,
     hostname,
+    idleTimeout: 60,
     async fetch(req) {
       try {
         const url = new URL(req.url);
+        // Method guard via route table
+        const guard = methodGuard(url.pathname, req.method);
+        if (guard) return guard;
 
         if (url.pathname === "/" || url.pathname === "/index.html") {
           return new Response(HTML_SHELL, {
@@ -414,8 +126,47 @@ export function startDashboard(directory, port) {
         }
 
         if (url.pathname === "/api/meetings") {
+          const sessionId = url.searchParams.get("session");
+          if (sessionId) {
+            // Session-filtered: only meetings for this session
+            const dbs = getDatabasesBySessionId(sessionId);
+            const meetings = [];
+            for (const { dbPath, meetingId } of dbs) {
+              try {
+                const api = DashboardApi.get(dbPath);
+                const state = api.getState();
+                if (state) {
+                  const participantCount = api.getParticipants().length;
+                  meetings.push({
+                    meeting_id: meetingId,
+                    question: state.question,
+                    status: state.status,
+                    round: state.round,
+                    max_rounds: state.max_rounds,
+                    convergence: state.convergence,
+                    created_at: state.created_at,
+                    participant_count: participantCount,
+                  });
+                }
+              } catch {}
+            }
+            meetings.sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""));
+            return Response.json(meetings);
+          }
           const meetings = listMeetings(directory);
           return Response.json(meetings);
+        }
+
+        if (url.pathname === "/api/session") {
+          const sessionId = url.searchParams.get("session");
+          if (!sessionId) {
+            return Response.json({ error: "session id required" }, { status: 400 });
+          }
+          const meeting = await findMeetingBySessionId(directory, sessionId);
+          if (!meeting) {
+            return Response.json({ meeting: null });
+          }
+          return Response.json({ meeting });
         }
 
         if (url.pathname === "/api/meeting") {
@@ -555,7 +306,9 @@ export function startDashboard(directory, port) {
           if (since > 0) {
             let contribs = api.getContributionsSince(since);
             if (!includeContext) contribs = contribs.map((c) => ({ ...c, prompt_context: null }));
-            return Response.json(contribs);
+            // Normalized shape: always return {contributions, total} (total = count of returned slice for since queries)
+            // Clients handle both array and object for backward compat — this ensures consistency.
+            return Response.json({ contributions: contribs, total: contribs.length });
           }
           const limit = clampLimit(url.searchParams.get("limit"));
           const offset = clampOffset(url.searchParams.get("offset"));
@@ -654,8 +407,20 @@ export function startDashboard(directory, port) {
 
           const stream = new ReadableStream({
             start(controller) {
+              const isFirstClient = !sseClients.has(meetingId) || sseClients.get(meetingId).size === 0;
               if (!sseClients.has(meetingId)) {
                 sseClients.set(meetingId, new Set());
+              }
+              // Seed lastContributionId on first SSE connect so first poll is delta-only
+              if (isFirstClient && !lastContributionId.has(meetingId)) {
+                try {
+                  const maxId = api.getMaxContributionId();
+                  lastContributionId.set(meetingId, maxId);
+                } catch {}
+                // Also seed other deltas to avoid replaying full history on first poll
+                try { lastOrchestratorMsgId.set(meetingId, api.getMaxOrchestratorMessageId()); } catch {}
+                try { lastInterjectionId.set(meetingId, api.getMaxTurnRequestId()); } catch {}
+                try { lastErrorId.set(meetingId, api.getMaxErrorId()); } catch {}
               }
               clientEntry = { controller, slowSince: null };
               sseClients.get(meetingId).add(clientEntry);
@@ -685,16 +450,33 @@ export function startDashboard(directory, port) {
 
         if (url.pathname.startsWith("/assets/")) {
           const assetPath = url.pathname.slice("/assets/".length);
-          if (!isAssetPathSafe(assetPath)) {
+          if (!isAssetPathSafe(assetPath, ASSETS_DIR)) {
             return new Response("Not found", { status: 404 });
           }
           const filePath = join(ASSETS_DIR, assetPath);
           const lastDot = filePath.lastIndexOf(".");
           const ext = lastDot > 0 ? filePath.slice(lastDot) : "";
           const contentType = MIME_TYPES[ext] ?? "application/octet-stream";
-          return new Response(Bun.file(filePath), {
-            headers: { "Content-Type": contentType, ...SECURITY_HEADERS },
-          });
+          const headers = { "Content-Type": contentType, ...SECURITY_HEADERS };
+          if (assetPath === "app.js") {
+            headers["Cache-Control"] = "no-cache";
+            headers["ETag"] = (() => {
+              try {
+                const s = statSync(filePath);
+                return `W/"${s.mtimeMs.toString(36)}-${s.size.toString(36)}"`;
+              } catch { return undefined; }
+            })();
+            // Handle conditional request
+            const inm = req.headers.get("if-none-match");
+            if (inm && headers["ETag"] && inm === headers["ETag"]) {
+              return new Response(null, { status: 304, headers });
+            }
+          } else {
+            headers["Cache-Control"] = "public, max-age=31536000, immutable";
+          }
+          // Remove undefined ETag if stat failed
+          if (!headers["ETag"]) delete headers["ETag"];
+          return new Response(Bun.file(filePath), { headers });
         }
 
         return new Response("Not found", { status: 404, headers: SECURITY_HEADERS });

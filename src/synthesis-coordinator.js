@@ -1,9 +1,10 @@
-import { buildSynthesisPrompt } from "./prompts.js";
+import { buildSynthesisPrompt } from "./prompts/synthesis.js";
 import { formatFinalRoundTranscript } from "./fabric-manager.js";
 import { finalizeSynthesis, validateSynthesisSections, NEUTRAL_SYNTHESIZER_SYSTEM } from "./synthesizer.js";
 import { getConfig } from "./config.js";
 import { extractErrorInfo } from "./logger.js";
 import { incrementKeyedCounter, recordLatency } from "./metrics.js";
+import { withRetry, isRetryableError } from "./utils/retry.js";
 
 const MAX_CRITIQUE_RETRIES = 2;
 // Core required for both modes; Action Items / Proposed Fix group — at least one must be present (see synthesizer.validateSynthesisSections)
@@ -66,21 +67,21 @@ export class SynthesisCoordinator {
         additionalFeedback;
 
       const llmStart = Date.now();
-      const result = await this.#sessionManager.getContract().prompt({
-        sessionId,
-        system: NEUTRAL_SYNTHESIZER_SYSTEM,
-        model,
-        temperature: synthesizer.tier_config.temperature,
-        parts: [{ type: "text", text: userPrompt }],
-        timeoutMs: getConfig().synthesisTimeoutMs,
-      });
+      const result = await withRetry(async () => {
+        const r = await this.#sessionManager.getContract().prompt({
+          sessionId,
+          system: NEUTRAL_SYNTHESIZER_SYSTEM,
+          model,
+          temperature: synthesizer.tier_config.temperature,
+          parts: [{ type: "text", text: userPrompt }],
+          timeoutMs: getConfig().synthesisTimeoutMs,
+        });
+        if (!r.ok) throw r.error;
+        return r;
+      }, { maxAttempts: 3, baseDelayMs: 200, maxDelayMs: 2000, retryable: isRetryableError });
       const llmMs = Date.now() - llmStart;
       incrementKeyedCounter("llm_calls_by_type", "synthesis");
       recordLatency("synthesis_ms", llmMs);
-
-      if (!result.ok) {
-        throw result.error;
-      }
 
       const text = result.text;
       if (!text) {
@@ -165,14 +166,14 @@ export class SynthesisCoordinator {
         }).join("\n\n");
         parts.push(lastTwoText);
         const combined = parts.join("\n\n");
-        transcriptSnippet = combined.slice(0, 4000);
+        transcriptSnippet = combined.slice(0, 8000);
         // Fallback to head if combined empty
-        if (!transcriptSnippet.trim()) transcriptSnippet = transcript.slice(0, 4000);
+        if (!transcriptSnippet.trim()) transcriptSnippet = transcript.slice(0, 8000);
       } else {
-        transcriptSnippet = transcript.slice(0, 4000);
+        transcriptSnippet = transcript.slice(0, 8000);
       }
     } catch {
-      transcriptSnippet = transcript.slice(0, 4000);
+      transcriptSnippet = transcript.slice(0, 8000);
     }
 
     let critiquePrompt = `You are a synthesis auditor reviewing your own synthesis for grounding. You prefer longer, thorough deliberation — do not suppress dissent to fake consensus. Support both conversational and code-analysis (read-only) tasks.
@@ -202,16 +203,18 @@ ${draftForPrompt}`;
 
     for (let attempt = 0; attempt < MAX_CRITIQUE_RETRIES; attempt++) {
       try {
-        const result = await this.#sessionManager.getContract().prompt({
-          sessionId,
-          system: NEUTRAL_SYNTHESIZER_SYSTEM,
-          model,
-          temperature: synthesizer.tier_config.temperature,
-          parts: [{ type: "text", text: critiquePrompt }],
-          timeoutMs: getConfig().synthesisTimeoutMs,
-        });
-
-        if (!result.ok) throw result.error;
+        const result = await withRetry(async () => {
+          const r = await this.#sessionManager.getContract().prompt({
+            sessionId,
+            system: NEUTRAL_SYNTHESIZER_SYSTEM,
+            model,
+            temperature: synthesizer.tier_config.temperature,
+            parts: [{ type: "text", text: critiquePrompt }],
+            timeoutMs: getConfig().synthesisTimeoutMs,
+          });
+          if (!r.ok) throw r.error;
+          return r;
+        }, { maxAttempts: 3, baseDelayMs: 200, maxDelayMs: 2000, retryable: isRetryableError });
         const text2 = result.text;
         if (!text2 || !text2.trim()) return text;
 

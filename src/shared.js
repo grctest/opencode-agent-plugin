@@ -6,7 +6,6 @@ export {
   LOOKBACK,
   TURN_REQUEST_PRIORITY_CAP,
   getPriorityCap,
-  getPromptForTier,
   getTierConfig,
   splitModel,
   getRightsForTier,

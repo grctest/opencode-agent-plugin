@@ -70,7 +70,7 @@ export class SessionContract {
    *   temperature?: number,
    *   parts?: Array<{ type: string; text: string }>,
    *   tools?: Record<string, boolean>,
-   *   toolChoice?: string,
+   *   toolChoice?: string, // NOTE: PromptInput has no tool_choice field (see packages/opencode/src/session/prompt.ts:1499); server ignores this. Kept for future compat; toolChoice is actually determined by format ("required" for json_schema) and defaults to "auto". Evidence/vote "required"/"none" hints are prompt-enforced, not API-enforced.
    *   timeoutMs?: number,
    * }} payload
    * @returns {Promise<{ ok: true, data: object, text: string, tokens?: { input: number; output: number } | null, error: null } | { ok: false, data: null, text: "", tokens: null, error: Error }>}
@@ -78,6 +78,7 @@ export class SessionContract {
   async prompt({ sessionId, system, model, temperature, parts, tools, toolChoice, timeoutMs }) {
     const config = getConfig();
     try {
+      // Note: SessionPromptData (packages/sdk/js/src/gen/types.gen.ts:2588) has no tool_choice field; PromptInput (packages/opencode/src/session/prompt.ts:1499) also has no tool_choice — server derives toolChoice from format/isLastStep. We do NOT send tool_choice to avoid unknown-field noise.
       const result = await withTimeout(
         this.#client.session.prompt({
           path: { id: sessionId },
@@ -87,7 +88,6 @@ export class SessionContract {
             temperature,
             parts: parts ?? [{ type: "text", text: "" }],
             tools: tools ?? {},
-            tool_choice: toolChoice,
           },
           query: { directory: this.#directory },
         }),

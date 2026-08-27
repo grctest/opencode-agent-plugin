@@ -52,29 +52,6 @@ export class SessionManager {
   }
 
   /**
-   * Fetches user messages posted to the parent session after `sinceId`
-   * (audit 14 PV2 human-in-the-loop). Best-effort — returns [] on failure.
-   * @param {string|null} sinceId
-   * @returns {Promise<Array<{id: string, role: string, text: string}>>}
-   */
-  async getParentUserMessages(sinceId = null) {
-    if (!this.#parentSessionId) return [];
-    const { ok, messages } = await this.#contract.messages(this.#parentSessionId);
-    if (!ok) return [];
-    let seen = false;
-    return messages.filter((m) => {
-      if (m.role !== "user") return false;
-      if (sinceId == null) return true;
-      if (seen) return true;
-      if (m.id === sinceId) {
-        seen = true;
-        return false;
-      }
-      return false;
-    });
-  }
-
-  /**
    * Maps an ephemeral session ID to its meeting ID for fast lookup
    * during tool execution. Populated when sessions are created for a meeting.
    */
@@ -157,7 +134,26 @@ export class SessionManager {
     try {
       sessionId = await this.createEphemeralSession(participant);
       if (meetingId) this.registerSessionMeeting(sessionId, meetingId);
-      const res = await this.getContract().prompt({ sessionId, ...promptOpts });
+      // Honor context.abort if provided in promptOpts.signal/abort (guide: pass context.abort)
+      const { signal, abort, ...restOpts } = promptOpts;
+      const effectiveSignal = signal ?? abort ?? null;
+      // SessionContract currently ignores signal (PromptInput has no tool_choice/signal), but we forward for future compat
+      // and use it to race the prompt if abort fires
+      let res;
+      if (effectiveSignal) {
+        const abortPromise = new Promise((_, reject) => {
+          if (effectiveSignal.aborted) reject(new DOMException("Aborted", "AbortError"));
+          else effectiveSignal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+        });
+        res = await Promise.race([
+          this.getContract().prompt({ sessionId, ...restOpts }),
+          abortPromise.then(() => { throw new DOMException("Aborted", "AbortError"); }),
+        ]).catch((err) => ({ ok: false, data: null, error: err }));
+        // If abort raced, ensure we still clean up
+        if (res && res.error && res.error.name === "AbortError") throw res.error;
+      } else {
+        res = await this.getContract().prompt({ sessionId, ...restOpts });
+      }
       return res;
     } catch (err) {
       return { ok: false, data: null, error: err };

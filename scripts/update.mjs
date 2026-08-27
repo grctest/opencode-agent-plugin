@@ -46,11 +46,9 @@ function verifyToolRegistration() {
   const required = [
     "loom_vector_search",
     "loom_query",
-    "loom_evidence",
     "loom_vote",
     "loom_summon",
     "loom_request_next",
-    "loom_type",
   ];
   const missing = required.filter((name) => !content.includes(`"${name}"`));
   if (missing.length > 0) {

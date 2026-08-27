@@ -18,29 +18,55 @@ function getConfigDir() {
 }
 
 const MODEL_DIR = join(getConfigDir(), "loom", "models");
-const DEPS_DIR = join(getConfigDir(), "loom", "deps");
-const DEP_REQS = createRequire(join(DEPS_DIR, ".pkg.js"));
+
+function getDepsDirs() {
+  const base = getConfigDir();
+  return [
+    join(base, "plugins", "deps"),
+    join(base, "loom", "deps"),
+  ];
+}
 
 let cachedOrt = null;
 let cachedTokenizer = null;
+// Cached singletons persist for the process lifetime (onnxruntime/tokenizer are
+// expensive to reload). No automatic dispose is needed in production; the
+// dispose path below exists for tests and graceful shutdown and releases the
+// references so GC / re-init can proceed. Call disposeCachedDeps() when
+// tearing down to avoid leaks in long-running test suites.
 
 /**
  * Resolve an optional native dependency (onnxruntime-node, @huggingface/tokenizers)
- * from the runtime deps dir installed by scripts/install.mjs, falling back to a
- * bare import so local/dev resolution from project node_modules keeps working.
+ * from the runtime deps dir installed by scripts/install.mjs, probing both
+ * `plugins/deps` and `loom/deps` for compatibility (mirrors database/connection.js
+ * vec probing). Falls back to a bare import so local/dev resolution from project
+ * node_modules keeps working.
  */
 async function resolveDep(dep) {
   const spec = `"${dep}"`;
-  try {
-    return DEP_REQS(dep);
-  } catch (depErr) {
+  for (const dir of getDepsDirs()) {
     try {
-      return await import(dep);
-    } catch (importErr) {
-      throw new Error(
-        `Cannot load native dependency ${spec}. Install the Loom runtime deps with: npm run install:plugin (details: ${(depErr || importErr).message})`
-      );
+      const req = createRequire(join(dir, ".pkg.js"));
+      return req(dep);
+    } catch {}
+    try {
+      const req2 = createRequire(join(dir, "package.json"));
+      return req2(dep);
+    } catch {}
+  }
+  try {
+    return await import(dep);
+  } catch (importErr) {
+    // Try explicit node_modules fallback for the two known layouts
+    for (const dir of getDepsDirs()) {
+      try {
+        const abs = join(dir, "node_modules", dep);
+        return await import(abs);
+      } catch {}
     }
+    throw new Error(
+      `Cannot load native dependency ${spec}. Install the Loom runtime deps with: npm run install:plugin (details: ${importErr.message})`
+    );
   }
 }
 
@@ -55,6 +81,19 @@ async function resolveTokenizer() {
     cachedTokenizer = module.Tokenizer;
   }
   return cachedTokenizer;
+}
+
+/**
+ * Dispose cached native deps. Production code keeps singletons alive;
+ * this path exists for tests / graceful shutdown to release references
+ * and allow GC or re-init with a different dep dir.
+ */
+export function disposeCachedDeps() {
+  // onnxruntime-node and tokenizers have no explicit .dispose(); dropping
+  // the cached module reference is sufficient to let GC reclaim and forces
+  // resolveDep to re-probe on next load.
+  cachedOrt = null;
+  cachedTokenizer = null;
 }
 
 export const DEFAULT_EMBEDDING_MODEL = "Snowflake/snowflake-arctic-embed-xs";

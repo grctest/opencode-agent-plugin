@@ -61,6 +61,7 @@ export class StallWatchdog {
         this.#logger.error("watchdog_failed", "Stall watchdog check failed", info);
       }
     }, WATCHDOG_TICK_MS);
+    this.#timer.unref?.();
   }
 
   stop() {

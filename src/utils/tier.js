@@ -53,28 +53,6 @@ export function getDefaultTemperatureForTier(tier) {
   }
 }
 
-/**
- * @deprecated Use participant.config.tier_guidance from persona files instead.
- * This function is kept for backward compatibility only. Updated to match
- * verb-first doctrine in src/prompts.js:buildTierDoctrine so custom
- * participants without tier_guidance still behave correctly.
- */
-export function getPromptForTier(tier) {
-  switch (tier) {
-    case "junior":
-      return "Junior doctrine: surface one naive question that exposes an unstated senior assumption. Offer a concrete example from your lens, then ask ‘What would we need to learn to answer it?’ Be falsifiable.";
-    case "mid":
-    case "civilian":
-      return "Mid doctrine: make one tradeoff explicit (cost/time/risk/quality). Translate a claim into a number or a measurable check. Cite a precedent or [#id] when you push back.";
-    case "senior":
-      return "Senior doctrine: name the irreversible commitment and its mitigation/rollback. Cite one pattern or precedent you’ve seen — ‘Irreversible: … because … Mitigation: …’";
-    case "principal":
-      return "Principal doctrine: when at impasse, frame 2 viable options with decision criterion (cost/risk/time/reversibility) and a tie-break. State ‘Settled: … Open: …’ to cut re-litigation.";
-    default:
-      return "Contribute a falsifiable claim or question — avoid generalities. Cite [#id] when engaging prior work.";
-  }
-}
-
 /** Splits a "provider/model" string into its components. */
 export function splitModel(model) {
   const idx = model.indexOf("/");

@@ -8,8 +8,14 @@ export function deriveConfidence(weave, dissentCount, totalParticipants = 0, act
   const totalContribs = weave.length;
   if (totalContribs === 0) return "low";
 
+  const challengeWordsRe = /\b(challenge|dissent|disagree|concern|oppose|object|critique|dispute|contradict|refuse|risk|flaw|weakness|however|concerned)\b/i;
+  function isChallengeLike(c) {
+    if (c.type === "challenge" || c.type === "dissent" || c.type === "critique_response") return true;
+    const content = (c.content || "").toLowerCase();
+    return challengeWordsRe.test(content);
+  }
   const challengeRatio =
-    weave.filter((c) => c.type === "challenge" || c.type === "dissent").length /
+    weave.filter(isChallengeLike).length /
     Math.max(totalContribs, 1);
 
   const participationRate = totalParticipants > 0 ? activeParticipants / totalParticipants : 1;
@@ -21,8 +27,7 @@ export function deriveConfidence(weave, dissentCount, totalParticipants = 0, act
 
 /** Parses the Confidence section as a single High/Medium/Low value — anchored to heading, avoids "Highly". */
 export function parseConfidence(text) {
-  const tail = text.slice(-800);
-  const match = tail.match(/##\s*Confidence\b[^#]*?\b(High|Medium|Low)\b/i);
+  const match = text.match(/##\s*Confidence\b[^#]*?\b(High|Medium|Low)\b/i);
   if (match) return match[1].toLowerCase();
   return null;
 }
@@ -35,20 +40,24 @@ export function validateSynthesisSections(text) {
   const coreRequired = ["Decision", "Reasoning", "Confidence"];
   const atLeastOneOf = [["Action Items", "Proposed Fix"]];
   const alwaysRequired = ["Dissenting Views", "Open Questions"];
-  const lower = text.toLowerCase();
   const warnings = [];
+  function hasSection(section) {
+    const esc = section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(`^##\\s*${esc}\\s*$`, "im");
+    return re.test(text);
+  }
   for (const section of coreRequired) {
-    if (!lower.includes(`## ${section.toLowerCase()}`)) {
+    if (!hasSection(section)) {
       warnings.push(section);
     }
   }
   for (const section of alwaysRequired) {
-    if (!lower.includes(`## ${section.toLowerCase()}`)) {
+    if (!hasSection(section)) {
       warnings.push(section);
     }
   }
   for (const group of atLeastOneOf) {
-    const hasOne = group.some(s => lower.includes(`## ${s.toLowerCase()}`));
+    const hasOne = group.some(s => hasSection(s));
     if (!hasOne) {
       // Prefer Action Items as canonical, but accept Proposed Fix
       warnings.push(group[0]);

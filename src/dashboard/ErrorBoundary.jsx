@@ -1,4 +1,8 @@
 import { Component } from "react";
+import { Alert, AlertTitle, AlertDescription } from "./components/ui/alert.tsx";
+import { Button } from "./components/ui/button.tsx";
+import { Card, CardContent, CardHeader, CardTitle } from "./components/ui/card.tsx";
+import { TriangleAlertIcon } from "lucide-react";
 
 export class ErrorBoundary extends Component {
   constructor(props) {
@@ -21,23 +25,21 @@ export class ErrorBoundary extends Component {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="loom-card loom-card-error">
-          <h3 className="loom-title-sm">Something went wrong</h3>
-          <p className="loom-text loom-text-muted">
-            {this.props.fallbackMessage || "An error occurred rendering this component."}
-          </p>
-          {this.state.error && (
-            <pre className="loom-error-trace">
-              {this.state.error.message}
-            </pre>
-          )}
-          <button
-            className="pure-button pure-button-primary loom-mt-sm"
-            onClick={this.handleRetry}
-          >
-            Try again
-          </button>
-        </div>
+        <Alert variant="destructive" className="my-2">
+          <TriangleAlertIcon />
+          <AlertTitle>Something went wrong</AlertTitle>
+          <AlertDescription className="flex flex-col gap-2">
+            <span>{this.props.fallbackMessage || "An error occurred rendering this component."}</span>
+            {this.state.error && (
+              <pre className="text-xs bg-destructive/10 p-2 rounded whitespace-pre-wrap break-words">
+                {this.state.error.message}
+              </pre>
+            )}
+            <Button variant="outline" size="sm" onClick={this.handleRetry} className="w-fit">
+              Try again
+            </Button>
+          </AlertDescription>
+        </Alert>
       );
     }
     return <div key={this.state.resetKey}>{this.props.children}</div>;

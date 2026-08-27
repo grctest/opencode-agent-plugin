@@ -42,13 +42,14 @@ export class StateManager {
     // Copies are frozen, not the live internals, so internal mutation paths keep working.
     const deepFreeze = (value) => {
       if (value === null || typeof value !== "object") return value;
-      Object.freeze(value);
+      if (Object.isFrozen(value)) return value;
       for (const key of Object.keys(value)) {
-        if (value[key] !== null && typeof value[key] === "object") {
-          value[key] = deepFreeze(value[key]);
+        const v = value[key];
+        if (v !== null && typeof v === "object" && !Object.isFrozen(v)) {
+          deepFreeze(v);
         }
       }
-      return value;
+      return Object.freeze(value);
     };
     const frozenCopy = (v) => {
       if (v === null || typeof v !== "object") return v;
@@ -88,32 +89,6 @@ export class StateManager {
 
   getPassedCount() {
     return this.#state.participants.filter(p => p.status === "passed").length;
-  }
-
-  /**
-   * Mutes a participant for the remainder of the meeting (audit 14 PV3).
-   * Muted participants keep their history but are skipped by turn planning.
-   */
-  muteParticipant(participantId) {
-    const p = this.getParticipant(participantId);
-    if (p && p.status !== "failed" && p.status !== "passed") {
-      p.status = "muted";
-      this.#logger.info("participant_muted", `Participant ${participantId} muted`);
-      return true;
-    }
-    if (!p) this.#logger.warn("participant_not_found", `muteParticipant: unknown participant "${participantId}"`);
-    return false;
-  }
-
-  /** Returns a muted participant to the listening rotation (audit 14 PV3). */
-  releaseParticipant(participantId) {
-    const p = this.getParticipant(participantId);
-    if (p && p.status === "muted") {
-      p.status = "listening";
-      this.#logger.info("participant_released", `Participant ${participantId} released back to rotation`);
-      return true;
-    }
-    return false;
   }
 
   getActiveCount() {
@@ -209,7 +184,7 @@ export class StateManager {
    */
   static TRANSITIONS = {
     initializing: ["weaving", "cancelled", "aborted", "timeout"],
-    weaving: ["converged", "cancelled", "timeout", "max_rounds_reached", "aborted", "deadlocked"],
+    weaving: ["converged", "cancelled", "timeout", "max_rounds_reached", "aborted"],
     // Extension entry point: a converged/terminal meeting explicitly re-opened
     // by extendMeeting() passes through forceTransitionTo, documented below.
     converged: [],
@@ -217,7 +192,6 @@ export class StateManager {
     timeout: [],
     max_rounds_reached: [],
     aborted: [],
-    deadlocked: [],
   };
 
   transitionTo(status) {
