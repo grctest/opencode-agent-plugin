@@ -2,8 +2,18 @@ import { useRef, useMemo, useCallback, useState, useEffect, memo } from "react";
 import { cn, relativeTime } from "../utils.js";
 import { ContributionItem, TurnRequestItem, ThinkingCard, ReflectionRow, QueryResponseRow, EvidenceResponseRow, SummonedResponseRow, VoteResponseRow, OrchestratorItem, ORCHESTRATOR_TYPE_META, ContentDialog, renderMarkdown } from "./Cards.jsx";
 import { buildFlatItems, pairOrchestratorMessages } from "../utils/timeline.js";
-
 import { List } from "react-window";
+import { Card, CardContent } from "./ui/card.tsx";
+import { Badge } from "./ui/badge.tsx";
+import { Button } from "./ui/button.tsx";
+import { Alert, AlertDescription, AlertTitle } from "./ui/alert.tsx";
+import { Empty, EmptyHeader, EmptyTitle, EmptyDescription, EmptyMedia } from "./ui/empty.tsx";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui/tabs.tsx";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible.tsx";
+import { Spinner } from "./ui/spinner.tsx";
+import { Table, TableBody, TableCell, TableRow } from "./ui/table.tsx";
+import { Separator } from "./ui/separator.tsx";
+import { MessageSquareIcon, TriangleAlertIcon, CopyIcon, CheckIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 
 const THINKING_TURN_HEIGHT = 56;
 const THINKING_REFLECTION_HEIGHT = 56;
@@ -33,48 +43,32 @@ const ModelFallbackItem = memo(({ error, participantName }) => {
   const parts = msg.split(" — ");
   const modelInfo = parts[0] || msg;
   const errorMsg = parts.slice(1).join(" — ") || "unknown error";
-
   return (
-    <div className="loom-card loom-fallback-card">
-      <div className="loom-fallback-header" role="button" tabIndex={0} onClick={() => setExpanded(!expanded)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setExpanded(!expanded); } }} aria-expanded={expanded}>
-        <span className="loom-fallback-icon" aria-hidden="true">🔄</span>
-        <span className="loom-text loom-text-sm">
-          <strong>{name}</strong> switched models — {modelInfo}
-        </span>
-        <span className="loom-fallback-toggle">{expanded ? "▼" : "▶"}</span>
-      </div>
-      {expanded && (
-        <div className="loom-fallback-details">
-          <span className="loom-text-xs loom-text-muted">{errorMsg}</span>
-        </div>
-      )}
-    </div>
+    <Collapsible open={expanded} onOpenChange={setExpanded}>
+      <Card className="border-amber-500/50 py-2">
+        <CollapsibleTrigger className="flex items-center gap-2 w-full px-3 text-left">
+          <span aria-hidden="true">🔄</span>
+          <span className="text-sm"><strong>{name}</strong> switched models — {modelInfo}</span>
+          <span className="ml-auto text-muted-foreground text-xs flex items-center gap-1">{expanded ? <ChevronDownIcon className="size-3" /> : <ChevronRightIcon className="size-3" />}</span>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <div className="px-3 pt-2 mt-2 border-t"><span className="text-xs text-muted-foreground">{errorMsg}</span></div>
+        </CollapsibleContent>
+      </Card>
+    </Collapsible>
   );
 });
 
 const RoundSummaryItem = memo(({ summary, group, onDialogOpen }) => {
   const openDialog = () => onDialogOpen?.({ orchestratorGroup: group, type: "summary" });
-  const onKeyDown = (e) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      openDialog();
-    }
-  };
-
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      className="loom-card loom-card-dashed loom-round-summary"
-      onClick={openDialog}
-      onKeyDown={onKeyDown}
-    >
-      <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center loom-mb-xs">
-        <span className="loom-orchestrator-item-name">Orchestrator</span>
-        <span className="loom-badge loom-badge-orchestrator">{ORCHESTRATOR_TYPE_META.summary.label}</span>
+    <Card role="button" tabIndex={0} className="border-dashed border-l-[3px] border-l-amber-500 cursor-pointer hover:bg-accent py-3" onClick={openDialog} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDialog(); } }}>
+      <div className="flex flex-wrap gap-2 items-center mb-1 px-3">
+        <span className="text-sm font-semibold">Orchestrator</span>
+        <Badge variant="orchestrator" className="ml-auto">{ORCHESTRATOR_TYPE_META.summary.label}</Badge>
       </div>
-      <div className="loom-round-summary-content loom-text loom-text-muted">{summary}</div>
-    </div>
+      <div className="text-sm text-muted-foreground whitespace-pre-wrap break-words px-3">{summary}</div>
+    </Card>
   );
 });
 
@@ -113,23 +107,21 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
   if (!item) return null;
   if (item.type === "header") {
     return (
-      <div style={style} className="loom-vrow">
+      <div style={style} className="overflow-hidden py-0.5">
         {item.showExtensionMarker && (
-          <div className="loom-extension-marker">
-            <span className="loom-extension-marker-line" />
-            <span className="loom-extension-marker-label">Extended</span>
-            <span className="loom-extension-marker-line" />
+          <div className="flex items-center gap-2 my-3">
+            <Separator className="flex-1" />
+            <span className="text-[10px] font-semibold uppercase tracking-widest text-blue-600">Extended</span>
+            <Separator className="flex-1" />
           </div>
         )}
-        <div className={cn("loom-round-group", item.isActive && "loom-round-active")}>
-          <button className="loom-round-header" onClick={() => onToggleCollapse(item.round)} aria-expanded={!item.isCollapsed} aria-controls={`round-content-${item.round}`} aria-label={`Round ${item.round} ${item.isCollapsed ? "collapsed" : "expanded"}`}>
-            <span className="loom-round-toggle" aria-hidden="true">{item.isCollapsed ? "▶" : "▼"}</span>
-            <span className="loom-round-title">Round {item.round}</span>
-            <span className="loom-round-count" aria-live="polite">{item.contribsCount} contribution{item.contribsCount !== 1 ? "s" : ""}</span>
-            {item.errorsCount > 0 && (
-              <span className="loom-round-errors"><span aria-hidden="true">⚠</span> {item.errorsCount}</span>
-            )}
-          </button>
+        <div className={cn("mb-1", item.isActive && "[&>button]:border-primary")}>
+          <Button variant="outline" className="w-full justify-start gap-2 h-auto py-2" onClick={() => onToggleCollapse(item.round)} aria-expanded={!item.isCollapsed} aria-controls={`round-content-${item.round}`} aria-label={`Round ${item.round} ${item.isCollapsed ? "collapsed" : "expanded"}`}>
+            <span className="text-[10px] text-muted-foreground w-3">{item.isCollapsed ? "▶" : "▼"}</span>
+            <span className="text-sm font-semibold">Round {item.round}</span>
+            <span className="text-xs text-muted-foreground ml-auto" aria-live="polite">{item.contribsCount} contribution{item.contribsCount !== 1 ? "s" : ""}</span>
+            {item.errorsCount > 0 && (<Badge variant="destructive" className="ml-1"><TriangleAlertIcon className="size-3" /> {item.errorsCount}</Badge>)}
+          </Button>
           <div id={`round-content-${item.round}`} hidden={item.isCollapsed} aria-hidden={item.isCollapsed} />
         </div>
       </div>
@@ -137,8 +129,8 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
   }
   if (item.type === "agent_turn") {
     return (
-      <div style={style} className="loom-vrow">
-        <div className="loom-agent-turn-block">
+      <div style={style} className="overflow-hidden py-0.5">
+        <div className="flex flex-col gap-2">
           {item.contributions.map((c) => (
             <ContributionItem key={c.id} contribution={c} participantName={participantName(item.agentId)} onDialogOpen={onDialogOpen} />
           ))}
@@ -163,37 +155,27 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
         detail = `P${input.priority} ${input.reason ?? ""}`.slice(0,80);
       } else if (input && typeof input === "object") detail = JSON.stringify(input).slice(0,80);
     } catch { detail = invocation.input ? String(invocation.input).slice(0,80) : ""; }
-    // Clicking the invocation row opens the invoker's dialog (Tool use tab shows full evidence)
     const openInvokerDialog = (e) => {
       e.stopPropagation();
       const source = (contributions ?? []).find(c => c.id === item.sourceContributionId);
-      if (source && onDialogOpen) {
-        onDialogOpen({ contribution: source, participantName: participantName(item.sourceParticipantId), isLoomInvocation: true });
-      }
+      if (source && onDialogOpen) onDialogOpen({ contribution: source, participantName: participantName(item.sourceParticipantId), isLoomInvocation: true });
     };
     return (
-      <div style={style} className="loom-vrow loom-vrow-loom-invocation" title={`${detail} — click to open invoker's Tool use`}>
-        <div
-          className="loom-card loom-contribution-card loom-loom-invocation-row loom-contrib-clickable"
-          style={{ borderLeft: "3px solid #6366f1", paddingLeft: "1rem", opacity: 0.95, cursor: "pointer" }}
-          onClick={openInvokerDialog}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openInvokerDialog(e); } }}
-        >
-          <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">
-            <span className="loom-badge loom-badge-orchestrator" style={{ background: isError ? "#dc2626" : "#6366f1" }}>{toolName.replace("loom_", "")}</span>
-            <span className="loom-text-xs loom-text-muted">{detail}</span>
-            <span className={cn("loom-tool-call-status", isError ? "loom-tool-call-error" : "loom-tool-call-success")} style={{ marginLeft: "auto", fontSize: "0.65rem", padding: "2px 6px", borderRadius: "4px", background: isError ? "#fee2e2" : "#dcfce7", color: isError ? "#dc2626" : "#16a34a" }}>{isError ? "error" : "invoked"}</span>
+      <div style={style} className="pl-8 pb-1 overflow-hidden" title={`${detail} — click to open invoker's Tool use`}>
+        <Card className="border-l-[3px] border-l-[#6366f1] py-2 px-3 gap-1.5 opacity-95 cursor-pointer hover:bg-accent" onClick={openInvokerDialog} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openInvokerDialog(e); } }}>
+          <div className="flex flex-wrap gap-2 items-center">
+            <Badge variant={isError ? "destructive" : "orchestrator"}>{toolName.replace("loom_", "")}</Badge>
+            <span className="text-xs text-muted-foreground truncate flex-1">{detail}</span>
+            <Badge variant={isError ? "destructive" : "secondary"}>{isError ? "error" : "invoked"}</Badge>
           </div>
-          {invocation.output && <pre className="loom-tool-call-output" style={{ marginTop: "0.5rem", fontSize: "0.7rem", maxHeight: "60px", overflowY: "auto", whiteSpace: "pre-wrap" }}>{typeof invocation.output === "string" ? invocation.output.slice(0,300) : JSON.stringify(invocation.output).slice(0,300)}</pre>}
-        </div>
+          {invocation.output && <pre className="mt-1.5 text-[11px] max-h-[60px] overflow-y-auto whitespace-pre-wrap bg-muted p-2 rounded-md">{typeof invocation.output === "string" ? invocation.output.slice(0,300) : JSON.stringify(invocation.output).slice(0,300)}</pre>}
+        </Card>
       </div>
     );
   }
   if (item.type === "reflection") {
     return (
-      <div style={style} className="loom-vrow loom-vrow-reflection">
+      <div style={style} className="pl-8 pb-1 overflow-hidden">
         <ReflectionRow
           reflection={item.reflection}
           contributions={contributions}
@@ -205,7 +187,7 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
   }
   if (item.type === "query_response") {
     return (
-      <div style={style} className="loom-vrow loom-vrow-query-response">
+      <div style={style} className="pl-8 pb-1 overflow-hidden">
         <QueryResponseRow
           queryResponse={item.queryResponse}
           contributions={contributions}
@@ -218,7 +200,7 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
   }
   if (item.type === "perspective_response") {
     return (
-      <div style={style} className="loom-vrow loom-vrow-perspective-response">
+      <div style={style} className="pl-8 pb-1 overflow-hidden">
         <QueryResponseRow
           queryResponse={item.perspectiveResponse}
           contributions={contributions}
@@ -231,7 +213,7 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
   }
   if (item.type === "critique_response") {
     return (
-      <div style={style} className="loom-vrow loom-vrow-critique-response">
+      <div style={style} className="pl-8 pb-1 overflow-hidden">
         <QueryResponseRow
           queryResponse={item.critiqueResponse}
           contributions={contributions}
@@ -244,87 +226,67 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
   }
   if (item.type === "thinking_turn") {
     return (
-      <div style={style} className="loom-vrow">
-        <div className="loom-card loom-thinking-card loom-thinking-placeholder-row">
-          <div className="loom-thinking-content">
-            <span className="loom-thinking-dots">
-              <span /><span /><span />
-            </span>
-            <span className="loom-text loom-text-muted">
-              {item.participant.name} ({item.participant.tier}) is thinking...
-            </span>
-          </div>
-        </div>
+      <div style={style} className="overflow-hidden py-0.5">
+        <Card className="border-dashed opacity-70 py-2">
+          <CardContent className="flex items-center gap-3 py-0">
+            <Spinner className="size-4" />
+            <span className="text-sm text-muted-foreground">{item.participant.name} ({item.participant.tier}) is thinking...</span>
+          </CardContent>
+        </Card>
       </div>
     );
   }
   if (item.type === "thinking_reflection") {
     return (
-      <div style={style} className="loom-vrow loom-vrow-reflection">
-        <div className="loom-card loom-thinking-card loom-thinking-placeholder-row loom-contrib-type-reflection">
-          <div className="loom-thinking-content">
-            <span className="loom-thinking-dots">
-              <span /><span /><span />
-            </span>
-            <span className="loom-text loom-text-muted">
-              Reflection by {item.reflectorName} on {item.triggerAgentName}'s {item.triggerType}...
-            </span>
-          </div>
-        </div>
+      <div style={style} className="pl-8 pb-1 overflow-hidden">
+        <Card className="border-dashed opacity-70 py-2 border-l-2 border-l-[var(--badge-indigo)] bg-[color-mix(in_oklch,var(--badge-indigo)_4%,var(--card))]">
+          <CardContent className="flex items-center gap-3 py-0">
+            <Spinner className="size-4" />
+            <span className="text-sm text-muted-foreground">Reflection by {item.reflectorName} on {item.triggerAgentName}'s {item.triggerType}...</span>
+          </CardContent>
+        </Card>
       </div>
     );
   }
   if (item.type === "thinking_query") {
     return (
-      <div style={style} className="loom-vrow loom-vrow-query-response">
-        <div className="loom-card loom-thinking-card loom-thinking-placeholder-row loom-contrib-type-query_response">
-          <div className="loom-thinking-content">
-            <span className="loom-thinking-dots">
-              <span /><span /><span />
-            </span>
-            <span className="loom-text loom-text-muted">
-              {item.queriedAgentName} is answering a query...
-            </span>
-          </div>
-        </div>
+      <div style={style} className="pl-8 pb-1 overflow-hidden">
+        <Card className="border-dashed opacity-70 py-2 border-l-2 border-l-[var(--badge-teal)] bg-[color-mix(in_oklch,var(--badge-teal)_4%,var(--card))]">
+          <CardContent className="flex items-center gap-3 py-0">
+            <Spinner className="size-4" />
+            <span className="text-sm text-muted-foreground">{item.queriedAgentName} is answering a query...</span>
+          </CardContent>
+        </Card>
       </div>
     );
   }
   if (item.type === "thinking_evidence") {
     return (
-      <div style={style} className="loom-vrow loom-vrow-evidence-response">
-        <div className="loom-card loom-thinking-card loom-thinking-placeholder-row loom-contrib-type-evidence_response">
-          <div className="loom-thinking-content">
-            <span className="loom-thinking-dots">
-              <span /><span /><span />
-            </span>
-            <span className="loom-text loom-text-muted">
-              {item.evidenceAgentName} is finding evidence...
-            </span>
-          </div>
-        </div>
+      <div style={style} className="pl-8 pb-1 overflow-hidden">
+        <Card className="border-dashed opacity-70 py-2 border-l-2 border-l-[var(--badge-sky)] bg-[color-mix(in_oklch,var(--badge-sky)_4%,var(--card))]">
+          <CardContent className="flex items-center gap-3 py-0">
+            <Spinner className="size-4" />
+            <span className="text-sm text-muted-foreground">{item.evidenceAgentName} is finding evidence...</span>
+          </CardContent>
+        </Card>
       </div>
     );
   }
   if (item.type === "thinking_summon") {
     return (
-      <div style={style} className="loom-vrow loom-vrow-summoned-response">
-        <div className="loom-card loom-thinking-card loom-thinking-placeholder-row loom-contrib-type-summoned_response">
-          <div className="loom-thinking-content">
-            <span className="loom-thinking-dots">
-              <span /><span /><span />
-            </span>
-            <span className="loom-text loom-text-muted">
-              Guest expert is being summoned...
-            </span>
-          </div>
-        </div>
+      <div style={style} className="pl-8 pb-1 overflow-hidden">
+        <Card className="border-dashed opacity-70 py-2 border-l-2 border-l-[var(--badge-violet)] bg-[color-mix(in_oklch,var(--badge-violet)_4%,var(--card))]">
+          <CardContent className="flex items-center gap-3 py-0">
+            <Spinner className="size-4" />
+            <span className="text-sm text-muted-foreground">Guest expert is being summoned...</span>
+          </CardContent>
+        </Card>
       </div>
     );
   }
   if (item.type === "evidence_response") {
     return (
-      <div style={style} className="loom-vrow loom-vrow-evidence-response">
+      <div style={style} className="pl-8 pb-1 overflow-hidden">
         <EvidenceResponseRow
           evidenceResponse={item.evidenceResponse}
           contributions={contributions}
@@ -337,7 +299,7 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
   }
   if (item.type === "summoned_response") {
     return (
-      <div style={style} className="loom-vrow loom-vrow-summoned-response">
+      <div style={style} className="pl-8 pb-1 overflow-hidden">
         <SummonedResponseRow
           summonedResponse={item.summonedResponse}
           contributions={contributions}
@@ -350,47 +312,41 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
   }
   if (item.type === "vote_response") {
     return (
-      <div style={style} className="loom-vrow loom-vrow-vote-response">
-        <VoteResponseRow
-          voteResponse={item.voteResponse}
-          contributions={contributions}
-          participantName={participantName}
-          onDialogOpen={onDialogOpen}
-          invokerId={item.invokerId}
-        />
+      <div style={style} className="pl-8 pb-1 overflow-hidden">
+        <VoteResponseRow voteResponse={item.voteResponse} contributions={contributions} participantName={participantName} onDialogOpen={onDialogOpen} invokerId={item.invokerId} />
       </div>
     );
   }
   if (item.type === "round_summary") {
     return (
-      <div style={style} className="loom-vrow">
+      <div style={style} className="overflow-hidden py-0.5">
         <RoundSummaryItem summary={item.summary} group={item.group} onDialogOpen={onOrchestratorDialogOpen} />
       </div>
     );
   }
   if (item.type === "contribution") {
     return (
-      <div style={style} className="loom-vrow">
+      <div style={style} className="overflow-hidden py-0.5">
         <ContributionItem contribution={item.contribution} participantName={participantName(item.contribution.participant_id)} onDialogOpen={onDialogOpen} />
       </div>
     );
   }
   if (item.type === "orchestrator") {
     return (
-      <div style={style} className="loom-vrow">
+      <div style={style} className="overflow-hidden py-0.5">
         <OrchestratorItem group={item.group} onDialogOpen={onOrchestratorDialogOpen} />
       </div>
     );
   }
   if (item.type === "model_fallback") {
     return (
-      <div style={style} className="loom-vrow">
+      <div style={style} className="overflow-hidden py-0.5">
         <ModelFallbackItem error={item.error} participantName={participantName} />
       </div>
     );
   }
   return (
-    <div style={style} className="loom-vrow">
+    <div style={style} className="overflow-hidden py-0.5">
       <TurnRequestItem turnRequest={item.turnRequest} participantName={participantName(item.turnRequest.participant_id)} />
     </div>
   );
@@ -533,25 +489,29 @@ const TimelineTabBase = ({
   }), [flatItems, onToggleCollapse, participantName, contributions, handleDialogOpen, handleOrchestratorDialogOpen]);
 
   return (
-    <div className="loom-main-content">
-      {/* Poll error aria-live region — wired to setPollError */}
+    <div className="pt-4">
       {pollError && (
-        <div className="loom-card loom-card-error loom-mb-sm" role="alert" aria-live="polite" aria-atomic="true">
-          <p className="loom-text-xs">{pollError}</p>
-          <button className="loom-link-btn" onClick={() => setPollError(null)} aria-label="Dismiss poll error">Dismiss</button>
-        </div>
+        <Alert variant="destructive" className="mb-3" role="alert" aria-live="polite">
+          <TriangleAlertIcon />
+          <AlertTitle>Poll error</AlertTitle>
+          <AlertDescription className="flex items-center justify-between gap-2">
+            <span className="text-xs">{pollError}</span>
+            <Button variant="ghost" size="sm" onClick={() => setPollError(null)} aria-label="Dismiss poll error">Dismiss</Button>
+          </AlertDescription>
+        </Alert>
       )}
-      {/* Live indicator for assistive tech */}
       <div className="sr-only" aria-live="polite" aria-atomic="true">{isWeaving ? `Live — round ${activeRound} weaving` : `Round ${activeRound} complete`}</div>
       {groupedContributions.length === 0 && contributions.length === 0 && !isWeaving && (
-        <div className="loom-empty-state">
-          <div className="loom-empty-icon" aria-hidden="true">🧵</div>
-          <p className="loom-text loom-text-muted">Waiting for agents to respond...</p>
-          <p className="loom-text-xs loom-text-muted">Contributions will appear here in real-time</p>
-        </div>
+        <Empty className="border">
+          <EmptyHeader>
+            <EmptyMedia variant="icon"><MessageSquareIcon /></EmptyMedia>
+            <EmptyTitle>Waiting for agents to respond...</EmptyTitle>
+            <EmptyDescription>Contributions will appear here in real-time</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       )}
       {flatItems.length > 0 && (
-        <div className="loom-timeline-list" aria-live="polite">
+        <div aria-live="polite">
           <List
             listRef={listRef}
             rowCount={flatItems.length}
@@ -563,390 +523,129 @@ const TimelineTabBase = ({
           />
         </div>
       )}
-      <ContentDialog
+            <ContentDialog
         open={dialogContribution !== null}
         onClose={() => setDialogContribution(null)}
-      title={dialogContribution ? (dialogContribution.isReflection
-        ? `Reflection by ${dialogContribution.participantName}`
-        : dialogContribution.isQueryResponse
-        ? `Query response by ${dialogContribution.participantName}`
-        : dialogContribution.isEvidenceResponse
-        ? `Evidence response by ${dialogContribution.participantName}`
-        : dialogContribution.isSummonedResponse
-        ? `Summoned expert: ${dialogContribution.personaName}`
-        : dialogContribution.isVoteResponse
-        ? `Vote by ${dialogContribution.participantName}`
-        : `${dialogContribution.participantName} — ${dialogContribution.contribution.type}`) : ""}
-      className={dialogContribution ? (dialogContribution.isReflection
-        ? "loom-dialog-type-reflection"
-        : dialogContribution.isQueryResponse
-        ? "loom-dialog-type-query_response"
-        : dialogContribution.isEvidenceResponse
-        ? "loom-dialog-type-evidence_response"
-        : dialogContribution.isSummonedResponse
-        ? "loom-dialog-type-summoned_response"
-        : dialogContribution.isVoteResponse
-        ? "loom-dialog-type-vote_response"
-        : `loom-dialog-type-${dialogContribution.contribution.type}`) : ""}
+        title={dialogContribution ? (dialogContribution.isReflection
+          ? `Reflection by ${dialogContribution.participantName}`
+          : dialogContribution.isQueryResponse
+          ? `Query response by ${dialogContribution.participantName}`
+          : dialogContribution.isEvidenceResponse
+          ? `Evidence response by ${dialogContribution.participantName}`
+          : dialogContribution.isSummonedResponse
+          ? `Summoned expert: ${dialogContribution.personaName}`
+          : dialogContribution.isVoteResponse
+          ? `Vote by ${dialogContribution.participantName}`
+          : `${dialogContribution.participantName} — ${dialogContribution.contribution.type}`) : ""}
+        className={dialogContribution ? (dialogContribution.isReflection
+          ? "border-l-4 border-l-[var(--badge-indigo)]"
+          : dialogContribution.isQueryResponse
+          ? "border-l-4 border-l-[var(--badge-teal)]"
+          : dialogContribution.isEvidenceResponse
+          ? "border-l-4 border-l-[var(--badge-sky)]"
+          : dialogContribution.isSummonedResponse
+          ? "border-l-4 border-l-[var(--badge-violet)]"
+          : dialogContribution.isVoteResponse
+          ? "border-l-4 border-l-[var(--badge-emerald)]"
+          : "border-l-4 border-l-primary") : ""}
       >
         {dialogContribution && (
-          <div className="loom-dialog-tabs-container">
-            <div className="loom-dialog-tabs" role="tablist">
-              <button
-                role="tab"
-                aria-selected={activeTab === "response"}
-                className={cn("loom-dialog-tab", activeTab === "response" && "loom-dialog-tab-active")}
-                onClick={() => setActiveTab("response")}
-              >
-                Response
-              </button>
-              <button
-                role="tab"
-                aria-selected={activeTab === "tools"}
-                className={cn("loom-dialog-tab", activeTab === "tools" && "loom-dialog-tab-active")}
-                onClick={() => setActiveTab("tools")}
-              >
-                Tool use
-              </button>
-              <button
-                role="tab"
-                aria-selected={activeTab === "details"}
-                className={cn("loom-dialog-tab", activeTab === "details" && "loom-dialog-tab-active")}
-                onClick={() => setActiveTab("details")}
-              >
-                Details
-              </button>
-              <button
-                role="tab"
-                aria-selected={activeTab === "context"}
-                className={cn("loom-dialog-tab", activeTab === "context" && "loom-dialog-tab-active")}
-                onClick={() => setActiveTab("context")}
-              >
-                Context
-              </button>
-              <button
-                role="tab"
-                aria-selected={activeTab === "errors"}
-                className={cn("loom-dialog-tab", activeTab === "errors" && "loom-dialog-tab-active")}
-                onClick={() => setActiveTab("errors")}
-              >
-                Errors
-              </button>
-            </div>
-            <div className="loom-dialog-tab-panel" role="tabpanel">
-              {activeTab === "response" && (
-                <>
-                  <div className="loom-prose" dangerouslySetInnerHTML={{
-                    __html: renderMarkdown(dialogContribution.contribution.content ?? "")
-                  }} />
-                  <div className="loom-dialog-footer">
-                    <button
-                      className="pure-button pure-button-small loom-copy-btn"
-                      onClick={() => navigator.clipboard.writeText(dialogContribution.contribution.content ?? "")}
-                    >
-                      Copy text
-                    </button>
-                  </div>
-                </>
-              )}
-              {activeTab === "tools" && (
-                <div className="loom-tool-calls-panel">
-                  {dialogContribution.contribution.tool_calls && dialogContribution.contribution.tool_calls.length > 0 ? (
-                    <div className="loom-tool-calls-list">
-                      {dialogContribution.contribution.tool_calls.map((tc, i) => {
-                        const attempted = !!tc.attempted_tool;
-                        const failed = !!tc.error || tc.status === "error";
-                        return (
-                          <div key={tc.callID ?? i} className="loom-tool-call-item">
-                            <div className="loom-tool-call-header">
-                              {attempted && tc.attempted_tool !== tc.tool ? (
-                                <span className="loom-tool-call-name">attempted {tc.attempted_tool}</span>
-                              ) : (
-                                <span className="loom-tool-call-name">{tc.tool}</span>
-                              )}
-                              {tc.title && <span className="loom-tool-call-title">{tc.title}</span>}
-                              {failed ? (
-                                <span className="loom-tool-call-status loom-tool-call-error">
-                                  {attempted ? "attempted/failed" : "error"}
-                                </span>
-                              ) : (
-                                <span className="loom-tool-call-status loom-tool-call-success">ok</span>
-                              )}
-                            </div>
-                            {tc.input && (
-                              <pre className="loom-tool-call-input">{typeof tc.input === "string" ? tc.input : JSON.stringify(tc.input, null, 2)}</pre>
-                            )}
-                            {tc.output && (
-                              <pre className="loom-tool-call-output">{typeof tc.output === "string" ? tc.output : JSON.stringify(tc.output, null, 2)}</pre>
-                            )}
-                            {tc.error && (
-                              <pre className="loom-tool-call-error-output">{typeof tc.error === "string" ? tc.error : JSON.stringify(tc.error)}</pre>
-                            )}
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+            <TabsList variant="line" className="w-full justify-start">
+              <TabsTrigger value="response">Response</TabsTrigger>
+              <TabsTrigger value="tools">Tool use</TabsTrigger>
+              <TabsTrigger value="details">Details</TabsTrigger>
+              <TabsTrigger value="context">Context</TabsTrigger>
+              <TabsTrigger value="errors">Errors</TabsTrigger>
+            </TabsList>
+            <TabsContent value="response" className="pt-4">
+              <div className="typeset typeset-docs max-w-none w-full">
+                <div dangerouslySetInnerHTML={{ __html: renderMarkdown(dialogContribution.contribution.content ?? "") }} />
+              </div>
+              <div className="flex justify-end pt-3 mt-3 border-t">
+                <Button variant="outline" size="sm" onClick={() => { navigator.clipboard.writeText(dialogContribution.contribution.content ?? ""); }}>
+                  <CopyIcon className="size-3.5 mr-1" /> Copy text
+                </Button>
+              </div>
+            </TabsContent>
+            <TabsContent value="tools" className="pt-4">
+              <div className="flex flex-col gap-2">
+                {dialogContribution.contribution.tool_calls && dialogContribution.contribution.tool_calls.length > 0 ? (
+                  dialogContribution.contribution.tool_calls.map((tc, i) => {
+                    const attempted = !!tc.attempted_tool;
+                    const failed = !!tc.error || tc.status === "error";
+                    return (
+                      <Card key={tc.callID ?? i} className="py-2">
+                        <CardContent className="py-0 flex flex-col gap-1.5">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-xs font-semibold">{attempted && tc.attempted_tool !== tc.tool ? `attempted ${tc.attempted_tool}` : tc.tool}</span>
+                            {tc.title && <span className="text-xs text-muted-foreground truncate">{tc.title}</span>}
+                            <Badge variant={failed ? "destructive" : "secondary"} className="ml-auto text-[10px]">{failed ? "error" : "ok"}</Badge>
                           </div>
-                        );
-                      })}
-                    </div>
-                  ) : dialogContribution.contribution.tool_calls && Array.isArray(dialogContribution.contribution.tool_calls) && dialogContribution.contribution.tool_calls.length === 0 ? (
-                    <p className="loom-text loom-text-muted loom-tool-calls-empty">Tools were offered but no calls were made — model answered from memory/training data (no webfetch/websearch/read executed).</p>
-                  ) : (
-                    <p className="loom-text loom-text-muted loom-tool-calls-empty">No tool call data recorded (tools may not have been offered for this turn).</p>
-                  )}
-                  {(() => {
-                    const batchId = dialogContribution.contribution.batch_id;
-                    if (!batchId || !contributions) return null;
-                    const peers = contributions.filter(c => c.batch_id === batchId && c.id !== dialogContribution.contribution.id && c.tool_calls && c.tool_calls.length > 0);
-                    if (peers.length === 0) return null;
-                    return (
-                      <div className="loom-batch-peer-tools" style={{ marginTop: "1rem", borderTop: "1px solid var(--color-border)", paddingTop: "0.75rem" }}>
-                        <h4 className="loom-text loom-text-sm" style={{ fontWeight: 600, marginBottom: "0.5rem" }}>Peer tool calls in same batch ({peers.length} response{peers.length!==1?"s":""} via {batchId.slice(0,8)}…)</h4>
-                        <p className="loom-text-xs loom-text-muted" style={{ marginBottom: "0.5rem" }}>This contribution triggered peer actions (loom_query/evidence/vote/summon). Their research tool calls are stored on the peer responses, not on this invoker row — shown here for audit:</p>
-                        {peers.map(pc => {
-                          const peerName = participantName ? participantName(pc.participant_id) : pc.participant_id;
-                          return (
-                            <div key={pc.id} style={{ marginBottom: "0.75rem", paddingLeft: "0.5rem", borderLeft: "2px solid #6366f1" }}>
-                              <div className="loom-text-xs" style={{ fontWeight: 600 }}>{peerName} — {pc.type} #{pc.id} {pc.tool_calls.length} tool{pc.tool_calls.length!==1?"s":""}</div>
-                              <div className="loom-tool-calls-list">
-                                {pc.tool_calls.map((tc, j) => (
-                                  <div key={tc.callID ?? j} className="loom-tool-call-item">
-                                    <div className="loom-tool-call-header">
-                                      <span className="loom-tool-call-name">{tc.attempted_tool ? `attempted ${tc.attempted_tool}` : tc.tool}</span>
-                                      {tc.title && <span className="loom-tool-call-title">{tc.title}</span>}
-                                      <span className={tc.error || tc.status==="error" ? "loom-tool-call-status loom-tool-call-error" : "loom-tool-call-status loom-tool-call-success"}>{tc.error || tc.status==="error" ? "error" : "ok"}</span>
-                                    </div>
-                                    {tc.input && <pre className="loom-tool-call-input">{tc.input}</pre>}
-                                    {tc.output && <pre className="loom-tool-call-output">{tc.output}</pre>}
-                                    {tc.error && <pre className="loom-tool-call-error-output">{typeof tc.error==="string"?tc.error:JSON.stringify(tc.error)}</pre>}
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
+                          {tc.input && <pre className="text-xs bg-muted p-2 rounded whitespace-pre-wrap break-words">{typeof tc.input === "string" ? tc.input : JSON.stringify(tc.input, null, 2)}</pre>}
+                          {tc.output && <pre className="text-xs bg-muted p-2 rounded whitespace-pre-wrap break-words">{typeof tc.output === "string" ? tc.output : JSON.stringify(tc.output, null, 2)}</pre>}
+                          {tc.error && <pre className="text-xs bg-destructive/10 text-destructive p-2 rounded whitespace-pre-wrap break-words">{typeof tc.error === "string" ? tc.error : JSON.stringify(tc.error, null, 2)}</pre>}
+                        </CardContent>
+                      </Card>
                     );
-                  })()}
-                </div>
-              )}
-              {activeTab === "details" && (
-                <div className="loom-details-panel">
-                  <table className="loom-details-table">
-                    <tbody>
-                      <tr>
-                        <td className="loom-details-label">Type</td>
-                        <td className="loom-details-value">
-                          <span className={cn("loom-badge", `loom-badge-${dialogContribution.contribution.type}`)}>
-                            {dialogContribution.contribution.type}
-                          </span>
-                        </td>
-                      </tr>
-                      <tr>
-                        <td className="loom-details-label">Round</td>
-                        <td className="loom-details-value">{dialogContribution.contribution.round}</td>
-                      </tr>
-                      <tr>
-                        <td className="loom-details-label">Participant</td>
-                        <td className="loom-details-value">{dialogContribution.participantName}</td>
-                      </tr>
-                      <tr>
-                        <td className="loom-details-label">Timestamp</td>
-                        <td className="loom-details-value">{relativeTime(dialogContribution.contribution.created_at)}</td>
-                      </tr>
-                      <tr>
-                        <td className="loom-details-label">Word count</td>
-                        <td className="loom-details-value">{(dialogContribution.contribution.content ?? "").split(/\s+/).filter(Boolean).length}</td>
-                      </tr>
-                      <tr>
-                        <td className="loom-details-label">Contribution ID</td>
-                        <td className="loom-details-value loom-details-mono">#{dialogContribution.contribution.id}</td>
-                      </tr>
-                      {dialogContribution.isReflection && dialogContribution.triggerAgentName && (
-                        <>
-                          <tr>
-                            <td className="loom-details-label">Reflection on</td>
-                            <td className="loom-details-value">{dialogContribution.triggerAgentName}'s {dialogContribution.triggerType}</td>
-                          </tr>
-                          <tr>
-                            <td className="loom-details-label">Target ID</td>
-                            <td className="loom-details-value loom-details-mono">#{dialogContribution.contribution.targets_which}</td>
-                          </tr>
-                        </>
-                      )}
-                      {dialogContribution.isQueryResponse && dialogContribution.sourceAgentName && (
-                        <>
-                          <tr>
-                            <td className="loom-details-label">Query from</td>
-                            <td className="loom-details-value">{dialogContribution.sourceAgentName}</td>
-                          </tr>
-                          <tr>
-                            <td className="loom-details-label">Source ID</td>
-                            <td className="loom-details-value loom-details-mono">#{dialogContribution.contribution.targets_which}</td>
-                          </tr>
-                        </>
-                      )}
-                      {dialogContribution.isEvidenceResponse && dialogContribution.sourceAgentName && (
-                        <>
-                          <tr>
-                            <td className="loom-details-label">Evidence request from</td>
-                            <td className="loom-details-value">{dialogContribution.sourceAgentName}</td>
-                          </tr>
-                          <tr>
-                            <td className="loom-details-label">Source ID</td>
-                            <td className="loom-details-value loom-details-mono">#{dialogContribution.contribution.targets_which}</td>
-                          </tr>
-                        </>
-                      )}
-                      {dialogContribution.isSummonedResponse && (
-                        <>
-                          <tr>
-                            <td className="loom-details-label">Persona</td>
-                            <td className="loom-details-value">{dialogContribution.personaName} ({dialogContribution.personaTier})</td>
-                          </tr>
-                          <tr>
-                            <td className="loom-details-label">Summoned by</td>
-                            <td className="loom-details-value">A participant</td>
-                          </tr>
-                        </>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-              {activeTab === "context" && (
-                <div className="loom-context-panel">
-                  {(() => {
-                    const pc = dialogContribution.contribution.prompt_context;
-                    const hasFull = pc && (pc.system_prompt || pc.user_prompt || pc.state_of_play);
-                    const ctx = hasFull ? pc : (fetchedContext ?? pc);
-                    if (contextLoading) {
-                      return <p className="loom-text loom-text-muted loom-context-empty">Loading prompt context...</p>;
-                    }
-                    if (contextError) {
-                      return <p className="loom-text loom-text-muted loom-context-empty">{contextError}</p>;
-                    }
-                    if (!ctx) {
-                      return <p className="loom-text loom-text-muted loom-context-empty">No prompt context captured for this contribution.</p>;
-                    }
-                    return (
-                      <>
-                          {ctx.system_prompt && (
-                            <div className="loom-context-section">
-                              <h4 className="loom-context-heading">System Prompt</h4>
-                              <pre className="loom-context-block loom-context-raw">{ctx.system_prompt}</pre>
-                            </div>
-                          )}
-                          {ctx.state_of_play && (
-                            <div className="loom-context-section">
-                              <h4 className="loom-context-heading">State of Play (Round {ctx.round})</h4>
-                              <div className="loom-context-block">{ctx.state_of_play}</div>
-                            </div>
-                          )}
-                          {ctx.rag_chunks_used && ctx.rag_chunks_used.length > 0 && (
-                            <div className="loom-context-section">
-                              <h4 className="loom-context-heading">RAG Context (Vector Retrieval)</h4>
-                              <div className="loom-context-block">
-                                {ctx.rag_chunks_used.map((chunk, i) => (
-                                  <div key={i}>{chunk}</div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                          {ctx.recent_contributions && ctx.recent_contributions.length > 0 && (
-                            <div className="loom-context-section">
-                              <h4 className="loom-context-heading">Recent Contributions</h4>
-                              <div className="loom-context-block">
-                                {ctx.recent_contributions.map((c) => (
-                                  <div key={c.id}>
-                                    <span className="loom-context-contrib-id">#{c.id}</span>
-                                    <span className="loom-context-contrib-type">{c.type}</span>
-                                    [{c.participant_id}]: {c.content}
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                          {ctx.round_contributions_used && ctx.round_contributions_used.length > 0 && (
-                            <div className="loom-context-section">
-                              <h4 className="loom-context-heading">Round Contributions</h4>
-                              <div className="loom-context-block">
-                                {ctx.round_contributions_used.map((c) => (
-                                  <div key={c.id}>
-                                    <span className="loom-context-contrib-id">#{c.id}</span>
-                                    <span className="loom-context-contrib-type">{c.type}</span>
-                                    [{c.participant_id}]: {c.content}
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                          {ctx.reflection && (
-                            <div className="loom-context-section">
-                              <h4 className="loom-context-heading">Agent's Reflection</h4>
-                              <div className="loom-context-block">{ctx.reflection}</div>
-                            </div>
-                          )}
-                          {ctx.trigger_contribution_id && (
-                            <div className="loom-context-section">
-                              <h4 className="loom-context-heading">Triggered By</h4>
-                              <div className="loom-context-block">
-                                Contribution #{ctx.trigger_contribution_id} by {ctx.trigger_participant_id} ({ctx.trigger_type})
-                              </div>
-                            </div>
-                          )}
-                          {ctx.source_contribution_id && (
-                            <div className="loom-context-section">
-                              <h4 className="loom-context-heading">Source</h4>
-                              <div className="loom-context-block">
-                                Contribution #{ctx.source_contribution_id} by {ctx.source_participant_id}
-                                {ctx.question && <span> — Question: "{ctx.question}"</span>}
-                              </div>
-                            </div>
-                          )}
-                          {ctx.user_prompt && (
-                            <div className="loom-context-section">
-                              <h4 className="loom-context-heading">Full User Prompt</h4>
-                              <pre className="loom-context-block loom-context-raw">{ctx.user_prompt}</pre>
-                            </div>
-                          )}
-                        </>
-                    );
-                  })()}
-                </div>
-              )}
-              {activeTab === "errors" && (() => {
-                const toolCalls = dialogContribution.contribution.tool_calls ?? [];
-                const errors = toolCalls.filter(tc => tc.status === "error" || tc.error);
-                if (errors.length === 0) {
-                  return <p className="loom-text loom-text-muted loom-tool-calls-empty">No errors recorded for this contribution.</p>;
-                }
+                  })
+                ) : (
+                  <p className="text-sm text-muted-foreground text-center py-4">No tool call data recorded.</p>
+                )}
+              </div>
+            </TabsContent>
+            <TabsContent value="details" className="pt-4">
+              <Table>
+                <TableBody>
+                  <TableRow><TableCell className="font-medium w-32">Type</TableCell><TableCell><Badge variant={dialogContribution.contribution.type ?? "secondary"}>{dialogContribution.contribution.type}</Badge></TableCell></TableRow>
+                  <TableRow><TableCell className="font-medium">Round</TableCell><TableCell>{dialogContribution.contribution.round}</TableCell></TableRow>
+                  <TableRow><TableCell className="font-medium">Participant</TableCell><TableCell>{dialogContribution.participantName}</TableCell></TableRow>
+                  <TableRow><TableCell className="font-medium">Timestamp</TableCell><TableCell>{relativeTime(dialogContribution.contribution.created_at)}</TableCell></TableRow>
+                  <TableRow><TableCell className="font-medium">Word count</TableCell><TableCell>{(dialogContribution.contribution.content ?? "").split(/\s+/).filter(Boolean).length}</TableCell></TableRow>
+                  <TableRow><TableCell className="font-medium">Contribution ID</TableCell><TableCell className="font-mono">#{dialogContribution.contribution.id}</TableCell></TableRow>
+                </TableBody>
+              </Table>
+            </TabsContent>
+            <TabsContent value="context" className="pt-4">
+              {(() => {
+                const pc = dialogContribution.contribution.prompt_context;
+                const hasFull = pc && (pc.system_prompt || pc.user_prompt || pc.state_of_play);
+                const ctx = hasFull ? pc : (fetchedContext ?? pc);
+                if (contextLoading) return <div className="flex items-center justify-center py-8"><Spinner /> <span className="ml-2 text-sm text-muted-foreground">Loading prompt context...</span></div>;
+                if (contextError) return <p className="text-sm text-muted-foreground text-center py-4">{contextError}</p>;
+                if (!ctx) return <p className="text-sm text-muted-foreground text-center py-4">No prompt context captured for this contribution.</p>;
                 return (
-                  <div className="loom-tool-calls-panel">
-                    <div className="loom-tool-calls-list">
-                      {errors.map((tc, i) => (
-                        <div key={tc.callID ?? i} className="loom-tool-call-item">
-                          <div className="loom-tool-call-header">
-                            <span className="loom-tool-call-name">{tc.attempted_tool ? `attempted ${tc.attempted_tool}` : tc.tool}</span>
-                            {tc.title && <span className="loom-tool-call-title">{tc.title}</span>}
-                            <span className="loom-tool-call-status loom-tool-call-error">
-                              {tc.status === "error" ? "error" : tc.status ?? "unknown"}
-                            </span>
-                          </div>
-                          {tc.input && (
-                            <pre className="loom-tool-call-input">{typeof tc.input === "string" ? tc.input : JSON.stringify(tc.input, null, 2)}</pre>
-                          )}
-                          {tc.error && (
-                            <pre className="loom-tool-call-error-output">{typeof tc.error === "string" ? tc.error : JSON.stringify(tc.error, null, 2)}</pre>
-                          )}
-                          {tc.output && !tc.error && (
-                            <pre className="loom-tool-call-output">{typeof tc.output === "string" ? tc.output : JSON.stringify(tc.output, null, 2)}</pre>
-                          )}
-                        </div>
-                      ))}
-                    </div>
+                  <div className="flex flex-col gap-4 max-h-[60vh] overflow-y-auto pr-2">
+                    {ctx.system_prompt && <div><h4 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-1">System Prompt</h4><pre className="text-xs bg-muted p-3 rounded whitespace-pre-wrap break-words font-mono max-h-[40vh] overflow-auto">{ctx.system_prompt}</pre></div>}
+                    {ctx.state_of_play && <div><h4 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-1">State of Play</h4><div className="text-xs bg-muted p-3 rounded whitespace-pre-wrap break-words max-h-[40vh] overflow-auto">{ctx.state_of_play}</div></div>}
+                    {ctx.user_prompt && <div><h4 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-1">Full User Prompt</h4><pre className="text-xs bg-muted p-3 rounded whitespace-pre-wrap break-words font-mono max-h-[40vh] overflow-auto">{ctx.user_prompt}</pre></div>}
                   </div>
                 );
               })()}
-            </div>
-          </div>
+            </TabsContent>
+            <TabsContent value="errors" className="pt-4">
+              {(() => {
+                const toolCalls = dialogContribution.contribution.tool_calls ?? [];
+                const errors = toolCalls.filter(tc => tc.status === "error" || tc.error);
+                if (errors.length === 0) return <p className="text-sm text-muted-foreground text-center py-4">No errors recorded for this contribution.</p>;
+                return (
+                  <div className="flex flex-col gap-2">
+                    {errors.map((tc, i) => (
+                      <Card key={tc.callID ?? i} className="py-2 border-destructive/50">
+                        <CardContent className="py-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="font-mono text-xs font-semibold">{tc.attempted_tool ? `attempted ${tc.attempted_tool}` : tc.tool}</span>
+                            <Badge variant="destructive" className="ml-auto text-[10px]">error</Badge>
+                          </div>
+                          {tc.error && <pre className="text-xs bg-destructive/10 p-2 rounded whitespace-pre-wrap break-words">{typeof tc.error === "string" ? tc.error : JSON.stringify(tc.error, null, 2)}</pre>}
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                );
+              })()}
+            </TabsContent>
+          </Tabs>
         )}
       </ContentDialog>
       <ContentDialog
@@ -957,63 +656,35 @@ const TimelineTabBase = ({
           const meta = ORCHESTRATOR_TYPE_META[(dialogOrchestratorGroup.query ?? dialogOrchestratorGroup.response)?.type] || { label: "Orchestrator" };
           return meta.label;
         })()}
-        className="loom-dialog-type-orchestrator"
+        className="border-l-4 border-l-muted-foreground/30"
       >
         {dialogOrchestratorGroup && (
-          <div className="loom-dialog-tabs-container">
-            <div className="loom-dialog-tabs" role="tablist">
-              <button
-                role="tab"
-                aria-selected={orchestratorActiveTab === "prompt"}
-                className={cn("loom-dialog-tab", orchestratorActiveTab === "prompt" && "loom-dialog-tab-active")}
-                onClick={() => setOrchestratorActiveTab("prompt")}
-              >
-                Prompt
-              </button>
-              <button
-                role="tab"
-                aria-selected={orchestratorActiveTab === "response"}
-                className={cn("loom-dialog-tab", orchestratorActiveTab === "response" && "loom-dialog-tab-active")}
-                onClick={() => setOrchestratorActiveTab("response")}
-              >
-                Response
-              </button>
-            </div>
-            <div className="loom-dialog-tab-panel" role="tabpanel">
-              {orchestratorActiveTab === "prompt" && dialogOrchestratorGroup.query && (
+          <Tabs value={orchestratorActiveTab} onValueChange={setOrchestratorActiveTab} className="w-full">
+            <TabsList variant="line" className="w-full justify-start">
+              <TabsTrigger value="prompt">Prompt</TabsTrigger>
+              <TabsTrigger value="response">Response</TabsTrigger>
+            </TabsList>
+            <TabsContent value="prompt" className="pt-4">
+              {dialogOrchestratorGroup.query ? (
                 <>
-                  <pre className="loom-orchestrator-full-content">{dialogOrchestratorGroup.query.content}</pre>
-                  <div className="loom-dialog-footer">
-                    <button
-                      className="pure-button pure-button-small loom-copy-btn"
-                      onClick={() => navigator.clipboard.writeText(dialogOrchestratorGroup.query?.content ?? "")}
-                    >
-                      Copy text
-                    </button>
+                  <pre className="text-xs font-mono whitespace-pre-wrap break-words bg-muted p-3 rounded max-h-[60vh] overflow-auto">{dialogOrchestratorGroup.query.content}</pre>
+                  <div className="flex justify-end pt-3 mt-3 border-t">
+                    <Button variant="outline" size="sm" onClick={() => navigator.clipboard.writeText(dialogOrchestratorGroup.query?.content ?? "")}><CopyIcon className="size-3.5 mr-1" /> Copy text</Button>
                   </div>
                 </>
-              )}
-              {orchestratorActiveTab === "prompt" && !dialogOrchestratorGroup.query && (
-                <p className="loom-text loom-text-muted">No prompt recorded for this exchange.</p>
-              )}
-              {orchestratorActiveTab === "response" && dialogOrchestratorGroup.response && (
+              ) : <p className="text-sm text-muted-foreground">No prompt recorded for this exchange.</p>}
+            </TabsContent>
+            <TabsContent value="response" className="pt-4">
+              {dialogOrchestratorGroup.response ? (
                 <>
-                  <pre className="loom-orchestrator-full-content">{dialogOrchestratorGroup.response.content}</pre>
-                  <div className="loom-dialog-footer">
-                    <button
-                      className="pure-button pure-button-small loom-copy-btn"
-                      onClick={() => navigator.clipboard.writeText(dialogOrchestratorGroup.response?.content ?? "")}
-                    >
-                      Copy text
-                    </button>
+                  <pre className="text-xs font-mono whitespace-pre-wrap break-words bg-muted p-3 rounded max-h-[60vh] overflow-auto">{dialogOrchestratorGroup.response.content}</pre>
+                  <div className="flex justify-end pt-3 mt-3 border-t">
+                    <Button variant="outline" size="sm" onClick={() => navigator.clipboard.writeText(dialogOrchestratorGroup.response?.content ?? "")}><CopyIcon className="size-3.5 mr-1" /> Copy text</Button>
                   </div>
                 </>
-              )}
-              {orchestratorActiveTab === "response" && !dialogOrchestratorGroup.response && (
-                <p className="loom-text loom-text-muted">No response recorded for this exchange.</p>
-              )}
-            </div>
-          </div>
+              ) : <p className="text-sm text-muted-foreground">No response recorded for this exchange.</p>}
+            </TabsContent>
+          </Tabs>
         )}
       </ContentDialog>
     </div>

@@ -1,9 +1,15 @@
-import { useState, useRef, useEffect, useMemo, memo } from "react";
-import { createPortal } from "react-dom";
-import { cn, tierClass, typeClass } from "../utils.js";
+import { useMemo, memo } from "react";
+import { cn } from "../utils.js";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { TierBadge, TypeBadge } from "./Badges.jsx";
+import { Card, CardContent, CardHeader } from "./ui/card.tsx";
+import { Badge } from "./ui/badge.tsx";
+import { Avatar, AvatarFallback } from "./ui/avatar.tsx";
+import { Spinner } from "./ui/spinner.tsx";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./ui/dialog.tsx";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip.tsx";
+import { ScrollArea } from "./ui/scroll-area.tsx";
 
 marked.setOptions({ breaks: true, gfm: true });
 
@@ -24,110 +30,67 @@ export function renderMarkdown(content) {
 }
 
 export const ContentDialog = memo(({ open, onClose, title, className, children }) => {
-  const dialogRef = useRef(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const prevFocus = document.activeElement;
-    dialogRef.current?.focus?.();
-    const handleKey = (e) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        onClose();
-      } else if (e.key === "Tab") {
-        const focusables = dialogRef.current?.querySelectorAll(
-          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-        );
-        if (!focusables || focusables.length === 0) return;
-        const list = Array.from(focusables);
-        const first = list[0];
-        const last = list[list.length - 1];
-        if (e.shiftKey && document.activeElement === first) {
-          e.preventDefault();
-          last.focus();
-        } else if (!e.shiftKey && document.activeElement === last) {
-          e.preventDefault();
-          first.focus();
-        }
-      }
-    };
-    document.addEventListener("keydown", handleKey);
-    return () => {
-      document.removeEventListener("keydown", handleKey);
-      if (prevFocus && typeof prevFocus.focus === "function") prevFocus.focus();
-    };
-  }, [open, onClose]);
-
-  if (!open) return null;
-  return createPortal(
-    <div className="loom-dialog-backdrop" onClick={onClose}>
-      <div
-        ref={dialogRef}
-        tabIndex={-1}
-        role="dialog"
-        aria-modal="true"
-        aria-label={title || "Dialog"}
-        className={cn("loom-dialog", className)}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="loom-dialog-header">
-          <span className="loom-title-sm">{title}</span>
-          <button className="loom-dialog-close" onClick={onClose} aria-label="Close dialog">×</button>
-        </div>
-        <div className="loom-dialog-body">{children}</div>
-      </div>
-    </div>,
-    document.body
+  return (
+    <Dialog open={!!open} onOpenChange={(v) => { if (!v) onClose?.(); }}>
+      <DialogContent className={cn("w-[calc(100%-2rem)] sm:w-[50vw] sm:max-w-[50vw] max-h-[85vh] min-h-[30vh] flex flex-col p-0 gap-0", className)}>
+        {title ? (
+          <DialogHeader className="px-6 pt-6 pb-4 border-b shrink-0">
+            <DialogTitle>{title}</DialogTitle>
+            <DialogDescription className="sr-only">{title}</DialogDescription>
+          </DialogHeader>
+        ) : null}
+        <ScrollArea className="flex-1 min-h-0">
+          <div className="px-6 py-4">{children}</div>
+        </ScrollArea>
+      </DialogContent>
+    </Dialog>
   );
 });
 
 export const ParticipantCard = memo(({ participant, error, contributionsByRound, isReflecting, onSelect }) => {
-  const personaTitle = participant.name;
-
-  const statusIndicator = () => {
-    if (error) {
-      return <span className="loom-agent-status loom-agent-error" title={`${error.error_type}: ${error.error_message}`} />;
-    }
-    if (participant.status === "speaking" || isReflecting) {
-      return <span className="loom-agent-status loom-agent-thinking" />;
-    }
-    if (participant.status === "passed") {
-      return <span className="loom-agent-status loom-agent-passed" />;
-    }
-    return null;
-  };
-
+  const initials = participant.name?.slice(0, 2).toUpperCase() ?? "?";
+  const statusColor = error ? "bg-destructive" : (participant.status === "speaking" || isReflecting) ? "bg-amber-500 animate-pulse" : participant.status === "passed" ? "bg-muted-foreground/50" : "bg-transparent";
+  const hasErrorBorder = !!error;
   return (
-    <div
-      className={cn("loom-card", "loom-participant-card", error && "loom-participant-card-error")}
+    <Card
+      className={cn("cursor-pointer transition-colors hover:bg-accent hover:border-ring py-3 px-3 gap-2", hasErrorBorder && "border-destructive")}
       onClick={() => onSelect?.(participant)}
       role="button"
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect?.(participant); } }}
     >
-      <div className="loom-participant-card-header">
-        {statusIndicator()}
-        <span className="loom-participant-card-title">{personaTitle}</span>
+      <div className="flex items-center gap-2">
+        <Avatar className="size-7 shrink-0">
+          <AvatarFallback className="text-[10px]">{initials}</AvatarFallback>
+        </Avatar>
+        <span className={cn("size-2 rounded-full shrink-0", statusColor)} />
+        <span className="text-xs font-medium truncate flex-1">{participant.name}</span>
         <TierBadge tier={participant.tier} />
       </div>
       {participant.model_id && (
-        <span className="loom-participant-model">{participant.model_id}</span>
+        <span className="text-[11px] text-muted-foreground truncate block">{participant.model_id}</span>
       )}
-    </div>
+      {error && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="text-[11px] text-destructive truncate block">{error.error_type}</span>
+          </TooltipTrigger>
+          <TooltipContent>{error.error_message}</TooltipContent>
+        </Tooltip>
+      )}
+    </Card>
   );
 });
 
 export const ThinkingCard = memo(({ participant }) => (
-  <div className="loom-card loom-thinking-card">
-    <div className="loom-thinking-content">
-      <span className="loom-thinking-dots">
-        <span /><span /><span />
-      </span>
-      <span className="loom-text loom-text-muted">
+  <Card className="border-dashed opacity-70 py-3">
+    <CardContent className="flex items-center gap-3 py-0">
+      <Spinner className="size-4" />
+      <span className="text-sm text-muted-foreground">
         {participant.name} ({participant.tier}) is thinking...
       </span>
-    </div>
-  </div>
+    </CardContent>
+  </Card>
 ));
 
 export const ContributionItem = memo(({ contribution, participantName, onDialogOpen }) => {
@@ -164,62 +127,75 @@ export const ContributionItem = memo(({ contribution, participantName, onDialogO
     } catch { return tc.input ? String(tc.input).slice(0,80) : ""; }
   };
 
+  const borderColorMap = {
+    propose: "border-l-[var(--badge-green-dark)]",
+    challenge: "border-l-[var(--badge-red)]",
+    refine: "border-l-[var(--badge-blue-deep)]",
+    support: "border-l-[var(--badge-teal-dark)]",
+    dissent: "border-l-[var(--badge-brown)]",
+    synthesize: "border-l-[var(--badge-purple)]",
+    question: "border-l-[var(--badge-cyan)]",
+  };
+  const borderClass = borderColorMap[contribution.type] ?? "border-l-transparent";
+
   return (
-    <div
+    <Card
       role="button"
       tabIndex={0}
-      aria-expanded={false}
-      className={cn("loom-card", "loom-contribution-card", `loom-contrib-type-${contribution.type}`, "loom-contrib-clickable")}
+      className={cn("py-2 px-3 gap-2 border-l-[3px] cursor-pointer hover:bg-accent/50", borderClass)}
       onClick={openDialog}
       onKeyDown={onKeyDown}
     >
-      <div>
-        <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">
-          <span className="loom-contrib-participant" style={{ fontWeight: 700 }}>
-            {participantName}
-          </span>
-          <span style={{ marginLeft: "auto" }}>
-            <TypeBadge type={contribution.type} />
-          </span>
-        </div>
-        {loomCalls.length > 0 && (
-          <div className="loom-flex loom-flex-wrap loom-gap-xs loom-mt-xs">
-            {loomCalls.map((tc, i) => {
-              const isError = !!tc.error || tc.status === "error";
-              return (
-                <span key={tc.callID ?? i} className={cn("loom-badge loom-badge-orchestrator", isError && "loom-badge-aborted")} title={`${tc.tool}: ${formatLoomInput(tc)}${tc.error ? ` — ${tc.error}` : ""}`}>
-                  {tc.tool.replace("loom_", "")}: {formatLoomInput(tc)}
-                </span>
-              );
-            })}
-          </div>
-        )}
+      <div className="flex flex-wrap gap-2 items-center">
+        <span className="text-sm font-bold">
+          {participantName}
+        </span>
+        <span className="ml-auto">
+          <TypeBadge type={contribution.type} />
+        </span>
       </div>
-      {isLong ? (
-        <p className="loom-text loom-text-muted">{content.slice(0, 300)}...</p>
-      ) : (
-        <div className="loom-prose" dangerouslySetInnerHTML={{ __html: html }} />
+      {loomCalls.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {loomCalls.map((tc, i) => {
+            const isError = !!tc.error || tc.status === "error";
+            return (
+              <Tooltip key={tc.callID ?? i}>
+                <TooltipTrigger asChild>
+                  <Badge variant={isError ? "aborted" : "orchestrator"} className="cursor-help">
+                    {tc.tool.replace("loom_", "")}: {formatLoomInput(tc)}
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs break-words">{tc.tool}: {formatLoomInput(tc)}{tc.error ? ` — ${tc.error}` : ""}</TooltipContent>
+              </Tooltip>
+            );
+          })}
+        </div>
       )}
-    </div>
+      {isLong ? (
+        <p className="text-sm text-muted-foreground line-clamp-3">{content.slice(0, 300)}...</p>
+      ) : (
+        <div className="typeset typeset-docs max-w-none w-full">
+          <div dangerouslySetInnerHTML={{ __html: html }} />
+        </div>
+      )}
+    </Card>
   );
 });
 
 export const TurnRequestItem = memo(({ turnRequest, participantName }) => {
-  // Server now normalizes rows to {participant_id, target_participant_id, reason}
-  // via one mapper in api.js (audit 11 UF3) — read the normalized fields.
   const target = turnRequest.target_participant_id ?? turnRequest.target;
   return (
-    <div className="loom-card loom-card-dashed">
-      <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center loom-mb-xs">
-        <span className="loom-title-sm">{participantName}</span>
-        <span className="loom-badge loom-badge-turn-request">turn request</span>
-        <span className="loom-text-xs loom-text-muted">priority {turnRequest.priority}</span>
+    <Card className="border-dashed bg-card/50 py-3">
+      <div className="flex flex-wrap gap-2 items-center mb-1">
+        <span className="text-sm font-semibold">{participantName}</span>
+        <Badge variant="turn_request">turn request</Badge>
+        <span className="text-xs text-muted-foreground">priority {turnRequest.priority}</span>
         {target && (
-          <span className="loom-text-xs loom-text-muted">→ {target}</span>
+          <span className="text-xs text-muted-foreground">→ {target}</span>
         )}
       </div>
-      <p className="loom-text loom-text-muted">{turnRequest.reason}</p>
-    </div>
+      <p className="text-sm text-muted-foreground">{turnRequest.reason}</p>
+    </Card>
   );
 });
 
@@ -239,45 +215,43 @@ export const ReflectionInline = memo(({ reflection, contributions, participantNa
   const html = useMemo(() => renderMarkdown(stripped), [stripped]);
 
   return (
-    <div className="loom-reflection-inline">
-      <span className="loom-reflection-source">
+    <div className="border-l-2 border-[var(--badge-indigo)] pl-3 mt-2">
+      <span className="text-xs italic text-muted-foreground block mb-1">
         ↳ Reflection on {triggerAgentName}'s {triggerType}
       </span>
-      <div className="loom-prose" dangerouslySetInnerHTML={{ __html: html }} />
+      <div className="typeset typeset-docs max-w-none w-full">
+        <div dangerouslySetInnerHTML={{ __html: html }} />
+      </div>
     </div>
   );
 });
 
-// Base component consolidates duplicated response-row rendering.
-// Props: badgeClass/header/strippedRegex take caller specifics; wrappers stay ~10 lines.
-export const BaseResponseRow = memo(({ contribution, header, badgeLabel, badgeClass, strippedRegex, typeClass, rowClass, onDialogOpen, dialogPayload }) => {
+export const BaseResponseRow = memo(({ contribution, header, badgeLabel, badgeVariant, strippedRegex, borderClass, onDialogOpen, dialogPayload }) => {
   const content = contribution.content ?? "";
   const stripped = useMemo(() => content.replace(strippedRegex, ""), [content, strippedRegex]);
   const isLong = stripped.length > 300;
-  const hasTools = (contribution.tool_calls ?? []).length > 0;
-  const clickable = isLong || hasTools;
   const html = useMemo(() => renderMarkdown(stripped), [stripped]);
   const openDialog = () => onDialogOpen?.({ contribution, ...dialogPayload });
   return (
-    <div
-      className={cn("loom-card", "loom-contribution-card", typeClass, rowClass, clickable && "loom-contrib-clickable")}
+    <Card
+      className={cn("py-2 px-3 gap-2 border-l-2 cursor-pointer hover:bg-accent/50", borderClass)}
       onClick={openDialog}
-      role={clickable ? "button" : undefined}
-      tabIndex={clickable ? 0 : undefined}
-      onKeyDown={clickable ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDialog(); } } : undefined}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDialog(); } }}
     >
-      <div>
-        <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">
-          <span className="loom-text-xs">{header}</span>
-          <span style={{ marginLeft: "auto" }}><span className={cn("loom-badge", badgeClass)}>{badgeLabel}</span></span>
-        </div>
+      <div className="flex flex-wrap gap-2 items-center">
+        <span className="text-xs">{header}</span>
+        <span className="ml-auto"><Badge variant={badgeVariant}>{badgeLabel}</Badge></span>
       </div>
       {isLong ? (
-        <p className="loom-text loom-text-muted">{stripped.slice(0, 300)}...</p>
+        <p className="text-sm text-muted-foreground line-clamp-3">{stripped.slice(0, 300)}...</p>
       ) : (
-        <div className="loom-prose" dangerouslySetInnerHTML={{ __html: html }} />
+        <div className="typeset typeset-docs max-w-none w-full">
+          <div dangerouslySetInnerHTML={{ __html: html }} />
+        </div>
       )}
-    </div>
+    </Card>
   );
 });
 
@@ -286,8 +260,8 @@ export const ReflectionRow = memo(({ reflection, contributions, participantName,
   const triggerType = trigger?.type?.toUpperCase() ?? "CONTRIBUTION";
   const triggerAgentName = trigger ? participantName(trigger.participant_id) : "another agent";
   const reflectionAgentName = participantName(reflection.participant_id);
-  const header = <><span style={{ fontWeight: 700 }}>{reflectionAgentName}</span> <span className="loom-text-muted">reflected on</span> <span style={{ fontWeight: 700 }}>{triggerAgentName}</span><span className="loom-text-muted">'s {triggerType} #{reflection.targets_which}</span></>;
-  return <BaseResponseRow contribution={reflection} header={header} badgeLabel="reflection" badgeClass="loom-badge-reflection" strippedRegex={/^\[Reflection on #\d+ \[[\w]+\] by .+?\]\s*/m} typeClass="loom-contrib-type-reflection" rowClass="loom-reflection-row" onDialogOpen={onDialogOpen} dialogPayload={{ participantName: reflectionAgentName, isReflection: true, triggerAgentName, triggerType }} />;
+  const header = <><span className="font-bold">{reflectionAgentName}</span> <span className="text-muted-foreground">reflected on</span> <span className="font-bold">{triggerAgentName}</span><span className="text-muted-foreground">'s {triggerType} #{reflection.targets_which}</span></>;
+  return <BaseResponseRow contribution={reflection} header={header} badgeLabel="reflection" badgeVariant="reflection" strippedRegex={/^\[Reflection on #\d+ \[[\w]+\] by .+?\]\s*/m} borderClass="border-l-[var(--badge-indigo)] bg-[color-mix(in_oklch,var(--badge-indigo)_4%,var(--card))]" onDialogOpen={onDialogOpen} dialogPayload={{ participantName: reflectionAgentName, isReflection: true, triggerAgentName, triggerType }} />;
 });
 
 export const QueryResponseRow = memo(({ queryResponse, contributions, participantName, onDialogOpen, invokerId }) => {
@@ -308,8 +282,8 @@ export const QueryResponseRow = memo(({ queryResponse, contributions, participan
     return "another agent";
   }, [invokerId, source, queryResponse.batch_id, queryResponse.id, queryResponse.participant_id, queryResponse.prompt_context, contributions, participantName]);
   const responderName = participantName(queryResponse.participant_id);
-  const header = <><span style={{ fontWeight: 700 }}>{responderName}</span> <span className="loom-text-muted">responded to query from</span> <span style={{ fontWeight: 700 }}>{sourceAgentName}</span></>;
-  return <BaseResponseRow contribution={queryResponse} header={header} badgeLabel="query response" badgeClass="loom-badge-query_response" strippedRegex={/^\[Response to query from .+?\]\s*/m} typeClass="loom-contrib-type-query_response" rowClass="loom-query-response-row" onDialogOpen={onDialogOpen} dialogPayload={{ participantName: responderName, isQueryResponse: true, sourceAgentName }} />;
+  const header = <><span className="font-bold">{responderName}</span> <span className="text-muted-foreground">responded to query from</span> <span className="font-bold">{sourceAgentName}</span></>;
+  return <BaseResponseRow contribution={queryResponse} header={header} badgeLabel="query response" badgeVariant="query_response" strippedRegex={/^\[Response to query from .+?\]\s*/m} borderClass="border-l-[var(--badge-teal)] bg-[color-mix(in_oklch,var(--badge-teal)_4%,var(--card))]" onDialogOpen={onDialogOpen} dialogPayload={{ participantName: responderName, isQueryResponse: true, sourceAgentName }} />;
 });
 
 export const EvidenceResponseRow = memo(({ evidenceResponse, contributions, participantName, onDialogOpen, invokerId }) => {
@@ -331,8 +305,8 @@ export const EvidenceResponseRow = memo(({ evidenceResponse, contributions, part
   }, [invokerId, source, evidenceResponse.batch_id, evidenceResponse.id, evidenceResponse.participant_id, evidenceResponse.prompt_context, contributions, participantName]);
   const sourceType = source?.type?.toUpperCase() ?? "CONTRIBUTION";
   const responderName = participantName(evidenceResponse.participant_id);
-  const header = <><span style={{ fontWeight: 700 }}>{responderName}</span> <span className="loom-text-muted">providing evidence on</span> <span style={{ fontWeight: 700 }}>{sourceAgentName}</span><span className="loom-text-muted">'s {sourceType}</span></>;
-  return <BaseResponseRow contribution={evidenceResponse} header={header} badgeLabel="evidence" badgeClass="loom-badge-evidence_response" strippedRegex={/^\[Evidence from .+? on .+?\]\s*/m} typeClass="loom-contrib-type-evidence_response" rowClass="loom-evidence-response-row" onDialogOpen={onDialogOpen} dialogPayload={{ participantName: responderName, isEvidenceResponse: true, sourceAgentName, sourceType }} />;
+  const header = <><span className="font-bold">{responderName}</span> <span className="text-muted-foreground">providing evidence on</span> <span className="font-bold">{sourceAgentName}</span><span className="text-muted-foreground">'s {sourceType}</span></>;
+  return <BaseResponseRow contribution={evidenceResponse} header={header} badgeLabel="evidence" badgeVariant="evidence_response" strippedRegex={/^\[Evidence from .+? on .+?\]\s*/m} borderClass="border-l-[var(--badge-sky)] bg-[color-mix(in_oklch,var(--badge-sky)_4%,var(--card))]" onDialogOpen={onDialogOpen} dialogPayload={{ participantName: responderName, isEvidenceResponse: true, sourceAgentName, sourceType }} />;
 });
 
 export const SummonedResponseRow = memo(({ summonedResponse, contributions, participantName, onDialogOpen, invokerId }) => {
@@ -355,8 +329,8 @@ export const SummonedResponseRow = memo(({ summonedResponse, contributions, part
     }
     return null;
   }, [invokerId, summonedResponse.batch_id, summonedResponse.id, summonedResponse.participant_id, summonedResponse.prompt_context, contributions, participantName]);
-  const header = <><span style={{ fontWeight: 700 }}>Guest expert {personaInfo.name}</span> <span className="loom-text-muted">({personaInfo.tier}){invokerName ? " summoned by " : ""}</span>{invokerName && <span style={{ fontWeight: 700 }}>{invokerName}</span>}</>;
-  return <BaseResponseRow contribution={summonedResponse} header={header} badgeLabel="summoned" badgeClass="loom-badge-summoned_response" strippedRegex={/^\[Summoned: .+?\]\s*/m} typeClass="loom-contrib-type-summoned_response" rowClass="loom-summoned-response-row" onDialogOpen={onDialogOpen} dialogPayload={{ participantName: personaInfo.name, isSummonedResponse: true, personaName: personaInfo.name, personaTier: personaInfo.tier }} />;
+  const header = <><span className="font-bold">Guest expert {personaInfo.name}</span> <span className="text-muted-foreground">({personaInfo.tier}){invokerName ? " summoned by " : ""}</span>{invokerName && <span className="font-bold">{invokerName}</span>}</>;
+  return <BaseResponseRow contribution={summonedResponse} header={header} badgeLabel="summoned" badgeVariant="summoned_response" strippedRegex={/^\[Summoned: .+?\]\s*/m} borderClass="border-l-[var(--badge-violet)] bg-[color-mix(in_oklch,var(--badge-violet)_4%,var(--card))]" onDialogOpen={onDialogOpen} dialogPayload={{ participantName: personaInfo.name, isSummonedResponse: true, personaName: personaInfo.name, personaTier: personaInfo.tier }} />;
 });
 
 export const VoteResponseRow = memo(({ voteResponse, contributions, participantName, onDialogOpen, invokerId }) => {
@@ -381,105 +355,98 @@ export const VoteResponseRow = memo(({ voteResponse, contributions, participantN
     return "another agent";
   }, [invokerId, source, voteResponse.batch_id, voteResponse.id, voteResponse.participant_id, voteResponse.prompt_context, contributions, participantName]);
   const voterName = participantName(voteResponse.participant_id);
-  const header = <><span style={{ fontWeight: 700 }}>{voterName}</span> <span className="loom-text-muted">voted on poll from</span> <span style={{ fontWeight: 700 }}>{sourceAgentName}</span></>;
-  return <BaseResponseRow contribution={voteResponse} header={header} badgeLabel="vote" badgeClass="loom-badge-vote_response" strippedRegex={/^\[Vote from .+?\]\s*/m} typeClass="loom-contrib-type-vote_response" rowClass="loom-vote-response-row" onDialogOpen={onDialogOpen} dialogPayload={{ participantName: voterName, isVoteResponse: true, sourceAgentName }} />;
+  const header = <><span className="font-bold">{voterName}</span> <span className="text-muted-foreground">voted on poll from</span> <span className="font-bold">{sourceAgentName}</span></>;
+  return <BaseResponseRow contribution={voteResponse} header={header} badgeLabel="vote" badgeVariant="vote_response" strippedRegex={/^\[Vote from .+?\]\s*/m} borderClass="border-l-[var(--badge-emerald)] bg-[color-mix(in_oklch,var(--badge-emerald)_4%,var(--card))]" onDialogOpen={onDialogOpen} dialogPayload={{ participantName: voterName, isVoteResponse: true, sourceAgentName }} />;
 });
 
 export const VoteTallyRow = memo(({ tally, participantName, onDialogOpen }) => {
   const orchestratorName = participantName(tally.participant_id);
-
   const content = tally.content ?? "";
-  const stripped = useMemo(() => {
-    return content.replace(/^\[Vote Tally\]\s*/m, "");
-  }, [content]);
+  const stripped = useMemo(() => content.replace(/^\[Vote Tally\]\s*/m, ""), [content]);
   const isLong = stripped.length > 300;
   const hasTools = (tally.tool_calls ?? []).length > 0;
   const clickable = isLong || hasTools;
   const html = useMemo(() => renderMarkdown(stripped), [stripped]);
-
   const openDialog = () => onDialogOpen?.({ contribution: tally, participantName: orchestratorName, isVoteTally: true });
-
   return (
-    <div
-      className={cn("loom-card", "loom-contribution-card", "loom-contrib-type-vote_tally", "loom-vote-tally-row", clickable && "loom-contrib-clickable")}
-      onClick={openDialog}
+    <Card
+      className={cn("py-2 px-3 gap-2 border-l-2 border-l-[var(--badge-orange-light)] bg-[color-mix(in_oklch,var(--badge-orange-light)_4%,var(--card))]", clickable && "cursor-pointer hover:bg-accent/50")}
+      onClick={clickable ? openDialog : undefined}
       role={clickable ? "button" : undefined}
       tabIndex={clickable ? 0 : undefined}
       onKeyDown={clickable ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDialog(); } } : undefined}
     >
-      <div>
-        <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center">
-          <span className="loom-text-xs"><span style={{ fontWeight: 700 }}>{orchestratorName}</span> <span className="loom-text-muted">tally</span></span>
-          <span style={{ marginLeft: "auto" }}><span className="loom-badge loom-badge-vote_tally">tally</span></span>
-        </div>
+      <div className="flex flex-wrap gap-2 items-center">
+        <span className="text-xs"><span className="font-bold">{orchestratorName}</span> <span className="text-muted-foreground">tally</span></span>
+        <span className="ml-auto"><Badge variant="vote_tally">tally</Badge></span>
       </div>
       {isLong ? (
-        <p className="loom-text loom-text-muted">{stripped.slice(0, 300)}...</p>
+        <p className="text-sm text-muted-foreground line-clamp-3">{stripped.slice(0, 300)}...</p>
       ) : (
-        <div className="loom-prose" dangerouslySetInnerHTML={{ __html: html }} />
+        <div className="typeset typeset-docs max-w-none w-full">
+          <div dangerouslySetInnerHTML={{ __html: html }} />
+        </div>
       )}
-    </div>
+    </Card>
   );
 });
 
 export const AgentPerspective = memo(({ participant, stateOfPlay, recentContributions, reflection }) => {
   return (
-    <div className="loom-card loom-agent-perspective">
-      <div className="loom-agent-perspective-header">
-        <span className="loom-agent-perspective-name">{participant.name}</span>
+    <Card className="border-l-2 border-l-muted py-3 gap-2">
+      <CardHeader className="flex flex-row items-center justify-between py-0">
+        <span className="text-sm font-semibold">{participant.name}</span>
         <TierBadge tier={participant.tier} />
-      </div>
-      <div className="loom-agent-perspective-body">
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3 py-0">
         {participant.persona && (
-          <div className="loom-agent-perspective-section">
-            <span className="loom-agent-perspective-label">Persona</span>
-            <div className="loom-agent-perspective-text">
+          <div>
+            <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Persona</span>
+            <div className="text-xs text-muted-foreground bg-muted rounded-md px-2 py-1.5 whitespace-pre-wrap break-words">
               {participant.persona.length > 300 ? participant.persona.slice(0, 300) + "..." : participant.persona}
             </div>
           </div>
         )}
         {participant.agenda && (
-          <div className="loom-agent-perspective-section">
-            <span className="loom-agent-perspective-label">Agenda</span>
-            <div className="loom-agent-perspective-text">
+          <div>
+            <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Agenda</span>
+            <div className="text-xs text-muted-foreground bg-muted rounded-md px-2 py-1.5 whitespace-pre-wrap break-words">
               {participant.agenda.length > 300 ? participant.agenda.slice(0, 300) + "..." : participant.agenda}
             </div>
           </div>
         )}
         {stateOfPlay && (
-          <div className="loom-agent-perspective-section">
-            <span className="loom-agent-perspective-label">State of Play</span>
-            <div className="loom-agent-perspective-text loom-agent-perspective-scroll">
+          <div>
+            <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">State of Play</span>
+            <div className="text-xs text-muted-foreground bg-muted rounded-md px-2 py-1.5 max-h-24 overflow-y-auto whitespace-pre-wrap break-words">
               {stateOfPlay}
             </div>
           </div>
         )}
         {recentContributions && recentContributions.length > 0 && (
-          <div className="loom-agent-perspective-section">
-            <span className="loom-agent-perspective-label">Recent Contributions</span>
-            <div className="loom-agent-perspective-text loom-agent-perspective-scroll">
+          <div>
+            <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Recent Contributions</span>
+            <div className="text-xs text-muted-foreground bg-muted rounded-md px-2 py-1.5 max-h-24 overflow-y-auto">
               {recentContributions.map((c) => (
-                <div key={c.id} className="loom-agent-perspective-contrib">
-                  <span className="loom-agent-perspective-contrib-id">#{c.id}</span>
-                  <span className="loom-agent-perspective-contrib-type">{c.type}</span>
-                  <span className="loom-agent-perspective-contrib-content">
-                    {c.content.length > 200 ? c.content.slice(0, 200) + "..." : c.content}
-                  </span>
+                <div key={c.id} className="flex gap-1.5 items-baseline py-0.5 border-b border-border last:border-0">
+                  <span className="font-mono text-muted-foreground">#{c.id}</span>
+                  <Badge variant="secondary" className="text-[10px] h-4 px-1">{c.type}</Badge>
+                  <span className="truncate">{c.content.length > 200 ? c.content.slice(0, 200) + "..." : c.content}</span>
                 </div>
               ))}
             </div>
           </div>
         )}
         {reflection && (
-          <div className="loom-agent-perspective-section">
-            <span className="loom-agent-perspective-label">Reflection</span>
-            <div className="loom-agent-perspective-text loom-agent-perspective-scroll">
+          <div>
+            <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Reflection</span>
+            <div className="text-xs text-muted-foreground bg-muted rounded-md px-2 py-1.5 max-h-24 overflow-y-auto whitespace-pre-wrap break-words">
               {reflection}
             </div>
           </div>
         )}
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 });
 
@@ -495,35 +462,26 @@ export const OrchestratorItem = memo(({ group, onDialogOpen }) => {
   const msg = group.query ?? group.response;
   const meta = ORCHESTRATOR_TYPE_META[msg.type] || { emoji: "❓", label: msg.type };
   const content = msg.content ?? "";
-
   const openDialog = () => onDialogOpen?.({ orchestratorGroup: group, type: msg.type });
-  const onKeyDown = (e) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      openDialog();
-    }
-  };
-
   return (
-    <div
+    <Card
       role="button"
       tabIndex={0}
-      className="loom-card loom-card-dashed loom-orchestrator-item loom-orchestrator-item-row"
+      className="border-dashed border-l-[3px] border-l-muted-foreground/30 cursor-pointer hover:bg-accent py-3"
       onClick={openDialog}
-      onKeyDown={onKeyDown}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDialog(); } }}
     >
-      <div className="loom-flex loom-flex-wrap loom-gap-sm loom-items-center loom-mb-xs">
-        <span className="loom-orchestrator-item-name" style={{ fontWeight: 700 }}>Orchestrator</span>
-        <span className="loom-badge loom-badge-orchestrator" style={{ marginLeft: "auto" }}>{meta.label}</span>
+      <div className="flex flex-wrap gap-2 items-center mb-1 px-3">
+        <span className="text-sm font-semibold">Orchestrator</span>
+        <Badge variant="orchestrator" className="ml-auto">{meta.label}</Badge>
       </div>
-      <p className="loom-text loom-text-muted">{content.slice(0, 150)}{content.length > 150 ? "..." : ""}</p>
-    </div>
+      <p className="text-sm text-muted-foreground px-3">{content.slice(0, 150)}{content.length > 150 ? "..." : ""}</p>
+    </Card>
   );
 });
 
 export const OrchestratorDetailDialog = memo(({ open, onClose, orchestratorMessages, highestTierModel }) => {
   const messages = orchestratorMessages ?? [];
-
   const stats = useMemo(() => {
     const counts = {};
     for (const m of messages) {
@@ -532,47 +490,38 @@ export const OrchestratorDetailDialog = memo(({ open, onClose, orchestratorMessa
     }
     return counts;
   }, [messages]);
-
   return (
-    <ContentDialog
-      open={open}
-      onClose={onClose}
-      title="Orchestrator"
-      className="loom-dialog-type-orchestrator"
-    >
-      <div className="loom-orchestrator-detail">
-        <div className="loom-participant-detail-section">
-          <span className="loom-participant-detail-label">Role</span>
-          <p className="loom-text loom-text-muted">
+    <ContentDialog open={open} onClose={onClose} title="Orchestrator" className="border-l-4 border-l-muted-foreground/30">
+      <div className="flex flex-col gap-3">
+        <div>
+          <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Role</span>
+          <p className="text-sm text-muted-foreground">
             Coordinates the deliberation flow — plans turn order, summarizes rounds, checks for convergence, and moderates conflicts.
           </p>
         </div>
-
         {highestTierModel && (
-          <div className="loom-participant-detail-section">
-            <span className="loom-participant-detail-label">Model</span>
-            <p className="loom-text loom-text-muted">{highestTierModel}</p>
+          <div>
+            <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Model</span>
+            <p className="text-sm text-muted-foreground">{highestTierModel}</p>
           </div>
         )}
-
         {Object.keys(stats).length > 0 && (
-          <div className="loom-participant-detail-section">
-            <span className="loom-participant-detail-label">Activity</span>
-            <div className="loom-flex loom-flex-wrap loom-gap-sm">
+          <div>
+            <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Activity</span>
+            <div className="flex flex-wrap gap-1.5 mt-1">
               {Object.entries(stats).map(([type, count]) => {
                 const meta = ORCHESTRATOR_TYPE_META[type] || { emoji: "❓", label: type };
                 return (
-                  <span key={type} className="loom-badge loom-badge-orchestrator">
+                  <Badge key={type} variant="orchestrator">
                     {meta.emoji} {meta.label}: {count}
-                  </span>
+                  </Badge>
                 );
               })}
             </div>
           </div>
         )}
-
         {messages.length === 0 && (
-          <p className="loom-text loom-text-muted">No orchestrator messages recorded yet.</p>
+          <p className="text-sm text-muted-foreground">No orchestrator messages recorded yet.</p>
         )}
       </div>
     </ContentDialog>

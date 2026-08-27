@@ -122,8 +122,6 @@ export const HTML_SHELL = `<!DOCTYPE html>
       if (t !== "system") document.documentElement.setAttribute("data-theme", t);
     })();
   </script>
-  <link rel="stylesheet" href="/assets/pure.css" />
-  <link rel="stylesheet" href="/assets/pure-grids-responsive.css" />
   <link rel="stylesheet" href="/assets/styles.css" />
 </head>
 <body>

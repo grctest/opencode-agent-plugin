@@ -1,19 +1,9 @@
-/** @typedef {string | number | boolean | null | undefined | ClassValue[] | Record<string, boolean>} ClassValue */
+import { clsx } from "clsx";
+import { twMerge } from "tailwind-merge";
 
-/** @param {ClassValue} value */
-function normalize(value) {
-  if (!value) return "";
-  if (typeof value === "string" || typeof value === "number") return String(value);
-  if (Array.isArray(value)) return value.map(normalize).filter(Boolean).join(" ");
-  return Object.entries(value)
-    .filter(([, v]) => v)
-    .map(([k]) => k)
-    .join(" ");
-}
-
-/** @param {...ClassValue} inputs */
+/** @param {...any} inputs */
 export function cn(...inputs) {
-  return inputs.map(normalize).filter(Boolean).join(" ");
+  return twMerge(clsx(inputs));
 }
 
 const TIER_COLORS = {
