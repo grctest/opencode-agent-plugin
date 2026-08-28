@@ -7,8 +7,6 @@ import { OutputTab } from "./components/OutputTab.jsx";
 import { ErrorBoundary } from "./ErrorBoundary.jsx";
 import { usePersistedState, useMeetingApi, useSSEReset, useEmbeddingStatus } from "./hooks.js";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "./components/ui/tabs.tsx";
-import { Card, CardContent } from "./components/ui/card.tsx";
-import { Badge } from "./components/ui/badge.tsx";
 import { Button } from "./components/ui/button.tsx";
 import { Alert, AlertTitle, AlertDescription } from "./components/ui/alert.tsx";
 import { TooltipProvider } from "./components/ui/tooltip.tsx";
@@ -183,22 +181,6 @@ function ThemeProvider({ theme, setTheme, children }) {
   return children;
 }
 
-function MeetingHeader({ state, activeAgentCount, errorCount }) {
-  return (
-    <div className="border-b pb-4 mb-5">
-      <h1 className="text-xl font-bold leading-tight mb-2">{state.question}</h1>
-      <div className="flex flex-wrap gap-3 items-center">
-        {activeAgentCount > 0 && (
-          <Badge variant="secondary" className="gap-1"><span aria-hidden="true">⏳</span> {activeAgentCount} active</Badge>
-        )}
-        {errorCount > 0 && (
-          <Badge variant="destructive" className="gap-1"><TriangleAlertIcon className="size-3" /> {errorCount} error{errorCount > 1 ? "s" : ""}</Badge>
-        )}
-      </div>
-    </div>
-  );
-}
-
 function ExtensionBanner({ banner, onDismiss }) {
   if (!banner) return null;
   return (
@@ -342,8 +324,6 @@ export function App() {
   const isWeaving = state?.status === "weaving";
   const activeRound = state?.round ?? 0;
   const totalRounds = state?.max_rounds ?? 0;
-  const activeAgentCount = thinkingParticipants.length;
-  const errorCount = agentErrors.length;
   return (
     <ThemeProvider theme={theme} setTheme={setTheme}>
       <TooltipProvider delayDuration={0}>
@@ -379,20 +359,15 @@ export function App() {
             />
           </ErrorBoundary>
           <main className="flex-1 overflow-y-auto p-6">
-            {state && (
-              <ErrorBoundary fallbackMessage="Failed to render meeting header">
-                <MeetingHeader state={state} activeAgentCount={activeAgentCount} errorCount={errorCount} />
-              </ErrorBoundary>
-            )}
-            <ErrorBoundary fallbackMessage="Failed to render extension banner">
-              <ExtensionBanner banner={extensionBanner} onDismiss={dismissExtensionBanner} />
-            </ErrorBoundary>
             <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
               <TabsList variant="line" className="w-full justify-start">
                 <TabsTrigger value="overview">Overview</TabsTrigger>
                 <TabsTrigger value="timeline">Timeline</TabsTrigger>
                 <TabsTrigger value="output">Output</TabsTrigger>
               </TabsList>
+              <ErrorBoundary fallbackMessage="Failed to render extension banner">
+                <ExtensionBanner banner={extensionBanner} onDismiss={dismissExtensionBanner} />
+              </ErrorBoundary>
               <TabsContent value="overview" className="pt-4">
                 <ErrorBoundary fallbackMessage="Failed to render the overview tab">
                   {state && (
