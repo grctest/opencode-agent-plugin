@@ -1,15 +1,9 @@
 /**
- * MeetingOrchestrator — composition root (Phase 4).
+ * MeetingOrchestrator — composition root.
  *
  * Delegates to focused helpers under src/orchestrator/* and services/*. Thin
- * forwarders use explicit `this` binding; helpers are pure functions imported
- * and called with orchestrator context. Future explicit DI (passing services
- * as args) remains documented but current forwarder is minimal-risk.
- *
- * Constants (SUMMARY_TRUNCATE_LEN / MAX_ORCHESTRATOR_MESSAGES) are canonical
- * here; src/orchestrator/constants.js re-exports them for backward compat.
- * Deadline logic is centralized in TimeBudget; legacy _remainingMs fallback is
- * deprecated and delegates to TimeBudget when present.
+ * forwarders bind orchestrator context so helpers can access services/state.
+ * Constants are canonical in src/constants.js (re-exported here for compat).
  */
 
 import { getTierConfig } from "./shared.js";
@@ -45,9 +39,7 @@ import * as modelsHelpers from "./orchestrator/models.js";
 import * as initHelpers from "./orchestrator/init.js";
 import { TimeBudget } from "./orchestrator/time-budget.js";
 
-// Canonical constants — single source (Phase 3 collapse of orchestrator/constants.js)
-export const SUMMARY_TRUNCATE_LEN = 200;
-export const MAX_ORCHESTRATOR_MESSAGES = 200;
+export { SUMMARY_TRUNCATE_LEN, MAX_ORCHESTRATOR_MESSAGES } from "./constants.js";
 
 export class MeetingOrchestrator {
   _meetingId;
@@ -188,6 +180,8 @@ export class MeetingOrchestrator {
 
     async close() {
     this._cancelled = true;
+    // Abort in-flight LLM prompts by signalling cancellation to round executor if it exposes an abort
+    try { this._roundExecutor?._abortInflight?.(); } catch {}
     try { this._stallWatchdog?.stop(); } catch {}
     try {
       if (this._sessionManager) {
@@ -202,70 +196,23 @@ export class MeetingOrchestrator {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Mixin forwarders (Phase 3): thin `apply(this)` delegators — `this` remains
-  // the orchestrator instance so helpers can access services/state. Explicit
-  // dependency-injection (passing stateManager/database/etc. as args) is the
-  // intended future; retained here for minimal-risk audit with documented
-  // composition in the file header. Each forwarder has JSDoc where behavior
-  // is non-trivial; trivial delegators are intentionally one-liners.
-  // ---------------------------------------------------------------------------
-  /** @returns {Array<{tier:string, model:any}>} */
-  _modelList(...args) {
-    return modelsHelpers._modelList.apply(this, args);
+  // Thin forwarders — bound to orchestrator instance so helpers can access this.* services.
+  _modelList() { return modelsHelpers._modelList.call(this); }
+  _getHighestTierModel() { return modelsHelpers._getHighestTierModel.call(this); }
+  _getAllowedFallbackModel() { return modelsHelpers._getAllowedFallbackModel.call(this); }
+  _getParticipantModel(participant, fallbackOnError = false) { return modelsHelpers._getParticipantModel.call(this, participant, fallbackOnError); }
+  async _promptOrchestrator(system, model, message, type, round) { return modelsHelpers._promptOrchestrator.call(this, system, model, message, type, round); }
+  async initialize() { return initHelpers.initialize.call(this); }
+  async runMeeting() { return weavingHelpers.runMeeting.call(this); }
+  async extendMeeting(newPrompt) { return weavingHelpers.extendMeeting.call(this, newPrompt); }
+  async _runWeavingLoop() { return weavingHelpers._runWeavingLoop.call(this); }
+  _tokenBudgetExceeded() { return weavingHelpers._tokenBudgetExceeded.call(this); }
+  _remainingMs() {
+    if (this._timeBudget) return this._timeBudget.remainingMs();
+    return weavingHelpers._remainingMs.call(this);
   }
-  _getHighestTierModel(...args) {
-    return modelsHelpers._getHighestTierModel.apply(this, args);
-  }
-  _getAllowedFallbackModel(...args) {
-    return modelsHelpers._getAllowedFallbackModel.apply(this, args);
-  }
-  _getParticipantModel(...args) {
-    return modelsHelpers._getParticipantModel.apply(this, args);
-  }
-  async _promptOrchestrator(...args) {
-    return modelsHelpers._promptOrchestrator.apply(this, args);
-  }
-  async initialize(...args) {
-    return initHelpers.initialize.apply(this, args);
-  }
-  async runMeeting(...args) {
-    return weavingHelpers.runMeeting.apply(this, args);
-  }
-  async extendMeeting(...args) {
-    return weavingHelpers.extendMeeting.apply(this, args);
-  }
-  async _runWeavingLoop(...args) {
-    return weavingHelpers._runWeavingLoop.apply(this, args);
-  }
-
-  /**
-   * Token budget brake (audit 14 PV4): maxTotalTokens > 0 caps total LLM tokens
-   * per meeting so a runaway meeting has a cost ceiling, not just a time one.
-   */
-  _tokenBudgetExceeded(...args) {
-    return weavingHelpers._tokenBudgetExceeded.apply(this, args);
-  }
-
-  /**
-   * Single deadline authority (audit 01 E6) — every timeout check consults this.
-   * Delegates to TimeBudget when available (Phase 3 centralization).
-   */
-  _remainingMs(...args) {
-    if (this._timeBudget) {
-      return this._timeBudget.remainingMs(...args);
-    }
-    return weavingHelpers._remainingMs.apply(this, args);
-  }
-
-  /**
-   * Promise.race with a guard timer that is always cleared and unref'd, so losing
-   * the race doesn't leak a pending timer (audit 05 LS6 / audit 17 PF1).
-   */
-  _raceWithGuardTimer(...args) {
-    return weavingHelpers._raceWithGuardTimer.apply(this, args);
-  }
-  _checkTimeout(...args) {
+  _raceWithGuardTimer(promise, timeoutMs, label) { return weavingHelpers._raceWithGuardTimer.call(this, promise, timeoutMs, label); }
+  _checkTimeout() {
     if (this._timeBudget) {
       if (this._timeBudget.checkTimeout()) {
         this._stateManager.transitionTo("timeout");
@@ -274,50 +221,17 @@ export class MeetingOrchestrator {
       }
       return false;
     }
-    return weavingHelpers._checkTimeout.apply(this, args);
+    return weavingHelpers._checkTimeout.call(this);
   }
-  async runRound(...args) {
-    return roundHelpers.runRound.apply(this, args);
-  }
-  async _finalizeRound(...args) {
-    return roundHelpers._finalizeRound.apply(this, args);
-  }
-
-  /**
-   * Classify whether an error from finalization is a persistence/indexing problem
-   * (degradable) vs. a logic/state-machine error (must abort) — audit 01 E2.
-   */
-  _isPersistenceError(...args) {
-    return roundHelpers._isPersistenceError.apply(this, args);
-  }
-  async _persistState(...args) {
-    return roundHelpers._persistState.apply(this, args);
-  }
-  _getMergedStats(...args) {
-    return roundHelpers._getMergedStats.apply(this, args);
-  }
-  _logError(...args) {
-    return roundHelpers._logError.apply(this, args);
-  }
-  _notifyUpdate(...args) {
-    return roundHelpers._notifyUpdate.apply(this, args);
-  }
-  async _synthesize(...args) {
-    return synthesisHelpers._synthesize.apply(this, args);
-  }
-
-  /**
-   * Deliberation quality telemetry (audit 14 PV5): derived counts over the
-   * final weave — contribution mix, dissent survival, participation, votes.
-   * Persisted inside meeting_metrics.counters.quality for trend analysis.
-   */
-  _computeQualityTelemetry(...args) {
-    return synthesisHelpers._computeQualityTelemetry.apply(this, args);
-  }
-  _saveArtifact(...args) {
-    return synthesisHelpers._saveArtifact.apply(this, args);
-  }
-  _saveMeetingMetrics(...args) {
-    return synthesisHelpers._saveMeetingMetrics.apply(this, args);
-  }
+  async runRound() { return roundHelpers.runRound.call(this); }
+  async _finalizeRound(round) { return roundHelpers._finalizeRound.call(this, round); }
+  _isPersistenceError(err) { return roundHelpers._isPersistenceError.call(this, err); }
+  async _persistState() { return roundHelpers._persistState.call(this); }
+  _getMergedStats() { return roundHelpers._getMergedStats.call(this); }
+  _logError(context, error, phase) { return roundHelpers._logError.call(this, context, error, phase); }
+  _notifyUpdate() { return roundHelpers._notifyUpdate.call(this); }
+  async _synthesize() { return synthesisHelpers._synthesize.call(this); }
+  _computeQualityTelemetry() { return synthesisHelpers._computeQualityTelemetry.call(this); }
+  _saveArtifact(artifact) { return synthesisHelpers._saveArtifact.call(this, artifact); }
+  _saveMeetingMetrics() { return synthesisHelpers._saveMeetingMetrics.call(this); }
 }

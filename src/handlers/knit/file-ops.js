@@ -2,6 +2,7 @@ import { unlinkSync, writeFileSync, mkdirSync, openSync, fsyncSync, closeSync, r
 import { join } from "node:path";
 import { resolveLoomBaseDir } from "../../paths.js";
 import { extractErrorInfo } from "../../logger.js";
+import { sanitizeForDisplay } from "../../utils/sanitize.js";
 
 export function writeReportFile(directory, meetingId, report, logger) {
   const tmpSuffix = `${process.pid}.${crypto.randomUUID().slice(0, 8)}`;

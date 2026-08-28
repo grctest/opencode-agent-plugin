@@ -13,7 +13,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip.tsx";
 import { ScrollArea } from "./ui/scroll-area.tsx";
 import { Spinner } from "./ui/spinner.tsx";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert.tsx";
-import { TriangleAlertIcon, CircleCheckIcon, Loader2Icon } from "lucide-react";
+import { TriangleAlertIcon, CircleCheckIcon } from "lucide-react";
 
 const THEME_OPTIONS = [
   { value: "light", label: "☀ Light" },

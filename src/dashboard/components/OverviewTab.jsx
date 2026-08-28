@@ -33,14 +33,14 @@ export const OverviewTab = memo(({
   const totalInputTokens = useMemo(() => Number(stats.input_tokens) || 0, [stats]);
   const totalOutputTokens = useMemo(() => Number(stats.output_tokens) || 0, [stats]);
 
-  const StatCard = ({ value, label }) => (
-    <Card className="py-4">
-      <CardContent className="text-center py-0">
-        <span className="block text-2xl font-bold">{value}</span>
-        <span className="block text-xs text-muted-foreground mt-1">{label}</span>
-      </CardContent>
-    </Card>
-  );
+const StatCard = memo(({ value, label }) => (
+  <Card className="py-4">
+    <CardContent className="text-center py-0">
+      <span className="block text-2xl font-bold">{value}</span>
+      <span className="block text-xs text-muted-foreground mt-1">{label}</span>
+    </CardContent>
+  </Card>
+));
 
   return (
     <div className="flex flex-col gap-4">

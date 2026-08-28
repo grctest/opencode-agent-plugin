@@ -1,11 +1,13 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { MeetingOrchestrator } from "../orchestrator.js";
 import { composeRoomWithSimilarity, formatRoomPreview } from "../composer.js";
 import { findMeetingBySessionId, getDbPathForMeeting, deleteMeetingFiles, MeetingDatabase } from "../database.js";
 import { discoverModels, assignModelsToParticipants } from "../services/model-service.js";
 import { Logger, extractErrorInfo } from "../logger.js";
 import { getConfig } from "../config.js";
-import { getMeetingDbPath } from "../paths.js";
-import { sanitizeForPrompt } from "../utils/sanitize.js";
+import { getMeetingDbPath, resolveLoomBaseDir } from "../paths.js";
+import { sanitizeForPrompt, sanitizeForDisplay } from "../utils/sanitize.js";
 import { applyModelFilter } from "./knit/utils.js";
 import { createMeetingCallbacks, buildSummary } from "./knit/callbacks.js";
 import { writeReportFile as writeReportFileHelper, createSessionLock } from "./knit/file-ops.js";
@@ -15,9 +17,6 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
   const logger = new Logger();
   const withSessionLock = createSessionLock();
   const state = { pendingModelsBySession: new Map(), disabledModelsBySession: new Map() };
-  // Compat: keep old fields for external inspectors but they are unused
-  state.pendingModels = null;
-  state.enabledModels = null;
 
   const { handleListKnitModels, handleEnableKnitModels, handleDisableKnitModels, handleResetKnitModels } = createModelHandlers({ client, directory, logger, state });
 
@@ -35,36 +34,36 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
     // Per-session deny-list: reload latest persisted filter for this session (handles external edits / multi-process)
     let disabledForSession = null;
     try {
-      const { existsSync: _exists, readFileSync: _read } = await import("node:fs");
-      const { join: _join } = await import("node:path");
-      const { resolveLoomBaseDir: _resolve } = await import("../paths.js");
-      const p = _join(_resolve(directory), `models-filter-${sessionID}.json`);
-      if (_exists(p)) {
-        const data = JSON.parse(_read(p, "utf-8"));
+      const p = join(resolveLoomBaseDir(directory), `models-filter-${sessionID}.json`);
+      if (existsSync(p)) {
+        const data = JSON.parse(readFileSync(p, "utf-8"));
         if (Array.isArray(data.disabledModels)) disabledForSession = new Set(data.disabledModels);
       }
       if (disabledForSession) {
-        if (!state.disabledModelsBySession) state.disabledModelsBySession = new Map();
         state.disabledModelsBySession.set(sessionID, disabledForSession);
-      } else if (state.disabledModelsBySession?.has(sessionID)) {
+      } else if (state.disabledModelsBySession.has(sessionID)) {
         disabledForSession = state.disabledModelsBySession.get(sessionID);
       }
-    } catch {}
-    const disabledSet = disabledForSession ?? state.disabledModelsBySession?.get(sessionID) ?? null;
+    } catch (err) {
+      logger.warn("model_filter_reload_failed", "Failed to reload per-session model filter", extractErrorInfo(err));
+    }
+    const disabledSet = disabledForSession ?? state.disabledModelsBySession.get(sessionID) ?? null;
     const available = applyModelFilter(allAvailable, disabledSet);
 
+    let existingMeeting = null;
     if (args.fresh === true) {
-      const existingMeeting = await findMeetingBySessionId(directory, sessionID);
+      existingMeeting = await findMeetingBySessionId(directory, sessionID);
       if (existingMeeting) {
         const extDbPath = getDbPathForMeeting(directory, existingMeeting.meetingId);
         if (extDbPath) {
           deleteMeetingFiles(extDbPath);
           logger.info("loom_fresh", "Cleared existing loom database for fresh start", { meetingId: existingMeeting.meetingId });
         }
+        existingMeeting = null;
       }
+    } else {
+      existingMeeting = await findMeetingBySessionId(directory, sessionID);
     }
-
-    const existingMeeting = await findMeetingBySessionId(directory, sessionID);
 
     if (existingMeeting && args.fresh !== true && !args.dry_run) {
       return handleExtend(existingMeeting, args, context, loomId, sessionID, available);
@@ -76,7 +75,7 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
     let meetingDb = null;
 
     const modelMap = new Map();
-    const pendingForSession = state.pendingModelsBySession?.get(sessionID) ?? state.pendingModels ?? null;
+    const pendingForSession = state.pendingModelsBySession.get(sessionID) ?? null;
     const explicitModels = args.models ?? pendingForSession;
     if (explicitModels && explicitModels.length > 0) {
       // Validate explicit models against filtered available (deny-list) — don't inject disabled models
@@ -106,8 +105,7 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
         const modelId = "model_id" in m ? m.model_id : m.modelID;
         modelMap.set(tier, { providerID: providerId, modelID: modelId });
       }
-      if (state.pendingModelsBySession) state.pendingModelsBySession.delete(sessionID);
-      state.pendingModels = null;
+      state.pendingModelsBySession.delete(sessionID);
     }
 
     if (args.participants && args.participants.length > 0) {
@@ -135,6 +133,7 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
         };
       }
       const seenIds = new Set();
+      let dedupCounter = 0;
       participants = args.participants.map((p, i) => {
         const rawTags = p.tags ?? p.expertise ?? ["general"];
         const tags = Array.isArray(rawTags) ? rawTags : typeof rawTags === "string" ? [rawTags] : ["general"];
@@ -142,7 +141,7 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
         let baseId = `${slug}_${i}`;
         let id = baseId;
         if (seenIds.has(id)) {
-          id = `${baseId}_${Math.random().toString(36).slice(2,6)}`;
+          id = `${baseId}_${++dedupCounter}`;
         }
         seenIds.add(id);
         return {
@@ -309,7 +308,8 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
       const artifact = await engine.runMeeting();
 
       const state = engine.getState();
-      const fullReport = `# Loom Deliberation Output\n\n**Question:** ${args.question}\n\n**Participants:** ${participants.map((p) => `${p.name} (${p.tier})`).join(", ")}\n\n**Rounds:** ${state.current_round}\n\n**Meeting ID:** ${engine.getMeetingId()}\n\n---\n\n${artifact}`;
+      const safeQuestion = sanitizeForDisplay(args.question ?? "", 5000);
+      const fullReport = `# Loom Deliberation Output\n\n**Question:** ${safeQuestion}\n\n**Participants:** ${participants.map((p) => `${p.name} (${p.tier})`).join(", ")}\n\n**Rounds:** ${state.current_round}\n\n**Meeting ID:** ${engine.getMeetingId()}\n\n---\n\n${artifact}`;
       const reportPath = writeReportFile(engine.getMeetingId(), fullReport);
 
       return {
@@ -403,7 +403,9 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
         await extEngine.initialize();
         const artifact = await extEngine.extendMeeting(args.question);
         const extState = extEngine.getState();
-        const fullReport = `# Loom Deliberation (Extended)\n\n**Original Question:** ${existingMeeting.question}\n\n**New Input:** ${args.question}\n\n**Participants:** ${existingParts.map((p) => `${p.name} (${p.tier})`).join(", ")}\n\n**Total Rounds:** ${extState.current_round}\n\n**Meeting ID:** ${extEngine.getMeetingId()}\n\n---\n\n${artifact}`;
+        const safeOrigQ = sanitizeForDisplay(existingMeeting.question ?? "", 5000);
+        const safeNewInput = sanitizeForDisplay(args.question ?? "", 5000);
+        const fullReport = `# Loom Deliberation (Extended)\n\n**Original Question:** ${safeOrigQ}\n\n**New Input:** ${safeNewInput}\n\n**Participants:** ${existingParts.map((p) => `${p.name} (${p.tier})`).join(", ")}\n\n**Total Rounds:** ${extState.current_round}\n\n**Meeting ID:** ${extEngine.getMeetingId()}\n\n---\n\n${artifact}`;
         const reportPath = writeReportFile(extEngine.getMeetingId(), fullReport);
         const summary = [
           `**Loom extended** — ${extState.current_round} round${extState.current_round !== 1 ? "s" : ""} total (${extState.status})`,

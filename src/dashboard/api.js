@@ -59,7 +59,7 @@ export class DashboardApi {
         }
       }
       if (oldest) {
-        oldest.api._db.close();
+        try { if (!oldest.api._db?.closed) oldest.api._db.close(); } catch {}
         DashboardApi.cache.delete(oldest.path);
       }
     }
@@ -72,7 +72,7 @@ export class DashboardApi {
     const now = Date.now();
     for (const [path, api] of DashboardApi.cache) {
       if (now - api._lastModified > DB_TTL_MS) {
-        api._db.close();
+        try { if (!api._db?.closed) api._db.close(); } catch {}
         DashboardApi.cache.delete(path);
       }
     }
@@ -80,7 +80,7 @@ export class DashboardApi {
 
   static closeAll() {
     for (const api of DashboardApi.cache.values()) {
-      api._db.close();
+      try { if (!api._db?.closed) api._db.close(); } catch {}
     }
     DashboardApi.cache.clear();
   }
@@ -120,8 +120,9 @@ export class DashboardApi {
       const stat = statSync(this._dbPath);
       const mtimeMs = stat.mtimeMs;
       if (mtimeMs !== this._fileMtimeMs) {
-        this._db.close();
+        try { if (!this._db?.closed) this._db.close(); } catch {}
         this._db = new Database(this._dbPath, { readonly: true });
+        try { this._db.exec("PRAGMA busy_timeout = 5000"); } catch {}
         this._fileMtimeMs = mtimeMs;
       }
     } catch {
@@ -303,7 +304,7 @@ export class DashboardApi {
   }
 
   close() {
-    this._db.close();
+    try { if (!this._db?.closed) this._db.close(); } catch {}
     DashboardApi.cache.delete(this._dbPath);
   }
 

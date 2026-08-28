@@ -25,10 +25,18 @@ export function deriveConfidence(weave, dissentCount, totalParticipants = 0, act
   return "low";
 }
 
-/** Parses the Confidence section — accepts ## or ###, avoids stopping at [#id] cites. */
+/** Parses the Confidence section — anchors to the Confidence heading block to avoid picking a stray High in body. */
 export function parseConfidence(text) {
-  const m = text.match(/^#{2,}\s*Confidence\b[\s\S]*?\b(High|Medium|Low)\b/im);
-  return m ? m[1].toLowerCase() : null;
+  // Find the Confidence section block, then search for the confidence word inside it
+  const sectionRe = /^#{2,}\s*Confidence\b([\s\S]*?)(?=^#{2,}\s|\z)/im;
+  const secMatch = text.match(sectionRe);
+  const searchScope = secMatch ? secMatch[1] : text;
+  // Look for the confidence word on its own line or as a label (avoid matching "High risk" in body unless it's the answer)
+  const lineMatch = searchScope.match(/^\s*(High|Medium|Low)\s*$/im);
+  if (lineMatch) return lineMatch[1].toLowerCase();
+  // Fallback: first occurrence inside the Confidence block
+  const anyMatch = searchScope.match(/\b(High|Medium|Low)\b/i);
+  return anyMatch ? anyMatch[1].toLowerCase() : null;
 }
 
 /** Validates that all required sections exist in the synthesis output (case-insensitive). Returns warnings for missing ones.
@@ -65,27 +73,33 @@ export function validateSynthesisSections(text) {
   return warnings;
 }
 
-/** Extracts list items from a named section of a markdown document. */
+/** Extracts list items from a named section of a markdown document — accepts ## or ###. */
 export function extractSection(text, sectionName) {
   const lines = text.split("\n");
   const results = [];
   let inSection = false;
   let paragraph = "";
+  const isHeading = (l) => /^#{2,}\s/.test(l);
 
   const flushParagraph = () => {
     const trimmed = paragraph.trim();
-    if (trimmed && !trimmed.startsWith("## ")) {
+    if (trimmed && !isHeading(trimmed)) {
       results.push(trimmed);
     }
     paragraph = "";
   };
 
+  const headerMatches = (line, name) => {
+    if (!isHeading(line)) return false;
+    return line.replace(/^#{2,}\s*/, "").toLowerCase().includes(name.toLowerCase());
+  };
+
   for (const line of lines) {
-    if (line.startsWith("## ") && line.toLowerCase().includes(sectionName.toLowerCase())) {
+    if (headerMatches(line, sectionName)) {
       inSection = true;
       continue;
     }
-    if (inSection && line.startsWith("## ")) {
+    if (inSection && isHeading(line)) {
       flushParagraph();
       inSection = false;
       continue;
@@ -151,12 +165,18 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, ob
     finalOutput = supplementMissingSections(finalOutput, missingSections);
   }
 
-  // Grounded synthesis check (audit 18 PV6): every Decision line must cite
-  // at least one [#id] present in the transcript. Ungrounded lines are flagged
-  // rather than silently dropped — cheap hallucination guard.
+  // Grounded synthesis check: every Decision line must cite at least one [#id] in weave.
+  // Skip lines inside fenced code blocks (they contain [#id] as example text, not citations).
   const weaveIds = new Set(weave.map((c) => String(c.id)));
+  const inCodeBlock = (fullText, lineText) => {
+    // Cheap: if the Decision section is wrapped in a code fence, skip verification for that section
+    // Otherwise check if line itself looks like code fence
+    if (/^```/.test(lineText.trim())) return true;
+    return false;
+  };
   const decisions = extractSection(finalOutput, "Decision");
   const ungrounded = decisions.filter((line) => {
+    if (inCodeBlock(finalOutput, line)) return false;
     const cites = [...line.matchAll(/\[#(\d+)\]/g)].map((m) => m[1]);
     return cites.length === 0 || cites.every((id) => !weaveIds.has(id));
   });

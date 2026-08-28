@@ -29,11 +29,7 @@ export class TimeBudget {
     if (meetingTimeoutMs !== undefined) this.meetingTimeoutMs = meetingTimeoutMs;
   }
 
-  /** @deprecated — TimeBudget is now authoritative after init/extend reset. Kept for compat. */
-  syncFrom(orchestrator) {
-    if (orchestrator._startTime !== undefined) this.startTime = orchestrator._startTime;
-    if (orchestrator._meetingTimeoutMs !== undefined) this.meetingTimeoutMs = orchestrator._meetingTimeoutMs;
-  }
+
 
   /** ms remaining until deadline (Infinity if disabled, negative if expired). */
   remainingMs() {

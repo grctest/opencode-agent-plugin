@@ -72,9 +72,14 @@ export function updateStateOfPlay(weave, question, tags) {
     }
   }
 
-  // Deduplicate keep most recent occurrence, then take last 5
+  // Deduplicate by full path lowercased, keep most recent, then take last 5
   const dedupMap = new Map();
-  for (const f of filesInvolved) dedupMap.set(f.toLowerCase(), f);
+  for (const f of filesInvolved) {
+    const key = f.toLowerCase();
+    // Use full path for dedup, not prefix-collided 80-char snippet alone
+    if (dedupMap.has(key)) dedupMap.delete(key);
+    dedupMap.set(key, f);
+  }
   const dedupedFiles = [...dedupMap.values()];
 
   return formatStateOfPlay({ decisions, agreements, disagreements, openQuestions, keyFacts, filesInvolved: dedupedFiles.slice(-5) }, question, tags);
@@ -192,6 +197,14 @@ function formatRoundLines(round, participants) {
 
 /** Formats transcript for synthesis: digest of earlier rounds + full final round + reflections. */
 export function formatFinalRoundTranscript(data, participants) {
+  const truncForTranscript = (s, lim) => {
+    if (s.length <= lim) return s;
+    // Avoid cutting surrogate pairs
+    let cut = s.slice(0, lim);
+    const last = cut.charCodeAt(cut.length - 1);
+    if (last >= 0xD800 && last <= 0xDBFF) cut = cut.slice(0, -1);
+    return cut + "\n...[truncated]";
+  };
   const appendReflections = (lines) => {
     const reflections = (participants || []).filter((p) => p.reflection).map((p) => `**${p.config.name} (${p.config.tier}) reflection**: ${p.reflection.slice(0, 400).replace(/\n/g, " ")}`);
     if (reflections.length > 0) {
@@ -210,7 +223,7 @@ export function formatFinalRoundTranscript(data, participants) {
     lines[0] = `### Round ${round.number} (Final)`;
     appendReflections(lines);
     const joined = lines.join("\n");
-    return joined.length > 8000 ? joined.slice(0, 8000) + "\n...[truncated]" : joined;
+    return truncForTranscript(joined, 8000);
   }
   const lines = [];
   // Digest for rounds 1..n-1 (2 lines each, capped)
@@ -227,7 +240,6 @@ export function formatFinalRoundTranscript(data, participants) {
   finalLines[0] = `### Round ${finalRound.number} (Final)`;
   lines.push(...finalLines);
   appendReflections(lines);
-  // Cap digest+final to ~8k chars to avoid token blowup
-  const joined = lines.join("\n");
-  return joined.length > 8000 ? joined.slice(0, 8000) + "\n...[truncated]" : joined;
+  const joined2 = lines.join("\n");
+  return truncForTranscript(joined2, 8000);
 }

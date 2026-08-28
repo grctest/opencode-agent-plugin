@@ -2,15 +2,19 @@ const LogLevel = { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3, FATAL: 4 };
 
 const LEVEL_LABELS = ['DEBUG', 'INFO', 'WARN', 'ERROR', 'FATAL'];
 
-// Ring buffer of recent log lines (audit 07 EH6) — bounded memory so the
-// dashboard can tail recent activity without a file or /api/logs backend.
+// Ring buffer of recent log lines — bounded memory so the dashboard can tail recent activity without file I/O.
 const RING_BUFFER_SIZE = 500;
 const logRing = [];
 let ringSeq = 0;
+const globalThrottleMap = new Map();
 
-export function getRecentLogs(limit = 100, minLevel = null) {
+export function getRecentLogs(limit = 100, minLevel = null, meetingId = null) {
   const minIdx = minLevel ? LEVEL_LABELS.indexOf(String(minLevel).toUpperCase()) : -1;
-  const rows = logRing.filter((e) => (minIdx < 0 || LEVEL_LABELS.indexOf(e.level) >= minIdx));
+  let rows = logRing.filter((e) => (minIdx < 0 || LEVEL_LABELS.indexOf(e.level) >= minIdx));
+  if (meetingId) {
+    const short = meetingId.slice(0, 8);
+    rows = rows.filter((e) => e.fullMeetingId === meetingId || e.meetingId === short);
+  }
   const n = Math.max(1, Math.min(limit, RING_BUFFER_SIZE));
   if (rows.length <= n) return rows;
   return rows.slice(rows.length - n);
@@ -45,7 +49,6 @@ export class Logger {
   #meetingId = null;
   #correlationId = null;
   #minLevel = resolveMinLevel();
-  #throttleMap = new Map();
 
   constructor(meetingId = null) {
     this.#meetingId = meetingId;
@@ -70,12 +73,12 @@ export class Logger {
    */
   warnThrottled(key, context, message, details = null, throttleMs = 30000) {
     const now = Date.now();
-    const last = this.#throttleMap.get(key) ?? 0;
+    const last = globalThrottleMap.get(key) ?? 0;
     if (now - last < throttleMs) return;
-    this.#throttleMap.set(key, now);
-    if (this.#throttleMap.size > 200) {
-      const oldest = this.#throttleMap.keys().next().value;
-      this.#throttleMap.delete(oldest);
+    globalThrottleMap.set(key, now);
+    if (globalThrottleMap.size > 200) {
+      const oldest = globalThrottleMap.keys().next().value;
+      globalThrottleMap.delete(oldest);
     }
     this.warn(context, message, details);
   }

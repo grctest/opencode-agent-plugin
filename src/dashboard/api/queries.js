@@ -126,6 +126,21 @@ export function getMaxOrchestratorMessageId() {
     return row?.max_id ?? 0;
   }
 
+function mapContributionRow(r) {
+  return {
+    id: r.id,
+    participant_id: r.participant_id,
+    round: r.round,
+    type: r.type,
+    content: r.content,
+    targets_which: r.target_which != null ? Number(r.target_which) : null,
+    batch_id: r.batch_id ?? null,
+    tool_calls: safeParseJson(r.tool_calls),
+    prompt_context: safeParseJson(r.prompt_context),
+    created_at: r.created_at,
+  };
+}
+
 export function getContributions(limit = 100, offset = 0) {
     return this._db
       .prepare(
@@ -133,18 +148,7 @@ export function getContributions(limit = 100, offset = 0) {
          FROM contributions ORDER BY round ASC, id ASC LIMIT ? OFFSET ?`,
       )
       .all(limit, offset)
-      .map((r) => ({
-        id: r.id,
-        participant_id: r.participant_id,
-        round: r.round,
-        type: r.type,
-        content: r.content,
-        targets_which: r.target_which != null ? Number(r.target_which) : null,
-        batch_id: r.batch_id ?? null,
-        tool_calls: safeParseJson(r.tool_calls),
-        prompt_context: safeParseJson(r.prompt_context),
-        created_at: r.created_at,
-      }));
+      .map(mapContributionRow);
 }
 
 export function getContributionsAfter(afterId, limit = 100) {
@@ -154,18 +158,7 @@ export function getContributionsAfter(afterId, limit = 100) {
          FROM contributions WHERE id > ? ORDER BY id ASC LIMIT ?`,
       )
       .all(afterId, limit)
-      .map((r) => ({
-        id: r.id,
-        participant_id: r.participant_id,
-        round: r.round,
-        type: r.type,
-        content: r.content,
-        targets_which: r.target_which != null ? Number(r.target_which) : null,
-        batch_id: r.batch_id ?? null,
-        tool_calls: safeParseJson(r.tool_calls),
-        prompt_context: safeParseJson(r.prompt_context),
-        created_at: r.created_at,
-      }));
+      .map(mapContributionRow);
 }
 
 export function getContributionsCount() {
@@ -180,17 +173,6 @@ export function getContributionsSince(sinceId) {
          FROM contributions WHERE id > ? ORDER BY id ASC`,
       )
       .all(sinceId)
-      .map((r) => ({
-        id: r.id,
-        participant_id: r.participant_id,
-        round: r.round,
-        type: r.type,
-        content: r.content,
-        targets_which: r.target_which != null ? Number(r.target_which) : null,
-        batch_id: r.batch_id ?? null,
-        tool_calls: safeParseJson(r.tool_calls),
-        prompt_context: safeParseJson(r.prompt_context),
-        created_at: r.created_at,
-      }));
-  }
+      .map(mapContributionRow);
+}
 

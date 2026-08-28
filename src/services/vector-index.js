@@ -59,8 +59,11 @@ export class VectorIndex {
         } else { failedEmbeds++; }
       }
     }
-    if (failedEmbeds > 0 && pending.length > 0 && failedEmbeds === pending.length) {
+    if (failedEmbeds > 0) {
       try { this.#database.setSemanticDegraded?.(true); } catch {}
+      if (failedEmbeds < pending.length) {
+        vectorLogger.warn("embed_partial_failed", `Partial embed failure for round ${roundNumber}: ${failedEmbeds}/${pending.length} chunks failed — semantic degraded flagged`, { indexed, failedEmbeds, total: pending.length });
+      }
     }
 
     vectorLogger.debug("round_indexed", `Indexed ${indexed} chunks for round ${roundNumber}`);
@@ -83,6 +86,7 @@ export class VectorIndex {
       if (chunkId != null) pending.push({ chunkId, text: chunk });
     }
     const concurrency = 4;
+    let failedEmbeds = 0;
     for (let i = 0; i < pending.length; i += concurrency) {
       const batch = pending.slice(i, i + concurrency);
       const embeddings = await Promise.all(batch.map((p) => embedText(p.text).catch((e) => { vectorLogger.warn("embed_failed", `Failed to embed chunk for context`, extractErrorInfo(e)); return null; })));
@@ -91,8 +95,12 @@ export class VectorIndex {
         if (emb) {
           this.#database.storeFabricEmbedding(batch[j].chunkId, emb, dim);
           indexed++;
-        }
+        } else { failedEmbeds++; }
       }
+    }
+    if (failedEmbeds > 0) {
+      try { this.#database.setSemanticDegraded?.(true); } catch {}
+      vectorLogger.warn("embed_context_partial_failed", `Context embed partial failure: ${failedEmbeds}/${pending.length} chunks failed — semantic degraded`, { indexed, failedEmbeds });
     }
     return indexed;
   }
@@ -109,8 +117,11 @@ export class VectorIndex {
     try {
       const dim = getEmbeddingDim();
       const queryEmbedding = await embedText(queryText, { isQuery: true });
+      if (!queryEmbedding) {
+        vectorLogger.debug("retrieve_no_embedding", "Vector retrieval skipped — embedding unavailable");
+        return [];
+      }
       const hasExclude = excludeRound != null && excludeRound !== -1;
-      // DB already WHERE round != ? when hasExclude, no need to overfetch
       const fetchK = topK;
       const results = this.#database.searchFabricVectors(queryEmbedding, fetchK, dim, hasExclude ? excludeRound : -1);
       return results.slice(0, topK).map((r) => ({

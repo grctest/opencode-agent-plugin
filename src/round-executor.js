@@ -130,29 +130,26 @@ export class RoundExecutor {
       for (const entry of creates) {
         if (entry) this._roundSessionIds.set(entry[0], entry[1]);
       }
-       if (this._roundSessionIds.size === 0) {
-        // Clean up any partially created sessions before discarding map
-        for (const sid of this._roundSessionIds.values()) {
-          try { this._sessionManager.unregisterSession(sid); } catch {}
-          try { this._options.deleteEphemeralSession(sid).catch(() => {}); } catch {}
-        }
+        if (this._roundSessionIds.size === 0) {
+         // Clean up any partially created sessions before discarding map
+        await this._cleanupRoundSessions([...this._roundSessionIds.values()]);
         this._roundSessionIds = null;
       }
     } catch {
       // Ensure partial sessions are cleaned on exception
       if (this._roundSessionIds) {
-        for (const sid of this._roundSessionIds.values()) {
-          try { this._sessionManager.unregisterSession(sid); } catch {}
-          try { this._options.deleteEphemeralSession(sid).catch(() => {}); } catch {}
-        }
+        await this._cleanupRoundSessions([...this._roundSessionIds.values()]);
       }
       this._roundSessionIds = null;
     }
+    // Deadline helper that also marks skipped speakers as passed internally for accounting
+    const skipped = [];
     try {
       while (remainingSpeakers.length > 0) {
       if (this._deadline && Date.now() > this._deadline - 1000) {
-        this._logger.warn("deadline_exceeded", "Deadline exceeded mid-round — stopping remaining speakers");
+        this._logger.warn("deadline_exceeded", `Deadline exceeded mid-round — stopping ${remainingSpeakers.length} remaining speakers`);
         this._options.onProgress?.(`⏱️ Deadline reached — skipping remaining ${remainingSpeakers.length} speakers`);
+        skipped.push(...remainingSpeakers.splice(0));
         break;
       }
       const batchId = randomUUID();
@@ -166,11 +163,15 @@ export class RoundExecutor {
       await this._handlePromptResult(p, result, round);
       }
     } finally {
-        if (this._roundSessionIds) {
-          for (const sid of this._roundSessionIds.values()) {
-            this._sessionManager.unregisterSession(sid);
-            this._options.deleteEphemeralSession(sid).catch(() => {});
+        if (skipped.length > 0) {
+          for (const p of skipped) {
+            try {
+              this._db.recordAgentError(this._stateManager.getMeetingId(), p.config.id, this._stateManager.getCurrentRound(), "deadline_skipped", "Skipped due to meeting deadline", 0);
+            } catch {}
           }
+        }
+        if (this._roundSessionIds) {
+          await this._cleanupRoundSessions([...this._roundSessionIds.values()]);
           this._roundSessionIds = null;
         }
     }
@@ -348,5 +349,19 @@ export class RoundExecutor {
   }
   _buildToolsMapWithoutLoom(config) {
     return buildToolsMapWithoutLoomHelper(config);
+  }
+
+  async _cleanupRoundSessions(sessionIds) {
+    let failed = 0;
+    for (const sid of sessionIds) {
+      try { this._sessionManager.unregisterSession(sid); } catch {}
+      try {
+        await this._sessionManager.deleteEphemeralSession(sid);
+      } catch (err) {
+        failed++;
+        this._logger.warn("round_session_cleanup_failed", `Failed to delete round session ${sid}`, extractErrorInfo(err));
+      }
+    }
+    if (failed > 0) this._logger.warn("round_session_cleanup_partial", `${failed}/${sessionIds.length} round sessions failed to delete`);
   }
 }

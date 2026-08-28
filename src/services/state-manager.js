@@ -51,8 +51,15 @@ export class StateManager {
     };
     const frozenParticipant = (p) => {
       const cfg = p.config && typeof p.config === "object" ? deepFreeze(structuredClone(p.config)) : p.config;
-      const tierCfg = p.tier_config && typeof p.tier_config === "object" ? Object.freeze({ ...p.tier_config }) : p.tier_config;
+      const tierCfg = p.tier_config && typeof p.tier_config === "object" ? deepFreeze(structuredClone(p.tier_config)) : p.tier_config;
       return Object.freeze({ ...p, config: cfg, tier_config: tierCfg });
+    };
+    // Ensure tier_config.rights is deeply frozen if present
+    const freezeTierConfig = (tc) => {
+      if (!tc || typeof tc !== "object") return tc;
+      const frozen = { ...tc };
+      if (frozen.rights && typeof frozen.rights === "object") frozen.rights = Object.freeze({ ...frozen.rights });
+      return Object.freeze(frozen);
     };
     const frozenCopy = (v) => {
       if (v === null || typeof v !== "object") return v;
@@ -66,7 +73,12 @@ export class StateManager {
     };
     return Object.freeze({
       ...this.#state,
-      participants: Object.freeze(this.#state.participants.map((p) => frozenParticipant(p))),
+      participants: Object.freeze(this.#state.participants.map((p) => {
+        const fp = frozenParticipant(p);
+        // Re-freeze tier_config deeply
+        if (fp.tier_config) return Object.freeze({ ...fp, tier_config: freezeTierConfig(fp.tier_config) });
+        return fp;
+      })),
       weave: Object.freeze([...this.#state.weave]),
       rounds: Object.freeze(this.#state.rounds.map((r) => Object.freeze({ ...r }))),
       artifact: this.#state.artifact ? frozenCopy(this.#state.artifact) : this.#state.artifact,
@@ -230,8 +242,20 @@ export class StateManager {
   forceTransitionTo(status) {
     const current = this.#state.status;
     if (current === status) return;
-    this.#state.status = status;
-    this.#logger.info("state_transition", `${current} -> ${status} (forced: extension entry point)`);
+    const allowedForced = {
+      converged: ["weaving"],
+      cancelled: ["weaving"],
+      timeout: ["weaving"],
+      max_rounds_reached: ["weaving"],
+      aborted: ["weaving"],
+    };
+    if (allowedForced[current]?.includes(status)) {
+      this.#state.status = status;
+      this.#logger.info("state_transition", `${current} -> ${status} (forced: extension entry point)`);
+      return;
+    }
+    this.#logger.error("invalid_forced_transition", `Invalid forced transition rejected: ${current} -> ${status}`);
+    throw new Error(`Invalid forced transition: ${current} -> ${status}`);
   }
 
   incrementRound() {
@@ -298,9 +322,10 @@ export class StateManager {
   }
 
   /**
-   * Restores all mutable state properties from a database-loaded meeting.
-   * Used by the orchestrator when resuming a persisted meeting.
-   */
+    * Restores all mutable state properties from a database-loaded meeting.
+    * Used by the orchestrator when resuming a persisted meeting.
+    * Validates status to prevent terminal→weaving bypass; caller must use forceTransitionTo for extension.
+    */
   restore({ participants, question, context, fabric, max_rounds, tags, current_round, status, weave, next_contribution_id, state_of_play }) {
     if (participants !== undefined) this.#state.participants = participants;
     if (question !== undefined) this.#state.question = question;
@@ -309,7 +334,26 @@ export class StateManager {
     if (max_rounds !== undefined) this.#state.max_rounds = max_rounds;
     if (tags !== undefined) this.#state.tags = tags;
     if (current_round !== undefined) this.#state.current_round = current_round;
-    if (status !== undefined) this.#state.status = status;
+    if (status !== undefined) {
+      const current = this.#state.status;
+      const terminal = new Set(["converged", "cancelled", "timeout", "max_rounds_reached", "aborted"]);
+      if (terminal.has(status) && current !== status) {
+        // Direct terminal init is ok; terminal→weaving must go via forceTransitionTo
+        if (status === "weaving" && terminal.has(current)) {
+          this.#logger.error("invalid_restore", `Restore rejected terminal→weaving bypass: ${current} -> ${status} — use forceTransitionTo`);
+          throw new Error(`Invalid restore: terminal ${current} -> weaving must use forceTransitionTo`);
+        }
+      }
+      // Validate via transition table unless it's initial load (status same or from initializing)
+      if (current !== status) {
+        const allowed = StateManager.TRANSITIONS[current];
+        if (allowed && !allowed.includes(status) && !(terminal.has(status) && current === "initializing")) {
+          // Allow initial DB load to set any status, but log
+          this.#logger.warn("restore_transition_unvalidated", `Restore sets ${current} -> ${status} outside transition table`);
+        }
+      }
+      this.#state.status = status;
+    }
     if (weave !== undefined) this.#state.weave = weave;
     if (next_contribution_id !== undefined) this.#state.next_contribution_id = next_contribution_id;
     if (state_of_play !== undefined) this.#state.state_of_play = state_of_play;
@@ -375,7 +419,7 @@ export class StateManager {
       round: this.#state.current_round,
       fabric: this.#state.fabric,
       question: this.#state.question,
-      contributions: this.#state.weave,
+      contributions: structuredClone(this.#state.weave),
       status: this.#state.status,
       state_of_play: this.#state.state_of_play ?? "",
     };

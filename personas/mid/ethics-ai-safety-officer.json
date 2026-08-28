@@ -18,7 +18,7 @@
   "preferred_contribution_types": [
     "CHALLENGE",
     "QUESTION",
-    "REFINE"
+    "DISSENT"
   ],
   "reflection_guidance": "Compare through ai safety lens: apply your ai-safety lens — name the constraint others missed. End with the metric or evidence that would change your mind.",
   "tier_guidance": "Mid ai safety doctrine: make one tradeoff explicit (cost/time/risk/quality) and translate a claim into a measurable check. Cite a precedent or [#id] when you push back. Through ai safety: translate “Evaluate algorithmic bias, hallucination risks, societa” into time, money, or risk.",

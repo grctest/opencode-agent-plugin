@@ -14,6 +14,7 @@ import { ChevronRightIcon } from "lucide-react";
 
 marked.setOptions({ breaks: true, gfm: true });
 
+const MD_CACHE_MAX = 150;
 const mdCache = new Map();
 
 export function renderMarkdown(content) {
@@ -21,15 +22,52 @@ export function renderMarkdown(content) {
   const cached = mdCache.get(content);
   if (cached !== undefined) return cached;
   const raw = marked.parse(content, { async: false });
-  const sanitized = DOMPurify.sanitize(raw, { FORBID_TAGS: ["svg", "math", "style", "script", "iframe", "object", "embed"] });
+  const sanitized = DOMPurify.sanitize(raw, { FORBID_TAGS: ["svg", "math", "style", "script", "iframe", "object", "embed", "form", "input", "link"] });
   mdCache.set(content, sanitized);
-  while (mdCache.size > 200) {
+  while (mdCache.size > MD_CACHE_MAX) {
     const firstKey = mdCache.keys().next().value;
     mdCache.delete(firstKey);
-    if (mdCache.size <= 150) break;
   }
   return sanitized;
 }
+
+// Shared invoker resolution — deduped from 4× query/evidence/summon/vote rows
+function isValidInvoker(id) {
+  return id && id !== "caller" && id !== "Caller" && id !== "unknown" && id !== "Unknown";
+}
+
+function resolveInvokerName({ invokerId, source, response, contributions, participantName }) {
+  if (isValidInvoker(invokerId)) return participantName(invokerId);
+  if (source) return participantName(source.participant_id);
+  const pcId = response.prompt_context?.source_participant_id ?? response.prompt_context?.sourceParticipantId ?? response.prompt_context?.source_participant_name;
+  if (isValidInvoker(pcId)) {
+    // pcId may be a name rather than id — try name lookup first
+    if (response.prompt_context?.source_participant_name) {
+      const byName = contributions?.find(c => participantName(c.participant_id) === pcId);
+      if (byName) return participantName(byName.participant_id);
+    }
+    return participantName(pcId);
+  }
+  if (response.batch_id && contributions) {
+    const batchContribs = contributions.filter(c => c.batch_id === response.batch_id);
+    const excluded = new Set(["query_response","perspective_response","critique_response","evidence_response","vote_response","summoned_response","vote_tally","reflection"]);
+    const invoker = batchContribs.find(c => c.id !== response.id && !excluded.has(c.type));
+    if (invoker) return participantName(invoker.participant_id);
+    const anyOther = batchContribs.find(c => c.id !== response.id && c.participant_id !== response.participant_id);
+    if (anyOther) return participantName(anyOther.participant_id);
+  }
+  return "another agent";
+}
+
+const BORDER_COLOR_MAP = {
+  propose: "border-l-[var(--badge-green-dark)]",
+  challenge: "border-l-[var(--badge-red)]",
+  refine: "border-l-[var(--badge-blue-deep)]",
+  support: "border-l-[var(--badge-teal-dark)]",
+  dissent: "border-l-[var(--badge-brown)]",
+  synthesize: "border-l-[var(--badge-purple)]",
+  question: "border-l-[var(--badge-cyan)]",
+};
 
 export const ContentDialog = memo(({ open, onClose, title, className, children }) => {
   return (
@@ -129,16 +167,7 @@ export const ContributionItem = memo(({ contribution, participantName, onDialogO
     } catch { return tc.input ? String(tc.input).slice(0,80) : ""; }
   };
 
-  const borderColorMap = {
-    propose: "border-l-[var(--badge-green-dark)]",
-    challenge: "border-l-[var(--badge-red)]",
-    refine: "border-l-[var(--badge-blue-deep)]",
-    support: "border-l-[var(--badge-teal-dark)]",
-    dissent: "border-l-[var(--badge-brown)]",
-    synthesize: "border-l-[var(--badge-purple)]",
-    question: "border-l-[var(--badge-cyan)]",
-  };
-  const borderClass = borderColorMap[contribution.type] ?? "border-l-transparent";
+  const borderClass = BORDER_COLOR_MAP[contribution.type] ?? "border-l-transparent";
 
   return (
     <Card
@@ -260,21 +289,7 @@ export const ReflectionRow = memo(({ reflection, contributions, participantName,
 
 export const QueryResponseRow = memo(({ queryResponse, contributions, participantName, onDialogOpen, invokerId }) => {
   const source = useMemo(() => !queryResponse.targets_which ? null : contributions.find((c) => c.id === queryResponse.targets_which), [queryResponse.targets_which, contributions]);
-  const isValidInvoker = (id) => id && id !== "caller" && id !== "Caller" && id !== "unknown" && id !== "Unknown";
-  const sourceAgentName = useMemo(() => {
-    if (isValidInvoker(invokerId)) return participantName(invokerId);
-    if (source) return participantName(source.participant_id);
-    const pcId = queryResponse.prompt_context?.source_participant_id ?? queryResponse.prompt_context?.sourceParticipantId;
-    if (isValidInvoker(pcId)) return participantName(pcId);
-    if (queryResponse.batch_id && contributions) {
-      const batchContribs = contributions.filter(c => c.batch_id === queryResponse.batch_id);
-      const invoker = batchContribs.find(c => c.id !== queryResponse.id && !["query_response","perspective_response","critique_response","evidence_response","vote_response","summoned_response","vote_tally","reflection"].includes(c.type));
-      if (invoker) return participantName(invoker.participant_id);
-      const anyOther = batchContribs.find(c => c.id !== queryResponse.id && c.participant_id !== queryResponse.participant_id);
-      if (anyOther) return participantName(anyOther.participant_id);
-    }
-    return "another agent";
-  }, [invokerId, source, queryResponse.batch_id, queryResponse.id, queryResponse.participant_id, queryResponse.prompt_context, contributions, participantName]);
+  const sourceAgentName = useMemo(() => resolveInvokerName({ invokerId, source, response: queryResponse, contributions, participantName }), [invokerId, source, queryResponse, contributions, participantName]);
   const responderName = participantName(queryResponse.participant_id);
   const header = <><span className="font-bold">{responderName}</span> <span className="text-muted-foreground">responded to query from</span> <span className="font-bold">{sourceAgentName}</span></>;
   return <BaseResponseRow contribution={queryResponse} header={header} badgeLabel="query response" badgeVariant="query_response" strippedRegex={/^\[Response to query from .+?\]\s*/m} borderClass="border-l-[var(--badge-teal)] bg-[color-mix(in_oklch,var(--badge-teal)_4%,var(--card))]" onDialogOpen={onDialogOpen} dialogPayload={{ participantName: responderName, isQueryResponse: true, sourceAgentName }} />;
@@ -282,21 +297,7 @@ export const QueryResponseRow = memo(({ queryResponse, contributions, participan
 
 export const EvidenceResponseRow = memo(({ evidenceResponse, contributions, participantName, onDialogOpen, invokerId }) => {
   const source = useMemo(() => !evidenceResponse.targets_which ? null : contributions.find((c) => c.id === evidenceResponse.targets_which), [evidenceResponse.targets_which, contributions]);
-  const isValidInvoker = (id) => id && id !== "caller" && id !== "Caller" && id !== "unknown" && id !== "Unknown";
-  const sourceAgentName = useMemo(() => {
-    if (isValidInvoker(invokerId)) return participantName(invokerId);
-    if (source) return participantName(source.participant_id);
-    const pcId = evidenceResponse.prompt_context?.source_participant_id ?? evidenceResponse.prompt_context?.sourceParticipantId;
-    if (isValidInvoker(pcId)) return participantName(pcId);
-    if (evidenceResponse.batch_id && contributions) {
-      const batchContribs = contributions.filter(c => c.batch_id === evidenceResponse.batch_id);
-      const invoker = batchContribs.find(c => c.id !== evidenceResponse.id && !["query_response","perspective_response","critique_response","evidence_response","vote_response","summoned_response","vote_tally","reflection"].includes(c.type));
-      if (invoker) return participantName(invoker.participant_id);
-      const anyOther = batchContribs.find(c => c.id !== evidenceResponse.id && c.participant_id !== evidenceResponse.participant_id);
-      if (anyOther) return participantName(anyOther.participant_id);
-    }
-    return "another agent";
-  }, [invokerId, source, evidenceResponse.batch_id, evidenceResponse.id, evidenceResponse.participant_id, evidenceResponse.prompt_context, contributions, participantName]);
+  const sourceAgentName = useMemo(() => resolveInvokerName({ invokerId, source, response: evidenceResponse, contributions, participantName }), [invokerId, source, evidenceResponse, contributions, participantName]);
   const sourceType = source?.type?.toUpperCase() ?? "CONTRIBUTION";
   const responderName = participantName(evidenceResponse.participant_id);
   const header = <><span className="font-bold">{responderName}</span> <span className="text-muted-foreground">providing evidence on</span> <span className="font-bold">{sourceAgentName}</span><span className="text-muted-foreground">'s {sourceType}</span></>;
@@ -309,45 +310,17 @@ export const SummonedResponseRow = memo(({ summonedResponse, contributions, part
     const match = content.match(/^\[Summoned: (.+?) \((.+?)\)\]/m);
     return match ? { name: match[1], tier: match[2] } : { name: "Guest Expert", tier: "unknown" };
   }, [content]);
-  const isValidInvoker = (id) => id && id !== "caller" && id !== "Caller" && id !== "unknown" && id !== "Unknown";
   const invokerName = useMemo(() => {
-    if (isValidInvoker(invokerId)) return participantName(invokerId);
-    const pcId = summonedResponse.prompt_context?.source_participant_id ?? summonedResponse.prompt_context?.sourceParticipantId;
-    if (isValidInvoker(pcId)) return participantName(pcId);
-    if (summonedResponse.batch_id && contributions) {
-      const batchContribs = contributions.filter(c => c.batch_id === summonedResponse.batch_id);
-      const invoker = batchContribs.find(c => c.id !== summonedResponse.id && !["query_response","perspective_response","critique_response","evidence_response","vote_response","summoned_response","vote_tally","reflection"].includes(c.type));
-      if (invoker) return participantName(invoker.participant_id);
-      const anyOther = batchContribs.find(c => c.id !== summonedResponse.id && c.participant_id !== summonedResponse.participant_id);
-      if (anyOther) return participantName(anyOther.participant_id);
-    }
-    return null;
-  }, [invokerId, summonedResponse.batch_id, summonedResponse.id, summonedResponse.participant_id, summonedResponse.prompt_context, contributions, participantName]);
+    const n = resolveInvokerName({ invokerId, source: null, response: summonedResponse, contributions, participantName });
+    return n === "another agent" ? null : n;
+  }, [invokerId, summonedResponse, contributions, participantName]);
   const header = <><span className="font-bold">Guest expert {personaInfo.name}</span> <span className="text-muted-foreground">({personaInfo.tier}){invokerName ? " summoned by " : ""}</span>{invokerName && <span className="font-bold">{invokerName}</span>}</>;
   return <BaseResponseRow contribution={summonedResponse} header={header} badgeLabel="summoned" badgeVariant="summoned_response" strippedRegex={/^\[Summoned: .+?\]\s*/m} borderClass="border-l-[var(--badge-violet)] bg-[color-mix(in_oklch,var(--badge-violet)_4%,var(--card))]" onDialogOpen={onDialogOpen} dialogPayload={{ participantName: personaInfo.name, isSummonedResponse: true, personaName: personaInfo.name, personaTier: personaInfo.tier }} />;
 });
 
 export const VoteResponseRow = memo(({ voteResponse, contributions, participantName, onDialogOpen, invokerId }) => {
   const source = useMemo(() => !voteResponse.targets_which ? null : contributions.find((c) => c.id === voteResponse.targets_which), [voteResponse.targets_which, contributions]);
-  const isValidInvoker = (id) => id && id !== "caller" && id !== "Caller" && id !== "unknown" && id !== "Unknown";
-  const sourceAgentName = useMemo(() => {
-    if (isValidInvoker(invokerId)) return participantName(invokerId);
-    if (source) return participantName(source.participant_id);
-    const pcId = voteResponse.prompt_context?.source_participant_id ?? voteResponse.prompt_context?.sourceParticipantId ?? voteResponse.prompt_context?.source_participant_name;
-    if (isValidInvoker(pcId)) {
-      const byName = contributions?.find(c => participantName(c.participant_id) === pcId);
-      if (byName) return participantName(byName.participant_id);
-      return participantName(pcId);
-    }
-    if (voteResponse.batch_id && contributions) {
-      const batchContribs = contributions.filter(c => c.batch_id === voteResponse.batch_id);
-      const invoker = batchContribs.find(c => c.id !== voteResponse.id && !["query_response","perspective_response","critique_response","evidence_response","vote_response","summoned_response","vote_tally","reflection"].includes(c.type));
-      if (invoker) return participantName(invoker.participant_id);
-      const anyOther = batchContribs.find(c => c.id !== voteResponse.id && c.participant_id !== voteResponse.participant_id);
-      if (anyOther) return participantName(anyOther.participant_id);
-    }
-    return "another agent";
-  }, [invokerId, source, voteResponse.batch_id, voteResponse.id, voteResponse.participant_id, voteResponse.prompt_context, contributions, participantName]);
+  const sourceAgentName = useMemo(() => resolveInvokerName({ invokerId, source, response: voteResponse, contributions, participantName }), [invokerId, source, voteResponse, contributions, participantName]);
   const voterName = participantName(voteResponse.participant_id);
   const header = <><span className="font-bold">{voterName}</span> <span className="text-muted-foreground">voted on poll from</span> <span className="font-bold">{sourceAgentName}</span></>;
   return <BaseResponseRow contribution={voteResponse} header={header} badgeLabel="vote" badgeVariant="vote_response" strippedRegex={/^\[Vote from .+?\]\s*/m} borderClass="border-l-[var(--badge-emerald)] bg-[color-mix(in_oklch,var(--badge-emerald)_4%,var(--card))]" onDialogOpen={onDialogOpen} dialogPayload={{ participantName: voterName, isVoteResponse: true, sourceAgentName }} />;

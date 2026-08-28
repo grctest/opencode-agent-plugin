@@ -64,36 +64,54 @@ export function listMeetings(directory) {
   }
 
   const meetings = [];
-  for (const file of files) {
+  const PAGINATION_LIMIT = 100;
+  const filesToScan = files.slice(0, PAGINATION_LIMIT);
+  for (const file of filesToScan) {
     let db = null;
-    try {
-      db = new Database(file, { readonly: true });
-      try { db.exec("PRAGMA busy_timeout = 5000"); } catch {}
-      const state = db
-        .prepare(
-          `SELECT id as meeting_id, question, status, round, max_rounds, convergence, created_at FROM meetings LIMIT 1`,
-        )
-        .get();
-      const participantCount = (
-        db.prepare(`SELECT COUNT(*) as count FROM participants`).get()
-      )?.count ?? 0;
-
-      if (state) {
-        meetings.push({
-          meeting_id: state.meeting_id,
-          question: state.question,
-          status: state.status,
-          round: state.round,
-          max_rounds: state.max_rounds,
-          convergence: state.convergence,
-          created_at: state.created_at,
-          participant_count: participantCount,
-        });
+    let retries = 2;
+    let state = null;
+    let participantCount = 0;
+    while (retries >= 0) {
+      try {
+        db = new Database(file, { readonly: true });
+        try { db.exec("PRAGMA busy_timeout = 5000"); } catch {}
+        state = db
+          .prepare(
+            `SELECT id as meeting_id, question, status, round, max_rounds, convergence, created_at FROM meetings LIMIT 1`,
+          )
+          .get();
+        participantCount = (
+          db.prepare(`SELECT COUNT(*) as count FROM participants`).get()
+        )?.count ?? 0;
+        break;
+      } catch (err) {
+        const msg = String(err?.message ?? err);
+        const isBusy = /SQLITE_BUSY|busy|locked/i.test(msg);
+        try { if (db) db.close(); } catch {}
+        db = null;
+        if (isBusy && retries > 0) {
+          retries--;
+          // Busy — retry after brief pause (WAL writer holds RESERVED)
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+          continue;
+        }
+        break;
+      } finally {
+        if (state !== null) { try { if (db) db.close(); } catch {} db = null; }
       }
-    } catch {
-      // Corrupted or locked DB — skip this meeting file
-    } finally {
-      try { if (db) db.close(); } catch {}
+    }
+    if (db) { try { db.close(); } catch {} }
+    if (state) {
+      meetings.push({
+        meeting_id: state.meeting_id,
+        question: state.question,
+        status: state.status,
+        round: state.round,
+        max_rounds: state.max_rounds,
+        convergence: state.convergence,
+        created_at: state.created_at,
+        participant_count: participantCount,
+      });
     }
   }
 

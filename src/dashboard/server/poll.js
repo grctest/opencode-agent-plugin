@@ -20,6 +20,11 @@ export function createPollSystem(directory) {
     if (!clients || clients.size === 0) return;
     for (const entry of clients) {
       try {
+        if (entry.controller.desiredSize !== undefined && entry.controller.desiredSize <= 0) {
+          if (!entry.slowSince) entry.slowSince = Date.now();
+          else if (Date.now() - entry.slowSince > SLOW_CONSUMER_TIMEOUT_MS) clients.delete(entry);
+          continue;
+        }
         sendSSE(entry.controller, event);
         entry.slowSince = null;
       } catch {
@@ -217,11 +222,10 @@ export function createPollSystem(directory) {
           hadActivity = true;
         }
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`[Loom dashboard] Poll error for meeting ${meetingId}:`, message);
+        console.error(`[Loom dashboard] Poll error for meeting ${meetingId}:`, err instanceof Error ? err.message : String(err));
         broadcast(meetingId, {
           type: "error",
-          data: { message, meetingId, phase: "poll" },
+          data: { message: "internal error", meetingId, phase: "poll" },
           timestamp: new Date().toISOString(),
         });
       }

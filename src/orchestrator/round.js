@@ -164,14 +164,13 @@ export async function _finalizeRound(updatedRound) {
         return false;
       }
 
-      // Unified challenge-like detection that also handles contribution-type prose (keyword fallback)
       const isChallengeLikeContent = (c) => {
         if (c.type === "challenge" || c.type === "dissent" || c.type === "critique_response") return true;
         return /\b(challenge|dissent|disagree|concern|oppose|dispute|contradict|risk|flaw|weakness)\b/i.test(String(c.content ?? ""));
       };
       const challengeLikeCount = updatedRound.contributions.filter(isChallengeLikeContent).length;
       if (challengeLikeCount >= 3) {
-        const hasSynthesis = updatedRound.contributions.some(c => c.type === "synthesize" || /synthesi/i.test(String(c.content ?? "")));
+        const hasSynthesis = updatedRound.contributions.some(c => c.type === "synthesize");
         if (!hasSynthesis) {
           this._stateManager.setNextRoundSteering(
             "Steering note for the next speaker: last round had multiple disagreements with no consolidation. Please synthesize positions — cite [#id] — before opening a new challenge."

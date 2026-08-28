@@ -19,11 +19,12 @@ export class SynthesisCoordinator {
   }
 
   selectSynthesizer(participants) {
+    const nonFailed = participants.filter((p) => p.status !== "failed");
+    if (nonFailed.length === 0) return null;
     return (
-      participants.find((p) => p.config.tier === "principal" && p.status !== "failed") ??
-      participants.find((p) => p.config.tier === "senior" && p.status !== "failed") ??
-      participants.find((p) => p.status !== "failed") ??
-      participants[participants.length - 1]
+      nonFailed.find((p) => p.config.tier === "principal") ??
+      nonFailed.find((p) => p.config.tier === "senior") ??
+      nonFailed[0]
     );
   }
 
@@ -63,7 +64,8 @@ export class SynthesisCoordinator {
 
   async #promptWithRetry(sessionId, synthesizer, transcriptData, transcript, model, allParticipants, stateOfPlay = "", objections = [], userContext = "") {
     let additionalFeedback = "";
-    const maxRetries = getConfig().synthesisMaxRetries;
+    const rawMaxRetries = getConfig().synthesisMaxRetries;
+    const maxRetries = Number.isFinite(rawMaxRetries) ? rawMaxRetries : 1;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       const userPrompt =

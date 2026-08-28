@@ -75,21 +75,38 @@ export class SessionContract {
    * }} payload
    * @returns {Promise<{ ok: true, data: object, text: string, tokens?: { input: number; output: number } | null, error: null } | { ok: false, data: null, text: "", tokens: null, error: Error }>}
    */
-  async prompt({ sessionId, system, model, temperature, parts, tools, toolChoice, timeoutMs }) {
+  async prompt({ sessionId, system, model, temperature, parts, tools, toolChoice, timeoutMs, signal }) {
     const config = getConfig();
     try {
-      // Note: SessionPromptData (packages/sdk/js/src/gen/types.gen.ts:2588) has no tool_choice field; PromptInput (packages/opencode/src/session/prompt.ts:1499) also has no tool_choice — server derives toolChoice from format/isLastStep. We do NOT send tool_choice to avoid unknown-field noise.
+      if (signal?.aborted) {
+        const err = new DOMException("Aborted", "AbortError");
+        err.cause = "AbortSignal already aborted before prompt";
+        throw err;
+      }
+      const promptPromise = this.#client.session.prompt({
+        path: { id: sessionId },
+        body: {
+          system,
+          model,
+          temperature,
+          parts: parts ?? [{ type: "text", text: "" }],
+          tools: tools ?? {},
+        },
+        query: { directory: this.#directory },
+      });
+      const racePromises = [promptPromise];
+      let abortHandler = null;
+      if (signal) {
+        racePromises.push(new Promise((_, reject) => {
+          abortHandler = () => reject(new DOMException("Aborted", "AbortError"));
+          signal.addEventListener("abort", abortHandler, { once: true });
+        }));
+      }
       const result = await withTimeout(
-        this.#client.session.prompt({
-          path: { id: sessionId },
-          body: {
-            system,
-            model,
-            temperature,
-            parts: parts ?? [{ type: "text", text: "" }],
-            tools: tools ?? {},
-          },
-          query: { directory: this.#directory },
+        Promise.race(racePromises).finally(() => {
+          if (signal && abortHandler) {
+            try { signal.removeEventListener("abort", abortHandler); } catch {}
+          }
         }),
         timeoutMs ?? config.agentTimeoutMs,
       );

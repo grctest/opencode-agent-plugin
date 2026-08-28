@@ -19,17 +19,27 @@ export function invalidateVecPathCache() {
   cachedVecPath = null;
 }
 
+let _vecPathCacheTime = 0;
+const VEC_CACHE_TTL_MS = 60_000;
+
 export function resolveVecPath() {
   if (vecPathResolved) {
+    const now = Date.now();
+    const stale = now - _vecPathCacheTime > VEC_CACHE_TTL_MS;
     if (cachedVecPath && existsSync(cachedVecPath)) return cachedVecPath;
     if (cachedVecPath && !existsSync(cachedVecPath)) {
       vecPathResolved = false;
       cachedVecPath = null;
-    } else if (vecPathResolved) {
+    } else if (vecPathResolved && !stale) {
       return cachedVecPath;
+    } else if (stale) {
+      // TTL expired — re-scan even on cached miss
+      vecPathResolved = false;
+      cachedVecPath = null;
     }
   }
   vecPathResolved = true;
+  _vecPathCacheTime = Date.now();
   const baseDir = (import.meta.dir ?? import.meta.dirname ?? '.');
   const roots = [
     join(baseDir, 'deps', 'node_modules'),
@@ -87,6 +97,8 @@ export function ensureDb() {
     const mod = await import("bun:sqlite");
     DatabaseClass = mod.Database;
   })();
+  // Reset on rejection so future callers can retry (e.g., binary missing transiently)
+  dbReady.catch(() => { dbReady = null; });
   return dbReady;
 }
 

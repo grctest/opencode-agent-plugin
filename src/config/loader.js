@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { DEFAULT_CONFIG, CONFIG_SCHEMA, NESTED_SCHEMA, DEPRECATED_KEYS } from "./defaults.js";
 import { deepMerge, collectLeafPaths, getNestedValue, setNestedValue, stripJsoncComments, parseFastPathModel, homeOpenCodeDir } from "./utils.js";
 import { validateConfigKey, validateNestedConfig, validateCrossField, validateAllowlistEntries, applyEnvOverrides } from "./validation.js";
+import { Logger, extractErrorInfo } from "../logger.js";
 
 export { parseFastPathModel };
 
@@ -23,6 +24,7 @@ function parseConfigFileContent(filePath) {
 }
 
 function collectConfigCandidates(directory) {
+  const logger = new Logger();
   const candidates = [];
   const readCandidate = (path) => {
     try {
@@ -32,7 +34,9 @@ function collectConfigCandidates(directory) {
         const config = parsed.loom && typeof parsed.loom === 'object' ? parsed.loom : parsed;
         candidates.push({ path, config });
       }
-    } catch { /* unreadable/malformed candidate — skipped */ }
+    } catch (err) {
+      logger.warn("config_candidate_failed", `Skipping unreadable config candidate ${path}`, extractErrorInfo(err));
+    }
   };
 
   if (directory) {
@@ -56,8 +60,8 @@ export function buildConfig(directory) {
   let primarySource = null;
 
   const candidates = collectConfigCandidates(directory);
-  // Candidates are collected directory-first, home-last. Project must win,
-  // so apply home→project (reverse) so directory overwrites home.
+  // Candidates are collected home-first via build order in collectConfigCandidates
+  // (directory entries pushed first, home pushed after). Reversing makes project win.
   const ordered = [...candidates].reverse();
   for (const { path, config } of ordered) {
     userConfig = deepMerge(userConfig, config);

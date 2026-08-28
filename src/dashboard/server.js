@@ -2,53 +2,12 @@ import {
   DashboardApi,
   listMeetings,
 } from "./api.js";
-import { join, resolve, sep } from "node:path";
+import { join, resolve, sep, extname } from "node:path";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { getMetricsSnapshot } from "../metrics.js";
 import { getRecentLogs } from "../logger.js";
 import { getConfig } from "../config.js";
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_QUANT } from "../services/model-manager.js";
-
-// Route table helper — centralizes method guards and documents API surface.
-// Each entry declares allowed methods; fetch handler checks before dispatch.
-const ROUTE_TABLE = [
-  { path: "/", methods: ["GET"] },
-  { path: "/index.html", methods: ["GET"] },
-  { path: "/api/meetings", methods: ["GET"] },
-  { path: "/api/session", methods: ["GET"] },
-  { path: "/api/meeting", methods: ["GET"] },
-  { path: "/api/artifact", methods: ["GET"] },
-  { path: "/api/contribution_context", methods: ["GET"] },
-  { path: "/api/orchestrator_messages", methods: ["GET"] },
-  { path: "/api/state", methods: ["GET"] },
-  { path: "/api/state_stats", methods: ["GET"] },
-  { path: "/api/health", methods: ["GET"] },
-  { path: "/api/models", methods: ["GET"] },
-  { path: "/api/models/select", methods: ["POST"] },
-  { path: "/api/metrics", methods: ["GET"] },
-  { path: "/api/logs", methods: ["GET"] },
-  { path: "/api/participants", methods: ["GET"] },
-  { path: "/api/contributions", methods: ["GET"] },
-  { path: "/api/turn_requests", methods: ["GET"] },
-  { path: "/api/agent_errors", methods: ["GET"] },
-  { path: "/api/agent_contexts", methods: ["GET"] },
-  { path: "/api/agent_context", methods: ["GET"] },
-  { path: "/api/export", methods: ["GET"] },
-  { path: "/api/export/stream", methods: ["GET"] },
-  { path: "/api/stream", methods: ["GET"] },
-];
-function isMethodAllowed(pathname, method) {
-  const entry = ROUTE_TABLE.find((r) => r.path === pathname);
-  if (!entry) return true; // allow assets and unknown to fall through 404
-  return entry.methods.includes(method);
-}
-function methodGuard(pathname, method) {
-  if (!isMethodAllowed(pathname, method)) {
-    return Response.json({ error: "method not allowed" }, { status: 405, headers: { Allow: ROUTE_TABLE.find((r) => r.path === pathname)?.methods.join(", ") ?? "" } });
-  }
-  return null;
-}
-
 import {
   embeddingStatus,
   initEmbeddingModel,
@@ -67,6 +26,39 @@ import { createPollSystem } from "./server/poll.js";
 import { getMeetingDbPath, isValidMeetingId } from "./api/free.js";
 import { getDatabasesBySessionId } from "../database/session-index.js";
 import { findMeetingBySessionId } from "../database/lookup.js";
+
+const ROUTE_MAP = new Map([
+  ["/", ["GET"]],
+  ["/index.html", ["GET"]],
+  ["/api/meetings", ["GET"]],
+  ["/api/session", ["GET"]],
+  ["/api/meeting", ["GET"]],
+  ["/api/artifact", ["GET"]],
+  ["/api/contribution_context", ["GET"]],
+  ["/api/orchestrator_messages", ["GET"]],
+  ["/api/state", ["GET"]],
+  ["/api/state_stats", ["GET"]],
+  ["/api/health", ["GET"]],
+  ["/api/models", ["GET"]],
+  ["/api/models/select", ["POST"]],
+  ["/api/metrics", ["GET"]],
+  ["/api/logs", ["GET"]],
+  ["/api/participants", ["GET"]],
+  ["/api/contributions", ["GET"]],
+  ["/api/turn_requests", ["GET"]],
+  ["/api/agent_errors", ["GET"]],
+  ["/api/agent_contexts", ["GET"]],
+  ["/api/agent_context", ["GET"]],
+  ["/api/export", ["GET"]],
+  ["/api/export/stream", ["GET"]],
+  ["/api/stream", ["GET"]],
+]);
+function methodGuard(pathname, method) {
+  const allowed = ROUTE_MAP.get(pathname);
+  if (!allowed) return null;
+  if (allowed.includes(method)) return null;
+  return Response.json({ error: "method not allowed" }, { status: 405, headers: { Allow: allowed.join(", ") } });
+}
 
 const ASSETS_DIR = findAssetsDir();
 
@@ -248,16 +240,25 @@ export function startDashboard(directory, port) {
           return Response.json({ models, status: embeddingStatus });
         }
 
-        if (url.pathname === "/api/models/select" && req.method === "POST") {
+        if (url.pathname === "/api/models/select") {
           const body = await req.json().catch(() => null);
-          if (!body?.model) {
-            return Response.json({ error: "model name required" }, { status: 400 });
+          const rawName = body?.model;
+          if (!rawName || typeof rawName !== "string" || rawName.includes("..") || rawName.includes("\0") || rawName.length > 200) {
+            return Response.json({ error: "model name required (valid string, max 200 chars, no path traversal)" }, { status: 400 });
+          }
+          // Allow only printable, no traversal
+          if (/[<>:"|?*]/.test(rawName)) {
+            return Response.json({ error: "invalid model name" }, { status: 400 });
           }
           const { listDownloadedModels } = await import("./api.js");
           const models = listDownloadedModels();
-          const matched = models.find((m) => m.name === body.model || m.id === body.model);
+          const matched = models.find((m) => m.name === rawName || m.id === rawName);
           if (!matched) {
             return Response.json({ error: "model not found among downloaded models" }, { status: 404 });
+          }
+          // Validate matched name itself (defense against poisoned model.json)
+          if (matched.name.includes("..") || matched.name.includes("\0")) {
+            return Response.json({ error: "stored model name invalid" }, { status: 500 });
           }
           if (embeddingStatus.state === "initializing") {
             return Response.json({ error: "embedding model is currently initializing, please wait" }, { status: 409 });
@@ -285,11 +286,11 @@ export function startDashboard(directory, port) {
           return Response.json(getMetricsSnapshot());
         }
 
-        // Recent in-process log lines from the logger ring buffer (audit 07 EH6).
         if (url.pathname === "/api/logs") {
           const limit = clampLimit(url.searchParams.get("limit"), 500);
           const level = url.searchParams.get("level");
-          return Response.json(getRecentLogs(limit, level));
+          const meetingId = url.searchParams.get("meeting");
+          return Response.json(getRecentLogs(limit, level, meetingId));
         }
 
         if (url.pathname === "/api/participants") {
@@ -398,9 +399,16 @@ export function startDashboard(directory, port) {
             start(controller) {
               const encoder = new TextEncoder();
               for (const chunk of api.exportMarkdownStream(meetingId)) {
-                controller.enqueue(encoder.encode(chunk));
+                try {
+                  // Backpressure: if desiredSize ≤ 0, skip enqueue this tick (caller will retry on next chunk)
+                  if (controller.desiredSize !== null && controller.desiredSize <= 0) {
+                    // Best-effort: drop chunk rather than OOM — stream remains valid
+                    continue;
+                  }
+                  controller.enqueue(encoder.encode(chunk));
+                } catch {}
               }
-              controller.close();
+              try { controller.close(); } catch {}
             },
           });
           const filename = `loom-${meetingId.slice(0, 8)}-${Date.now()}.md`;
@@ -466,15 +474,17 @@ export function startDashboard(directory, port) {
         }
 
         if (url.pathname.startsWith("/assets/")) {
+          if (req.method !== "GET" && req.method !== "HEAD") {
+            return Response.json({ error: "method not allowed" }, { status: 405, headers: { Allow: "GET, HEAD" } });
+          }
           const assetPath = url.pathname.slice("/assets/".length);
           if (!isAssetPathSafe(assetPath, ASSETS_DIR)) {
             return new Response("Not found", { status: 404 });
           }
           const filePath = join(ASSETS_DIR, assetPath);
-          const lastDot = filePath.lastIndexOf(".");
-          const ext = lastDot > 0 ? filePath.slice(lastDot) : "";
+          const ext = extname(filePath).toLowerCase();
           const contentType = MIME_TYPES[ext] ?? "application/octet-stream";
-          const headers = { "Content-Type": contentType, ...SECURITY_HEADERS };
+          const headers = { "Content-Type": contentType, ...SECURITY_HEADERS, "X-Content-Type-Options": "nosniff" };
           const etagVal = (() => {
             try {
               const s = statSync(filePath);
@@ -495,6 +505,7 @@ export function startDashboard(directory, port) {
             return new Response(null, { status: 304, headers });
           }
           if (!headers["ETag"]) delete headers["ETag"];
+          if (req.method === "HEAD") return new Response(null, { headers });
           return new Response(Bun.file(filePath), { headers });
         }
 

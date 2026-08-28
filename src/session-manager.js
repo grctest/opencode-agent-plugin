@@ -112,11 +112,13 @@ export class SessionManager {
   }
 
   /**
-   * Best-effort deletion of an ephemeral session.
-   */
+    * Best-effort deletion of an ephemeral session.
+    */
   async deleteEphemeralSession(sessionId) {
-    const { ok } = await this.#contract.delete(sessionId);
+    // Unregister first to avoid resolveMeetingId race while delete in flight
     this.unregisterSession(sessionId);
+    const { ok } = await this.#contract.delete(sessionId);
+    void ok;
   }
 
   /**
@@ -131,35 +133,20 @@ export class SessionManager {
    */
   async runEphemeralPrompt(participant, promptOpts, meetingId = null) {
     let sessionId = null;
-    let abortHandler = null;
-    let effectiveSignal = null;
     try {
       sessionId = await this.createEphemeralSession(participant);
       if (meetingId) this.registerSessionMeeting(sessionId, meetingId);
       const { signal, abort, ...restOpts } = promptOpts;
-      effectiveSignal = signal ?? abort ?? null;
-      let res;
-      if (effectiveSignal) {
-        if (effectiveSignal.aborted) throw new DOMException("Aborted", "AbortError");
-        const abortPromise = new Promise((_, reject) => {
-          abortHandler = () => reject(new DOMException("Aborted", "AbortError"));
-          effectiveSignal.addEventListener("abort", abortHandler, { once: true });
-        });
-        res = await Promise.race([
-          this.getContract().prompt({ sessionId, ...restOpts }),
-          abortPromise.then(() => { throw new DOMException("Aborted", "AbortError"); }),
-        ]).catch((err) => ({ ok: false, data: null, error: err }));
-        if (res && res.error && res.error.name === "AbortError") throw res.error;
-      } else {
-        res = await this.getContract().prompt({ sessionId, ...restOpts });
-      }
+      const effectiveSignal = signal ?? abort ?? null;
+      if (effectiveSignal?.aborted) throw new DOMException("Aborted", "AbortError");
+      // SessionContract.prompt now handles signal/AbortError natively — no manual
+      // addEventListener race needed. Pass signal straight through.
+      const res = await this.getContract().prompt({ sessionId, signal: effectiveSignal, ...restOpts });
+      if (res?.error?.name === "AbortError") throw res.error;
       return res;
     } catch (err) {
       return { ok: false, data: null, error: err };
     } finally {
-      if (effectiveSignal && abortHandler) {
-        try { effectiveSignal.removeEventListener("abort", abortHandler); } catch {}
-      }
       if (sessionId) {
         this.unregisterSession(sessionId);
         await this.deleteEphemeralSession(sessionId).catch(() => {});
@@ -172,45 +159,7 @@ export class SessionManager {
    * orchestrator calls in a meeting. Falls back to ephemeral if persistent creation fails.
    * @returns {Promise<{ text: string, tokens?: { input: number; output: number } }>}
    */
-  async promptOrchestrator(system, model, message) {
-    // Try persistent session first (Option D)
-    let sessionId = this.#orchestratorSessionId;
-    if (!sessionId) {
-      try {
-        sessionId = await this.#createSessionWithRetry("Loom · Orchestrator (persistent)");
-        this.#orchestratorSessionId = sessionId;
-      } catch {
-        // Fallback to ephemeral per-prompt (previous behavior)
-        sessionId = await this.#createSessionWithRetry("Loom · Orchestrator (ephemeral)");
-        try {
-          const result = await withRetry(async () => {
-            const res = await this.#contract.prompt({
-              sessionId,
-              system,
-              model,
-              tools: {},
-              parts: [{ type: "text", text: message }],
-            });
-            if (!res.ok) throw res.error;
-            if (!String(res.text ?? "").trim()) {
-              const err = new Error("Empty response from orchestrator LLM");
-              err.name = "EmptyResponseError";
-              throw err;
-            }
-            return res;
-          }, {
-            maxAttempts: getConfig().maxRetryAttempts,
-            baseDelayMs: getConfig().retryBaseDelayMs,
-            maxDelayMs: getConfig().retryMaxDelayMs,
-            retryable: (err) => isRetryableError(err) || isEmptyResponseError(err),
-          });
-          return { text: result.text, tokens: result.tokens };
-        } finally {
-          this.deleteEphemeralSession(sessionId);
-        }
-      }
-    }
-    // Persistent path — reuse session, do not delete
+  async #promptOrchestratorOnce(sessionId, system, model, message) {
     const result = await withRetry(async () => {
       const res = await this.#contract.prompt({
         sessionId,
@@ -233,6 +182,39 @@ export class SessionManager {
       retryable: (err) => isRetryableError(err) || isEmptyResponseError(err),
     });
     return { text: result.text, tokens: result.tokens };
+  }
+
+  async promptOrchestrator(system, model, message) {
+    let sessionId = this.#orchestratorSessionId;
+    if (!sessionId) {
+      try {
+        sessionId = await this.#createSessionWithRetry("Loom · Orchestrator (persistent)");
+        this.#orchestratorSessionId = sessionId;
+      } catch {
+        const ephemeralId = await this.#createSessionWithRetry("Loom · Orchestrator (ephemeral)");
+        try {
+          return await this.#promptOrchestratorOnce(ephemeralId, system, model, message);
+        } finally {
+          await this.deleteEphemeralSession(ephemeralId).catch(() => {});
+        }
+      }
+    }
+    try {
+      return await this.#promptOrchestratorOnce(sessionId, system, model, message);
+    } catch (err) {
+      // If persistent session is dead (404), clear and retry once on ephemeral
+      const msg = String(err?.message ?? err);
+      if (/not found|404|session/i.test(msg)) {
+        this.#orchestratorSessionId = null;
+        const ephemeralId = await this.#createSessionWithRetry("Loom · Orchestrator (ephemeral)");
+        try {
+          return await this.#promptOrchestratorOnce(ephemeralId, system, model, message);
+        } finally {
+          await this.deleteEphemeralSession(ephemeralId).catch(() => {});
+        }
+      }
+      throw err;
+    }
   }
 
   async deleteSession(sessionId) {

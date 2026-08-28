@@ -33,7 +33,9 @@ function makeSentinel() {
  */
 export function neutralizeImitationDirectives(text) {
   if (!text || typeof text !== "string") return text ?? "";
-  return text.replace(LINE_START_DIRECTIVE_RE, (match) => match.replace(/^\s*\[/, (lead) => lead + "\u200D"));
+  // Handle zero-width obfuscation before [ — strip ZW chars then neutralize
+  const dezw = text.replace(/[\u200B\u200C\u200D\uFEFF]/g, "");
+  return dezw.replace(LINE_START_DIRECTIVE_RE, (match) => match.replace(/^\s*\[/, (lead) => lead + "\u200D"));
 }
 
 /**
@@ -43,9 +45,14 @@ export function neutralizeImitationDirectives(text) {
 function stripUnsafeChars(text) {
   return text
     // eslint-disable-next-line no-control-regex
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
-    // Preserve generics like Array<string> — only strip script/style/iframe tags
-    .replace(/<\s*\/?\s*(script|style|iframe|object|embed|form)[^>]*>/gi, "");
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u202E\uFEFF]/g, "")
+    // Strip dangerous bidi overrides / zero-width joiners that hide injection + HTML injection vectors
+    .replace(/[\u200B\u200C\u200D]/g, "")
+    // Preserve generics like Array<string> — only strip dangerous tags (incl svg/img with event handlers, links, forms)
+    .replace(/<\s*\/?\s*(script|style|iframe|object|embed|form|svg|img|link|input|meta)[^>]*>/gi, "")
+    // Neutralize javascript: and data: URIs in any remaining attribute-like context
+    .replace(/javascript\s*:/gi, "")
+    .replace(/data\s*:\s*text\/html/gi, "");
 }
 
 /**

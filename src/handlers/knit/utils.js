@@ -27,10 +27,4 @@ export function applyModelFilter(allAvailable, disabledModels) {
   });
 }
 
-/**
- * Backward compat alias - old callers used enabledModels allow-list.
- * If the set looks like an allow list (size < available/2), treat as such? No, we force deny.
- */
-export function applyModelFilterAllowList(allAvailable, enabledModels) {
-  return applyModelFilter(allAvailable, enabledModels ? new Set(allAvailable.map(m => `${m.providerID}/${m.modelID}`).filter(k => !enabledModels.has(k))) : null);
-}
+

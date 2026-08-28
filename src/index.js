@@ -16,13 +16,12 @@ import { createAgentTools } from "./plugin/agent-tools.js";
 import { createPluginReturn } from "./plugin/return.js";
 import { createResolveMeeting } from "./plugin/resolve-meeting.js";
 import { createLifecycleHandlers } from "./plugin/lifecycle.js";
-// Static hoists (audit 10 MA4): these were previously `await import()` inside
-// tool handlers on every call — pure overhead for cycle-free modules.
 import { extractAgentResponse, mapToolResults } from "./shared.js";
 import { getPersonas } from "./composer.js";
 import { getHighestTierModel } from "./services/model-service.js";
 import { getMeetingDbPath } from "./paths.js";
 import { DashboardApi } from "./dashboard/api.js";
+import { ensureEmbedderInitialized, getEmbeddingDim, isEmbedderInitialized } from "./services/embedding-service.js";
 
 export const Loom = async (input) => {
   const { client, directory } = input;
@@ -60,7 +59,6 @@ export const Loom = async (input) => {
   const startupValues = config.get();
   const resolvedModel = startupValues.embeddingModel ?? DEFAULT_EMBEDDING_MODEL;
   const resolvedQuant = startupValues.embeddingQuant ?? DEFAULT_EMBEDDING_QUANT;
-  const { ensureEmbedderInitialized, getEmbeddingDim, isEmbedderInitialized } = await import("./services/embedding-service.js");
   const embedInitPromise = ensureEmbedderInitialized(resolvedModel, resolvedQuant)
     .then(() => {
       logger.info("embedder_initialized", `Embedding model loaded: ${resolvedModel} (${getEmbeddingDim()}d)`);

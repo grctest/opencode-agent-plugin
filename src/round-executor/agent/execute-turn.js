@@ -8,6 +8,7 @@ import { selectFallbackModel } from "../../services/model-service.js";
 import { incrementKeyedCounter, recordLatency } from "../../metrics.js";
 import { extractErrorInfo } from "../../logger.js";
 import { buildToolsMap, buildToolsMapWithoutLoom } from "../tools.js";
+import { truncateLoomOutputs } from "../../utils/text.js";
 
 export async function executeAgentTurn(participant, model, timeoutMs, promptContext) {
   const config = getConfig();
@@ -128,23 +129,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
     const loomSynthesisCalls = effective1.filter(t => isSynthesisLoom(t.tool) && t.status === "completed" && t.output);
     const sameTurnEnabled = !!agentToolsConfig?.sameTurnSynthesis;
     const needsSynthesis = sameTurnEnabled && loomSynthesisCalls.length > 0 && agentText1 != null && String(agentText1).trim() !== "[PASS]" && String(agentText1).trim().length > 0;
-    // Total synthesis budget: 12k chars across all loom outputs
-    const cappedLoomCalls = (() => {
-      let total = 0;
-      const out = [];
-      for (const tc of loomSynthesisCalls) {
-        const raw = typeof tc.output === "string" ? tc.output : JSON.stringify(tc.output);
-        const slice = raw.slice(0, 3500);
-        if (total + slice.length > 12000) {
-          const remaining = 12000 - total;
-          if (remaining > 500) out.push({ ...tc, output: slice.slice(0, remaining) + " …[truncated for budget]" });
-          break;
-        }
-        total += slice.length;
-        out.push(tc);
-      }
-      return out;
-    })();
+    const cappedLoomCalls = truncateLoomOutputs(loomSynthesisCalls, 12000, 3500);
 
     let finalText = agentText1;
     let finalToolResults = effective1;
@@ -232,10 +217,9 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
           round: currentRound,
           tools: mappedTools.map(t => ({ tool: t.tool, status: t.status ?? null })),
         });
-                  const cap = getPriorityCap(participant.config.tier);
+        const cap = getPriorityCap(participant.config.tier);
         const reqNext = extractRequestNextFromToolResults(finalToolResults);
         this._recordModelSuccess(model);
-        if (consumedHint) this._stateManager.setNextRoundSteering(consumedHint);
         ephemeralSessionIdToDelete = null;
         return {
           participant_id: participant.config.id,

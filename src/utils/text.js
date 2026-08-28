@@ -267,6 +267,24 @@ export function mapToolResults(toolResults) {
   });
 }
 
+/** Caps loom synthesis outputs to a 12k char total budget, slicing per-call as needed. */
+export function truncateLoomOutputs(loomCalls, maxTotal = 12000, perCallSlice = 3500) {
+  let total = 0;
+  const out = [];
+  for (const tc of loomCalls) {
+    const raw = typeof tc.output === "string" ? tc.output : JSON.stringify(tc.output);
+    const slice = raw.slice(0, perCallSlice);
+    if (total + slice.length > maxTotal) {
+      const remaining = maxTotal - total;
+      if (remaining > 500) out.push({ ...tc, output: slice.slice(0, remaining) + " …[truncated for budget]" });
+      break;
+    }
+    total += slice.length;
+    out.push(tc);
+  }
+  return out;
+}
+
 /** Wraps a promise with a timeout. Rejects if the promise doesn't resolve in time. */
 export function withTimeout(promise, ms) {
   return new Promise((resolve, reject) => {

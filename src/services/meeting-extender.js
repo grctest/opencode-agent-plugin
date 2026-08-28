@@ -60,31 +60,42 @@ export class MeetingExtender {
 
     // Fabric + max-rounds + round marker must apply atomically or not at all
     // (audit 05 LS7): half-applied extensions leave inconsistent state.
+    // Snapshot in-memory state before DB transaction so we can revert on rollback.
+    const prevMaxRounds = stateManager.getMaxRounds();
+    const prevFabric = (() => { try { return database.getFabric(); } catch { return stateManager.getFabric(); } })();
+    let txSucceeded = false;
     if (typeof database.transaction === "function") {
-      await database.transaction(() => {
-        database.setFabric(`${database.getFabric()}\n\n**User Input:** ${safePrompt}`);
-        stateManager.setMaxRounds(stateManager.getMaxRounds() + extraRounds);
-        database.setRound(stateManager.getCurrentRound());
-      });
+      try {
+        await database.transaction(() => {
+          database.setFabric(`${prevFabric}\n\n**User Input:** ${safePrompt}`);
+          database.setRound(stateManager.getCurrentRound());
+          database.setMaxRounds(prevMaxRounds + extraRounds);
+        });
+        txSucceeded = true;
+      } catch (err) {
+        // Transaction rolled back — do not mutate in-memory state
+        this.#logger.warn("extend_tx_failed", "Extension transaction failed, state not mutated", extractErrorInfo(err));
+        throw err;
+      }
     } else {
       // No transaction support — sequential best-effort (legacy path)
-      database.setFabric(`${database.getFabric()}\n\n**User Input:** ${safePrompt}`);
-      stateManager.setMaxRounds(stateManager.getMaxRounds() + extraRounds);
+      database.setFabric(`${prevFabric}\n\n**User Input:** ${safePrompt}`);
       database.setRound(stateManager.getCurrentRound());
+      database.setMaxRounds(prevMaxRounds + extraRounds);
+      txSucceeded = true;
     }
 
-    stateManager.setFabric(database.getFabric());
-    // New fabric contains **User Input:** extension marker — also make it visible via context so
-    // next round's Weighted Golden Sandwich sees it (agents read getContext(), not getFabric())
-    try {
+    if (txSucceeded) {
+      stateManager.setMaxRounds(prevMaxRounds + extraRounds);
       const newFabric = database.getFabric();
-      if (typeof stateManager.getContext === "function" && typeof stateManager.setContext === "function") {
-        // setContext may not exist on some StateManager versions — fallback to direct fabric
-        stateManager.setContext(newFabric);
-      } else if (stateManager._state) {
-        stateManager._state.context = newFabric;
-      }
-    } catch {}
+      stateManager.setFabric(newFabric);
+      // Make extension visible via context (agents read getContext())
+      try {
+        if (typeof stateManager.getContext === "function" && typeof stateManager.setContext === "function") {
+          stateManager.setContext(newFabric);
+        }
+      } catch {}
+    }
     stateManager.forceTransitionTo("weaving");
 
     for (const p of stateManager.getParticipants()) {

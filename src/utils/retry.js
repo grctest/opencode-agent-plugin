@@ -20,6 +20,14 @@ export const DEFAULT_RETRY_CONFIG = {
  * @param {Error} err - The error to check
  * @returns {boolean} True if the error is retryable
  */
+export function isRateLimitError(err) {
+  if (!err) return false;
+  if (err.status === 429 || err.statusCode === 429) return true;
+  if (err.message && /\b429\b/.test(err.message)) return true;
+  if (err.message && /rate.?limit/i.test(err.message)) return true;
+  return false;
+}
+
 export function isRetryableError(err) {
   if (!err) return false;
 
@@ -34,23 +42,22 @@ export function isRetryableError(err) {
   ) {
     return true;
   }
-  // SQLite busy string variants (bun:sqlite surfaces as message, not always code)
   if (err.message && /SQLITE_BUSY|database is locked|database is busy/i.test(err.message)) {
     return true;
   }
 
-  // Timeout errors
-  if (err.message && /timed?\s*out/i.test(err.message)) {
+  if (err.name === "TimeoutError" || err.name === "AbortError") {
+    return true;
+  }
+  if (err.message && /\btimeout\b/i.test(err.message)) {
     return true;
   }
 
-  // HTTP 5xx errors (if response object is attached)
   if (err.status >= 500 && err.status < 600) {
     return true;
   }
 
-  // Rate limiting + request timeout
-  if (err.status === 429 || err.status === 408) {
+  if (isRateLimitError(err) || err.status === 408 || err.statusCode === 408) {
     return true;
   }
 
@@ -139,7 +146,10 @@ export class CircuitBreaker {
     if (state.failures < this.failureThreshold) return true;
 
     if (Date.now() > state.nextAttempt) {
-      state.status = 'half-open';
+      if (state.status !== 'half-open') {
+        state.status = 'half-open';
+        state.nextAttempt = Date.now() + this.resetTimeoutMs;
+      }
       return true;
     }
 
@@ -165,10 +175,16 @@ export class CircuitBreaker {
     if (this.#states.has(key)) this.#states.delete(key);
     this.#states.set(key, state);
     if (this.#states.size > this.maxSize) {
-      // Evict oldest non-open entry first; keep open breakers until reset
+      // Evict expired open breakers first, then oldest non-open, then oldest open (preserved if still within timeout)
+      const now = Date.now();
       let oldest = null;
       for (const [k, v] of this.#states) {
-        if (v.status !== "open") { oldest = k; break; }
+        if (v.status === "open" && now > v.nextAttempt) { oldest = k; break; }
+      }
+      if (oldest == null) {
+        for (const [k, v] of this.#states) {
+          if (v.status !== "open") { oldest = k; break; }
+        }
       }
       if (oldest == null) oldest = this.#states.keys().next().value;
       if (oldest !== key) this.#states.delete(oldest);

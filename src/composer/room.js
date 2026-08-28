@@ -117,12 +117,15 @@ export async function composeRoomWithSimilarity(question, database) {
   try {
     const tierCounts = Object.fromEntries(Object.entries(personas).map(([t, arr]) => [t, arr.length]));
     const chain = ["principal", "senior", "mid", "junior", "civilian"];
-    for (const tier of Object.keys(Object.fromEntries(roles.map(r=>[r,1])))) {
-      const need = roles.filter(r=>r===tier).length;
+    const originalNeed = {};
+    for (const r of roles) originalNeed[r] = (originalNeed[r] ?? 0) + 1;
+    for (const tier of Object.keys(originalNeed)) {
+      const need = originalNeed[tier];
       if ((tierCounts[tier] ?? 0) >= need) continue;
       let deficit = need - (tierCounts[tier] ?? 0);
       composerLogger.warn("tier_starved", `Not enough ${tier} personas (${tierCounts[tier] ?? 0} < ${need}) — cascading ${deficit} to fallback chain`);
       // Walk roles and replace one at a time, picking best available fallback with capacity
+      // Count against current roles snapshot, not mutated need
       for (let i = 0; i < roles.length && deficit > 0; i++) {
         if (roles[i] !== tier) continue;
         let picked = null;
@@ -292,27 +295,50 @@ function composeRoomByKeyword(question, personas, roles, complexity, count, used
   };
 }
 
+let _vocabCache = null;
+function getVocab() {
+  if (_vocabCache) return _vocabCache;
+  _vocabCache = loadDomainVocabulary();
+  return _vocabCache;
+}
+
 function scorePersonaForQuestion(persona, tokens, questionText = "") {
   const tags = getPersonaTags(persona);
   const expertise = Array.isArray(persona.expertise) ? persona.expertise : [];
   const haystack = [...tags, ...expertise].join(" ").toLowerCase();
   const personaText = `${persona.persona ?? ""} ${persona.agenda ?? ""}`.toLowerCase();
-  // Cap tokens and pre-escape to avoid ReDoS on 5k-char question
-  const cappedTokens = tokens.length > 200 ? tokens.slice(0, 200) : tokens;
-  let score = 0;
-  for (const token of cappedTokens) {
-    if (token.length < 2) continue;
-    const esc = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // Cap tokens and cap alternation size to prevent ReDoS: use Set lookups instead of giant regex when >50 tokens
+  const cappedTokens = tokens.length > 50 ? tokens.slice(0, 50) : tokens;
+  const escTokens = [];
+  for (const t of cappedTokens) {
+    if (t.length < 2) continue;
+    const esc = t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     if (esc.length > 30) continue;
-    const re = new RegExp(`\\b${esc}\\b`);
-    if (re.test(haystack)) score++;
-    if (re.test(personaText)) score += 2;
+    escTokens.push(esc.toLowerCase());
   }
-  // Domain vocabulary boost (audit 13 PC4): domains.json is now wired into the
-  // keyword fallback — personas tagged for a domain whose keywords appear in
-  // the question get a relevance bump instead of the file being dead weight.
-    const vocab = loadDomainVocabulary();
+  let score = 0;
+  if (escTokens.length > 0) {
+    if (escTokens.length > 30) {
+      // Use word-set lookup for large alternations to avoid ReDoS
+      const hayWords = new Set(haystack.split(/\W+/));
+      const personaWords = new Set(personaText.split(/\W+/));
+      const uniqueTokens = new Set(escTokens);
+      for (const tok of uniqueTokens) {
+        if (hayWords.has(tok)) score++;
+        if (personaWords.has(tok)) score += 2;
+      }
+    } else {
+      const re = new RegExp(`\\b(?:${escTokens.join("|")})\\b`, "gi");
+      const haystackHits = new Set((haystack.match(re) ?? []).map(s => s.toLowerCase()));
+      const personaHits = new Set((personaText.match(re) ?? []).map(s => s.toLowerCase()));
+      for (const tok of escTokens) {
+        if (haystackHits.has(tok)) score++;
+        if (personaHits.has(tok)) score += 2;
+      }
+    }
+  }
   if (questionText) {
+    const vocab = getVocab();
     for (const tag of tags) {
       const keywords = vocab[String(tag).toLowerCase()];
       if (!Array.isArray(keywords)) continue;

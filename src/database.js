@@ -25,24 +25,37 @@ export class MeetingDatabase {
     return new MeetingDatabase(dbPath, meetingId);
   }
 
-  static async withTransaction(dbPath, fn) {
+  static async withTransaction(dbPath, fn, { retries = 5 } = {}) {
     await ensureDb();
     const DatabaseClass = getDatabaseClass();
     const db = new DatabaseClass(dbPath);
-    try {
-      db.exec('PRAGMA foreign_keys = ON');
-      db.exec('PRAGMA busy_timeout = 5000');
-      db.exec('PRAGMA wal_autocheckpoint = 1000');
-      db.exec('BEGIN IMMEDIATE');
-      const result = await fn(db);
-      db.exec('COMMIT');
-      return result;
-    } catch (err) {
-      try { db.exec('ROLLBACK'); } catch {}
-      throw err;
-    } finally {
-      try { db.close(); } catch {}
+    let lastErr;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        db.exec('PRAGMA foreign_keys = ON');
+        db.exec('PRAGMA busy_timeout = 5000');
+        db.exec('PRAGMA wal_autocheckpoint = 1000');
+        db.exec('BEGIN IMMEDIATE');
+        const result = await fn(db);
+        db.exec('COMMIT');
+        try { db.close(); } catch {}
+        return result;
+      } catch (err) {
+        const msg = String(err?.message ?? err);
+        const isBusy = /SQLITE_BUSY|database is locked|busy/i.test(msg);
+        try { db.exec('ROLLBACK'); } catch {}
+        if (isBusy && attempt < retries) {
+          lastErr = err;
+          const delay = Math.min(50 * Math.pow(2, attempt) + Math.random() * 50, 800);
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+        try { db.close(); } catch {}
+        throw err;
+      }
     }
+    try { db.close(); } catch {}
+    throw lastErr;
   }
 
   static async readParticipants(dbPath) {
@@ -80,10 +93,10 @@ export class MeetingDatabase {
     const DatabaseClass = getDatabaseClass();
     const db = new DatabaseClass(dbPath);
     this.#db = db;
-    const jm = this.#db.prepare("PRAGMA journal_mode = WAL").get();
-    if (jm?.journal_mode !== "wal") dbLogger.warn("pragma_journal_mode_fallback", `journal_mode WAL not achieved (got ${jm?.journal_mode ?? "unknown"}) — concurrency reduced`, { journal_mode: jm?.journal_mode });
     this.#db.exec("PRAGMA foreign_keys = ON");
     this.#db.exec("PRAGMA busy_timeout = 5000");
+    const jm = this.#db.prepare("PRAGMA journal_mode = WAL").get();
+    if (jm?.journal_mode !== "wal") dbLogger.warn("pragma_journal_mode_fallback", `journal_mode WAL not achieved (got ${jm?.journal_mode ?? "unknown"}) — concurrency reduced`, { journal_mode: jm?.journal_mode });
     this.#db.exec("PRAGMA synchronous = NORMAL");
     this.#db.exec("PRAGMA wal_autocheckpoint = 1000");
     const vecPath = resolveVecPath();
@@ -99,11 +112,8 @@ export class MeetingDatabase {
       }
     }
     initSchema(this.#db);
-    try {
-      runMigrations(this.#db, { logger: dbLogger });
-    } catch (err) {
-      dbLogger.error("db_migration_failed", "Database migration failed — continuing with base schema", extractErrorInfo(err));
-    }
+    // Migrations must succeed or the DB is unusable — busy_timeout already retries 5s; on failure throw (no warn+continue)
+    runMigrations(this.#db, { logger: dbLogger });
     initVectorTable(this.#db);
     const shouldMaintain = existedBefore || process.env.LOOM_INTEGRITY_CHECK === '1'
       ? maintenanceDue(this.#db)
@@ -120,17 +130,32 @@ export class MeetingDatabase {
     }
   }
 
+  #_txnSeq = 0;
+
   async transaction(fn) {
-    // Use SAVEPOINT to allow nesting inside existing TX (prevents cannot start within TX)
-    const inTx = (() => { try { return this.#db.prepare("SELECT 1").get() && false; } catch { return false; } })();
-    // Simpler: check if already in transaction via pragma? Use try SAVEPOINT
-    try { this.#db.exec('SAVEPOINT loom_txn'); } catch { this.#db.exec('BEGIN IMMEDIATE'); }
+    const spName = `loom_txn_${++this.#_txnSeq}`;
+    let usedSavepoint = false;
+    try {
+      this.#db.exec(`SAVEPOINT ${spName}`);
+      usedSavepoint = true;
+    } catch {
+      this.#db.exec('BEGIN IMMEDIATE');
+    }
     try {
       const result = await fn(this.#db);
-      try { this.#db.exec('RELEASE loom_txn'); } catch { this.#db.exec('COMMIT'); }
+      if (usedSavepoint) {
+        this.#db.exec(`RELEASE ${spName}`);
+      } else {
+        this.#db.exec('COMMIT');
+      }
       return result;
     } catch (err) {
-      try { this.#db.exec('ROLLBACK TO loom_txn'); this.#db.exec('RELEASE loom_txn'); } catch { try { this.#db.exec('ROLLBACK'); } catch {} }
+      if (usedSavepoint) {
+        try { this.#db.exec(`ROLLBACK TO ${spName}`); } catch {}
+        try { this.#db.exec(`RELEASE ${spName}`); } catch {}
+      } else {
+        try { this.#db.exec('ROLLBACK'); } catch {}
+      }
       throw err;
     }
   }
@@ -203,18 +228,27 @@ export class MeetingDatabase {
 
   close() {
     try {
+      if (this.#db?.closed === true) return;
+    } catch {}
+    try {
       this.#db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
     } catch (err) {
       dbLogger.debug("wal_checkpoint_failed", "WAL checkpoint on close failed", extractErrorInfo(err));
     }
-    this.#db.close();
+    try { this.#db.close(); } catch {}
   }
 
   getDatabasePath() {
+    try {
+      if (this.#db?.closed) return this.#db.filename ?? this.#db.name ?? "closed";
+    } catch {}
     return this.#db.filename ?? this.#db.name ?? "unknown";
   }
 
   checkpoint() {
+    try {
+      if (this.#db?.closed === true) return;
+    } catch {}
     try {
       this.#db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
     } catch (err) {

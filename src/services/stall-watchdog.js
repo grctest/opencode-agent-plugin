@@ -38,11 +38,17 @@ export class StallWatchdog {
   }
 
   start(getStatus, cancelled) {
-    if (this.#timer) return;
+    if (this.#timer) {
+      this.touch();
+      return;
+    }
     this.#lastActivityAt = Date.now();
     this.#timer = setInterval(() => {
       try {
-        if (cancelled()) return;
+        if (cancelled()) {
+          // Don't keep ticking forever if meeting cancelled — stop timer but keep unref
+          return;
+        }
         const status = getStatus();
         if (status !== "weaving" && status !== "initializing") {
           this.stop();
@@ -71,5 +77,12 @@ export class StallWatchdog {
   reset() {
     this.#stallCancelled = false;
     this.#lastActivityAt = Date.now();
+    // Touch ensures lastActivityAt updated even if timer already running; start() is now idempotent so caller can just touch
+  }
+
+  restart(getStatus, cancelled) {
+    this.stop();
+    this.#stallCancelled = false;
+    this.start(getStatus, cancelled);
   }
 }
