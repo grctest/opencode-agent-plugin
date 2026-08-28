@@ -4,7 +4,7 @@ import { getDatabasesBySessionId, deleteMeetingFiles, deleteMeetingsBySessionId 
 import { resolveLoomBaseDir } from "../paths.js";
 
 export const PROGRESS_PATTERN =
-  /^\[info\] (?:🎬|⚠️|ℹ️|is thinking\.\.\.|— synthesize:|— critique:|Round \d+ (?:complete|starting)|Synthesizing final output|✅ Completed|❌ Error:)/;
+  /^\[(?:info|warn|error)\] (?:🎬|⚠️|ℹ️|📋|🔄|⏭️|✅|🛑|⏱️|💰|🧵|.*is thinking\.\.\.|Round \d+|Synthesizing|Completed|Error:)/;
 
 const TOOL_REQUIRED_OVERRIDES = {
   knit: ["question"],

@@ -59,13 +59,14 @@ export class VectorIndex {
         } else { failedEmbeds++; }
       }
     }
-    if (failedEmbeds > 0) {
+    if (indexed === 0 && failedEmbeds > 0) {
       try { this.#database.setSemanticDegraded?.(true); } catch {}
-      if (failedEmbeds < pending.length) {
-        vectorLogger.warn("embed_partial_failed", `Partial embed failure for round ${roundNumber}: ${failedEmbeds}/${pending.length} chunks failed — semantic degraded flagged`, { indexed, failedEmbeds, total: pending.length });
-      }
+      vectorLogger.warn("embed_all_failed", `All embeds failed for round ${roundNumber}: ${failedEmbeds}/${pending.length} — semantic degraded`, { indexed, failedEmbeds, total: pending.length });
     } else if (indexed > 0) {
       try { this.#database.setSemanticDegraded?.(false); } catch {}
+      if (failedEmbeds > 0) {
+        vectorLogger.warn("embed_partial_failed", `Partial embed failure for round ${roundNumber}: ${failedEmbeds}/${pending.length} (some chunks indexed)`, { indexed, failedEmbeds, total: pending.length });
+      }
     }
 
     vectorLogger.debug("round_indexed", `Indexed ${indexed} chunks for round ${roundNumber}`);
@@ -100,11 +101,12 @@ export class VectorIndex {
         } else { failedEmbeds++; }
       }
     }
-    if (failedEmbeds > 0) {
+    if (indexed === 0 && failedEmbeds > 0) {
       try { this.#database.setSemanticDegraded?.(true); } catch {}
-      vectorLogger.warn("embed_context_partial_failed", `Context embed partial failure: ${failedEmbeds}/${pending.length} chunks failed — semantic degraded`, { indexed, failedEmbeds });
+      vectorLogger.warn("embed_context_partial_failed", `All context embeds failed: ${failedEmbeds}/${pending.length} — semantic degraded`, { indexed, failedEmbeds });
     } else if (indexed > 0) {
       try { this.#database.setSemanticDegraded?.(false); } catch {}
+      if (failedEmbeds > 0) vectorLogger.warn("embed_context_partial_failed", `Partial context embed failure: ${failedEmbeds}/${pending.length}`, { indexed, failedEmbeds });
     }
     return indexed;
   }

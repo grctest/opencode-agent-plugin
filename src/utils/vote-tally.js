@@ -12,11 +12,9 @@ export function extractVoteLetter(text) {
   if (!text) return null;
   const tagMatch = text.match(/\[Vote:\s*([A-Za-z0-9])\]/i);
   if (tagMatch) return tagMatch[1].toUpperCase();
-  const lines = text.split("\n");
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (/^[A-Za-z0-9]$/.test(trimmed)) return trimmed.toUpperCase();
-  }
+  // Require explicit Vote: prefix, not stray single letter in prose (phantom votes)
+  const voteLineMatch = text.match(/^\s*Vote:\s*([A-Za-z0-9])\b/im);
+  if (voteLineMatch) return voteLineMatch[1].toUpperCase();
   return null;
 }
 
@@ -38,9 +36,11 @@ export function buildTally({ question, sourceLetter = null, sourceLabel = "sourc
     lines.push(`${sourceLetter}: 1 vote (${sourceLabel} — source)`);
   }
 
+  let validVotes = 0;
   for (const vr of responses) {
     const letter = extractVoteLetter(vr.content);
     if (!letter) continue;
+    validVotes++;
     counts[letter] = (counts[letter] || 0) + 1;
     const existing = lines.find((l) => l.startsWith(`${letter}:`));
     if (existing) {
@@ -51,7 +51,7 @@ export function buildTally({ question, sourceLetter = null, sourceLabel = "sourc
     }
   }
 
-  const totalVoters = (sourceLetter ? 1 : 0) + responses.length;
+  const totalVoters = (sourceLetter ? 1 : 0) + validVotes;
   lines.push(`Total voters: ${totalVoters}`);
 
   const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);

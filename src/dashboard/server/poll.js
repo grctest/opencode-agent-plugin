@@ -114,18 +114,13 @@ export function createPollSystem(directory) {
             }
           }
         } catch {}
-        // Live artifact for non-terminal synthesis (weaving)
+        // Live artifact for non-terminal synthesis (weaving) — seed on connect, broadcast first time too
         try {
           const liveArtifact = api.getArtifact();
           if (liveArtifact && lastArtifactCreatedAt.get(meetingId) !== liveArtifact.created_at) {
-            const prevAt = lastArtifactCreatedAt.get(meetingId);
             lastArtifactCreatedAt.set(meetingId, liveArtifact.created_at);
-            if (prevAt !== undefined) {
-              broadcast(meetingId, { type: "artifact", data: liveArtifact, timestamp: new Date().toISOString() });
-              hadActivity = true;
-            }
-          } else if (!liveArtifact) {
-            // No artifact yet, keep cache empty
+            broadcast(meetingId, { type: "artifact", data: liveArtifact, timestamp: new Date().toISOString() });
+            hadActivity = true;
           }
         } catch {}
 
@@ -277,6 +272,11 @@ export function createPollSystem(directory) {
 
   pollTimer = setInterval(pollMeetings, currentPollInterval);
 
+  const stop = () => {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    if (pingTimer) { clearInterval(pingTimer); }
+  };
+
   return {
     sseClients,
     lastContributionId,
@@ -289,6 +289,7 @@ export function createPollSystem(directory) {
     pingTimer,
     pollMeetings,
     restartPollTimer,
+    stop,
     getPollTimer: () => pollTimer,
     setPollTimer: (t) => { pollTimer = t; },
     getCurrentPollInterval: () => currentPollInterval,

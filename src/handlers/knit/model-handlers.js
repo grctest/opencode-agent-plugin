@@ -21,10 +21,8 @@ function loadPersistedFilter(directory, sessionId) {
         if (existsSync(globalPath)) {
           try {
             const gData = JSON.parse(readFileSync(globalPath, "utf-8"));
-            // Old shape was enabledModels allow-list — convert to deny list
             if (Array.isArray(gData.enabledModels)) {
-              // Can't know allKeys here, so keep as allow-list compat for migration; caller will handle
-              return new Set(gData.enabledModels);
+              return { __allowList: new Set(gData.enabledModels) };
             }
             if (Array.isArray(gData.disabledModels)) return new Set(gData.disabledModels);
           } catch {}

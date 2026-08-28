@@ -2,6 +2,7 @@ import { sanitizeForDisplay } from "../utils/sanitize.js";
 import { TIER_ORDER, LENGTH_LIMITS } from "./constants.js";
 import { QUERY_MODES } from "./query-modes.js";
 import { getRecentContributionsBlock, buildEvidenceGuidance, buildSeniorityContext, buildRoundContext } from "./blocks.js";
+import { delimitContext } from "./delimiters.js";
 
 /** Builds a prompt for a queried agent to respond to a direct question from another agent.
  * mode: one of QUERY_MODES keys (clarify | perspective | evidence | critique | risks | assumptions | alternatives). */
@@ -26,11 +27,9 @@ export function buildQueryPrompt(sourceAgent, targetAgent, sourceContribution, q
 
   const header = `## ${mode === "clarify" ? "Direct Query" : `${mode.charAt(0).toUpperCase() + mode.slice(1)} Request`} — to ${sanitizeForDisplay(targetAgent.config.name)} (${targetAgent.config.tier}) from ${safeSourceName} (${sourceAgent.config.tier})
 
-Context (what they said):
-"${safeContribution}"
+${delimitContext(safeContribution, "PEER_CONTRIBUTION")}
 
-Their question:
-"${safeQuestion}"
+${delimitContext(safeQuestion, "PEER_QUESTION")}
 
 ${sopSnippet}${recentMine ? recentMine + "\n\n" : ""}${reflectionLine ? reflectionLine + "\n\n" : ""}Seniority: ${seniorityContext}
 Round: ${roundContext}
@@ -63,11 +62,9 @@ export function buildEvidencePrompt(sourceAgent, targetAgent, sourceContribution
 
   return `## Evidence Request — to ${sanitizeForDisplay(targetAgent.config.name)} (${targetAgent.config.tier}) from ${safeSourceName} (${sourceAgent.config.tier})
 
-Context:
-"${safeContribution}"
+${delimitContext(safeContribution, "PEER_CONTRIBUTION")}
 
-Evidence question:
-"${safeQuestion}"
+${delimitContext(safeQuestion, "EVIDENCE_QUESTION")}
 
 ${recentMine ? recentMine + "\n\n" : ""}${reflectionLine ? reflectionLine + "\n\n" : ""}Seniority: ${seniorityContext}
 Round: ${roundContext}
@@ -112,11 +109,9 @@ export function buildVotePrompt(sourceAgent, targetAgent, sourceContribution, qu
 
   return `## Vote Requested — to ${sanitizeForDisplay(targetAgent.config.name)} (${targetAgent.config.tier}) from ${safeSourceName} (${sourceAgent.config.tier})
 
-Source proposal (excerpt):
-"${sourceSnippet.slice(0, 400)}"
+${delimitContext(sourceSnippet.slice(0, 400), "SOURCE_PROPOSAL")}
 
-Vote question:
-"${safeQuestion}"
+${delimitContext(safeQuestion, "VOTE_QUESTION")}
 
 ${sopSnippet}${recentMine ? recentMine + "\n" : ""}${reflectionLine ? reflectionLine + "\n" : ""}Round: ${roundContext}
 
@@ -179,8 +174,7 @@ ${sanitizeForDisplay(expertise, 300)}
 ### Voice
 ${sanitizeForDisplay(style, 300)}
 
-Issue you were summoned for:
-"${safeIssue}"
+${delimitContext(safeIssue, "SUMMON_ISSUE")}
 ${sopSnippet}
 ${recentBlock}
 

@@ -1,8 +1,17 @@
 import { Logger } from "../logger.js";
+import { getConfig } from "../config.js";
+import { TUNING } from "../config/defaults.js";
 
-const SKIP_PASSED_MIN_ROUND = 3;
-const SKIP_PASSED_LOOKBACK = 10;
-const SKIP_PASSED_WINDOW = 2;
+function getSkipPassedConfig() {
+  try {
+    const cfg = getConfig()?.tuning ?? TUNING;
+    return {
+      minRound: cfg.SKIP_PASSED_MIN_ROUND ?? TUNING.SKIP_PASSED_MIN_ROUND,
+      lookback: cfg.SKIP_PASSED_LOOKBACK ?? TUNING.SKIP_PASSED_LOOKBACK,
+      window: cfg.SKIP_PASSED_WINDOW ?? TUNING.SKIP_PASSED_WINDOW,
+    };
+  } catch { return { minRound: TUNING.SKIP_PASSED_MIN_ROUND, lookback: TUNING.SKIP_PASSED_LOOKBACK, window: TUNING.SKIP_PASSED_WINDOW }; }
+}
 
 /**
  * Handles round initialization and participant filtering.
@@ -45,7 +54,9 @@ export class RoundInitializer {
    * @returns {{ activeParticipants: Array, skipped: string[] }}
    */
   filterActiveParticipants(stateManager, round) {
-    let activeParticipants = stateManager.getActiveParticipants();
+    // Include passed participants so skip logic can actually evaluate them (getActiveParticipants already filters passed → dead)
+    const { minRound: SKIP_PASSED_MIN_ROUND, lookback: SKIP_PASSED_LOOKBACK, window: SKIP_PASSED_WINDOW } = getSkipPassedConfig();
+    let activeParticipants = stateManager.getParticipants().filter((p) => p.status !== "failed" && p.status !== "muted");
     let skipped = [];
 
     if (round.number >= SKIP_PASSED_MIN_ROUND) {

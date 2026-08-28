@@ -7,7 +7,7 @@
  * directly; older files run only the migrations they are missing.
  */
 
-export const LATEST_SCHEMA_VERSION = 1;
+export const LATEST_SCHEMA_VERSION = 2;
 
 /**
  * Ordered migrations. MIGRATIONS[n] upgrades a DB at user_version n to n+1.
@@ -15,9 +15,6 @@ export const LATEST_SCHEMA_VERSION = 1;
  */
 export const MIGRATIONS = [
   // v0 → v1: degradation flags on the meeting row (audit 07 EH2)
-  // Guarded with column-existence checks because initSchema() creates fresh
-  // tables that already include these columns — a plain ALTER TABLE would
-  // fail with "duplicate column name" on any DB it touches.
   (db) => {
     const cols = new Set(
       db.prepare("PRAGMA table_info(meetings)").all().map((c) => c.name),
@@ -28,6 +25,10 @@ export const MIGRATIONS = [
     if (!cols.has("persistence_degraded")) {
       db.exec(`ALTER TABLE meetings ADD COLUMN persistence_degraded INTEGER NOT NULL DEFAULT 0`);
     }
+  },
+  // v1 → v2: add CHECK constraints for status/tier (no users yet, fresh DBs get them via initSchema; existing v1 DBs keep permissive schema)
+  (db) => {
+    // No-op migration for existing DBs — CHECKs are enforced at application layer via StateManager TRANSITIONS; fresh DBs get them in initSchema
   },
 ];
 
@@ -44,7 +45,7 @@ export function initSchema(db) {
       id TEXT PRIMARY KEY,
       question TEXT NOT NULL,
       context TEXT,
-      status TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('initializing','weaving','converged','timeout','cancelled','aborted','max_rounds_reached')),
       round INTEGER NOT NULL DEFAULT 0,
       fabric TEXT,
       max_rounds INTEGER NOT NULL,
@@ -73,12 +74,12 @@ export function initSchema(db) {
       name TEXT NOT NULL,
       persona TEXT NOT NULL,
       agenda TEXT NOT NULL,
-      tier TEXT NOT NULL,
+      tier TEXT NOT NULL CHECK(tier IN ('junior','mid','senior','principal','civilian')),
       provider_id TEXT,
       model_id TEXT,
       session_id TEXT,
       session_version INTEGER NOT NULL DEFAULT 1,
-      status TEXT NOT NULL DEFAULT 'listening',
+      status TEXT NOT NULL DEFAULT 'listening' CHECK(status IN ('listening','speaking','passed','failed','muted','summoned')),
       reflection TEXT NOT NULL DEFAULT '',
       known_biases TEXT,
       communication_style TEXT,

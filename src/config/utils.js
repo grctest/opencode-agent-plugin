@@ -2,6 +2,15 @@ import { statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+function applyBooleanToBuiltIn(targetObj, value) {
+  const clone = { ...targetObj };
+  for (const k of Object.keys(clone)) {
+    if (typeof clone[k] === 'boolean') clone[k] = value;
+    else if (clone[k] !== null && typeof clone[k] === 'object' && 'enabled' in clone[k]) clone[k] = { ...clone[k], enabled: value };
+  }
+  return clone;
+}
+
 export function deepMerge(target, source) {
   const result = { ...target };
   for (const key of Object.keys(source)) {
@@ -10,17 +19,20 @@ export function deepMerge(target, source) {
       typeof source[key] === 'boolean' &&
       target[key] !== null &&
       typeof target[key] === 'object' &&
-      !Array.isArray(target[key]) &&
-      'enabled' in target[key]
+      !Array.isArray(target[key])
     ) {
-      // Only agentTools family supports boolean shorthand (agentTools: false → {enabled:false})
       const isAgentToolsFamily = key === 'agentTools' || key === 'builtIn' || key === 'loom' || key === 'reflection' || key === 'bash';
       if (isAgentToolsFamily) {
-        result[key] = { ...target[key], enabled: source[key] };
+        if ('enabled' in target[key]) {
+          result[key] = { ...target[key], enabled: source[key] };
+        } else if (key === 'builtIn' || key === 'loom' || key === 'reflection') {
+          // builtIn: true/false shorthand — enable/disable all sub-tools
+          result[key] = applyBooleanToBuiltIn(target[key], source[key]);
+        } else {
+          result[key] = source[key];
+        }
         continue;
       }
-      // For other objects (circuitBreaker, composition, etc.) boolean is invalid — replace wholesale
-      // Validation will warn and restore default via validateNestedConfig if needed
       result[key] = source[key];
       continue;
     }

@@ -140,28 +140,14 @@ export class MeetingDatabase {
 
   async transaction(fn) {
     const spName = `loom_txn_${++this.#_txnSeq}`;
-    let usedSavepoint = false;
-    try {
-      this.#db.exec(`SAVEPOINT ${spName}`);
-      usedSavepoint = true;
-    } catch {
-      this.#db.exec('BEGIN IMMEDIATE');
-    }
+    this.#db.exec(`SAVEPOINT ${spName}`);
     try {
       const result = await fn(this.#db);
-      if (usedSavepoint) {
-        this.#db.exec(`RELEASE ${spName}`);
-      } else {
-        this.#db.exec('COMMIT');
-      }
+      this.#db.exec(`RELEASE ${spName}`);
       return result;
     } catch (err) {
-      if (usedSavepoint) {
-        try { this.#db.exec(`ROLLBACK TO ${spName}`); } catch {}
-        try { this.#db.exec(`RELEASE ${spName}`); } catch {}
-      } else {
-        try { this.#db.exec('ROLLBACK'); } catch {}
-      }
+      try { this.#db.exec(`ROLLBACK TO ${spName}`); } catch {}
+      try { this.#db.exec(`RELEASE ${spName}`); } catch {}
       throw err;
     }
   }

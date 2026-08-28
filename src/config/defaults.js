@@ -42,6 +42,7 @@ export const DEFAULT_CONFIG = {
   maxTotalTokens: 0,
   dashboard: { host: "127.0.0.1" },
   composition: { maxCosineDistance: 0.85 },
+  modelDiversity: true,
   tuning: TUNING,
   circuitBreaker: {
     failureThreshold: 3,
@@ -101,6 +102,7 @@ export const CONFIG_SCHEMA = {
   maxSummonsPerRound: { type: 'number', min: 0, max: 5 },
   maxSummonsPerAgent: { type: 'number', min: 0, max: 3 },
   synthesisMaxRetries: { type: 'number', min: 0, max: 5 },
+  modelDiversity: { type: 'boolean' },
 };
 
 export const NESTED_SCHEMA = {

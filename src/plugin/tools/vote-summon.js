@@ -56,8 +56,8 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
           const currentRound = stateManager.getCurrentRound();
           let roundObj = null;
           try { const st = stateManager.getState(); roundObj = (st.rounds || []).find(r => r.number === currentRound) || null; } catch {}
-          // Source contribution placeholder for vote context — use caller's current contribution or question
-          const sourceSnippet = caller?.currentContribution ?? args.question.slice(0,300);
+          // Source snippet for context only — not a vote (source does not ballot, only voters do)
+          const sourceSnippet = args.question.slice(0,300);
           // Voters = all other active participants excluding caller
           const voters = allParticipants.filter(p => (!caller || p.config.id !== caller.config.id) && p.status !== "failed" && p.status !== "passed" && p.status !== "muted");
           const extractVoteLetter = (text) => sharedVoteTally.extractVoteLetter(text);
@@ -73,7 +73,7 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
               });
               const { lines: tallyLines } = sharedVoteTally.buildTally({
                 question: args.question,
-                sourceLetter: extractVoteLetter(sourceSnippet),
+                sourceLetter: null,
                 sourceLabel: caller?.config?.name ?? "source",
                 responses: voteResponses,
               });
@@ -87,8 +87,8 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
             }
           } catch {}
           if (voters.length === 0) {
-            const tallyContent = `[Vote Tally] ${args.question}\nSource vote: ${sourceSnippet.slice(0,200)}\nTotal voters: 1 (source only)`;
-            const payload = { inline: true, question: args.question, tally: tallyContent.slice(0,800), votes: [], note: "Vote completed inline — source only (invoker interprets tally)." };
+            const tallyContent = `[Vote Tally] ${args.question}\nNo voters (source does not ballot)\nTotal voters: 0`;
+            const payload = { inline: true, question: args.question, tally: tallyContent.slice(0,800), votes: [], note: "Vote completed inline — source only (no voters, source does not ballot)." };
             return { output: JSON.stringify(payload), metadata: { inline: true }, title: "loom_vote:source only" };
           }
           // Parallel fan-out to voters
@@ -204,10 +204,10 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
               try { db.setParticipantStatus(voter.config.id, "listening"); } catch {}
             }
           }));
-          // Tally generation via shared builder — inline only (no persisted vote_tally row)
+          // Tally generation — source does not ballot, only voter responses counted
           const { lines: tallyLines } = sharedVoteTally.buildTally({
             question: args.question,
-            sourceLetter: extractVoteLetter(sourceSnippet),
+            sourceLetter: null,
             sourceLabel: caller?.config?.name ?? "source",
             responses: voteResponses,
           });

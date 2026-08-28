@@ -166,17 +166,14 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, ob
   }
 
   // Grounded synthesis check: every Decision line must cite at least one [#id] in weave.
-  // Skip lines inside fenced code blocks (they contain [#id] as example text, not citations).
+  // Skip lines inside fenced code blocks (track fence state, not just delimiter line).
   const weaveIds = new Set(weave.map((c) => String(c.id)));
-  const inCodeBlock = (fullText, lineText) => {
-    // Cheap: if the Decision section is wrapped in a code fence, skip verification for that section
-    // Otherwise check if line itself looks like code fence
-    if (/^```/.test(lineText.trim())) return true;
-    return false;
-  };
   const decisions = extractSection(finalOutput, "Decision");
+  let inFence = false;
   const ungrounded = decisions.filter((line) => {
-    if (inCodeBlock(finalOutput, line)) return false;
+    const trimmed = line.trim();
+    if (/^```/.test(trimmed)) { inFence = !inFence; return false; }
+    if (inFence) return false;
     const cites = [...line.matchAll(/\[#(\d+)\]/g)].map((m) => m[1]);
     return cites.length === 0 || cites.every((id) => !weaveIds.has(id));
   });

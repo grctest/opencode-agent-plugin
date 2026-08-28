@@ -528,8 +528,9 @@ export function startDashboard(directory, port) {
     port: server.port,
     hostname,
     stop: () => {
-      if (pollTimer) clearInterval(pollTimer);
-      if (pingTimer) clearInterval(pingTimer);
+      try { const cur = pollSystem.getPollTimer?.(); if (cur) clearInterval(cur); else if (pollTimer) clearInterval(pollTimer); } catch {}
+      try { if (pingTimer) clearInterval(pingTimer); } catch {}
+      try { pollSystem.stop?.(); } catch {}
       for (const clients of sseClients.values()) {
         for (const entry of clients) {
           try {

@@ -63,7 +63,7 @@ export function updateStateOfPlay(weave, question, tags) {
 
     if (hasFileMention(content)) {
       const fileMatch = content.match(/(?:file\s*=\s*)([^\s`'"]+\.\w+)/i) || content.match(/(src\/[^\s`'"]+\.\w+)/i) || content.match(/(^|[\s(])([\w-]+\.(?:tsx|ts|js|jsx|py|rs|go))\b/i);
-      const rawSnippet = fileMatch ? (fileMatch[1] || fileMatch[2]).slice(0, 80) : content.slice(0, 120);
+      const rawSnippet = fileMatch ? (fileMatch[2] ?? fileMatch[1]).slice(0, 80) : content.slice(0, 120);
       const fileSnippet = rawSnippet.toLowerCase().replace(/[,\)\.\]]+$/,'');
       filesInvolved.push(fileSnippet);
     }
@@ -134,12 +134,12 @@ function classifyContribution(type, content, mode = "") {
  * Uses word-boundary-aware matching to avoid substring false positives.
  */
 function classifyByKeywords(content) {
-  const withoutUrls = content.replace(/https?:\/\/\S+/g, "");
+  const withoutUrls = content.replace(/https?:\/\/\S+/g, "").replace(/`[^`]*`/g, "");
   const lower = withoutUrls.toLowerCase();
   if (/\bwe should\b/.test(lower) || /\bdecision\b/.test(lower)) return "decisions";
   if (/\bagree\b/.test(lower) || /\bconsensus\b/.test(lower)) return "agreements";
   if (/\bdisagree\b/.test(lower) || /\bconcern\b/.test(lower)) return "disagreements";
-  if (/\?/.test(withoutUrls)) return "openQuestions";
+  if (/\?\s*$/.test(withoutUrls.trim()) || /\?\s+[A-Z]/.test(withoutUrls)) return "openQuestions";
   return "keyFacts";
 }
 

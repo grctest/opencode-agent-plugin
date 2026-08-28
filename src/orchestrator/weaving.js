@@ -29,24 +29,28 @@ export async function runMeeting() {
     this._cancelled = false;
     this._stallWatchdog.reset();
     try { this._sessionManager?.clearOrchestratorSession?.(); } catch {}
-
-    await this._meetingExtender.extend({
-      database: this._database,
-      stateManager: this._stateManager,
-      sessionManager: this._sessionManager,
-      newPrompt,
-    });
-    // Also index the extension prompt itself for RAG (otherwise next round's retrieve misses it)
-    try {
-      const { sanitizeForPrompt } = await import("../utils/sanitize.js");
-      const safe = sanitizeForPrompt(newPrompt ?? "", 8000);
-      if (safe) await this._vectorIndex.indexContext(safe).catch(()=>{});
-    } catch {}
-    // Ensure watchdog is (re)started even if extend threw — finally guarantees stop/start symmetry
+    // Start watchdog BEFORE extend so stall is detected even if extend hangs; extend itself is short DB work
     this._stallWatchdog.start(
       () => this._stateManager.getStatus(),
       () => this._cancelled,
     );
+    try {
+      await this._meetingExtender.extend({
+        database: this._database,
+        stateManager: this._stateManager,
+        sessionManager: this._sessionManager,
+        newPrompt,
+      });
+      // Also index the extension prompt itself for RAG (otherwise next round's retrieve misses it)
+      try {
+        const { sanitizeForPrompt } = await import("../utils/sanitize.js");
+        const safe = sanitizeForPrompt(newPrompt ?? "", 8000);
+        if (safe) await this._vectorIndex.indexContext(safe).catch(()=>{});
+      } catch {}
+    } catch (e) {
+      // Extend failed — keep watchdog running for loop, but surface error
+      throw e;
+    }
     let output;
     try {
       await this._runWeavingLoop();

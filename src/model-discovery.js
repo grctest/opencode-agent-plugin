@@ -162,9 +162,32 @@ function formatCost(assignment, available) {
 
 /** Creates a complete model plan: assigns models to each role and designates the orchestrator. */
 export function createModelPlan(available, roles, sessionModel) {
-  const defaultRoles = ["junior", "mid", "senior", "principal"];
-  const participants = assignModelsByTier(available, sessionModel, roles ?? defaultRoles);
-  const orchestrator = participants.find((p) => p.tier === "mid") || participants[0];
+  const defaultRoles = ["junior", "mid", "senior", "principal", "civilian"];
+  let participants = assignModelsByTier(available, sessionModel, roles ?? defaultRoles);
+  // Mirror runtime diversity: when enough unique models, each agent gets distinct model (best to highest tier)
+  try {
+    const uniqueTiers = new Set((roles ?? defaultRoles).map((r) => r));
+    if (available.length > uniqueTiers.size) {
+      const sorted = sortModelsByQuality(available);
+      const tierOrder = { principal: 0, senior: 1, mid: 2, civilian: 2, junior: 3 };
+      participants = [...participants].sort((a, b) => (tierOrder[a.tier] ?? 9) - (tierOrder[b.tier] ?? 9));
+      const used = new Set();
+      for (let i = 0; i < participants.length; i++) {
+        for (let j = 0; j < sorted.length; j++) {
+          const key = `${sorted[j].providerID}/${sorted[j].modelID}`;
+          if (!used.has(key)) {
+            used.add(key);
+            participants[i] = { ...participants[i], providerID: sorted[j].providerID, modelID: sorted[j].modelID, modelName: sorted[j].name };
+            break;
+          }
+        }
+      }
+    }
+  } catch {}
+  // Orchestrator is highest-tier model (matches getHighestTierModel), not mid
+  const tierOrder = { principal: 0, senior: 1, mid: 2, civilian: 2, junior: 3 };
+  const sortedByTier = [...participants].sort((a, b) => (tierOrder[a.tier] ?? 9) - (tierOrder[b.tier] ?? 9));
+  const orchestrator = sortedByTier[0] ?? participants[0];
   return { orchestrator, participants, available };
 }
 

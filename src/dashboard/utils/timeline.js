@@ -41,10 +41,12 @@ export function buildFlatItems(groupedContributions, opts) {
 
   const out = [];
 
-  // Extra rounds per extension derived same as MeetingExtender#deriveExtraRounds
+  // Extra rounds per extension — must match MeetingExtender#deriveExtraRounds (4 fallback, else ceil(cfg/2) clamped 2-6)
+  // Use same derivation as meeting-extender (importing getConfig would couple dashboard to node fs, so duplicate the 3-line formula)
   const extraPerExtension = (() => {
     try {
-      const cfg = globalThis.__loomConfig?.defaultMaxRounds;
+      // Prefer explicit global injected by dashboard server, else fallback
+      const cfg = (typeof window !== "undefined" && window.__loomConfig?.defaultMaxRounds) ?? globalThis.__loomConfig?.defaultMaxRounds;
       if (Number.isFinite(cfg)) return Math.max(2, Math.min(6, Math.ceil(cfg / 2)));
     } catch {}
     return 4;

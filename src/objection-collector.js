@@ -13,7 +13,7 @@ export function collectObjections({ rounds, participants }) {
 
   const objections = [];
   for (const round of rounds) {
-    const challenges = round.contributions.filter((c) => c.type === "critique_response" || c.type === "perspective_response" || c.type === "challenge" || c.type === "dissent" || c.type === "reflection");
+    const challenges = round.contributions.filter((c) => c.type === "critique_response" || c.type === "dissent" || c.type === "challenge");
     for (const c of challenges) {
       const p = participants.find((pp) => pp.config.id === c.participant_id);
       const key = `${c.id}`;

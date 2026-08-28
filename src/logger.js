@@ -107,9 +107,12 @@ export class Logger {
     if (!details || typeof details !== "object") return details;
     try {
       const str = JSON.stringify(details);
-      if (/authorization|api_key|apikey|bearer|token\s*[:=]/i.test(str)) {
-        const redacted = JSON.parse(str.replace(/(authorization|api_key|apikey|bearer|token)(\s*[:=]\s*)[^",\s}]+/gi, `$1$2[REDACTED]`));
-        return redacted;
+      if (/authorization|api[_-]?key|bearer|token/i.test(str)) {
+        const redactedStr = str.replace(/(authorization|api[_-]?key|bearer|token)(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,}\]]+)/gi, (m, k, sep, val) => {
+          const isQuoted = val.startsWith('"') || val.startsWith("'");
+          return `${k}${sep}${isQuoted ? '"[REDACTED]"' : '[REDACTED]'}`;
+        });
+        return JSON.parse(redactedStr);
       }
     } catch {}
     return details;

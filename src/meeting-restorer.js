@@ -89,6 +89,9 @@ export function restoreStateFromDb({ db, stateManager, meetingId, options }) {
       type: c.type,
       round: c.round,
       targets_which: c.targets_which ?? null,
+      batch_id: c.batch_id ?? null,
+      tool_calls: c.tool_calls ?? null,
+      prompt_context: c.prompt_context ?? null,
       created_at: c.created_at,
     })),
     next_contribution_id: Math.max(db.getMaxContributionId() ?? 0, ...contributions.map(c=>c.id ?? 0), 0) + 1,
@@ -108,6 +111,9 @@ export function restoreStateFromDb({ db, stateManager, meetingId, options }) {
       type: c.type,
       round: c.round,
       targets_which: c.targets_which ?? null,
+      batch_id: c.batch_id ?? null,
+      tool_calls: c.tool_calls ?? null,
+      prompt_context: c.prompt_context ?? null,
       created_at: c.created_at,
     });
   }

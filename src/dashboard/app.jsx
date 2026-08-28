@@ -55,9 +55,13 @@ function useSSE(meetingId, onEvent) {
               onEventRef.current({ type: "contributions", data: arr, timestamp });
             }
           }
-          const [sRes, pRes] = await Promise.all([
+          const [sRes, pRes, trRes, errRes, omRes, artRes] = await Promise.all([
             fetch(`/api/state?meeting=${meetingId}`, { signal: controller.signal }),
             fetch(`/api/participants?meeting=${meetingId}`, { signal: controller.signal }),
+            fetch(`/api/turn_requests?meeting=${meetingId}`, { signal: controller.signal }),
+            fetch(`/api/agent_errors?meeting=${meetingId}`, { signal: controller.signal }),
+            fetch(`/api/orchestrator_messages?meeting=${meetingId}`, { signal: controller.signal }),
+            fetch(`/api/artifact?meeting=${meetingId}`, { signal: controller.signal }),
           ]);
           if (sRes.ok) {
             const sData = await sRes.json();
@@ -66,6 +70,23 @@ function useSSE(meetingId, onEvent) {
           if (pRes.ok) {
             const pData = await pRes.json();
             onEventRef.current({ type: "participants", data: pData, timestamp });
+          }
+          if (trRes.ok) {
+            const trData = await trRes.json();
+            if (Array.isArray(trData) && trData.length > 0) onEventRef.current({ type: "turn_requests", data: trData, timestamp });
+          }
+          if (errRes.ok) {
+            const eData = await errRes.json();
+            if (Array.isArray(eData)) for (const e of eData) onEventRef.current({ type: "agent_error", data: e, timestamp });
+          }
+          if (omRes.ok) {
+            const omData = await omRes.json();
+            const msgs = omData.messages ?? omData;
+            if (Array.isArray(msgs) && msgs.length > 0) onEventRef.current({ type: "orchestrator_messages", data: msgs, timestamp });
+          }
+          if (artRes.ok) {
+            const aData = await artRes.json();
+            if (aData) onEventRef.current({ type: "artifact", data: aData, timestamp });
           }
         } catch (err) {
           if (err.name !== "AbortError") {
@@ -90,6 +111,7 @@ function useSSE(meetingId, onEvent) {
       esRef.current = es;
       es.onopen = () => {
         if (cancelled) return;
+        window.dispatchEvent(new CustomEvent("loom-sse-reset", { detail: { meetingId } }));
         fetch(`/api/contributions?meeting=${meetingId}&since=${lastPollIdRef.current}&include_context=0`).then(async (r) => {
           if (r.ok) {
             const data = await r.json().catch(() => null);

@@ -32,10 +32,11 @@ function generateRolesFromComplexity(count, complexity) {
   if (count <= 3) {
     const base = ["mid", "civilian", "junior"];
     const boosted = applySeniorityBoost(base, seniorityBoost);
-    // Avoid duplicate junior after downgrade
     if (boosted[0] === boosted[2]) boosted[0] = "mid";
     return boosted;
-  } else if (count <= 5) {
+  } else if (count === 4) {
+    return applySeniorityBoost(["senior", "mid", "civilian", "junior"], seniorityBoost);
+  } else if (count === 5) {
     return applySeniorityBoost(["senior", "mid", "civilian", "junior", "junior"], seniorityBoost);
   } else {
     return applySeniorityBoost(["senior", "mid", "mid", "civilian", "junior", "junior", "junior"], seniorityBoost);

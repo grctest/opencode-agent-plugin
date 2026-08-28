@@ -97,4 +97,21 @@ export function applyEnvOverrides(merged, warnings) {
       merged[key] = raw;
     }
   }
+  for (const [path, schema] of Object.entries(NESTED_SCHEMA)) {
+    const envName = 'LOOM_' + path.replace(/\./g, '_').replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase();
+    const raw = process.env[envName];
+    if (raw === undefined || raw === '') continue;
+    if (schema.type === 'number') {
+      const parsed = Number(raw);
+      if (!Number.isFinite(parsed)) {
+        warnings.push(`Env ${envName}="${raw}" is not a number — ignored.`);
+        continue;
+      }
+      setNestedValue(merged, path, parsed);
+    } else if (schema.type === 'boolean') {
+      setNestedValue(merged, path, raw === '1' || raw.toLowerCase() === 'true');
+    } else {
+      setNestedValue(merged, path, raw);
+    }
+  }
 }
