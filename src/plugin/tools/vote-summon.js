@@ -249,6 +249,28 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
             if (m) { found = { ...m, tier }; break; }
           }
           if (!found) return { output: JSON.stringify({ error: `Persona "${args.persona_name}" not found` }), metadata: { error: true }, title: "loom_summon error" };
+          // Enforce summon caps from config (were dead theater before)
+          try {
+            const maxPerRound = config.getValue ? (config.getValue("maxSummonsPerRound") ?? config.getValue("tuning")?.MAX_SUMMONS_PER_ROUND ?? 2) : 2;
+            const maxPerAgent = config.getValue ? (config.getValue("maxSummonsPerAgent") ?? config.getValue("tuning")?.MAX_SUMMONS_PER_AGENT ?? 1) : 1;
+            // Support both flat and nested config shapes
+            const cfgMaxRound = (typeof maxPerRound === "number" ? maxPerRound : (config.get?.()?.maxSummonsPerRound ?? 2));
+            const cfgMaxAgent = (typeof maxPerAgent === "number" ? maxPerAgent : (config.get?.()?.maxSummonsPerAgent ?? 1));
+            const curRound = (() => { try { return engine.getStateManager().getCurrentRound(); } catch { return 0; }})();
+            const weaveForCap = (() => { try { return engine.getStateManager().getWeave() ?? []; } catch { return []; }})();
+            const roundSummons = weaveForCap.filter(c => c.type === "summoned_response" && c.round === curRound).length;
+            if (roundSummons >= cfgMaxRound) {
+              return { output: JSON.stringify({ error: `Summon limit reached for round ${curRound} (${cfgMaxRound} per round) — try next round` }), metadata: { error: true }, title: "loom_summon error" };
+            }
+            let summonCallerForCap = null;
+            try { summonCallerForCap = engine.getStateManager().getParticipants().find(p => p.session_id === context.sessionID) || engine.getStateManager().getParticipants().find(p => p?.status === "speaking") || null; } catch {}
+            if (summonCallerForCap) {
+              const agentSummons = weaveForCap.filter(c => c.type === "summoned_response" && c.round === curRound && c.prompt_context?.source_participant_id === summonCallerForCap.config.id).length;
+              if (agentSummons >= cfgMaxAgent) {
+                return { output: JSON.stringify({ error: `Summon limit reached for you this round (${cfgMaxAgent} per agent per round)` }), metadata: { error: true }, title: "loom_summon error" };
+              }
+            }
+          } catch {}
           // For summon, we do inline prompt of the guest and return its content for immediate synthesis.
           const stateManager = engine.getStateManager();
           const sessionManager = engine.getSessionManager();

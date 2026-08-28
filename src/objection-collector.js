@@ -13,7 +13,7 @@ export function collectObjections({ rounds, participants }) {
 
   const objections = [];
   for (const round of rounds) {
-    const challenges = round.contributions.filter((c) => c.type === "challenge" || c.type === "dissent");
+    const challenges = round.contributions.filter((c) => c.type === "critique_response" || c.type === "perspective_response" || c.type === "challenge" || c.type === "dissent" || c.type === "reflection");
     for (const c of challenges) {
       const p = participants.find((pp) => pp.config.id === c.participant_id);
       const key = `${c.id}`;
@@ -35,9 +35,13 @@ export function collectObjections({ rounds, participants }) {
 
   const lastRound = rounds[rounds.length - 1];
   const finalRoundHasActivity = lastRound.contributions.length > 0;
+  // Only resolve if final round actually addresses the dissent (keyword overlap), not just any activity
+  const finalTexts = lastRound.contributions.map((c) => (c.content || "").toLowerCase()).join(" ");
   for (const o of objections) {
     if (o.round < lastRound.number && finalRoundHasActivity) {
-      o.unresolved = false;
+      const kw = o.content.toLowerCase().split(/\W+/).filter((w) => w.length > 4).slice(0, 5);
+      const addressed = kw.length === 0 || kw.some((k) => finalTexts.includes(k));
+      if (addressed) o.unresolved = false;
     }
   }
   return objections;

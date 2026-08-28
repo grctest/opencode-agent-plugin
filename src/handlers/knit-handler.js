@@ -201,9 +201,12 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
           composedRoom = await composeRoomWithSimilarity(sanitizedQuestion, db);
           participants = composedRoom.participants;
           if (!participants || participants.length === 0) {
-            composedRoom = { participants: [], tags: [], estimated_rounds: 2, reasoning: "No relevant personas — fallback to empty room" };
-            participants = [];
-            logger.warn("empty_room", "No personas matched sanitized question — returning empty room preview");
+            try { db.close(); } catch {}
+            return {
+              title: "Loom Error",
+              output: "Could not compose a relevant room — no personas matched your question. Try rephrasing with more specific context or use custom participants.",
+              metadata: { loom_id: loomId, loom_status: "error", error: "empty room" },
+            };
           }
           try {
             const { isEmbedderInitialized, getEmbeddingDim } = await import("../services/embedding-service.js");
@@ -243,6 +246,14 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
           composedRoom = { participants: [], tags: [], estimated_rounds: 2, reasoning: "Fallback composition" };
         }
       }
+    }
+
+    if (!participants || participants.length === 0) {
+      return {
+        title: "Loom Error",
+        output: "Could not compose a relevant room — no personas matched your question. Try rephrasing with more specific context or use custom participants.",
+        metadata: { loom_id: loomId, loom_status: "error", error: "empty room" },
+      };
     }
 
     if (available.length > 0 && participants.length > 0 && participants.some((p) => !p.model)) {

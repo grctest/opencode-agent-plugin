@@ -24,7 +24,7 @@ export const ContributionTypeSchema = z.enum([
 // Agent response parsed from LLM output — peer-interaction fields are now always null (real tool use only)
 export const AgentResponseSchema = z.object({
   participant_id: z.string(),
-  content: z.string().max(5000),
+  content: z.string().max(20000),
   type: ContributionTypeSchema,
   request_next: z.object({
     priority: z.number().int().min(1).max(10),

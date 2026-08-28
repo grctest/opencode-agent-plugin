@@ -1,23 +1,29 @@
 import { Logger, extractErrorInfo } from "./logger.js";
 import { isPassContribution } from "./utils/contribution-types.js";
 
-// Compat: bracket directives (PROPOSE/CHALLENGE etc.) were removed from the live protocol
-// (all peer interactions now use loom_* tools). These regexes remain only for stored
-// data from older meetings — defensive strip so old rows don't pollute state-of-play.
 const TAG_STRIP_RE = /^\[(?:PROPOSE|CHALLENGE|REFINE|SUPPORT|DISSENT|SYNTHESIZE|QUESTION|REFUSE)\]\s*/i;
 const REQUEST_NEXT_RE = /^\[REQUEST_NEXT:[^\]]*\]\s*/gim;
-const QUERY_TAG_RE = /\[QUERY:\s*[^\]]*\]\s*/gi;
-const EVIDENCE_TAG_RE = /\[EVIDENCE:\s*[^\]]*\]\s*/gi;
-const SUMMON_TAG_RE = /\[SUMMON:\s*[^\]]*\]\s*/gi;
+// Live prefixes emitted by loom_* tools (store as indented rows, but strip for SoP compactness)
+const LIVE_PREFIX_RES = [
+  /^\[Response to query from .+?\]\s*/gim,
+  /^\[Evidence from .+? on .+?\]\s*/gim,
+  /^\[Critique from .+?\]\s*/gim,
+  /^\[Risk analysis by .+?\]\s*/gim,
+  /^\[Assumptions surfaced by .+?\]\s*/gim,
+  /^\[Alternatives proposed by .+?\]\s*/gim,
+  /^\[Summoned: .+?\] ?/gim,
+  /^\[Vote from .+?\]\s*/gim,
+  /^\[Reflection on .+?\]\s*/gim,
+];
 
 function cleanContent(content) {
-  return content
+  let out = content
     .replace(TAG_STRIP_RE, "")
-    .replace(REQUEST_NEXT_RE, "")
-    .replace(QUERY_TAG_RE, "")
-    .replace(EVIDENCE_TAG_RE, "")
-    .replace(SUMMON_TAG_RE, "")
-    .trim();
+    .replace(REQUEST_NEXT_RE, "");
+  for (const re of LIVE_PREFIX_RES) out = out.replace(re, "");
+  // Also strip legacy generic [QUERY:/[EVIDENCE:/[SUMMON: for old rows
+  out = out.replace(/^\[(?:QUERY|EVIDENCE|SUMMON):[^\]]*\]\s*/gi, "");
+  return out.trim();
 }
 
 /**
@@ -94,17 +100,9 @@ function classifyContribution(type, content, mode = "") {
   switch (type) {
     case "contribution":
       return classifyByKeywords(content);
-    case "propose":
-    case "refine":
-      return "decisions";
-    case "support":
-      return "agreements";
-    case "challenge":
-    case "dissent":
     case "critique_response":
-      return "disagreements";
-    case "question":
-      return "openQuestions";
+    case "perspective_response":
+      return type === "perspective_response" ? "keyFacts" : "disagreements";
     case "query_response":
       if (mode === "risks" || mode === "assumptions") return "openQuestions";
       return "keyFacts";
@@ -116,6 +114,14 @@ function classifyContribution(type, content, mode = "") {
     case "refuse":
     case "pass":
       return null;
+    // Legacy typed contributions no longer emitted; route to keyword fallback
+    case "propose":
+    case "refine":
+    case "support":
+    case "challenge":
+    case "dissent":
+    case "question":
+      return classifyByKeywords(content);
     case "reflection":
       return "keyFacts";
     default:
@@ -231,7 +237,7 @@ export function formatFinalRoundTranscript(data, participants) {
   for (let i = 0; i < data.rounds.length - 1; i++) {
     const r = data.rounds[i];
     const summary = (r.summary || (r.contributions[0]?.content ?? "")).slice(0, 120).replace(/\n/g, " ");
-    const contested = (r.contributions.find((c) => c.type === "challenge" || c.type === "dissent")?.content ?? "").slice(0, 120).replace(/\n/g, " ");
+    const contested = (r.contributions.find((c) => c.type === "critique_response" || c.type === "perspective_response" || c.type === "challenge" || c.type === "dissent")?.content ?? "").slice(0, 120).replace(/\n/g, " ");
     lines.push(`### Round ${r.number} (digest)`);
     if (summary) lines.push(`Summary: ${summary}`);
     if (contested) lines.push(`Contested: ${contested}`);

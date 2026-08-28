@@ -175,7 +175,8 @@ export class MeetingOrchestrator {
 
   cancel() {
     this._cancelled = true;
-    this._logger.info("cancellation", "Loom cancelled by user");
+    try { this._roundExecutor?._abortInflight?.(); } catch {}
+    this._logger.info("cancellation", "Loom cancelled by user — aborting in-flight turn");
   }
 
     async close() {

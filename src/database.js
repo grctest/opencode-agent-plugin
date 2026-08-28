@@ -91,30 +91,36 @@ export class MeetingDatabase {
     const existedBefore = existsSync(dbPath);
     mkdirSync(dirname(dbPath), { recursive: true });
     const DatabaseClass = getDatabaseClass();
-    const db = new DatabaseClass(dbPath);
-    this.#db = db;
-    this.#db.exec("PRAGMA foreign_keys = ON");
-    this.#db.exec("PRAGMA busy_timeout = 5000");
-    const jm = this.#db.prepare("PRAGMA journal_mode = WAL").get();
-    if (jm?.journal_mode !== "wal") dbLogger.warn("pragma_journal_mode_fallback", `journal_mode WAL not achieved (got ${jm?.journal_mode ?? "unknown"}) — concurrency reduced`, { journal_mode: jm?.journal_mode });
-    this.#db.exec("PRAGMA synchronous = NORMAL");
-    this.#db.exec("PRAGMA wal_autocheckpoint = 1000");
-    const vecPath = resolveVecPath();
-    if (vecPath && existsSync(vecPath)) {
-      try {
-        this.#db.loadExtension(vecPath);
-      } catch (err) {
-        dbLogger.warn("sqlite_vec_load_error", "Failed to load sqlite-vec extension", extractErrorInfo(err));
+    let db;
+    try {
+      db = new DatabaseClass(dbPath);
+      this.#db = db;
+      this.#db.exec("PRAGMA foreign_keys = ON");
+      this.#db.exec("PRAGMA busy_timeout = 5000");
+      const jm = this.#db.prepare("PRAGMA journal_mode = WAL").get();
+      if (jm?.journal_mode !== "wal") dbLogger.warn("pragma_journal_mode_fallback", `journal_mode WAL not achieved (got ${jm?.journal_mode ?? "unknown"}) — concurrency reduced`, { journal_mode: jm?.journal_mode });
+      this.#db.exec("PRAGMA synchronous = NORMAL");
+      this.#db.exec("PRAGMA wal_autocheckpoint = 1000");
+      const vecPath = resolveVecPath();
+      if (vecPath && existsSync(vecPath)) {
+        try {
+          this.#db.loadExtension(vecPath);
+        } catch (err) {
+          dbLogger.warn("sqlite_vec_load_error", "Failed to load sqlite-vec extension", extractErrorInfo(err));
+        }
+      } else {
+        if (!vecPath) {
+          dbLogger.warn("sqlite_vec_not_found", "sqlite-vec extension not found — vector search degraded to keyword fallback", { searched: 'no candidate found', candidates: 'sqlite-vec-*' });
+        }
       }
-    } else {
-      if (!vecPath) {
-        dbLogger.warn("sqlite_vec_not_found", "sqlite-vec extension not found — vector search degraded to keyword fallback", { searched: 'no candidate found', candidates: 'sqlite-vec-*' });
-      }
+      initSchema(this.#db);
+      runMigrations(this.#db, { logger: dbLogger });
+      initVectorTable(this.#db);
+    } catch (err) {
+      try { db?.close?.(); } catch {}
+      try { this.#db?.close?.(); } catch {}
+      throw err;
     }
-    initSchema(this.#db);
-    // Migrations must succeed or the DB is unusable — busy_timeout already retries 5s; on failure throw (no warn+continue)
-    runMigrations(this.#db, { logger: dbLogger });
-    initVectorTable(this.#db);
     const shouldMaintain = existedBefore || process.env.LOOM_INTEGRITY_CHECK === '1'
       ? maintenanceDue(this.#db)
       : false;

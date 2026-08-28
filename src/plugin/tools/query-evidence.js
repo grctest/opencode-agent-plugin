@@ -89,15 +89,15 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
           const sourceName = caller?.config?.name ?? "Unknown";
 
           const results = [...skipped];
-          // Precompute batch for idempotency (same for all queries in this call)
+          const fallbackForCheck = `inline-${stateManager.getState?.()?.id ?? meetingInfo.meetingId}-${stateManager.getCurrentRound?.() ?? 0}-${caller?.config?.id ?? "unknown"}`;
           const batchIdForCheck = (() => {
             try {
               const allParts = stateManager.getParticipants();
               let cfb = allParts.find(p => p.session_id === context.sessionID) || null;
               if (!cfb) cfb = allParts.find(p => p?.status === "speaking") || null;
               if (!cfb) cfb = caller;
-              return cfb?.currentBatchId ?? null;
-            } catch { return null; }
+              return cfb?.currentBatchId ?? fallbackForCheck;
+            } catch { return fallbackForCheck; }
           })();
           for (const { participant: target, question, mode } of resolved) {
             const meta = QUERY_MODES[mode];

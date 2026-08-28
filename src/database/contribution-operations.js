@@ -3,9 +3,10 @@ import { isoNow, safeParseJsonArray } from "./connection.js";
 
 const dbLogger = new Logger();
 
+function qq(db, sql) { return db.query ? db.query(sql) : db.prepare(sql); }
+
 export function addContribution(db, meetingId, contribution, getRoundFn) {
-  db
-    .prepare(
+  qq(db,
       `INSERT INTO contributions (meeting_id, participant_id, round, type, content, target_which, batch_id, tool_calls, prompt_context, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
@@ -32,8 +33,7 @@ function safeJsonParse(val, fallback = null) {
 }
 
 export function getContributions(db, meetingId) {
-  const rows = db
-    .prepare(
+  const rows = qq(db,
       `SELECT id, participant_id, round, type, content, target_which, batch_id, tool_calls, prompt_context, created_at
          FROM contributions WHERE meeting_id = ? ORDER BY id ASC`,
     )
@@ -53,8 +53,7 @@ export function getContributions(db, meetingId) {
 }
 
 export function getRecentContributions(db, meetingId, count) {
-  const rows = db
-    .prepare(
+  const rows = qq(db,
       `SELECT id, participant_id, round, type, content, target_which, batch_id, tool_calls, prompt_context, created_at
          FROM contributions WHERE meeting_id = ? ORDER BY id DESC LIMIT ?`,
     )
@@ -74,15 +73,13 @@ export function getRecentContributions(db, meetingId, count) {
 }
 
 export function getContributionContext(db, contributionId) {
-  const row = db
-    .prepare(`SELECT prompt_context FROM contributions WHERE id = ?`)
+  const row = qq(db,`SELECT prompt_context FROM contributions WHERE id = ?`)
     .get(contributionId);
   return safeJsonParse(row?.prompt_context, null);
 }
 
 export function addTurnRequest(db, meetingId, turnRequest) {
-  db
-    .prepare(
+  qq(db,
       `INSERT INTO turn_requests (meeting_id, participant_id, target_participant_id, round, content, priority, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
     )
@@ -99,8 +96,7 @@ export function addTurnRequest(db, meetingId, turnRequest) {
 
 export function ensureParticipantRow(db, meetingId, participantId, name = participantId, tier = "mid") {
   try {
-    const result = db
-      .prepare(
+    const result = qq(db,
         `INSERT OR IGNORE INTO participants (id, meeting_id, name, persona, agenda, tier, status)
            VALUES (?, ?, ?, ?, ?, ?, 'summoned')`,
       )
@@ -116,19 +112,18 @@ export function addContributionWithTurnRequest(db, meetingId, contribution, turn
   db.exec('BEGIN IMMEDIATE');
 
   try {
-    const exists = db.prepare(`SELECT 1 FROM participants WHERE id = ? AND meeting_id = ?`).get(contribution.participant_id, meetingId);
+    const exists = qq(db,`SELECT 1 FROM participants WHERE id = ? AND meeting_id = ?`).get(contribution.participant_id, meetingId);
     if (!exists) {
       dbLogger.warn("orphan_contribution", `Contribution participant_id ${contribution.participant_id} not in participants for meeting ${meetingId}`);
     }
     if (turnRequest?.target_participant_id) {
-      const targetExists = db.prepare(`SELECT 1 FROM participants WHERE id = ? AND meeting_id = ?`).get(turnRequest.target_participant_id, meetingId);
+      const targetExists = qq(db,`SELECT 1 FROM participants WHERE id = ? AND meeting_id = ?`).get(turnRequest.target_participant_id, meetingId);
       if (!targetExists) {
         dbLogger.warn("orphan_turn_request", `Turn request target ${turnRequest.target_participant_id} not in participants for meeting ${meetingId}`);
       }
     }
 
-    db
-      .prepare(
+    qq(db,
         `INSERT INTO contributions (meeting_id, participant_id, round, type, content, target_which, batch_id, tool_calls, prompt_context, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )

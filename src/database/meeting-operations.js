@@ -44,7 +44,7 @@ export function initializeMeeting(db, meetingId, input) {
       input.question,
       input.context ?? "",
       "initializing",
-      input.context ?? "",
+      input.fabric ?? input.context ?? "",
       input.maxRounds,
       input.convergence ?? "moderator_forces",
       JSON.stringify(input.tags ?? []),

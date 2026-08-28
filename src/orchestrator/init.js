@@ -63,13 +63,11 @@ export async function initialize() {
         this._logger.info("meeting_upserted", "Meeting row ensured in database");
       }
 
-      // Ensure a real embedder is loaded in this process. Init normally happens
-      // once at plugin startup; this is a backstop for resumed/standalone meetings
-      // and surfaces degraded semantic features loudly rather than silently.
+      // Ensure a real embedder is loaded; guard with 5s timeout so init never hangs indefinitely (init runs outside stall watchdog)
       try {
         const { ensureEmbedderInitialized, getEmbeddingDim } = await import("../services/embedding-service.js");
         const modelName = this._options.embedding_model ?? getConfig().embeddingModel ?? null;
-        await ensureEmbedderInitialized(modelName, getConfig().embeddingQuant);
+        await this._raceWithGuardTimer(ensureEmbedderInitialized(modelName, getConfig().embeddingQuant), 5000, "embedderInit");
         if (modelName) {
           this._logger.info("embedder_initialized", `Embedding model loaded: ${modelName} (${getEmbeddingDim()}d)`);
         }
