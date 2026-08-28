@@ -167,72 +167,81 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
           metadata: { loom_id: loomId, loom_status: "error", error: "question too short" },
         };
       }
-      meetingId = crypto.randomUUID();
-      const dbPath = getMeetingDbPath(directory, meetingId);
-      const sanitizedContext = args.context ? sanitizeForPrompt(args.context, 8000) : 'No additional context provided.';
-      const maxRounds = args.max_rounds ?? getConfig().defaultMaxRounds;
-      // Single DB handle for entire compose path — avoid WAL busy races (audit Phase 1)
-      const db = await MeetingDatabase.create(dbPath, meetingId);
-      let composeSucceeded = false;
-      try {
-        db.initializeMeeting({
-          question: sanitizedQuestion,
-          context: sanitizedContext,
-          maxRounds,
-          tags: [],
-          parentSessionId: sessionID,
-          opencodeSessionId: sessionID,
-          embedding_model: null,
-          embedding_dim: null,
-          participants: [],
-        });
-        composedRoom = await composeRoomWithSimilarity(sanitizedQuestion, db);
-        participants = composedRoom.participants;
-        if (!participants || participants.length === 0) {
-          composedRoom = { participants: [], tags: [], estimated_rounds: 2, reasoning: "No relevant personas — fallback to empty room" };
-          participants = [];
-          logger.warn("empty_room", "No personas matched sanitized question — returning empty room preview");
-        }
-        // Resolve embedding model from config (not hardcoded default)
+      // Dry run must not touch DB — compose without side effects
+      if (args.dry_run) {
         try {
-          const { isEmbedderInitialized, getEmbeddingDim } = await import("../services/embedding-service.js");
-          const cfg = getConfig();
-          const resolvedModel = cfg.embeddingModel ?? (await import("../services/model-manager.js")).DEFAULT_EMBEDDING_MODEL;
-          if (isEmbedderInitialized()) {
-            const dim = getEmbeddingDim();
-            db.upsertMeeting({
-              question: sanitizedQuestion,
-              context: sanitizedContext,
-              maxRounds,
-              tags: composedRoom.tags ?? [],
-              parentSessionId: sessionID,
-              opencodeSessionId: sessionID,
-              embedding_model: resolvedModel,
-              embedding_dim: dim,
-              participants: [],
-            });
-          }
-        } catch {}
-        participants = participants.map((p) =>
-          p.model ? p : { ...p, model: modelMap.get(p.tier) ?? undefined }
-        );
-        if (available.length > 0) {
+          composedRoom = await composeRoomWithSimilarity(sanitizedQuestion, null);
+        } catch {
+          composedRoom = { participants: [], tags: [], estimated_rounds: 2, reasoning: "Dry-run composition" };
+        }
+        participants = composedRoom.participants ?? [];
+        participants = participants.map((p) => p.model ? p : { ...p, model: modelMap.get(p.tier) ?? undefined });
+        if (available.length > 0 && participants.length > 0) {
           participants = assignModelsToParticipants(participants, available, sessionModel);
         }
-        if (participants.length > 0) {
-          db.insertParticipants(participants);
+      } else {
+        meetingId = crypto.randomUUID();
+        const dbPath = getMeetingDbPath(directory, meetingId);
+        const sanitizedContext = args.context ? sanitizeForPrompt(args.context, 8000) : 'No additional context provided.';
+        const maxRounds = args.max_rounds ?? getConfig().defaultMaxRounds;
+        const db = await MeetingDatabase.create(dbPath, meetingId);
+        let composeSucceeded = false;
+        try {
+          db.initializeMeeting({
+            question: sanitizedQuestion,
+            context: sanitizedContext,
+            maxRounds,
+            tags: [],
+            parentSessionId: sessionID,
+            opencodeSessionId: sessionID,
+            embedding_model: null,
+            embedding_dim: null,
+            participants: [],
+          });
+          composedRoom = await composeRoomWithSimilarity(sanitizedQuestion, db);
+          participants = composedRoom.participants;
+          if (!participants || participants.length === 0) {
+            composedRoom = { participants: [], tags: [], estimated_rounds: 2, reasoning: "No relevant personas — fallback to empty room" };
+            participants = [];
+            logger.warn("empty_room", "No personas matched sanitized question — returning empty room preview");
+          }
+          try {
+            const { isEmbedderInitialized, getEmbeddingDim } = await import("../services/embedding-service.js");
+            const cfg = getConfig();
+            const resolvedModel = cfg.embeddingModel ?? (await import("../services/model-manager.js")).DEFAULT_EMBEDDING_MODEL;
+            if (isEmbedderInitialized()) {
+              const dim = getEmbeddingDim();
+              db.upsertMeeting({
+                question: sanitizedQuestion,
+                context: sanitizedContext,
+                maxRounds,
+                tags: composedRoom.tags ?? [],
+                parentSessionId: sessionID,
+                opencodeSessionId: sessionID,
+                embedding_model: resolvedModel,
+                embedding_dim: dim,
+                participants: [],
+              });
+            }
+          } catch {}
+          participants = participants.map((p) => p.model ? p : { ...p, model: modelMap.get(p.tier) ?? undefined });
+          if (available.length > 0) {
+            participants = assignModelsToParticipants(participants, available, sessionModel);
+          }
+          if (participants.length > 0) {
+            db.insertParticipants(participants);
+          }
+          composeSucceeded = true;
+        } catch (err) {
+          logger.warn("similarity_composition_failed", "Similarity-based composition failed — using fallback", extractErrorInfo(err));
+          composedRoom = { participants: [], tags: [], estimated_rounds: 2, reasoning: "Fallback composition" };
+          participants = [];
+        } finally {
+          try { db.close(); } catch {}
         }
-        composeSucceeded = true;
-      } catch (err) {
-        logger.warn("similarity_composition_failed", "Similarity-based composition failed — using fallback", extractErrorInfo(err));
-        composedRoom = { participants: [], tags: [], estimated_rounds: 2, reasoning: "Fallback composition" };
-        participants = [];
-      } finally {
-        try { db.close(); } catch {}
-      }
-      // If compose failed, ensure we have fallback values
-      if (!composeSucceeded && !composedRoom) {
-        composedRoom = { participants: [], tags: [], estimated_rounds: 2, reasoning: "Fallback composition" };
+        if (!composeSucceeded && !composedRoom) {
+          composedRoom = { participants: [], tags: [], estimated_rounds: 2, reasoning: "Fallback composition" };
+        }
       }
     }
 

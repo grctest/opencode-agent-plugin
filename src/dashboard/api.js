@@ -112,23 +112,29 @@ export class DashboardApi {
     this._lastModified = Date.now();
   }
 
+  #refreshing = null;
+
   _maybeRefresh() {
     const now = Date.now();
     if (now - this._openedAt <= DB_REFRESH_INTERVAL_MS) return;
-
-    try {
-      const stat = statSync(this._dbPath);
-      const mtimeMs = stat.mtimeMs;
-      if (mtimeMs !== this._fileMtimeMs) {
-        try { if (!this._db?.closed) this._db.close(); } catch {}
-        this._db = new Database(this._dbPath, { readonly: true });
-        try { this._db.exec("PRAGMA busy_timeout = 5000"); } catch {}
-        this._fileMtimeMs = mtimeMs;
+    if (this.#refreshing) return;
+    this.#refreshing = (async () => {
+      try {
+        const stat = statSync(this._dbPath);
+        const mtimeMs = stat.mtimeMs;
+        if (mtimeMs !== this._fileMtimeMs) {
+          try { if (!this._db?.closed) this._db.close(); } catch {}
+          this._db = new Database(this._dbPath, { readonly: true });
+          try { this._db.exec("PRAGMA busy_timeout = 5000"); } catch {}
+          this._fileMtimeMs = mtimeMs;
+        }
+      } catch {
+        // DB file may have been deleted or locked — will retry on next access
       }
-    } catch {
-      // DB file may have been deleted or locked — will retry on next access
-    }
-    this._openedAt = now;
+      this._openedAt = Date.now();
+    })();
+    // Fire-and-forget but coalesce concurrent callers
+    this.#refreshing.finally(() => { this.#refreshing = null; });
   }
   getState(...args) {
     return queriesHelpers.getState.apply(this, args);

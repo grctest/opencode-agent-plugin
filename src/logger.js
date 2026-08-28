@@ -103,8 +103,21 @@ export class Logger {
     this.#log(LogLevel.FATAL, context, message, details);
   }
 
+  #redact(details) {
+    if (!details || typeof details !== "object") return details;
+    try {
+      const str = JSON.stringify(details);
+      if (/authorization|api_key|apikey|bearer|token\s*[:=]/i.test(str)) {
+        const redacted = JSON.parse(str.replace(/(authorization|api_key|apikey|bearer|token)(\s*[:=]\s*)[^",\s}]+/gi, `$1$2[REDACTED]`));
+        return redacted;
+      }
+    } catch {}
+    return details;
+  }
+
   #log(level, context, message, details) {
     if (level < this.#minLevel) return;
+    const safeDetails = this.#redact(details);
     const entry = {
       seq: ++ringSeq,
       level: LEVEL_LABELS[level],
@@ -113,7 +126,7 @@ export class Logger {
       fullMeetingId: this.#meetingId,
       context,
       message,
-      ...(details !== null ? { details } : {}),
+      ...(safeDetails !== null ? { details: safeDetails } : {}),
       timestamp: new Date().toISOString(),
     };
     // Ring buffer push (audit 07 EH6): O(1), bounded at RING_BUFFER_SIZE.

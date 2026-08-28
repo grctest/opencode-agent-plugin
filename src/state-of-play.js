@@ -5,7 +5,7 @@ import { isPassContribution } from "./utils/contribution-types.js";
 // (all peer interactions now use loom_* tools). These regexes remain only for stored
 // data from older meetings — defensive strip so old rows don't pollute state-of-play.
 const TAG_STRIP_RE = /^\[(?:PROPOSE|CHALLENGE|REFINE|SUPPORT|DISSENT|SYNTHESIZE|QUESTION|REFUSE)\]\s*/i;
-const REQUEST_NEXT_RE = /\[REQUEST_NEXT:[^\]]*\]/gi;
+const REQUEST_NEXT_RE = /^\[REQUEST_NEXT:[^\]]*\]\s*/gim;
 const QUERY_TAG_RE = /\[QUERY:\s*[^\]]*\]\s*/gi;
 const EVIDENCE_TAG_RE = /\[EVIDENCE:\s*[^\]]*\]\s*/gi;
 const SUMMON_TAG_RE = /\[SUMMON:\s*[^\]]*\]\s*/gi;
@@ -29,7 +29,9 @@ function cleanContent(content) {
  * signal. Falls back to keyword matching only when c.type is missing or unknown.
  */
 function hasFileMention(content) {
-  return /(?:file\s*=\s*[^\s]+\.\w+|src\/[^\s]+\.\w+|\b\w+\.(?:tsx|ts|js|jsx|py|rs|go)\b|```[^`]*file=)/i.test(content);
+  // Exclude version strings like 1.2.js — require src/ path or file= prefix or word boundary without leading digit-dot
+  if (/(?:file\s*=\s*[^\s]+\.\w+|src\/[^\s]+\.\w+|```[^`]*file=)/i.test(content)) return true;
+  return /(^|[\s(])[\w-]+\.(?:tsx|ts|js|jsx|py|rs|go)\b/i.test(content) && !/\d+\.\d+\.js/.test(content);
 }
 
 export function updateStateOfPlay(weave, question, tags) {
@@ -53,11 +55,10 @@ export function updateStateOfPlay(weave, question, tags) {
       content = `[Reflected: ${content.slice(0, 280)}]`;
     }
 
-    // Code-aware: collect file mentions into dedicated bucket (also keep in original bucket for context)
     if (hasFileMention(content)) {
-      // Extract file= or src/ snippets for files list
-      const fileMatch = content.match(/(?:file\s*=\s*)([^\s`'"]+\.\w+)/i) || content.match(/(src\/[^\s`'"]+\.\w+)/i) || content.match(/(\b\w+\.(?:tsx|ts|js|jsx))\b/i);
-      const fileSnippet = fileMatch ? fileMatch[1].slice(0, 80) : content.slice(0, 120);
+      const fileMatch = content.match(/(?:file\s*=\s*)([^\s`'"]+\.\w+)/i) || content.match(/(src\/[^\s`'"]+\.\w+)/i) || content.match(/(^|[\s(])([\w-]+\.(?:tsx|ts|js|jsx|py|rs|go))\b/i);
+      const rawSnippet = fileMatch ? (fileMatch[1] || fileMatch[2]).slice(0, 80) : content.slice(0, 120);
+      const fileSnippet = rawSnippet.toLowerCase().replace(/[,\)\.\]]+$/,'');
       filesInvolved.push(fileSnippet);
     }
 

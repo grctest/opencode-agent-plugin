@@ -59,15 +59,18 @@ export async function runRound() {
 
 export async function _finalizeRound(updatedRound) {
     try {
-      this._database.setRoundSummary(updatedRound.number, updatedRound.summary);
-
       const newStateOfPlay = updateStateOfPlay(
         this._stateManager.getWeave(),
         this._stateManager.getQuestion(),
         this._stateManager.getTags(),
       );
       this._stateManager.setStateOfPlay(newStateOfPlay);
-      this._database.setStateOfPlay(newStateOfPlay);
+      // Atomic: 3 writes in one SAVEPOINT — all-or-nothing
+      await this._database.transaction(() => {
+        this._database.setRoundSummary(updatedRound.number, updatedRound.summary);
+        this._database.setStateOfPlay(newStateOfPlay);
+        // addOrchestratorMessage for vector-index timeout is handled separately (best-effort)
+      });
 
       try {
         await this._raceWithGuardTimer(

@@ -56,12 +56,18 @@ export async function promptChildSession(participant) {
   const systemPrompt = buildAgentSystemPrompt(participant);
   let steeringHint = "";
   let consumedHint = "";
-  try {
-    const plannedFirst = this._stateManager.getPlannedTurnOrder?.()?.[0] ?? this._stateManager.getNextSpeakerId?.();
-    const isFirstSpeaker = !plannedFirst || plannedFirst === participant.config.id;
-    if (isFirstSpeaker) consumedHint = this._stateManager.consumeNextRoundSteering();
-    steeringHint = consumedHint;
-  } catch {}
+  // Atomic consume — hintLocked flag prevents double-consume if two promptChildSessions race
+  if (!this._hintLocked) {
+    this._hintLocked = true;
+    try {
+      const plannedFirst = this._stateManager.getPlannedTurnOrder?.()?.[0] ?? this._stateManager.getNextSpeakerId?.();
+      const isFirstSpeaker = !plannedFirst || plannedFirst === participant.config.id;
+      if (isFirstSpeaker) consumedHint = this._stateManager.consumeNextRoundSteering();
+      steeringHint = consumedHint;
+    } catch {}
+    // release lock after microtask so same-round second speaker can't re-consume same hint
+    queueMicrotask(() => { this._hintLocked = false; });
+  }
   const userPromptBase = buildAgentUserPrompt(
     participant,
     this._stateManager.getStateOfPlay(),
@@ -119,10 +125,12 @@ export async function promptChildSession(participant) {
   };
 
   let succeeded = false;
+  let localSucceeded = false;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       const response = await this._executeAgentTurn(participant, activeModel, timeoutMs, promptContext);
       succeeded = true;
+      localSucceeded = true;
       if (consumedHint) consumedHint = "";
       return response;
     } catch (err) {
@@ -202,6 +210,7 @@ export async function promptChildSession(participant) {
   return null;
   } finally {
     if (!localSucceeded && participant.status === "speaking") participant.status = prevStatus;
+    this._hintLocked = false;
   }
 }
 

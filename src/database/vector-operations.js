@@ -125,39 +125,42 @@ export function searchPersonaEmbeddings(db, meetingId, queryEmbedding, tier, top
     dbLogger.warn("search_persona_invalid_dim", `Invalid dim ${dim} for searchPersonaEmbeddings`, { dim });
     return [];
   }
-  try {
-    initPersonaVectorTable(db, safeDim);
-    const limit = Math.max(1, Math.floor(Number(topK) || 5));
-    // Push tier filter to SQL (avoids missing relevant tier beyond top 50)
+    let success = false;
     try {
-      const rowsTiered = db.prepare(`
+      initPersonaVectorTable(db, safeDim);
+      const limit = Math.max(1, Math.floor(Number(topK) || 5));
+      try {
+        const rowsTiered = db.prepare(`
         SELECT v.rowid, v.distance, p.persona_name, p.tier, p.tags, p.embedding_text
         FROM vec_persona_embeddings_${safeDim} v
         JOIN persona_embeddings p ON p.id = v.rowid AND p.meeting_id = ?
         WHERE v.embedding MATCH ? AND k = ? AND v.tier = ?
         ORDER BY v.distance
       `).all(meetingId, queryEmbedding, limit, tier);
-      if (rowsTiered.length > 0) return rowsTiered.slice(0, limit);
-    } catch {}
-    const fetchK = Math.max(limit * 10, 50);
-    const rows = db.prepare(`
+        if (rowsTiered.length > 0) { success = true; return rowsTiered.slice(0, limit); }
+      } catch {}
+      const fetchK = Math.max(limit * 10, 50);
+      const rows = db.prepare(`
         SELECT v.rowid, v.distance, p.persona_name, p.tier, p.tags, p.embedding_text
         FROM vec_persona_embeddings_${safeDim} v
         JOIN persona_embeddings p ON p.id = v.rowid AND p.meeting_id = ?
         WHERE v.embedding MATCH ? AND k = ?
         ORDER BY v.distance
       `).all(meetingId, queryEmbedding, fetchK);
-    return rows.filter((r) => r.tier === tier).slice(0, limit);
-  } catch (err) {
-    dbLogger.warnThrottled(
-      "search_persona_embeddings_failed",
-      "Persona vector search",
-      "Persona vector search failed — composition degrades to tag matching",
-      extractErrorInfo(err)
-    );
-    try { db.prepare("UPDATE meetings SET semantic_degraded = 1, updated_at = ? WHERE id = ?").run(isoNow(), meetingId); } catch {}
-    return [];
-  }
+      const filtered = rows.filter((r) => r.tier === tier).slice(0, limit);
+      if (filtered.length > 0 || rows.length > 0) success = true;
+      if (success) { try { db.prepare("UPDATE meetings SET semantic_degraded = 0, updated_at = ? WHERE id = ?").run(isoNow(), meetingId); } catch {} }
+      return filtered;
+    } catch (err) {
+      dbLogger.warnThrottled(
+        "search_persona_embeddings_failed",
+        "Persona vector search",
+        "Persona vector search failed — composition degrades to tag matching",
+        extractErrorInfo(err)
+      );
+      try { db.prepare("UPDATE meetings SET semantic_degraded = 1, updated_at = ? WHERE id = ?").run(isoNow(), meetingId); } catch {}
+      return [];
+    }
 }
 
 export function countPersonaEmbeddings(db, meetingId) {
@@ -168,10 +171,24 @@ export function countPersonaEmbeddings(db, meetingId) {
   return 0;
 }
 
-export function countPersonaVecEmbeddings(db, dim = 384) {
-  const safeDim = Number(dim);
+export function countPersonaVecEmbeddings(db, meetingId, dim = 384) {
+  // Back-compat: when called as countPersonaVecEmbeddings(db, dim) the second arg may be dim
+  let actualMeetingId = meetingId;
+  let actualDim = dim;
+  if (typeof meetingId === "number" && dim === 384) {
+    // legacy call countPersonaVecEmbeddings(db, 384) — treat as global count, but warn
+    actualDim = meetingId;
+    actualMeetingId = null;
+  }
+  const safeDim = Number(actualDim);
   if (!Number.isFinite(safeDim) || safeDim < 64 || safeDim > 2048 || Math.floor(safeDim) !== safeDim) return 0;
   try {
+    if (actualMeetingId) {
+      const row = db.prepare(
+        `SELECT COUNT(*) as count FROM persona_embeddings WHERE meeting_id = ?`
+      ).get(actualMeetingId);
+      return row?.count ?? 0;
+    }
     const row = db.prepare(`SELECT COUNT(*) as count FROM vec_persona_embeddings_${safeDim}`).get();
     return row?.count ?? 0;
   } catch { /* table may not exist yet */ }

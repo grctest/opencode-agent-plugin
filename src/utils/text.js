@@ -214,11 +214,12 @@ export function extractFileBlockTools(text) {
   return tools;
 }
 
-/** Truncates text to max length, adding ellipsis if needed. */
+/** Truncates text to max length, adding ellipsis if needed — surrogate-safe. */
 export function truncate(text, max) {
   const cleaned = text.replace(/\n/g, " ").trim();
-  if (cleaned.length <= max) return cleaned;
-  return cleaned.slice(0, max - 3) + "...";
+  const arr = Array.from(cleaned);
+  if (arr.length <= max) return cleaned;
+  return arr.slice(0, max - 3).join("") + "...";
 }
 
 /** Safe JSON.stringify — never throws; handles BigInt in nested objects. */
@@ -285,10 +286,14 @@ export function truncateLoomOutputs(loomCalls, maxTotal = 12000, perCallSlice = 
   return out;
 }
 
-/** Wraps a promise with a timeout. Rejects if the promise doesn't resolve in time. */
+/** Wraps a promise with a timeout. Rejects with TimeoutError if the promise doesn't resolve in time. */
 export function withTimeout(promise, ms) {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`Timed out after ${ms}ms`)), ms);
+    const timer = setTimeout(() => {
+      const err = new Error(`Timed out after ${ms}ms`);
+      err.name = "TimeoutError";
+      reject(err);
+    }, ms);
     promise.then(resolve, reject).finally(() => clearTimeout(timer));
   });
 }

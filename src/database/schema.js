@@ -230,6 +230,9 @@ export function initSchema(db) {
  * @param {{ logger?: { info?: Function, warn?: Function } }} [opts]
  */
 export function runMigrations(rawDb, opts = {}) {
+  if (MIGRATIONS.length !== LATEST_SCHEMA_VERSION) {
+    throw new Error(`MIGRATIONS.length (${MIGRATIONS.length}) must equal LATEST_SCHEMA_VERSION (${LATEST_SCHEMA_VERSION}) — forgot to bump version or add migration`);
+  }
   const log = opts.logger ?? {};
   const row = rawDb.prepare("PRAGMA user_version").get();
   const current = Number(row?.user_version ?? 0);
@@ -242,7 +245,7 @@ export function runMigrations(rawDb, opts = {}) {
 
   if (current === LATEST_SCHEMA_VERSION) return current;
 
-  rawDb.exec("BEGIN TRANSACTION");
+  rawDb.exec("BEGIN IMMEDIATE");
   try {
     for (let v = current; v < MIGRATIONS.length; v++) {
       MIGRATIONS[v](rawDb);
@@ -251,7 +254,7 @@ export function runMigrations(rawDb, opts = {}) {
     rawDb.exec(`PRAGMA user_version = ${LATEST_SCHEMA_VERSION}`);
     rawDb.exec("COMMIT");
   } catch (err) {
-    rawDb.exec("ROLLBACK");
+    try { rawDb.exec("ROLLBACK"); } catch {}
     throw err;
   }
   return LATEST_SCHEMA_VERSION;

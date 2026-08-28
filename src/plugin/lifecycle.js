@@ -51,14 +51,14 @@ export function createLifecycleHandlers(activeLooms) {
       process.exit(143);
     };
     handlers.uncaughtException = (err) => {
-      logger.error("uncaught_exception", "Uncaught exception — aborting active meetings", { message: err.message, stack: err.stack });
+      logger.error("uncaught_exception", "Uncaught exception — aborting active meetings (host process survives)", { message: err.message, stack: err.stack });
       markActiveMeetingsAborted();
-      process.exit(1);
+      // Do not process.exit — let opencode host survive a stray rejection
     };
     handlers.unhandledRejection = (reason) => {
-      logger.error("unhandled_rejection", "Unhandled rejection — aborting active meetings", { reason: String(reason) });
+      logger.error("unhandled_rejection", "Unhandled rejection — aborting active meetings (host process survives)", { reason: String(reason) });
       markActiveMeetingsAborted();
-      process.exit(1);
+      // Do not process.exit — let opencode host survive a stray rejection
     };
     process.on("exit", handlers.exit);
     process.on("SIGINT", handlers.sigint);

@@ -113,15 +113,20 @@ export function ensureParticipantRow(db, meetingId, participantId, name = partic
 }
 
 export function addContributionWithTurnRequest(db, meetingId, contribution, turnRequest, getRoundFn) {
+  db.exec('BEGIN IMMEDIATE');
+
   try {
     const exists = db.prepare(`SELECT 1 FROM participants WHERE id = ? AND meeting_id = ?`).get(contribution.participant_id, meetingId);
     if (!exists) {
       dbLogger.warn("orphan_contribution", `Contribution participant_id ${contribution.participant_id} not in participants for meeting ${meetingId}`);
     }
-  } catch {}
-  db.exec('BEGIN IMMEDIATE');
+    if (turnRequest?.target_participant_id) {
+      const targetExists = db.prepare(`SELECT 1 FROM participants WHERE id = ? AND meeting_id = ?`).get(turnRequest.target_participant_id, meetingId);
+      if (!targetExists) {
+        dbLogger.warn("orphan_turn_request", `Turn request target ${turnRequest.target_participant_id} not in participants for meeting ${meetingId}`);
+      }
+    }
 
-  try {
     db
       .prepare(
         `INSERT INTO contributions (meeting_id, participant_id, round, type, content, target_which, batch_id, tool_calls, prompt_context, created_at)

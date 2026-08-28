@@ -28,6 +28,7 @@ export async function runMeeting() {
     if (this._timeBudget) this._timeBudget.reset(this._startTime, this._meetingTimeoutMs);
     this._cancelled = false;
     this._stallWatchdog.reset();
+    try { this._sessionManager?.clearOrchestratorSession?.(); } catch {}
 
     await this._meetingExtender.extend({
       database: this._database,
@@ -59,7 +60,8 @@ export async function runMeeting() {
 export async function _runWeavingLoop() {
     let continueWeaving = true;
     let iterations = 0;
-    const MAX_ITERATIONS = 100;
+    const maxRounds = this._stateManager?.getMaxRounds?.() ?? 10;
+    const MAX_ITERATIONS = Math.max(10, maxRounds + 5);
     while (continueWeaving) {
       if (++iterations > MAX_ITERATIONS) {
         this._logger.error("weaving_loop_guard", `Weaving loop exceeded ${MAX_ITERATIONS} iterations — forcing timeout (possible max_rounds corruption)`);

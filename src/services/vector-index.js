@@ -64,6 +64,8 @@ export class VectorIndex {
       if (failedEmbeds < pending.length) {
         vectorLogger.warn("embed_partial_failed", `Partial embed failure for round ${roundNumber}: ${failedEmbeds}/${pending.length} chunks failed — semantic degraded flagged`, { indexed, failedEmbeds, total: pending.length });
       }
+    } else if (indexed > 0) {
+      try { this.#database.setSemanticDegraded?.(false); } catch {}
     }
 
     vectorLogger.debug("round_indexed", `Indexed ${indexed} chunks for round ${roundNumber}`);
@@ -101,6 +103,8 @@ export class VectorIndex {
     if (failedEmbeds > 0) {
       try { this.#database.setSemanticDegraded?.(true); } catch {}
       vectorLogger.warn("embed_context_partial_failed", `Context embed partial failure: ${failedEmbeds}/${pending.length} chunks failed — semantic degraded`, { indexed, failedEmbeds });
+    } else if (indexed > 0) {
+      try { this.#database.setSemanticDegraded?.(false); } catch {}
     }
     return indexed;
   }
@@ -115,7 +119,12 @@ export class VectorIndex {
   async retrieveRelevant(queryText, topK = 5, excludeRound = -1) {
     if (!queryText || !queryText.trim()) return [];
     try {
-      const dim = getEmbeddingDim();
+      // Prefer meeting-persisted dim to avoid drift when global model swapped
+      let dim = getEmbeddingDim();
+      try {
+        const meeting = this.#database.getMeeting?.();
+        if (meeting?.embedding_dim && Number.isFinite(meeting.embedding_dim)) dim = meeting.embedding_dim;
+      } catch {}
       const queryEmbedding = await embedText(queryText, { isQuery: true });
       if (!queryEmbedding) {
         vectorLogger.debug("retrieve_no_embedding", "Vector retrieval skipped — embedding unavailable");

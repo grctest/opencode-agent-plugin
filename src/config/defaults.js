@@ -42,6 +42,7 @@ export const DEFAULT_CONFIG = {
   maxTotalTokens: 0,
   dashboard: { host: "127.0.0.1" },
   composition: { maxCosineDistance: 0.85 },
+  tuning: TUNING,
   circuitBreaker: {
     failureThreshold: 3,
     resetTimeoutMs: 300000,

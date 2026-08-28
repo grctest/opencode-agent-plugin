@@ -91,9 +91,8 @@ export function listMeetings(directory) {
         db = null;
         if (isBusy && retries > 0) {
           retries--;
-          // Busy — retry after brief pause (WAL writer holds RESERVED)
-          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
-          continue;
+          // Busy — skip this file this tick; next poll will retry (non-blocking)
+          break;
         }
         break;
       } finally {

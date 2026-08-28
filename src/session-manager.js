@@ -159,7 +159,7 @@ export class SessionManager {
    * orchestrator calls in a meeting. Falls back to ephemeral if persistent creation fails.
    * @returns {Promise<{ text: string, tokens?: { input: number; output: number } }>}
    */
-  async #promptOrchestratorOnce(sessionId, system, model, message) {
+  async #promptOrchestratorOnce(sessionId, system, model, message, timeoutMs) {
     const result = await withRetry(async () => {
       const res = await this.#contract.prompt({
         sessionId,
@@ -167,6 +167,7 @@ export class SessionManager {
         model,
         tools: {},
         parts: [{ type: "text", text: message }],
+        timeoutMs,
       });
       if (!res.ok) throw res.error;
       if (!String(res.text ?? "").trim()) {
@@ -184,7 +185,7 @@ export class SessionManager {
     return { text: result.text, tokens: result.tokens };
   }
 
-  async promptOrchestrator(system, model, message) {
+  async promptOrchestrator(system, model, message, timeoutMs) {
     let sessionId = this.#orchestratorSessionId;
     if (!sessionId) {
       try {
@@ -193,28 +194,31 @@ export class SessionManager {
       } catch {
         const ephemeralId = await this.#createSessionWithRetry("Loom · Orchestrator (ephemeral)");
         try {
-          return await this.#promptOrchestratorOnce(ephemeralId, system, model, message);
+          return await this.#promptOrchestratorOnce(ephemeralId, system, model, message, timeoutMs);
         } finally {
           await this.deleteEphemeralSession(ephemeralId).catch(() => {});
         }
       }
     }
     try {
-      return await this.#promptOrchestratorOnce(sessionId, system, model, message);
+      return await this.#promptOrchestratorOnce(sessionId, system, model, message, timeoutMs);
     } catch (err) {
-      // If persistent session is dead (404), clear and retry once on ephemeral
       const msg = String(err?.message ?? err);
       if (/not found|404|session/i.test(msg)) {
         this.#orchestratorSessionId = null;
         const ephemeralId = await this.#createSessionWithRetry("Loom · Orchestrator (ephemeral)");
         try {
-          return await this.#promptOrchestratorOnce(ephemeralId, system, model, message);
+          return await this.#promptOrchestratorOnce(ephemeralId, system, model, message, timeoutMs);
         } finally {
           await this.deleteEphemeralSession(ephemeralId).catch(() => {});
         }
       }
       throw err;
     }
+  }
+
+  clearOrchestratorSession() {
+    this.#orchestratorSessionId = null;
   }
 
   async deleteSession(sessionId) {

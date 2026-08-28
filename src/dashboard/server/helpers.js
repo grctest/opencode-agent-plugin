@@ -68,7 +68,9 @@ export const MIME_TYPES = {
 };
 
 export function isAssetPathSafe(assetPath, assetsDir) {
-  let decoded = assetPath;
+  // Normalize fullwidth％ (audit 10 S2) — attacker uses ％2e instead of %2e
+  const normalized = assetPath.replace(/\uFF05/g, "%").normalize("NFC");
+  let decoded = normalized;
   for (let i = 0; i < 3; i++) {
     try {
       const next = decodeURIComponent(decoded);
@@ -77,7 +79,7 @@ export function isAssetPathSafe(assetPath, assetsDir) {
     } catch { break; }
   }
   if (decoded.includes("..") || decoded.includes("\0") || decoded.includes("%00")) return false;
-  if (assetPath.includes("\0")) return false;
+  if (normalized.includes("\0")) return false;
   const lastDot = decoded.lastIndexOf(".");
   if (lastDot <= 0) return false;
   const ext = decoded.slice(lastDot);

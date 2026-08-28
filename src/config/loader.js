@@ -13,10 +13,11 @@ function parseConfigFileContent(filePath) {
   try {
     parsed = JSON.parse(content);
   } catch (e) {
-    if (filePath.endsWith('.jsonc') || content.includes('//') || content.includes('/*')) {
+    // Always try JSONC strip on parse failure (heuristic content.includes('//') misses // inside string)
+    try {
       const stripped = stripJsoncComments(content);
       parsed = JSON.parse(stripped);
-    } else {
+    } catch {
       throw e;
     }
   }

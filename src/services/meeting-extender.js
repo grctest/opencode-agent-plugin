@@ -99,6 +99,7 @@ export class MeetingExtender {
     stateManager.forceTransitionTo("weaving");
 
     for (const p of stateManager.getParticipants()) {
+      if (p.status === "failed" || p.status === "muted") continue;
       stateManager.setParticipantStatus(p.config.id, "listening");
       database.setParticipantStatus(p.config.id, "listening");
     }

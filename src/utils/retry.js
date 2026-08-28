@@ -46,10 +46,17 @@ export function isRetryableError(err) {
     return true;
   }
 
-  if (err.name === "TimeoutError" || err.name === "AbortError") {
+  if (err.name === "TimeoutError") {
     return true;
   }
-  if (err.message && /\btimeout\b/i.test(err.message)) {
+  if (err.name === "AbortError") {
+    return false;
+  }
+  // Fetch network: status 0 + ECONNRESET/ETIMEDOUT is retryable; prose containing "timeout" is not
+  if (err.status === 0 && (err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT')) {
+    return true;
+  }
+  if (err.message && /(timed out|timeout after|ETIMEDOUT)/i.test(err.message)) {
     return true;
   }
 
@@ -93,7 +100,9 @@ export async function withRetry(fn, options = {}) {
   }
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
-      return await fn();
+      const res = await fn();
+      if (attempt > 0) incrementKeyedCounter('retry_events', 'retry_success');
+      return res;
     } catch (err) {
       lastError = err;
       
@@ -164,7 +173,7 @@ export class CircuitBreaker {
   recordFailure(model) {
     const key = CircuitBreaker.#getModelKey(model);
     const state = this.#states.get(key) ?? { failures: 0, status: 'closed', nextAttempt: 0 };
-    state.failures++;
+    state.failures = Math.min(state.failures + 1, this.failureThreshold + 1);
     state.status = state.failures >= this.failureThreshold ? 'open' : 'closed';
     if (state.status === 'open') {
       state.nextAttempt = Date.now() + this.resetTimeoutMs;

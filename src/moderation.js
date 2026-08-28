@@ -94,10 +94,10 @@ export async function checkModeratorIntervention(round, participants, weave, cur
     return { action: "continue", nextSpeakerIdx: -1 };
   }
 
-  const recentTypes = round.contributions.slice(-trigger.lookbackWindow).map((c) => c.type);
-  const challengeCount = recentTypes.filter(
-    (t) => t === "challenge" || t === "dissent",
-  ).length;
+  const CHALLENGE_TYPES = new Set(["challenge", "dissent", "critique_response"]);
+  const isChallengeLike = (c) => CHALLENGE_TYPES.has(c.type) || /\b(challenge|dissent|disagree|concern|object|reject)\b/i.test(c.content || "");
+  const recent = round.contributions.slice(-trigger.lookbackWindow);
+  const challengeCount = recent.filter(isChallengeLike).length;
   if (challengeCount < trigger.recentChallenges) {
     return { action: "continue", nextSpeakerIdx: -1 };
   }
@@ -108,7 +108,7 @@ export async function checkModeratorIntervention(round, participants, weave, cur
     const lastSix = weave.slice(-LOOKBACK.SENDER_HISTORY);
     const challengeCounts = {};
     for (const c of lastSix) {
-      if (c.type === "challenge" || c.type === "dissent") {
+      if (isChallengeLike(c)) {
         challengeCounts[c.participant_id] = (challengeCounts[c.participant_id] || 0) + 1;
       }
     }
@@ -146,11 +146,17 @@ export async function checkModeratorIntervention(round, participants, weave, cur
 
     const ruling = parseModeratorRuling(result);
 
-    if (
-      ruling.next_speaker === "synthesize" ||
-      ruling.next_speaker === "converge" ||
-      ruling.decision.toLowerCase().includes("converge") ||
-      ruling.decision.toLowerCase().includes("wrap up")
+    const ns = String(ruling.next_speaker || "continue").toLowerCase().trim();
+  const dec = String(ruling.decision || "").toLowerCase();
+  if (ns === "continue" && (dec.includes("converge") || dec.includes("wrap up"))) {
+    // next_speaker explicitly continue — do not force converge on decision substring match
+    return { action: "continue", nextSpeakerIdx: -1 };
+  }
+  if (
+      ns === "synthesize" ||
+      ns === "converge" ||
+      dec.includes("converge") ||
+      dec.includes("wrap up")
     ) {
       return { action: "converge", nextSpeakerIdx: -1 };
     }

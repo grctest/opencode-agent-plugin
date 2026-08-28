@@ -8,7 +8,7 @@ export function deriveConfidence(weave, dissentCount, totalParticipants = 0, act
   const totalContribs = weave.length;
   if (totalContribs === 0) return "low";
 
-  const challengeWordsRe = /\b(challenge|dissent|disagree|concern|oppose|object|critique|dispute|contradict|refuse|risk|flaw|weakness)\b/i;
+  const challengeWordsRe = /\b(challenge|dissent|disagree|concern|oppose|object|critique|dispute|contradict|refuse)\b/i;
   function isChallengeLike(c) {
     if (c.type === "challenge" || c.type === "dissent" || c.type === "critique_response") return true;
     const content = (c.content || "").toLowerCase();

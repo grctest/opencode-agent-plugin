@@ -142,6 +142,12 @@ export async function composeRoomWithSimilarity(question, database) {
     }
   } catch {}
 
+  // Dry-run or no DB — skip vector indexing entirely (keyword fallback)
+  if (!database) {
+    composerLogger.info("compose_no_db", "No database provided (dry-run) — using keyword-based composition");
+    return composeRoomByKeyword(question, personas, roles, complexity, count, used, participants);
+  }
+
   const { isEmbedderInitialized, ensureEmbedderInitialized, embedText } = await import("../services/embedding-service.js");
   let embedderReady = isEmbedderInitialized();
   if (!embedderReady) {
@@ -170,13 +176,14 @@ export async function composeRoomWithSimilarity(question, database) {
   try { questionEmbedding = await embedText(question, { isQuery: true }); } catch (err) {
     composerLogger.warnThrottled("compose.embed_failed", "Room composition", "Question embedding failed — composition falls back to keyword matching", extractErrorInfo(err));
   }
-  // Relevance floor (audit 03 PC2): candidates beyond this cosine distance are
-  // treated as off-topic; the seat then goes to a deliberate generalist instead.
-  let maxDistance = 0.85;
+  // Relevance floor: maxCosineDistance (cosine distance) converted to L2 for vec0 which returns L2
+  let maxCosineDistance = 0.85;
   try {
     const configured = getConfig()?.composition?.maxCosineDistance;
-    if (Number.isFinite(configured) && configured > 0 && configured < 2) maxDistance = configured;
+    if (Number.isFinite(configured) && configured > 0 && configured < 2) maxCosineDistance = configured;
   } catch {}
+  // vec0 returns L2 for normalized vectors: L2 = sqrt(2 * cosineDistance)
+  const maxL2 = Math.sqrt(Math.max(0, 2 * maxCosineDistance));
   const selectedDistances = [];
   for (const tier of roles) {
     let results = [];
@@ -192,10 +199,10 @@ export async function composeRoomWithSimilarity(question, database) {
       database?.setSemanticDegraded?.(true);
       results = await personaIndex.search(question, tier, 5);
     }
-    // Threshold filter over vector results (keyword-fallback rows have no distance and pass through)
-    const onTopic = results.filter((r) => r.distance == null || r.distance <= maxDistance);
+    // Threshold filter: vec0 L2 distance vs maxL2; keyword rows have no distance and pass through
+    const onTopic = results.filter((r) => r.distance == null || r.distance <= maxL2);
     if (results.length > 0 && onTopic.length === 0) {
-      composerLogger.info("compose_no_on_topic", `No ${tier} candidate within distance ${maxDistance} of the question — leaving seat to deliberate generalist fallback`);
+      composerLogger.info("compose_no_on_topic", `No ${tier} candidate within L2 ${maxL2.toFixed(3)} (cosine distance ${maxCosineDistance}) of the question — leaving seat to deliberate generalist fallback`);
     }
     const candidate = onTopic.find((r) => !used.has(r.persona_name));
     if (candidate) {
@@ -217,7 +224,7 @@ export async function composeRoomWithSimilarity(question, database) {
     }
   }
   if (selectedDistances.length > 0) {
-    composerLogger.info("compose_selection_distances", "Persona selection distances", { distances: selectedDistances, maxDistance });
+    composerLogger.info("compose_selection_distances", "Persona selection distances (L2)", { distances: selectedDistances, maxCosineDistance, maxL2 });
   }
 
   const estimatedRounds = complexity === "high" ? 4 : complexity === "medium" ? 3 : 2;

@@ -23,6 +23,8 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
     this._sessionManager.registerSessionMeeting(ephemeralSessionId, this._stateManager.getMeetingId());
   }
   let ephemeralSessionIdToDelete = isRoundScoped ? null : ephemeralSessionId;
+  const abortController = new AbortController();
+  if (this._abortControllers) this._abortControllers.add(abortController);
 
   const isSynthesisLoom = (name) => ["loom_query","loom_vote","loom_summon"].includes(name);
   const isLoomTool = (name) => name?.startsWith("loom_") && name !== "loom_vector_search";
@@ -88,6 +90,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
       tools: toolsMap,
       toolChoice: Object.keys(toolsMap).length > 0 ? "auto" : undefined,
       timeoutMs,
+      signal: abortController.signal,
     });
     const llmMs = Date.now() - llmStart;
     incrementKeyedCounter("llm_calls_by_type", "agent");
@@ -168,6 +171,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
             tools: synthesisToolsMap,
             toolChoice: Object.keys(synthesisToolsMap).length > 0 ? "auto" : undefined,
             timeoutMs: remainingMs,
+            signal: abortController.signal,
           });
           const synthMs = Date.now() - synthStart;
           recordLatency("llm_synthesis_ms", synthMs);
@@ -290,9 +294,9 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
     ephemeralSessionIdToDelete = null;
     return response;
   } finally {
-    if (!isRoundScoped) this._sessionManager.unregisterSession(ephemeralSessionId);
-    else {
-      // Round-scoped sessions are bulk-cleaned in runPromptPhase; don't double-unregister
+    if (this._abortControllers) this._abortControllers.delete(abortController);
+    if (!isRoundScoped) {
+      // deleteEphemeralSession already unregisters, no need for double unregister
     }
     if (ephemeralSessionIdToDelete) {
       this._options.deleteEphemeralSession(ephemeralSessionIdToDelete).catch((err) => {

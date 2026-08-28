@@ -65,8 +65,9 @@ function stripUnsafeChars(text) {
  */
 export function sanitizeForPrompt(text, maxLen = 10000) {
   if (!text || typeof text !== "string") return "";
-  // Truncate before any processing so restoration can never splice across the cut
-  const bounded = text.length > maxLen ? text.slice(0, maxLen) : text;
+  // Truncate surrogate-safe before any processing so restoration can never splice across the cut
+  const arr = Array.from(text);
+  const bounded = arr.length > maxLen ? arr.slice(0, maxLen).join("") : text;
   const cleaned = stripUnsafeChars(bounded);
   return neutralizeImitationDirectives(cleaned).trim();
 }
@@ -83,7 +84,8 @@ export function sanitizeForPrompt(text, maxLen = 10000) {
  */
 export function sanitizeAgentOutput(text, maxLen = 10000) {
   if (!text || typeof text !== "string") return "";
-  const bounded = text.length > maxLen ? text.slice(0, maxLen) : text;
+  const arr = Array.from(text);
+  const bounded = arr.length > maxLen ? arr.slice(0, maxLen).join("") : text;
   return stripUnsafeChars(bounded).trim();
 }
 
@@ -97,8 +99,9 @@ export function sanitizeAgentOutput(text, maxLen = 10000) {
  */
 export function sanitizeForDisplay(text, maxLen = 5000) {
   if (!text || typeof text !== "string") return "";
-  // Truncate before extraction so a cut can never split a sentinel
-  const bounded = text.length > maxLen ? text.slice(0, maxLen) : text;
+  // Truncate surrogate-safe before extraction so a cut can never split a sentinel
+  const arr = Array.from(text);
+  const bounded = arr.length > maxLen ? arr.slice(0, maxLen).join("") : text;
 
   // Strip unsafe chars FIRST — our sentinels contain control characters and
   // must never pass through the stripping step.

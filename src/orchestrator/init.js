@@ -78,16 +78,19 @@ export async function initialize() {
       }
 
       // Index personas into the meeting database for vector similarity search.
-      // Skip if already indexed (e.g., by knit-handler during participant selection).
+      // Skip if already indexed for this meeting (per-meeting scoping).
       const { isEmbedderInitialized } = await import("../services/embedding-service.js");
       if (isEmbedderInitialized()) {
         try {
           this._personaIndex = new PersonaIndex(db);
-          if (db.countPersonaVecEmbeddings() === 0) {
+          if (db.countPersonaEmbeddings() === 0) {
             const personas = getPersonas();
             await this._personaIndex.indexAll(personas);
+            if (db.countPersonaEmbeddings() > 0) {
+              try { db.setSemanticDegraded(false); } catch {}
+            }
           } else {
-            this._logger.info("personas_already_indexed", "Persona embeddings already present in database");
+            this._logger.info("personas_already_indexed", "Persona embeddings already present for this meeting");
           }
         } catch (err) {
           this._logger.warn("persona_index_failed", "Failed to index personas for vector search", extractErrorInfo(err));

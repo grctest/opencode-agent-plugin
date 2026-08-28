@@ -5,9 +5,11 @@ import { collectObjections } from "../objection-collector.js";
 import { getHighestTierModel } from "../services/model-service.js";
 
 export async function _synthesize() {
-    const allFailed = this._stateManager.getParticipants().every((p) => p.status === "failed");
+    const participants = this._stateManager.getParticipants();
+    const active = participants.filter((p) => p.status !== "failed").length;
+    const allFailed = active === 0;
     if (allFailed) {
-      const output = `_ Deliberation Output\n\n__ Decision\nNo output could be generated — all participants failed to respond.\n\n__ Reasoning\nAll ${this._stateManager.getParticipants().length} participants encountered errors during the deliberation.\n\n__ Action Items\n- Check model connectivity and retry\n- Verify provider authentication\n\n__ Confidence\nLow (no contributions received)`;
+      const output = `# Deliberation Output\n\n## Decision\nNo output could be generated — all participants failed to respond.\n\n## Reasoning\nAll ${participants.length} participants encountered errors during the deliberation.\n\n## Action Items\n- Check model connectivity and retry\n- Verify provider authentication\n\n## Confidence\nLow (no contributions received)`;
       this._saveArtifact({ content: output, format: "markdown", decisions: [], action_items: [], dissent: [], open_questions: [], confidence: "low" });
       await this._sessionManager.postProgress("⚠️ All participants failed — no synthesis possible.", "error");
       this._logger.error("all_failed", "All participants failed — no synthesis possible");
@@ -23,7 +25,7 @@ export async function _synthesize() {
       return txt !== "" && txt !== "[PASS]";
     });
     if (substantiveForSynthesis.length === 0) {
-      const output = `_ Deliberation Output\n\n__ Decision\nNo output could be generated — all participants passed without contributing.\n\n__ Reasoning\nAll ${this._stateManager.getParticipants().length} participants chose to pass. This may indicate the question was unclear or participants had nothing to add.\n\n__ Action Items\n- Rephrase the question with more specific context\n- Add participants with more targeted expertise\n\n__ Confidence\nLow (no contributions received)`;
+      const output = `# Deliberation Output\n\n## Decision\nNo output could be generated — all participants passed without contributing.\n\n## Reasoning\nAll ${participants.length} participants chose to pass. This may indicate the question was unclear or participants had nothing to add.\n\n## Action Items\n- Rephrase the question with more specific context\n- Add participants with more targeted expertise\n\n## Confidence\nLow (no contributions received)`;
       this._saveArtifact({ content: output, format: "markdown", decisions: [], action_items: [], dissent: [], open_questions: [], confidence: "low" });
       await this._sessionManager.postProgress("ℹ️ All participants passed — no contributions to synthesize.");
       this._logger.warn("all_passed", "All participants passed — no contributions to synthesize");
@@ -62,7 +64,7 @@ export async function _synthesize() {
     } catch (err) {      const message = err instanceof Error ? err.message : String(err);
       this._logger.error("synthesis_failed", `Synthesis failed — persisting degraded artifact: ${message}`);
       await this._sessionManager.postProgress(`⚠️ Synthesis failed (${message}) — degraded artifact persisted.`, "error");
-      const degraded = `_ Deliberation Output\n\n__ Decision\nSynthesis could not be completed (${message}).\n\n__ Reasoning\nThe meeting reached its end state but the synthesis step failed. The full transcript is preserved for review.\n\n__ Action Items\n- Retry synthesis with the meeting data\n- Review the transcript tab for the full deliberation\n\n__ Confidence\nLow (synthesis interrupted)`;
+      const degraded = `# Deliberation Output\n\n## Decision\nSynthesis could not be completed (${message}).\n\n## Reasoning\nThe meeting reached its end state but the synthesis step failed. The full transcript is preserved for review.\n\n## Action Items\n- Retry synthesis with the meeting data\n- Review the transcript tab for the full deliberation\n\n## Confidence\nLow (synthesis interrupted)`;
       result = {
         output: degraded,
         artifact: { content: degraded, format: "markdown", decisions: [], action_items: [], dissent: [], open_questions: [], confidence: "low" },

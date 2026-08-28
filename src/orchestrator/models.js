@@ -56,7 +56,8 @@ export async function _promptOrchestrator(system, model, message, type = "orches
     if (this._database) {
       this._database.addOrchestratorMessage(type, "user", safeMessage, round);
     }
-    const { text: response, tokens } = await this._sessionManager.promptOrchestrator(system, useModel, message);
+    const timeoutMs = type === "moderation" ? 60000 : type === "summary" ? 90000 : type === "turn_order" ? 30000 : undefined;
+    const { text: response, tokens } = await this._sessionManager.promptOrchestrator(system, useModel, message, timeoutMs);
     if (tokens) {
       this._callStats.input_tokens += tokens.input ?? 0;
       this._callStats.output_tokens += tokens.output ?? 0;

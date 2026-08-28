@@ -190,31 +190,23 @@ export function exportJSON(meetingId) {
     }
     yield `\n`;
 
-    // Stream contributions by round — paginated for full history
+    // Truly streaming: paginate by round, yield per-contribution without materializing all rounds
     const total = this.getContributionsCount();
-    const allContributions = [];
+    let currentRound = null;
+    const participantName = (id) => participants.find((p) => p.id === id)?.name ?? id;
     for (let offset = 0; offset < total; offset += 500) {
-      allContributions.push(...this.getContributions(500, offset));
-    }
-    const roundMap = new Map();
-    const roundNumbers = [];
-    for (const c of allContributions) {
-      if (!roundMap.has(c.round)) {
-        roundMap.set(c.round, []);
-        roundNumbers.push(c.round);
-      }
-      roundMap.get(c.round).push(c);
-    }
-
-    for (const roundNum of roundNumbers.sort((a, b) => a - b)) {
-      yield `## Round ${roundNum}\n\n`;
-      for (const c of roundMap.get(roundNum)) {
-        const participant = participants.find((p) => p.id === c.participant_id);
-        const name = participant?.name ?? c.participant_id;
+      const batch = this.getContributions(500, offset);
+      for (const c of batch) {
+        if (c.round !== currentRound) {
+          if (currentRound !== null) yield `\n`;
+          currentRound = c.round;
+          yield `## Round ${currentRound}\n\n`;
+        }
+        const name = participantName(c.participant_id);
         yield `- **[${name}]** (${c.type}): ${c.content}\n`;
       }
-      yield `\n`;
     }
+    if (currentRound !== null) yield `\n`;
 
     if (turnRequests.length > 0) {
       yield `## Turn Requests\n\n`;

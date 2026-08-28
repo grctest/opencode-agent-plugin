@@ -12,8 +12,6 @@ import { incrementKeyedCounter, recordLatency } from "./metrics.js";
 import { extractVoteLetter, buildTally } from "./utils/vote-tally.js";
 import { degrade } from "./utils/degrade.js";
 import { randomUUID } from "node:crypto";
-import { executeQueries as executeQueriesHelper, executeEvidenceRequests as executeEvidenceRequestsHelper } from "./round-executor/interactions/query-evidence.js";
-import { executeSummons as executeSummonsHelper, executeVote as executeVoteHelper } from "./round-executor/interactions/summon-vote.js";
 import { promptChildSession as promptChildSessionHelper, executeAgentTurn as executeAgentTurnHelper, recordFallbackFailure as recordFallbackFailureHelper } from "./round-executor/agent-turn.js";
 import { buildToolsMap as buildToolsMapHelper, buildToolsMapWithoutLoom as buildToolsMapWithoutLoomHelper } from "./round-executor/tools.js";
 
@@ -205,7 +203,7 @@ export class RoundExecutor {
           round: this._stateManager.getCurrentRound(),
           participant_id: result.participant_id,
           content: "[PASS]",
-          type: "propose",
+          type: "pass",
           targets_which: null,
           batch_id: p.currentBatchId ?? randomUUID(),
           tool_calls: result.tool_calls,
@@ -233,46 +231,7 @@ export class RoundExecutor {
     this._options.onProgress?.(`${p.config.name} (${p.config.tier}) — ${result.type}: "${truncated}"`);
   }
 
-  /**
-   * Executes directed queries. When an agent embeds [QUERY: @target] in their
-   * response, the target agent is prompted to respond directly to the question.
-   * Each response becomes a query_response contribution in the weave.
-   */
-  async executeQueries(round, sourceParticipant, query, sourceContributionId, {
-    sessionManager,
-    getParticipantModel,
-    stateManager,
-    db,
-    callStats,
-  }) {
-    return executeQueriesHelper.call(this, round, sourceParticipant, query, sourceContributionId, { sessionManager, getParticipantModel, stateManager, db, callStats });
-  }
-  async executeEvidenceRequests(round, sourceParticipant, evidence, sourceContributionId, {
-    sessionManager,
-    getParticipantModel,
-    stateManager,
-    db,
-    callStats,
-  }) {
-    return executeEvidenceRequestsHelper.call(this, round, sourceParticipant, evidence, sourceContributionId, { sessionManager, getParticipantModel, stateManager, db, callStats });
-  }
-  async executeSummons(round, sourceParticipant, summon, {
-    sessionManager,
-    stateManager,
-    db,
-    callStats,
-  }) {
-    return executeSummonsHelper.call(this, round, sourceParticipant, summon, { sessionManager, stateManager, db, callStats });
-  }
-  async executeVote(round, sourceParticipant, vote, sourceContributionId, {
-    sessionManager,
-    getParticipantModel,
-    stateManager,
-    db,
-    callStats,
-  }) {
-    return executeVoteHelper.call(this, round, sourceParticipant, vote, sourceContributionId, { sessionManager, getParticipantModel, stateManager, db, callStats });
-  }
+
 
   _storeContribution(participant, result, round) {
     const id = this._stateManager.nextContributionId();
@@ -321,7 +280,20 @@ export class RoundExecutor {
       }, turnRequest);
     } catch (err) {
       const info = extractErrorInfo(err);
-      this._logger.error("contribution_db_failed", `Failed to persist ${result.type} for ${participant.config.name} — visible in memory only this session; meeting continues`, info);
+      this._logger.error("contribution_db_failed", `Failed to persist ${result.type} for ${participant.config.name} — rolling back in-memory weave; meeting continues degraded`, info);
+      // Atomicity: remove the just-pushed contribution from weave/round to avoid memory/DB divergence
+      try {
+        const weave = this._stateManager.getWeave();
+        if (weave.length > 0 && weave[weave.length - 1].id === contribution.id) {
+          weave.pop();
+          // Also pop from round contributions
+          const idx = round.contributions.findIndex((c) => c.id === contribution.id);
+          if (idx >= 0) round.contributions.splice(idx, 1);
+          // Reconcile count
+          const p = this._stateManager.getParticipant(participant.config.id);
+          if (p && p.contributions_count > 0) p.contributions_count--;
+        }
+      } catch {}
       try { this._db.setPersistenceDegraded(true); } catch {}
       try {
         this._db.recordAgentError(
@@ -331,6 +303,8 @@ export class RoundExecutor {
       } catch {}
       if (!this._dbFailedThisMeeting) this._dbFailedThisMeeting = new Set();
       this._dbFailedThisMeeting.add(participant.config.id);
+      participant.status = "failed";
+      try { this._db.setParticipantStatus(participant.config.id, "failed"); } catch {}
     }
 
     this._options.onContribution?.(participant.config.name, this._stateManager.getCurrentRound(), result.type);
@@ -351,17 +325,29 @@ export class RoundExecutor {
     return buildToolsMapWithoutLoomHelper(config);
   }
 
-  async _cleanupRoundSessions(sessionIds) {
-    let failed = 0;
-    for (const sid of sessionIds) {
-      try { this._sessionManager.unregisterSession(sid); } catch {}
-      try {
-        await this._sessionManager.deleteEphemeralSession(sid);
-      } catch (err) {
-        failed++;
-        this._logger.warn("round_session_cleanup_failed", `Failed to delete round session ${sid}`, extractErrorInfo(err));
-      }
+  _abortControllers = new Set();
+
+  _abortInflight() {
+    for (const c of this._abortControllers) {
+      try { c.abort(); } catch {}
     }
+    this._abortControllers.clear();
+  }
+
+  async _cleanupRoundSessions(sessionIds) {
+    // Parallel with per-session timeout 3s — no 40s sequential stall
+    const results = await Promise.allSettled(sessionIds.map(async (sid) => {
+      try {
+        await Promise.race([
+          this._sessionManager.deleteEphemeralSession(sid),
+          new Promise((_, rej) => setTimeout(() => rej(new Error("cleanup timeout")), 3000)),
+        ]);
+      } catch (err) {
+        throw err;
+      }
+    }));
+    let failed = 0;
+    for (const r of results) if (r.status === "rejected") failed++;
     if (failed > 0) this._logger.warn("round_session_cleanup_partial", `${failed}/${sessionIds.length} round sessions failed to delete`);
   }
 }

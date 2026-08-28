@@ -90,8 +90,15 @@ export function startDashboard(directory, port) {
   } catch {
     // Config not available (e.g. standalone dashboard) — safe default holds
   }
-  if (hostname !== "127.0.0.1" && hostname !== "localhost") {
-    console.warn(`[Loom dashboard] Non-loopback binding (${hostname}) exposes full transcripts to the network.`);
+  const allowedHosts = new Set(["127.0.0.1", "localhost", "::1"]);
+  if (!allowedHosts.has(hostname)) {
+    const allowLan = process.env.LOOM_ALLOW_LAN === "1";
+    if (!allowLan) {
+      console.warn(`[Loom dashboard] Non-loopback binding (${hostname}) blocked — set Loom dashboard.host to 127.0.0.1 or export LOOM_ALLOW_LAN=1 to expose to LAN. Falling back to 127.0.0.1.`);
+      hostname = "127.0.0.1";
+    } else {
+      console.warn(`[Loom dashboard] Non-loopback binding (${hostname}) exposes full transcripts to the network (LOOM_ALLOW_LAN=1).`);
+    }
   }
 
   const server = Bun.serve({
