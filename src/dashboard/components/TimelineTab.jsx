@@ -25,16 +25,16 @@ const HEADER_HEIGHT = 48;
 const CONTRIBUTION_HEIGHT = 56;
 const INTERJECTION_HEIGHT = 72;
 const EXTENSION_MARKER_HEIGHT = 32;
-const REFLECTION_HEIGHT = 44;
-const QUERY_RESPONSE_HEIGHT = 44;
-const EVIDENCE_RESPONSE_HEIGHT = 44;
-const SUMMONED_RESPONSE_HEIGHT = 44;
-const VOTE_RESPONSE_HEIGHT = 44;
-const ORCHESTRATOR_ITEM_HEIGHT = 44;
+const REFLECTION_HEIGHT = 35;
+const QUERY_RESPONSE_HEIGHT = 35;
+const EVIDENCE_RESPONSE_HEIGHT = 35;
+const SUMMONED_RESPONSE_HEIGHT = 35;
+const VOTE_RESPONSE_HEIGHT = 35;
+const ORCHESTRATOR_ITEM_HEIGHT = 48;
 
 const ROUND_SUMMARY_HEIGHT = 88;
 
-const LOOM_INVOCATION_HEIGHT = 72;
+const LOOM_INVOCATION_HEIGHT = 39;
 
 const ModelFallbackItem = memo(({ error, participantName }) => {
   const [expanded, setExpanded] = useState(false);
@@ -99,8 +99,8 @@ function getRowHeight(item) {
   if (item.type === "agent_turn") {
     const n = item.contributions?.length ?? 1;
     const longest = Math.max(0, ...item.contributions.map(c => (c.content ?? "").length));
-    // Base 115, +30 per extra contribution, +20 if any long (>500) content
-    return 115 + Math.max(0, n - 1) * 30 + (longest > 500 ? 25 : 0);
+    // pt-4 (16px) top + pb-[3px] (3px) bottom = 19 vs old 4 → +15
+    return 103 + Math.max(0, n - 1) * 22 + (longest > 500 ? 16 : 0);
   }
   return 115;
 }
@@ -132,8 +132,8 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
   }
   if (item.type === "agent_turn") {
     return (
-      <div style={style} className="overflow-hidden py-0.5">
-        <div className="flex flex-col gap-2">
+      <div style={style} className="overflow-hidden pt-4 pb-[3px]">
+        <div className="flex flex-col gap-1.5">
           {item.contributions.map((c) => (
             <ContributionItem key={c.id} contribution={c} participantName={participantName(item.agentId)} onDialogOpen={onDialogOpen} />
           ))}
@@ -164,21 +164,20 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
       if (source && onDialogOpen) onDialogOpen({ contribution: source, participantName: participantName(item.sourceParticipantId), isLoomInvocation: true });
     };
     return (
-      <div style={style} className="pl-8 pb-1 overflow-hidden" title={`${detail} — click to open invoker's Tool use`}>
-        <Card className="border-l-[3px] border-l-[#6366f1] py-2 px-3 gap-1.5 opacity-95 cursor-pointer hover:bg-accent" onClick={openInvokerDialog} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openInvokerDialog(e); } }}>
+      <div style={style} className="pl-6 overflow-hidden" title={`${detail} — click to open invoker's Tool use`}>
+        <Card className="border-l-[3px] border-l-[#6366f1] py-1.5 px-3 gap-1 opacity-95 cursor-pointer hover:bg-accent mb-[3px]" onClick={openInvokerDialog} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openInvokerDialog(e); } }}>
           <div className="flex flex-wrap gap-2 items-center">
-            <Badge variant={isError ? "destructive" : "orchestrator"}>{toolName.replace("loom_", "")}</Badge>
+            <Badge variant={isError ? "destructive" : "orchestrator"} className="text-[10px] px-1.5 py-0 h-4">{toolName.replace("loom_", "")}</Badge>
             <span className="text-xs text-muted-foreground truncate flex-1">{detail}</span>
-            <Badge variant={isError ? "destructive" : "secondary"}>{isError ? "error" : "invoked"}</Badge>
+            <Badge variant={isError ? "destructive" : "secondary"} className="text-[10px] px-1.5 py-0 h-4">{isError ? "error" : "invoked"}</Badge>
           </div>
-          {invocation.output && <pre className="mt-1.5 text-[11px] max-h-[60px] overflow-y-auto whitespace-pre-wrap bg-muted p-2 rounded-md">{typeof invocation.output === "string" ? invocation.output.slice(0,300) : JSON.stringify(invocation.output).slice(0,300)}</pre>}
         </Card>
       </div>
     );
   }
   if (item.type === "reflection") {
     return (
-      <div style={style} className="pl-8 pb-1 overflow-hidden">
+      <div style={style} className="pl-6 overflow-hidden">
         <ReflectionRow
           reflection={item.reflection}
           contributions={contributions}
@@ -190,7 +189,7 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
   }
   if (item.type === "query_response") {
     return (
-      <div style={style} className="pl-8 pb-1 overflow-hidden">
+      <div style={style} className="pl-6 overflow-hidden">
         <QueryResponseRow
           queryResponse={item.queryResponse}
           contributions={contributions}
@@ -203,7 +202,7 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
   }
   if (item.type === "perspective_response") {
     return (
-      <div style={style} className="pl-8 pb-1 overflow-hidden">
+      <div style={style} className="pl-6 overflow-hidden">
         <QueryResponseRow
           queryResponse={item.perspectiveResponse}
           contributions={contributions}
@@ -216,7 +215,7 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
   }
   if (item.type === "critique_response") {
     return (
-      <div style={style} className="pl-8 pb-1 overflow-hidden">
+      <div style={style} className="pl-6 overflow-hidden">
         <QueryResponseRow
           queryResponse={item.critiqueResponse}
           contributions={contributions}
@@ -241,8 +240,8 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
   }
   if (item.type === "thinking_reflection") {
     return (
-      <div style={style} className="pl-8 pb-1 overflow-hidden">
-        <Card className="border-dashed opacity-70 py-2 border-l-2 border-l-[var(--badge-indigo)] bg-[color-mix(in_oklch,var(--badge-indigo)_4%,var(--card))]">
+      <div style={style} className="pl-6 overflow-hidden">
+        <Card className="border-dashed opacity-70 py-1.5 border-l-2 border-l-[var(--badge-indigo)] bg-[color-mix(in_oklch,var(--badge-indigo)_4%,var(--card))]">
           <CardContent className="flex items-center gap-3 py-0">
             <Spinner className="size-4" />
             <span className="text-sm text-muted-foreground">Reflection by {item.reflectorName} on {item.triggerAgentName}'s {item.triggerType}...</span>
@@ -253,8 +252,8 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
   }
   if (item.type === "thinking_query") {
     return (
-      <div style={style} className="pl-8 pb-1 overflow-hidden">
-        <Card className="border-dashed opacity-70 py-2 border-l-2 border-l-[var(--badge-teal)] bg-[color-mix(in_oklch,var(--badge-teal)_4%,var(--card))]">
+      <div style={style} className="pl-6 overflow-hidden">
+        <Card className="border-dashed opacity-70 py-1.5 border-l-2 border-l-[var(--badge-teal)] bg-[color-mix(in_oklch,var(--badge-teal)_4%,var(--card))]">
           <CardContent className="flex items-center gap-3 py-0">
             <Spinner className="size-4" />
             <span className="text-sm text-muted-foreground">{item.queriedAgentName} is answering a query...</span>
@@ -265,8 +264,8 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
   }
   if (item.type === "thinking_evidence") {
     return (
-      <div style={style} className="pl-8 pb-1 overflow-hidden">
-        <Card className="border-dashed opacity-70 py-2 border-l-2 border-l-[var(--badge-sky)] bg-[color-mix(in_oklch,var(--badge-sky)_4%,var(--card))]">
+      <div style={style} className="pl-6 overflow-hidden">
+        <Card className="border-dashed opacity-70 py-1.5 border-l-2 border-l-[var(--badge-sky)] bg-[color-mix(in_oklch,var(--badge-sky)_4%,var(--card))]">
           <CardContent className="flex items-center gap-3 py-0">
             <Spinner className="size-4" />
             <span className="text-sm text-muted-foreground">{item.evidenceAgentName} is finding evidence...</span>
@@ -277,8 +276,8 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
   }
   if (item.type === "thinking_summon") {
     return (
-      <div style={style} className="pl-8 pb-1 overflow-hidden">
-        <Card className="border-dashed opacity-70 py-2 border-l-2 border-l-[var(--badge-violet)] bg-[color-mix(in_oklch,var(--badge-violet)_4%,var(--card))]">
+      <div style={style} className="pl-6 overflow-hidden">
+        <Card className="border-dashed opacity-70 py-1.5 border-l-2 border-l-[var(--badge-violet)] bg-[color-mix(in_oklch,var(--badge-violet)_4%,var(--card))]">
           <CardContent className="flex items-center gap-3 py-0">
             <Spinner className="size-4" />
             <span className="text-sm text-muted-foreground">Guest expert is being summoned...</span>
@@ -289,7 +288,7 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
   }
   if (item.type === "evidence_response") {
     return (
-      <div style={style} className="pl-8 pb-1 overflow-hidden">
+      <div style={style} className="pl-6 overflow-hidden">
         <EvidenceResponseRow
           evidenceResponse={item.evidenceResponse}
           contributions={contributions}
@@ -302,7 +301,7 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
   }
   if (item.type === "summoned_response") {
     return (
-      <div style={style} className="pl-8 pb-1 overflow-hidden">
+      <div style={style} className="pl-6 overflow-hidden">
         <SummonedResponseRow
           summonedResponse={item.summonedResponse}
           contributions={contributions}
@@ -315,7 +314,7 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
   }
   if (item.type === "vote_response") {
     return (
-      <div style={style} className="pl-8 pb-1 overflow-hidden">
+      <div style={style} className="pl-6 overflow-hidden">
         <VoteResponseRow voteResponse={item.voteResponse} contributions={contributions} participantName={participantName} onDialogOpen={onDialogOpen} invokerId={item.invokerId} />
       </div>
     );

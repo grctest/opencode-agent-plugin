@@ -232,7 +232,7 @@ export const BaseResponseRow = memo(({ contribution, header, badgeLabel, badgeVa
   const openDialog = () => onDialogOpen?.({ contribution, ...dialogPayload });
   return (
     <Card
-      className={cn("py-2.5 px-3 gap-0 border-l-2 cursor-pointer hover:bg-accent/50 flex flex-col justify-center", borderClass)}
+      className={cn("py-2.5 px-3 gap-0 border-l-2 cursor-pointer hover:bg-accent/50 flex flex-col justify-center mb-[3px]", borderClass)}
       onClick={openDialog}
       role="button"
       tabIndex={0}
@@ -358,7 +358,7 @@ export const VoteTallyRow = memo(({ tally, participantName, onDialogOpen }) => {
   const openDialog = () => onDialogOpen?.({ contribution: tally, participantName: orchestratorName, isVoteTally: true });
   return (
     <Card
-      className={cn("py-2.5 px-3 gap-0 border-l-2 border-l-[var(--badge-orange-light)] bg-[color-mix(in_oklch,var(--badge-orange-light)_4%,var(--card))] cursor-pointer hover:bg-accent/50 flex flex-col justify-center")}
+      className={cn("py-2.5 px-3 gap-0 border-l-2 border-l-[var(--badge-orange-light)] bg-[color-mix(in_oklch,var(--badge-orange-light)_4%,var(--card))] cursor-pointer hover:bg-accent/50 flex flex-col justify-center mb-[3px]")}
       onClick={openDialog}
       role="button"
       tabIndex={0}
