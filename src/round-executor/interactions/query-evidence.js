@@ -4,7 +4,6 @@ import { QUERY_MODES, researchTools } from "../../prompts/query-modes.js";
 import { extractAgentResponse, mapToolResults } from "../../shared.js";
 import { getPersonas } from "../../composer.js";
 import { extractErrorInfo } from "../../logger.js";
-import { extractVoteLetter, buildTally } from "../../utils/vote-tally.js";
 import { degrade } from "../../utils/degrade.js";
 
 function normalizeQueryItems(query) {

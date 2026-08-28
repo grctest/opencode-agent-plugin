@@ -2,7 +2,7 @@ import { memo } from "react";
 import { Badge } from "./ui/badge.tsx";
 
 const validTier = new Set(["junior", "mid", "senior", "principal"]);
-const validType = new Set(["propose", "challenge", "refine", "support", "dissent", "synthesize", "question", "turn_request", "reflection", "query_response", "evidence_response", "summoned_response", "vote_response", "vote_tally"]);
+const validType = new Set(["propose", "challenge", "refine", "support", "dissent", "synthesize", "question", "turn_request", "reflection", "query_response", "evidence_response", "summoned_response", "vote_response"]);
 const validStatus = new Set(["weaving", "converged", "max_rounds_reached", "initializing", "aborted", "failed", "cancelled", "timeout"]);
 
 export const StatusBadge = memo(({ status }) => {

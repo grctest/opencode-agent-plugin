@@ -750,7 +750,6 @@ The orchestrator calls `updateStateOfPlay(weave, question, tags)` which categori
 |-----------|----------|
 | `contribution` (primary turns — untyped) | Fallback keyword matching |
 | `propose`, `refine` | Decisions & Proposals |
-| `vote_tally` | Decisions & Proposals (a resolved poll is a decided point) |
 | `support` | Agreements |
 | `challenge`, `dissent`, `critique_response` | Disagreements & Concerns |
 | `question` | Open Questions |
@@ -818,7 +817,7 @@ After each round, a summary is generated via LLM — every round, unconditionall
 
 ### LLM Clerk Summary
 
-`summarizeRound` picks the highest-tier model (or fallback model), filters to substantive contributions (`contribution` + `query_response`/`evidence_response`/`vote_tally` etc., legacy `propose`/`challenge` included; `evidence_response` only when tool-backed; `[PASS]` excluded) via `SUBSTANTIVE_TYPES` (`src/utils/contribution-types.js`) and prompts:
+`summarizeRound` picks the highest-tier model (or fallback model), filters to substantive contributions (`contribution` + `query_response`/`evidence_response` etc., legacy `propose`/`challenge` included; `evidence_response` only when tool-backed; `[PASS]` excluded) via `SUBSTANTIVE_TYPES` (`src/utils/contribution-types.js`, `vote_tally` removed — outcome via invoker prose) and prompts:
 
 ```
 You are a concise deliberation clerk. Summarize round 3 in 60-90 words —
@@ -1383,9 +1382,9 @@ Fan-out to **all active participants** (source + every non-failed/passed/muted p
 - **Prompt** (`buildVotePrompt`): poll question, source's contribution, voter's last 2 contributions and stored reflection, round context.
 - **Ballot format:** `[Vote: <letter>]` + 1–2 sentences reasoning. `extractVoteLetter()` accepts the tag or a standalone capital letter.
 - **Tools:** none — `tool_choice: "none"` (fast, tool-free poll).
-- **Output:** each ballot stored as `vote_response` (`[Vote from <Name>]`); after collection a `vote_tally` contribution is produced listing counts, percentages, and total voters.
-- **Edge case:** source-only tally if no other active participants.
-- **Idempotency:** same `batch_id + question` reuses existing vote rows.
+- **Output:** each ballot stored as `vote_response` (`[Vote from <Name>]`); tally is returned **inline** to the caller (`{tally:"[Vote Tally] …", votes:[…]}`) for same-turn synthesis — no `vote_tally` row is persisted (invoker interprets in prose).
+- **Edge case:** source-only → tally inline with 1 voter.
+- **Idempotency:** same `batch_id + question` reuses existing `vote_response` rows and rebuilds tally inline.
 
 ### `loom_summon` — Guest Expert
 
@@ -1416,7 +1415,7 @@ Peer responses are returned as JSON payloads in the tool output. The caller's sy
 | `query_response` (clarify/critique/risks/assumptions/alternatives) | Key Facts | Includes the target's answer |
 | `query_response` (perspective) | Key Facts | Also updates target's stored reflection |
 | `evidence_response` | Key Facts | Includes source + strength metadata |
-| `vote_tally` | Decision | Per-poll tally; individual ballots excluded |
+| `vote_response` | (excluded) | Individual ballots — outcome via invoker prose |
 | `summoned_response` | Key Facts | Guest expert perspective |
 
 All response types flow into the weave and appear in later agents' recent contributions.

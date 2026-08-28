@@ -61,23 +61,11 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
           // Voters = all other active participants excluding caller
           const voters = allParticipants.filter(p => (!caller || p.config.id !== caller.config.id) && p.status !== "failed" && p.status !== "passed" && p.status !== "muted");
           const extractVoteLetter = (text) => sharedVoteTally.extractVoteLetter(text);
-          // Idempotent per-question guard: if this batch already polled this exact question (retry or duplicate tool call), reuse existing rows
+          // Idempotent per-question guard: if this batch already polled this exact question (retry or duplicate tool call), reuse existing votes and rebuild tally inline
           try {
             const weave = stateManager.getWeave ? stateManager.getWeave() : [];
-            const existingTally = weave.find(c => c.batch_id === callerBatchId && c.type === "vote_tally" && c.prompt_context?.question === args.question);
-            if (existingTally) {
-              const existingVotes = weave.filter(c => c.batch_id === callerBatchId && c.type === "vote_response" && c.prompt_context?.question === args.question);
-              const tallyContent = existingTally.content;
-              const voterResults = existingVotes.map(v => {
-                const raw = (v.content ?? "").replace(/^\[Vote from .+?\]\s*/m, "").trim();
-                return { voter: v.participant_id, name: v.content.match(/\[Vote from (.+?)\]/)?.[1] ?? v.participant_id, content: raw.slice(0,200) };
-              });
-              const payload = { inline: true, question: args.question, tally: tallyContent.slice(0,800), votes: voterResults, tallyId: existingTally.id, note: "Vote reused — identical poll already exists for this batch (duplicate tool call suppressed)." };
-              return { output: JSON.stringify(payload), metadata: { inline: true, voteCount: voterResults.length, reused: true }, title: `loom_vote:${voterResults.length} votes (cached)` };
-            }
             const existingVotesForQuestion = weave.filter(c => c.batch_id === callerBatchId && c.type === "vote_response" && c.prompt_context?.question === args.question);
             if (existingVotesForQuestion.length > 0) {
-              // Partial poll already exists (retry after timeout left votes but no tally) — reuse them and build tally
               const voteResponses = existingVotesForQuestion.map(v => {
                 const raw = (v.content ?? "").replace(/^\[Vote from .+?\]\s*/m, "").trim();
                 const name = v.content.match(/\[Vote from (.+?)\]/)?.[1] ?? v.participant_id;
@@ -94,36 +82,14 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
                 const raw = (v.content ?? "").replace(/^\[Vote from .+?\]\s*/m, "").trim();
                 return { voter: v.participant_id, name: v.content.match(/\[Vote from (.+?)\]/)?.[1] ?? v.participant_id, content: raw.slice(0,200) };
               });
-              // Find or create tally for these votes (reuse if not yet created)
-              let tallyId = existingTally?.id ?? `reused-${Date.now()}`;
-              const payload = { inline: true, question: args.question, tally: tallyContent.slice(0,800), votes: voterResults, tallyId, note: "Vote reused — partial poll already exists for this batch, tally rebuilt." };
+              const payload = { inline: true, question: args.question, tally: tallyContent.slice(0,800), votes: voterResults, note: "Vote reused — partial poll already exists for this batch, tally rebuilt inline." };
               return { output: JSON.stringify(payload), metadata: { inline: true, voteCount: voterResults.length, reused: true }, title: `loom_vote:${voterResults.length} votes (reused)` };
             }
           } catch {}
           if (voters.length === 0) {
             const tallyContent = `[Vote Tally] ${args.question}\nSource vote: ${sourceSnippet.slice(0,200)}\nTotal voters: 1 (source only)`;
-            try {
-              const tallyContrib = {
-                id: stateManager.nextContributionId(),
-                round: currentRound,
-                participant_id: caller?.config?.id ?? allParticipants[0]?.config?.id ?? "unknown",
-                content: tallyContent,
-                type: "vote_tally",
-                targets_which: null,
-                batch_id: callerBatchId,
-                tool_calls: null,
-                prompt_context: { type: "vote_tally", question: args.question, round: currentRound },
-                created_at: new Date().toISOString(),
-              };
-              stateManager.addContribution(tallyContrib);
-              if (roundObj) roundObj.contributions.push(tallyContrib);
-              degrade("tally_db_failed", "Failed to persist vote_tally — visible in memory only this session", () => db.addContributionWithTurnRequest(stateManager.getState().id, tallyContrib, null), null);
-              const payload = { inline: true, question: args.question, tally: tallyContent.slice(0,800), votes: [], tallyId: tallyContrib.id, note: "Vote completed inline — source only." };
-              return { output: JSON.stringify(payload), metadata: { inline: true }, title: "loom_vote:source only" };
-            } catch (e) {
-              const payload = { inline: true, question: args.question, tally: tallyContent.slice(0,800), votes: [], note: `Vote inline stored failed: ${e.message}` };
-              return { output: JSON.stringify(payload), metadata: { inline: true, error: true }, title: "loom_vote error" };
-            }
+            const payload = { inline: true, question: args.question, tally: tallyContent.slice(0,800), votes: [], note: "Vote completed inline — source only (invoker interprets tally)." };
+            return { output: JSON.stringify(payload), metadata: { inline: true }, title: "loom_vote:source only" };
           }
           // Parallel fan-out to voters
           const voteResponses = [];
@@ -238,46 +204,15 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
               try { db.setParticipantStatus(voter.config.id, "listening"); } catch {}
             }
           }));
-          // Tally generation via shared builder (audit 16 MA2 — mirrors RoundExecutor.executeVote)
-          const { lines: tallyLines, counts: voteCounts } = sharedVoteTally.buildTally({
+          // Tally generation via shared builder — inline only (no persisted vote_tally row)
+          const { lines: tallyLines } = sharedVoteTally.buildTally({
             question: args.question,
             sourceLetter: extractVoteLetter(sourceSnippet),
             sourceLabel: caller?.config?.name ?? "source",
             responses: voteResponses,
           });
-          const sorted = Object.entries(voteCounts).sort((a, b) => b[1] - a[1]);
-          if (sorted.length > 0) {
-            const [winner, count] = sorted[0];
-            tallyLines.push(`Leading option: ${winner} (${count} votes)`);
-          }
           const tallyContent = tallyLines.join("\n");
-          // Idempotent tally: reuse existing tally for this batch if present (retry)
-          let tallyContrib = null;
-          try {
-            const weave = stateManager.getWeave ? stateManager.getWeave() : [];
-            const existingTally = weave.find(c => c.batch_id === callerBatchId && c.type === "vote_tally");
-            if (existingTally) {
-              tallyContrib = existingTally;
-            }
-          } catch {}
-          if (!tallyContrib) {
-            tallyContrib = {
-              id: stateManager.nextContributionId(),
-              round: currentRound,
-              participant_id: caller?.config?.id ?? allParticipants[0]?.config?.id ?? "unknown",
-              content: tallyContent,
-              type: "vote_tally",
-              targets_which: null,
-              batch_id: callerBatchId,
-              tool_calls: null,
-              prompt_context: { type: "vote_tally", question: args.question, votes: voteResponses, round: currentRound },
-              created_at: new Date().toISOString(),
-            };
-            stateManager.addContribution(tallyContrib);
-            if (roundObj) roundObj.contributions.push(tallyContrib);
-            degrade("tally_db_failed", "Failed to persist final vote_tally — visible in memory only this session", () => db.addContributionWithTurnRequest(stateManager.getState().id, tallyContrib, null), null);
-          }
-          const payload = { inline: true, question: args.question, tally: tallyContent.slice(0,800), votes: voterResults, tallyId: tallyContrib.id, note: "Vote completed inline — tally and vote_response/tally rows stored, returned for same-turn synthesis." };
+          const payload = { inline: true, question: args.question, tally: tallyContent.slice(0,800), votes: voterResults, note: "Vote completed inline — invoker interprets tally (no persisted vote_tally row)." };
           return { output: JSON.stringify(payload), metadata: { inline: true, voteCount: voterResults.length }, title: `loom_vote:${voterResults.length} votes` };
         } catch (e) {
           const p = { error: `loom_vote inline failed: ${e.message}`, queued: true, question: args.question };

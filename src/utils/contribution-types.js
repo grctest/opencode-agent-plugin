@@ -13,13 +13,13 @@ export const CONTRIBUTION_TYPE = {
   EVIDENCE_RESPONSE: "evidence_response",
   SUMMONED_RESPONSE: "summoned_response",
   VOTE_RESPONSE: "vote_response",
-  VOTE_TALLY: "vote_tally",
 };
 
 // Legacy types from older meetings — treat as contribution for summary/SoP
 const LEGACY_SUBSTANTIVE = new Set(["propose", "challenge", "refine", "support", "dissent", "synthesize", "question"]);
 
 // Types that carry substantive deliberation positions (for summaries)
+// vote_tally removed — outcome lives in invoker's prose, not a separate row
 export const SUBSTANTIVE_TYPES = new Set([
   "contribution",
   "query_response",
@@ -27,7 +27,6 @@ export const SUBSTANTIVE_TYPES = new Set([
   "critique_response",
   "evidence_response",
   "summoned_response",
-  "vote_tally",
   ...LEGACY_SUBSTANTIVE,
 ]);
 

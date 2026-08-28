@@ -50,7 +50,7 @@ export async function promptChildSession(participant) {
     : "";
 
   const recentForPrompt = this._stateManager.getWeave().filter(
-    (c) => c.round != null && c.round >= currentRound - 1 && c.type !== "vote_response" && c.type !== "vote_tally" && c.type !== "reflection",
+    (c) => c.round != null && c.round >= currentRound - 1 && c.type !== "vote_response" && c.type !== "reflection",
   ).slice(-12);
 
   const systemPrompt = buildAgentSystemPrompt(participant);

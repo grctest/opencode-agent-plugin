@@ -11,7 +11,6 @@ import { VectorIndex } from "./services/vector-index.js";
 import { resolveLoomBaseDir } from "./paths.js";
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_QUANT } from "./services/model-manager.js";
 import { buildQueryPrompt, buildEvidencePrompt, buildVotePrompt, buildSummonPrompt } from "./prompts/interaction-prompts.js";
-import * as sharedVoteTally from "./utils/vote-tally.js";
 import { degrade } from "./utils/degrade.js";
 import { createAgentTools } from "./plugin/agent-tools.js";
 import { createPluginReturn } from "./plugin/return.js";

@@ -367,7 +367,7 @@ export const VoteTallyRow = memo(({ tally, participantName, onDialogOpen }) => {
       <div className="flex flex-wrap gap-2 items-center w-full">
         <span className="text-xs leading-none flex-1 min-w-0 truncate"><span className="font-bold">{orchestratorName}</span> <span className="text-muted-foreground">tally</span></span>
         <span className="ml-auto flex items-center gap-2 shrink-0">
-          <Badge variant="vote_tally" className="text-[10px] px-1.5 py-0 h-4">tally</Badge>
+          <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4">tally</Badge>
           <ChevronRightIcon className="size-3 text-muted-foreground/60" />
         </span>
       </div>

@@ -37,7 +37,6 @@ const badgeVariants = cva(
         evidence_response: "bg-[var(--badge-sky)] text-white",
         summoned_response: "bg-[var(--badge-violet)] text-white",
         vote_response: "bg-[var(--badge-emerald)] text-white",
-        vote_tally: "bg-[var(--badge-orange-light)] text-white",
         turn_request: "bg-[var(--badge-pink)] text-white",
         // Status variants
         weaving: "bg-[var(--badge-amber)] text-white",

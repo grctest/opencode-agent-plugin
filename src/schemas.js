@@ -9,6 +9,7 @@ import { z } from 'zod';
 
 // Contribution types — primary agent turns are now untyped ("contribution");
 // peer responses retain their specific types for timeline grouping.
+// vote_tally removed: tally is inline tool output interpreted by invoker, not a persisted row.
 export const ContributionTypeSchema = z.enum([
   'contribution',
   'pass',
@@ -18,7 +19,6 @@ export const ContributionTypeSchema = z.enum([
   'evidence_response',
   'summoned_response',
   'vote_response',
-  'vote_tally',
 ]);
 
 // Agent response parsed from LLM output — peer-interaction fields are now always null (real tool use only)

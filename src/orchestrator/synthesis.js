@@ -96,7 +96,7 @@ export function _computeQualityTelemetry() {
         participants: participants.length,
         contributors: contributors.size,
         participation_ratio: participants.length > 0 ? Math.round((contributors.size / participants.length) * 100) / 100 : 0,
-        votes_held: byType.vote_tally ?? 0,
+        votes_held: byType.vote_response ?? 0,
       };
     } catch {
       return null;

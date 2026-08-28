@@ -224,24 +224,8 @@ export async function executeVote(round, sourceParticipant, vote, sourceContribu
   );
 
   if (voters.length === 0) {
-    const tallyContent = `[Vote Tally] ${vote.question}\nSource vote: ${sourceVoteText.slice(0, 200)}\nTotal voters: 1 (source only)`;
-    const tallyContribution = {
-      id: stateManager.nextContributionId(),
-      round: stateManager.getCurrentRound(),
-      participant_id: sourceParticipant.config.id,
-      content: tallyContent,
-      type: "vote_tally",
-      targets_which: sourceContributionId,
-      batch_id: sourceParticipant.currentBatchId ?? crypto.randomUUID(),
-      tool_calls: null,
-      prompt_context: { type: "vote_tally", question: vote.question, round: stateManager.getCurrentRound() },
-      created_at: new Date().toISOString(),
-    };
-    stateManager.addContribution(tallyContribution);
-    round.contributions.push(tallyContribution);
-    stateManager.incrementParticipantContributions(sourceParticipant.config.id);
-    degrade("persist.contribution", "Persist contribution", () => db.addContributionWithTurnRequest(stateManager.getMeetingId(), tallyContribution, null), null);
-    this._options.onProgress?.(`${sourceParticipant.config.name} — vote tally (source only)`);
+    // No voters — no tally needed, source's vote is in their own contribution prose
+    this._options.onProgress?.(`${sourceParticipant.config.name} — vote (source only, no voters)`);
     return;
   }
 
@@ -365,31 +349,13 @@ One sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No
 
   db.setQueryingParticipants(null);
 
-  const sourceLetter = extractVoteLetter(sourceVoteText);
-  const { lines: tallyLines, counts: voteCounts } = buildTally({
+  // Tally is inline-only via loom_vote tool output; no persisted vote_tally row (invoker interprets in prose)
+  const { counts: voteCounts } = buildTally({
     question: vote.question,
-    sourceLetter,
+    sourceLetter: extractVoteLetter(sourceVoteText),
     sourceLabel: sourceParticipant.config.name,
     responses: voteResponses,
   });
-
-  const tallyContent = tallyLines.join("\n");
   const sorted = Object.entries(voteCounts).sort((a, b) => b[1] - a[1]);
-  const tallyContribution = {
-    id: stateManager.nextContributionId(),
-    round: stateManager.getCurrentRound(),
-    participant_id: sourceParticipant.config.id,
-    content: tallyContent,
-    type: "vote_tally",
-    targets_which: sourceContributionId,
-    batch_id: sourceParticipant.currentBatchId ?? crypto.randomUUID(),
-    tool_calls: null,
-    prompt_context: { type: "vote_tally", question: vote.question, votes: voteResponses, round: stateManager.getCurrentRound() },
-    created_at: new Date().toISOString(),
-  };
-  stateManager.addContribution(tallyContribution);
-  round.contributions.push(tallyContribution);
-  stateManager.incrementParticipantContributions(sourceParticipant.config.id);
-  degrade("persist.contribution", "Persist contribution", () => db.addContributionWithTurnRequest(stateManager.getMeetingId(), tallyContribution, null), null);
-  this._options.onProgress?.(`${sourceParticipant.config.name} — vote tally: ${sorted.length > 0 ? `Winner ${sorted[0][0]}` : "no votes"}`);
+  this._options.onProgress?.(`${sourceParticipant.config.name} — votes collected: ${sorted.length > 0 ? `leading ${sorted[0][0]}` : "no votes"} (tally inline, not persisted)`);
 }

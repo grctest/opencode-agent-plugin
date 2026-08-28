@@ -105,8 +105,6 @@ function classifyContribution(type, content, mode = "") {
     case "evidence_response":
     case "summoned_response":
       return "keyFacts";
-    case "vote_tally":
-      return "decisions";
     case "vote_response":
     case "synthesize":
     case "refuse":
