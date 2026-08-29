@@ -8,6 +8,7 @@ import { toast } from "./ui/toast.tsx";
 
 function OutputTabBase({ artifact }) {
   const [copied, setCopied] = useState(false);
+  const html = useMemo(() => renderMarkdown(artifact?.content ?? ""), [artifact?.content]);
   const handleCopy = async (text) => {
     try {
       await navigator.clipboard.writeText(text ?? "");
@@ -30,8 +31,6 @@ function OutputTabBase({ artifact }) {
       </Empty>
     );
   }
-
-  const html = useMemo(() => renderMarkdown(artifact.content ?? ""), [artifact.content]);
 
   return (
     <div className="flex flex-col gap-3">

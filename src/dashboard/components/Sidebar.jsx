@@ -45,7 +45,7 @@ function RoundIndicator({ current, max, status }) {
   return (
     <Card className="py-3 gap-2">
       <CardContent className="flex flex-col gap-1 py-0">
-        <div className="flex justify-between items-center">
+        <div className="flex flex-col gap-1">
           <span className="text-xs text-muted-foreground flex items-center gap-1">
             Status: <Badge variant={status === "weaving" ? "weaving" : status === "converged" ? "converged" : "secondary"} className="ml-1">{status}</Badge>
           </span>
