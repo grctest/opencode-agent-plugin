@@ -1,3 +1,5 @@
+import { TUNING } from "./config/defaults.js";
+import { getConfig } from "./config.js";
 /**
  * Simple in-memory metrics collector for the Loom deliberation engine.
  * Tracks LLM call counts, latency buckets, degradation events (via utils/degrade.js),
@@ -12,10 +14,12 @@ const counters = {
   degradation_events: {},
 };
 
-const latencies = {
-  llm_prompt_ms: [],
-  synthesis_ms: [],
+// Circular buffers per latency bucket — O(1) push
+const latencyBuffers = {
+  llm_prompt_ms: { buf: new Array(TUNING.LATENCY_SAMPLE_LIMIT), head: 0, count: 0 },
+  synthesis_ms: { buf: new Array(TUNING.LATENCY_SAMPLE_LIMIT), head: 0, count: 0 },
 };
+const latencies = latencyBuffers;
 
 /** Records a counter increment for a keyed sub-counter (e.g., llm_calls_by_type.agent). */
 export function incrementKeyedCounter(category, key, amount = 1) {
@@ -24,13 +28,41 @@ export function incrementKeyedCounter(category, key, amount = 1) {
   }
 }
 
-/** Records a latency sample (in milliseconds). Keeps last 100 samples per bucket. */
-export function recordLatency(bucket, ms) {
-  if (!latencies[bucket]) return;
-  latencies[bucket].push(ms);
-  if (latencies[bucket].length > 100) {
-    latencies[bucket].shift();
+function getLatencyCap() { try { return getConfig()?.tuning?.LATENCY_SAMPLE_LIMIT ?? TUNING.LATENCY_SAMPLE_LIMIT; } catch { return TUNING.LATENCY_SAMPLE_LIMIT; } }
+function ensureLatencyBuffer(bucket) {
+  if (!latencyBuffers[bucket]) latencyBuffers[bucket] = { buf: new Array(getLatencyCap()), head: 0, count: 0 };
+  const cap = getLatencyCap();
+  const b = latencyBuffers[bucket];
+  if (b.buf.length !== cap) {
+    // Resize preserving order
+    const ordered = [];
+    for (let i = 0; i < b.count; i++) ordered.push(b.buf[(b.head - b.count + i + b.buf.length) % b.buf.length] ?? b.buf[(b.head + i) % b.buf.length]);
+    // Simpler: collect via helper
+    const vals = getLatencyValues(bucket);
+    b.buf = new Array(cap);
+    b.head = 0;
+    b.count = 0;
+    for (const v of vals.slice(-cap)) { b.buf[b.head] = v; b.head = (b.head+1)%cap; if (b.count<cap) b.count++; }
   }
+  return b;
+}
+function getLatencyValues(bucket) {
+  const b = latencyBuffers[bucket];
+  if (!b || b.count===0) return [];
+  const cap = b.buf.length;
+  const out = [];
+  const start = b.count < cap ? 0 : b.head;
+  for (let i=0;i<b.count;i++) out.push(b.buf[(start+i)%cap]);
+  return out;
+}
+/** Records a latency sample (in milliseconds). Keeps last N samples per bucket (tunable) — O(1). */
+export function recordLatency(bucket, ms) {
+  const b = ensureLatencyBuffer(bucket);
+  if (!b) return;
+  const cap = getLatencyCap();
+  b.buf[b.head] = ms;
+  b.head = (b.head + 1) % cap;
+  if (b.count < cap) b.count++;
 }
 
 /** Computes summary stats for a latency bucket. */
@@ -57,7 +89,7 @@ export function getMetricsSnapshot() {
       degradation_events: { ...counters.degradation_events },
     },
     latencies: Object.fromEntries(
-      Object.entries(latencies).map(([k, v]) => [k, latencyStats(v)])
+      Object.entries(latencyBuffers).map(([k, _]) => [k, latencyStats(getLatencyValues(k))])
     ),
     timestamp: new Date().toISOString(),
   };

@@ -2,11 +2,12 @@ import { buildSynthesisPrompt } from "./prompts/synthesis.js";
 import { formatFinalRoundTranscript } from "./state-of-play.js";
 import { finalizeSynthesis, validateSynthesisSections, NEUTRAL_SYNTHESIZER_SYSTEM } from "./synthesizer.js";
 import { getConfig } from "./config.js";
+import { TUNING } from "./config/defaults.js";
 import { extractErrorInfo } from "./logger.js";
 import { incrementKeyedCounter, recordLatency } from "./metrics.js";
 import { withRetry, isRetryableError } from "./utils/retry.js";
 
-const MAX_CRITIQUE_RETRIES = 2;
+function getMaxCritiqueRetries() { try { return getConfig()?.tuning?.MAX_CRITIQUE_RETRIES ?? TUNING.MAX_CRITIQUE_RETRIES; } catch { return TUNING.MAX_CRITIQUE_RETRIES; } }
 // Core required for both modes; Action Items / Proposed Fix group — at least one must be present (see synthesizer.validateSynthesisSections)
 const REQUIRED_SECTIONS = ["Decision", "Reasoning", "Confidence", "Dissenting Views", "Open Questions"];
 const REQUIRED_ACTION_GROUP = ["Action Items", "Proposed Fix"];
@@ -207,7 +208,7 @@ If the draft is accurate, grounded, and complete, respond with exactly: [NO_CHAN
 Draft synthesis${draftChunks.length>1?` (${draftChunks.length} chunks)`: ""}:
 ${draftForPrompt}`;
 
-    for (let attempt = 0; attempt < MAX_CRITIQUE_RETRIES; attempt++) {
+    for (let attempt = 0; attempt < getMaxCritiqueRetries(); attempt++) {
       try {
         const result = await withRetry(async () => {
           const r = await this.#sessionManager.getContract().prompt({

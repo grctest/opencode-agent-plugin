@@ -6,8 +6,9 @@ import { resolveLoomBaseDir } from "../paths.js";
 import { parseReflections, safeParseJson } from "../utils/db-parsing.js";
 import * as queriesHelpers from "./api/queries.js";
 import * as exportsHelpers from "./api/exports.js";
-
-const DB_CACHE_MAX = 10;
+import { TUNING } from "../config/defaults.js";
+import { getConfig } from "../config.js";
+function getDbCacheMax() { try { return getConfig()?.tuning?.MAX_DB_CACHE_SIZE ?? TUNING.MAX_DB_CACHE_SIZE; } catch { return TUNING.MAX_DB_CACHE_SIZE; } }
 
 const DB_REFRESH_INTERVAL_MS = 500;
 
@@ -51,7 +52,7 @@ export class DashboardApi {
       return existing;
     }
     DashboardApi._evictExpired();
-    if (DashboardApi.cache.size >= DB_CACHE_MAX) {
+    if (DashboardApi.cache.size >= getDbCacheMax()) {
       let oldest = null;
       for (const [path, api] of DashboardApi.cache) {
         if (!oldest || api._lastModified < oldest.api._lastModified) {

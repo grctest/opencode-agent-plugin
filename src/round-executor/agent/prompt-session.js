@@ -3,7 +3,7 @@ import { getConfig, resolveBuiltInTools, resolveLoomTools } from "../../config.j
 import { extractAgentResponse, mapToolResults, extractFileBlockTools, getPriorityCap } from "../../shared.js";
 import { parseAgentResponse } from "../../validation.js";
 import { sanitizeAgentOutput } from "../../utils/sanitize.js";
-import { isRetryableError } from "../../utils/retry.js";
+import { withRetry, isRetryableError } from "../../utils/retry.js";
 import { selectFallbackModel } from "../../services/model-service.js";
 import { incrementKeyedCounter, recordLatency } from "../../metrics.js";
 import { extractErrorInfo } from "../../logger.js";

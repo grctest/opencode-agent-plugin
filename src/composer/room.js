@@ -1,6 +1,6 @@
+import { getConfig } from "../config.js";
 import { getPersonas, getPersonaTags, loadDomainVocabulary } from "./persona-loader.js";
 import { PersonaIndex } from "../services/persona-index.js";
-import { getConfig } from "../config.js";
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_QUANT } from "../services/model-manager.js";
 import { Logger, extractErrorInfo } from "../logger.js";
 
@@ -228,7 +228,8 @@ export async function composeRoomWithSimilarity(question, database) {
     composerLogger.info("compose_selection_distances", "Persona selection distances (L2)", { distances: selectedDistances, maxCosineDistance, maxL2 });
   }
 
-  const estimatedRounds = complexity === "high" ? 4 : complexity === "medium" ? 3 : 2;
+  const cfgRounds = getConfig()?.defaultMaxRounds;
+  const estimatedRounds = Number.isFinite(cfgRounds) ? cfgRounds : (complexity === "high" ? 4 : complexity === "medium" ? 3 : 2);
   const derivedTags = deriveTags(participants);
 
   return {
@@ -247,7 +248,8 @@ export async function composeRoomWithSimilarity(question, database) {
  */
 function composeRoomByKeyword(question, personas, roles, complexity, count, used, participants) {
   if (typeof question !== 'string' || question.length === 0) {
-    const estimatedRounds = complexity === "high" ? 4 : complexity === "medium" ? 3 : 2;
+    const cfgRounds = getConfig()?.defaultMaxRounds;
+  const estimatedRounds = Number.isFinite(cfgRounds) ? cfgRounds : (complexity === "high" ? 4 : complexity === "medium" ? 3 : 2);
     const derivedTags = deriveTags(participants);
     return {
       participants,
@@ -290,7 +292,8 @@ function composeRoomByKeyword(question, personas, roles, complexity, count, used
     }
   }
 
-  const estimatedRounds = complexity === "high" ? 4 : complexity === "medium" ? 3 : 2;
+  const cfgRounds = getConfig()?.defaultMaxRounds;
+  const estimatedRounds = Number.isFinite(cfgRounds) ? cfgRounds : (complexity === "high" ? 4 : complexity === "medium" ? 3 : 2);
   const derivedTags = deriveTags(participants);
   const reason = "keyword-based (embedding model unavailable)";
 

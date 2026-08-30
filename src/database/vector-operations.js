@@ -4,6 +4,15 @@ import { isoNow } from "./connection.js";
 
 const dbLogger = new Logger();
 
+export function sanitizeDim(dim) {
+  const n = Number(dim);
+  if (!Number.isFinite(n) || n < 64 || n > 2048 || Math.floor(n) !== n) throw new Error(`Invalid dim ${dim}`);
+  return n;
+}
+export function vecTableName(prefix, dim) {
+  return `vec_${prefix}_${sanitizeDim(dim)}`;
+}
+
 export function storeFabricEmbedding(db, chunkId, embedding, dim = 384) {
   const safeDim = Number(dim);
   if (!Number.isFinite(safeDim) || safeDim < 64 || safeDim > 2048 || Math.floor(safeDim) !== safeDim) {
@@ -13,7 +22,7 @@ export function storeFabricEmbedding(db, chunkId, embedding, dim = 384) {
   try {
     initVectorTable(db, safeDim);
     db.prepare(
-      `INSERT INTO vec_fabric_chunks_${safeDim}(rowid, embedding) VALUES (?, vec_f32(?))`
+      `INSERT INTO ${vecTableName("fabric_chunks", safeDim)}(rowid, embedding) VALUES (?, vec_f32(?))`
     ).run(chunkId, embedding);
   } catch (err) {
     dbLogger.debug("store_embedding_failed", "Failed to store fabric embedding", extractErrorInfo(err));
@@ -43,7 +52,16 @@ export function storeFabricChunk(db, meetingId, content, round, source = "round_
       }
     }
 
-    return insertChunk(db);
+    // Non-vector branch also needs txn to protect MAX+1 race
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const chunkId = insertChunk(db);
+      db.exec("COMMIT");
+      return chunkId;
+    } catch (err) {
+      try { db.exec("ROLLBACK"); } catch {}
+      throw err;
+    }
   } catch (err) {
     dbLogger.debug("store_chunk_failed", "Failed to store fabric chunk", extractErrorInfo(err));
     return null;
@@ -72,7 +90,7 @@ export function searchFabricVectors(db, meetingId, queryEmbedding, topK = 5, dim
     if (hasExclude) {
       return db.prepare(`
         SELECT v.rowid, v.distance, f.content, f.round, f.source
-        FROM vec_fabric_chunks_${safeDim} v
+        FROM ${vecTableName("fabric_chunks", safeDim)} v
         JOIN fabric_chunks f ON f.id = v.rowid AND f.meeting_id = ?
         WHERE v.embedding MATCH ? AND k = ? AND f.round != ?
         ORDER BY v.distance
@@ -80,7 +98,7 @@ export function searchFabricVectors(db, meetingId, queryEmbedding, topK = 5, dim
     }
     return db.prepare(`
         SELECT v.rowid, v.distance, f.content, f.round, f.source
-        FROM vec_fabric_chunks_${safeDim} v
+        FROM ${vecTableName("fabric_chunks", safeDim)} v
         JOIN fabric_chunks f ON f.id = v.rowid AND f.meeting_id = ?
         WHERE v.embedding MATCH ? AND k = ?
         ORDER BY v.distance
@@ -105,7 +123,7 @@ export function storePersonaEmbedding(db, meetingId, personaName, tier, tags, em
       ).run(meetingId, personaName, tier, JSON.stringify(tags), embeddingText, isoNow());
       const rowId = result.lastInsertRowid;
       db.prepare(
-        `INSERT INTO vec_persona_embeddings_${safeDim}(rowid, embedding, tier) VALUES (?, vec_f32(?), ?)`
+        `INSERT INTO ${vecTableName("persona_embeddings", safeDim)}(rowid, embedding, tier) VALUES (?, vec_f32(?), ?)`
       ).run(rowId, embedding, tier);
       db.exec("COMMIT");
       return rowId;
@@ -132,24 +150,25 @@ export function searchPersonaEmbeddings(db, meetingId, queryEmbedding, tier, top
       try {
         const rowsTiered = db.prepare(`
         SELECT v.rowid, v.distance, p.persona_name, p.tier, p.tags, p.embedding_text
-        FROM vec_persona_embeddings_${safeDim} v
+        FROM ${vecTableName("persona_embeddings", safeDim)} v
         JOIN persona_embeddings p ON p.id = v.rowid AND p.meeting_id = ?
         WHERE v.embedding MATCH ? AND k = ? AND v.tier = ?
         ORDER BY v.distance
       `).all(meetingId, queryEmbedding, limit, tier);
-        if (rowsTiered.length > 0) { success = true; return rowsTiered.slice(0, limit); }
+        if (rowsTiered.length > 0) { success = true; try { db.prepare("UPDATE meetings SET semantic_degraded = 0, updated_at = ? WHERE id = ?").run(isoNow(), meetingId); } catch {} return rowsTiered.slice(0, limit); }
       } catch {}
       const fetchK = Math.max(limit * 10, 50);
       const rows = db.prepare(`
         SELECT v.rowid, v.distance, p.persona_name, p.tier, p.tags, p.embedding_text
-        FROM vec_persona_embeddings_${safeDim} v
+        FROM ${vecTableName("persona_embeddings", safeDim)} v
         JOIN persona_embeddings p ON p.id = v.rowid AND p.meeting_id = ?
         WHERE v.embedding MATCH ? AND k = ?
         ORDER BY v.distance
       `).all(meetingId, queryEmbedding, fetchK);
       const filtered = rows.filter((r) => r.tier === tier).slice(0, limit);
-      if (filtered.length > 0 || rows.length > 0) success = true;
+      if (filtered.length > 0) success = true;
       if (success) { try { db.prepare("UPDATE meetings SET semantic_degraded = 0, updated_at = ? WHERE id = ?").run(isoNow(), meetingId); } catch {} }
+      else if (rows.length === 0) { /* no usable tier-matched results — keep degraded as-is */ }
       return filtered;
     } catch (err) {
       dbLogger.warnThrottled(
@@ -189,7 +208,7 @@ export function countPersonaVecEmbeddings(db, meetingId, dim = 384) {
       ).get(actualMeetingId);
       return row?.count ?? 0;
     }
-    const row = db.prepare(`SELECT COUNT(*) as count FROM vec_persona_embeddings_${safeDim}`).get();
+    const row = db.prepare(`SELECT COUNT(*) as count FROM ${vecTableName("persona_embeddings", safeDim)}`).get();
     return row?.count ?? 0;
   } catch { /* table may not exist yet */ }
   return 0;
@@ -208,7 +227,7 @@ export function clearPersonaEmbeddings(db, meetingId) {
       try {
         const safeDim = Math.floor(Number(d));
         if (!Number.isFinite(safeDim) || safeDim < 64 || safeDim > 2048) continue;
-        db.prepare(`DELETE FROM vec_persona_embeddings_${safeDim} WHERE rowid IN (SELECT id FROM persona_embeddings WHERE meeting_id = ?)`).run(meetingId);
+        db.prepare(`DELETE FROM ${vecTableName("persona_embeddings", safeDim)} WHERE rowid IN (SELECT id FROM persona_embeddings WHERE meeting_id = ?)`).run(meetingId);
       } catch {}
     }
     try {
@@ -229,7 +248,7 @@ export function getPersonaEmbeddingByName(db, meetingId, personaName, dim = 384)
     initPersonaVectorTable(db, safeDim);
     const row = db.prepare(`
         SELECT v.embedding
-        FROM vec_persona_embeddings_${safeDim} v
+        FROM ${vecTableName("persona_embeddings", safeDim)} v
         JOIN persona_embeddings p ON p.id = v.rowid AND p.meeting_id = ?
         WHERE p.persona_name = ?
       `).get(meetingId, personaName);
@@ -248,7 +267,7 @@ export function getPersonaEmbeddingsByNames(db, meetingId, personaNames, dim = 3
     const placeholders = personaNames.map(() => '?').join(',');
     const rows = db.prepare(`
         SELECT p.persona_name, v.embedding
-        FROM vec_persona_embeddings_${safeDim} v
+        FROM ${vecTableName("persona_embeddings", safeDim)} v
         JOIN persona_embeddings p ON p.id = v.rowid AND p.meeting_id = ?
         WHERE p.persona_name IN (${placeholders})
       `).all(meetingId, ...personaNames);

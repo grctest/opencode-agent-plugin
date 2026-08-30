@@ -1,4 +1,6 @@
 import { DashboardApi } from "../api.js";
+import { TUNING } from "../../config/defaults.js";
+import { getConfig } from "../../config.js";
 import { getMeetingDbPath } from "../api/free.js";
 import { sendSSE } from "./helpers.js";
 
@@ -55,7 +57,8 @@ export function createPollSystem(directory) {
   if (pingTimer.unref) pingTimer.unref();
 
   const ACTIVE_POLL_INTERVAL = 1000;
-  const IDLE_POLL_INTERVAL = 5000;
+  const getIdleInterval = () => { try { const v = getConfig()?.tuning?.DASHBOARD_IDLE_TIMEOUT_MS ?? TUNING.DASHBOARD_IDLE_TIMEOUT_MS; return Math.max(1000, Math.floor(v/12)); } catch { return 5000; }};
+  const IDLE_POLL_INTERVAL = getIdleInterval();
   let currentPollInterval = ACTIVE_POLL_INTERVAL;
   let pollTimer = null;
   let consecutiveIdlePolls = 0;
@@ -81,7 +84,14 @@ export function createPollSystem(directory) {
         const dbPath = getMeetingDbPath(directory, meetingId);
         if (!dbPath) continue;
         const api = DashboardApi.get(dbPath);
+        const prevMtime = lastMtime.get(meetingId);
         const currentMtime = api.refreshIfStale();
+        // Per-meeting mtime gate: if DB file unchanged since last poll, skip expensive reads
+        if (prevMtime !== undefined && currentMtime === prevMtime) {
+          // Still need to keep lastMtime updated, but skip this tick's queries
+          // Use 200ms debounce already covered by mtime; just skip to next meeting
+          continue;
+        }
         lastMtime.set(meetingId, currentMtime);
 
         const currentState = api.getState();
@@ -89,13 +99,9 @@ export function createPollSystem(directory) {
           const wasTerminal = participantStatusCache.get(`terminal:${meetingId}`);
           if (!wasTerminal) {
             participantStatusCache.set(`terminal:${meetingId}`, "true");
-            broadcast(meetingId, { type: "state", data: currentState, timestamp: new Date().toISOString() });
+            // State broadcast unified below via stateStr diff; don't double-emit here
           }
-          const artifact = api.getArtifact();
-          if (artifact && participantStatusCache.get(`artifact:${meetingId}`) !== artifact.created_at) {
-            participantStatusCache.set(`artifact:${meetingId}`, artifact.created_at);
-            broadcast(meetingId, { type: "artifact", data: artifact, timestamp: new Date().toISOString() });
-          }
+          // Artifact broadcast unified via liveArtifact block below; don't double-emit
           // Still poll round_summaries and other data even in terminal to ensure final summaries stream
         }
         // Always poll round_summaries (even in terminal) for live overview/timeline summaries

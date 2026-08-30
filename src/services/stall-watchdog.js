@@ -1,7 +1,6 @@
 import { getConfig } from "../config.js";
 import { Logger, extractErrorInfo } from "../logger.js";
-
-const WATCHDOG_TICK_MS = 30000;
+import { TUNING } from "../config/defaults.js";
 
 /**
  * Monitors meeting activity and triggers stall timeout when no activity occurs.
@@ -43,6 +42,7 @@ export class StallWatchdog {
       return;
     }
     this.#lastActivityAt = Date.now();
+    const tickMs = getConfig()?.tuning?.WATCHDOG_TICK_MS ?? TUNING.WATCHDOG_TICK_MS;
     this.#timer = setInterval(() => {
       try {
         if (cancelled()) {
@@ -63,7 +63,7 @@ export class StallWatchdog {
         const info = extractErrorInfo(err);
         this.#logger.error("watchdog_failed", "Stall watchdog check failed", info);
       }
-    }, WATCHDOG_TICK_MS);
+    }, tickMs);
     this.#timer.unref?.();
   }
 

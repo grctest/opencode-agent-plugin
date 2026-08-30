@@ -5,8 +5,9 @@ import { escapeDelimiters, delimitContext } from "./delimiters.js";
 import { LENGTH_LIMITS, TOOL_LADDER_LINE, TOOL_FAILURE_LINE } from "./constants.js";
 import { buildTierDoctrine } from "./blocks.js";
 
+import { TUNING } from "../config/defaults.js";
 const systemPromptCache = new Map();
-const SYSTEM_PROMPT_CACHE_MAX = 50;
+function getSystemPromptCacheMax() { try { return getConfig()?.tuning?.SYSTEM_PROMPT_CACHE_MAX ?? TUNING.SYSTEM_PROMPT_CACHE_MAX; } catch { return TUNING.SYSTEM_PROMPT_CACHE_MAX; } }
 
 function truncateAtSentence(text, limit) {
   if (!text || typeof text !== "string") return "";
@@ -25,7 +26,12 @@ function truncateAtSentence(text, limit) {
 }
 
 function hashConfig(cfg) {
-  const key = `${cfg.id ?? ""}|${cfg.tier ?? ""}|${cfg.tier_guidance ?? ""}|${(cfg.known_biases ?? []).join("|")}`;
+  let toolsDigest = "";
+  try {
+    const t = getConfig()?.agentTools;
+    toolsDigest = JSON.stringify({ enabled: t?.enabled, loom: t?.loom, builtIn: t?.builtIn, maxCalls: t?.maxToolCallsPerTurn, sameTurn: t?.sameTurnSynthesis });
+  } catch {}
+  const key = `${cfg.id ?? ""}|${cfg.tier ?? ""}|${cfg.tier_guidance ?? ""}|${(cfg.known_biases ?? []).join("|")}|${toolsDigest}`;
   let h = 0;
   for (let i = 0; i < key.length; i++) h = ((h << 5) - h + key.charCodeAt(i)) | 0;
   return String(h);
@@ -174,7 +180,8 @@ ${doctrine}
   ${toolSection}
  `;
 
-  if (systemPromptCache.size >= SYSTEM_PROMPT_CACHE_MAX) {
+  const cap = getSystemPromptCacheMax();
+  if (systemPromptCache.size >= cap) {
     const oldest = systemPromptCache.keys().next().value;
     if (oldest !== undefined) systemPromptCache.delete(oldest);
   }
@@ -193,7 +200,7 @@ export function buildAgentUserPrompt(participant, stateOfPlay, ragContext, recen
           .map((c) => {
             const isCode = (c.content || "").includes("```") || (c.content || "").includes("file=");
             const budget = isCode ? 320 : 220;
-            const safeContent = sanitizeForDisplay(c.content).slice(0, budget);
+            const safeContent = truncateAtSentence(sanitizeForDisplay(c.content), budget);
             return `- ${c.id != null ? `[#${c.id}]` : ""} [${c.participant_id}]: ${safeContent}`;
           })
           .join("\n");

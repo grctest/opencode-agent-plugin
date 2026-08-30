@@ -243,6 +243,7 @@ export class StateManager {
     const current = this.#state.status;
     if (current === status) return;
     const allowedForced = {
+      initializing: ["weaving"],
       converged: ["weaving"],
       cancelled: ["weaving"],
       timeout: ["weaving"],

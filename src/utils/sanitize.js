@@ -49,7 +49,7 @@ function stripUnsafeChars(text) {
     // Strip dangerous bidi overrides / zero-width joiners that hide injection + HTML injection vectors
     .replace(/[\u200B\u200C\u200D]/g, "")
     // Preserve generics like Array<string> — only strip dangerous tags (incl svg/img with event handlers, links, forms)
-    .replace(/<\s*\/?\s*(script|style|iframe|object|embed|form|svg|img|link|input|meta)[^>]*>/gi, "")
+    .replace(/<\s*\/?\s*(script|style|iframe|object|embed|form|svg|img|link|input|meta|video|audio|base|template|html|body)[^>]*>/gi, "")
     // Neutralize javascript: and data: URIs in any remaining attribute-like context
     .replace(/javascript\s*:/gi, "")
     .replace(/data\s*:\s*text\/html/gi, "");
@@ -123,4 +123,24 @@ export function sanitizeForDisplay(text, maxLen = 5000) {
   sanitized = sanitized.split(sentinel).join("");
 
   return sanitized.trim();
+}
+
+/**
+ * Validates a bash command string against allowlist arg sandbox.
+ * Rejects --upload-pack, -exec, -R, --exec, and other risky args even if command name is allowlisted.
+ * @param {string} cmd
+ * @returns {boolean} true if safe
+ */
+export function isSafeBashCommand(cmd) {
+  if (!cmd || typeof cmd !== "string") return false;
+  const lower = cmd.toLowerCase();
+  if (lower.includes("--upload-pack")) return false;
+  if (/\bfind\b.*\s-exec(\s|;|$)/.test(lower)) return false;
+  if (/\bgrep\b.*\s-R(\s|$)/.test(cmd)) return false;
+  if (/\b--exec(\s|=)/.test(lower)) return false;
+  if (/[;&|`$]/.test(cmd) && /(?:\|\||&&)/.test(cmd)) {
+    // Allow simple pipes but reject command chaining that escapes allowlist
+    if (/;\s*(rm|mv|cp|chmod|chown|wget|curl)\b/.test(lower)) return false;
+  }
+  return true;
 }

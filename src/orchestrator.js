@@ -59,6 +59,7 @@ export class MeetingOrchestrator {
   _database = null;
   _roundExecutor = null;
   _cancelled = false;
+  _closed = false;
   _startTime = 0;
   _meetingTimeoutMs;
   _sessionManager = null;
@@ -180,6 +181,8 @@ export class MeetingOrchestrator {
   }
 
     async close() {
+    if (this._closed) return;
+    this._closed = true;
     this._cancelled = true;
     // Abort in-flight LLM prompts by signalling cancellation to round executor if it exposes an abort
     try { this._roundExecutor?._abortInflight?.(); } catch {}
@@ -188,12 +191,18 @@ export class MeetingOrchestrator {
       if (this._sessionManager) {
         try { await this._sessionManager.deleteOrchestratorSession(); } catch {}
       }
+    } catch {}
+    try {
       if (this._database) {
         this._logger.info("close", "Closing meeting database");
-        this._database.close();
+        try { this._database.close(); } catch {}
       }
     } catch (err) {
       this._logger.error("close_failed", "Failed to close database", extractErrorInfo(err));
+    } finally {
+      this._database = null;
+      this._sessionManager = null;
+      this._roundExecutor = null;
     }
   }
 

@@ -26,6 +26,7 @@ function useSSE(meetingId, onEvent) {
   const onEventRef = useRef(onEvent);
   onEventRef.current = onEvent;
   const maxReconnectAttempts = 10;
+  useEffect(() => { lastPollIdRef.current = 0; }, [meetingId]);
 
   useEffect(() => {
     if (!meetingId) return;

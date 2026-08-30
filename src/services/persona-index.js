@@ -3,20 +3,25 @@
  * Used for similarity-based persona selection at meeting start.
  */
 
-import { embedText, getEmbeddingDim, getEmbeddingMaxTokens } from "./embedding-service.js";
+import { embedText, getEmbeddingDim, getEmbeddingMaxTokens, getEmbedderMeta } from "./embedding-service.js";
 import { Logger, extractErrorInfo } from "../logger.js";
 import { createHash } from "node:crypto";
+import { TUNING } from "../config/defaults.js";
+import { getConfig } from "../config.js";
 
 const personaIndexLogger = new Logger();
 
 const embeddingCache = new Map();
-const EMBEDDING_CACHE_MAX = 512;
+function getCacheMax() { try { return getConfig()?.tuning?.EMBEDDING_CACHE_MAX ?? TUNING.EMBEDDING_CACHE_MAX; } catch { return TUNING.EMBEDDING_CACHE_MAX; } }
 
 export function clearEmbeddingCache() { embeddingCache.clear(); }
 
 function cacheKey(personaName, tier, embeddingText) {
   const fingerprint = createHash("sha256").update(embeddingText).digest("hex").slice(0, 16);
-  return `${personaName}|${tier}|${getEmbeddingDim()}|${fingerprint}`;
+  const meta = getEmbedderMeta();
+  const modelName = meta?.name ?? getConfig()?.embeddingModel ?? "unknown";
+  const quant = meta?.quant ?? getConfig()?.embeddingQuant ?? "unknown";
+  return `${modelName}|${quant}|${personaName}|${tier}|${getEmbeddingDim()}|${fingerprint}`;
 }
 
 function cachedEmbeddingFor(key) {
@@ -30,7 +35,8 @@ function cachedEmbeddingFor(key) {
 }
 
 function storeEmbeddingInCache(key, embedding) {
-  if (embeddingCache.size >= EMBEDDING_CACHE_MAX) {
+  const cap = getCacheMax();
+  if (embeddingCache.size >= cap) {
     const oldest = embeddingCache.keys().next().value;
     if (oldest !== undefined) embeddingCache.delete(oldest);
   }

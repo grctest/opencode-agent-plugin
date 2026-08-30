@@ -33,8 +33,8 @@ export function initializeMeeting(db, meetingId, input) {
          updated_at=excluded.updated_at`,
   );
   const insertParticipant = db.prepare(
-    `INSERT INTO participants (id, meeting_id, name, persona, agenda, tier, provider_id, model_id, session_id, known_biases, communication_style, preferred_contribution_types)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO participants (id, meeting_id, name, persona, agenda, tier, provider_id, model_id, session_id, known_biases, communication_style, preferred_contribution_types, tags, expertise)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
 
   db.exec('BEGIN IMMEDIATE');
@@ -70,6 +70,8 @@ export function initializeMeeting(db, meetingId, input) {
         p.known_biases ? JSON.stringify(p.known_biases) : null,
         p.communication_style ?? null,
         p.preferred_contribution_types ? JSON.stringify(p.preferred_contribution_types) : null,
+        p.tags ? JSON.stringify(p.tags) : null,
+        p.expertise ? JSON.stringify(p.expertise) : null,
       );
     }
 
@@ -110,8 +112,8 @@ export function upsertMeeting(db, meetingId, input) {
 
 export function insertParticipants(db, meetingId, participants) {
   const insertParticipant = db.prepare(
-    `INSERT INTO participants (id, meeting_id, name, persona, agenda, tier, provider_id, model_id, session_id, known_biases, communication_style, preferred_contribution_types)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO participants (id, meeting_id, name, persona, agenda, tier, provider_id, model_id, session_id, known_biases, communication_style, preferred_contribution_types, tags, expertise)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   db.exec('BEGIN IMMEDIATE');
   try {
@@ -129,6 +131,8 @@ export function insertParticipants(db, meetingId, participants) {
         p.known_biases ? JSON.stringify(p.known_biases) : null,
         p.communication_style ?? null,
         p.preferred_contribution_types ? JSON.stringify(p.preferred_contribution_types) : null,
+        p.tags ? JSON.stringify(p.tags) : null,
+        p.expertise ? JSON.stringify(p.expertise) : null,
       );
     }
     db.exec('COMMIT');

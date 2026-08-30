@@ -5,6 +5,8 @@ import { extractAgentResponse, mapToolResults } from "../../shared.js";
 import { getPersonas } from "../../composer.js";
 import { degrade } from "../../utils/degrade.js";
 import * as sharedVoteTally from "../../utils/vote-tally.js";
+import { TUNING } from "../../config/defaults.js";
+import { getConfig } from "../../config.js";
 
 export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
   return {
@@ -170,7 +172,7 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
                 temperature: voter.tier_config?.temperature ?? 0.7,
                 parts: [{ type: "text", text: prompt }],
                 tools: {},
-                timeoutMs: 60000,
+                timeoutMs: getConfig()?.tuning?.VOTE_TIMEOUT_MS ?? TUNING.VOTE_TIMEOUT_MS,
                 signal: context.abort,
                 abort: context.abort,
               }, meetingInfo.meetingId);
@@ -312,7 +314,7 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
               if (t?.loom?.loom_vector_search) m.loom_vector_search = true;
               return m;
             })(),
-            timeoutMs: 90000,
+            timeoutMs: getConfig()?.tuning?.SUMMON_TIMEOUT_MS ?? TUNING.SUMMON_TIMEOUT_MS,
             signal: context.abort,
             abort: context.abort,
           }, meetingInfo.meetingId);

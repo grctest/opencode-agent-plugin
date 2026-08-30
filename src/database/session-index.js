@@ -22,11 +22,10 @@ const LOCK_STEAL_MS = 30000;
 /**
  * Acquire an exclusive lock file ('wx' fails when it already exists).
  * Stale locks (crashed process) are stolen after LOCK_STEAL_MS.
- * Returns true on success.
+ * Returns true on success. Async — does not block event loop.
  */
-function acquireLock(lockPath) {
+async function acquireLock(lockPath) {
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
-  let attempt = 0;
   for (;;) {
     try {
       const fd = openSync(lockPath, "wx");
@@ -51,8 +50,11 @@ function acquireLock(lockPath) {
       }
       if (Date.now() >= deadline) return false;
       const jitter = Math.floor(Math.random() * 10);
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25 + jitter);
-      attempt++;
+      if (typeof Atomics.waitAsync === "function") {
+        await Atomics.waitAsync(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25 + jitter).value;
+      } else {
+        await new Promise((r) => setTimeout(r, 25 + jitter));
+      }
     }
   }
 }
@@ -95,7 +97,7 @@ export function loadSessionIndex(directory) {
   }
 }
 
-function persistSessionIndex({ compact = false } = {}) {
+async function persistSessionIndexAsync({ compact = false } = {}) {
   const filePath = getIndexFilePath();
   if (!filePath) {
     indexLogger.warn("session_index_not_loaded", "Skipping session index persistence — loadSessionIndex() was never called");
@@ -104,9 +106,10 @@ function persistSessionIndex({ compact = false } = {}) {
   const lockPath = `${filePath}.lock`;
   let locked = false;
   try {
-    locked = acquireLock(lockPath);
+    locked = await acquireLock(lockPath);
     if (!locked) {
-      indexLogger.warn("session_index_lock_timeout", "Could not acquire session-index lock — skipping this persist (will retry on next change)");
+      indexLogger.warn("session_index_lock_timeout", "Could not acquire session-index lock — will retry in 200ms");
+      setTimeout(() => persistSessionIndexAsync({ compact }).catch(() => {}), 200);
       return;
     }
     // Re-read inside lock and merge so we don't clobber another process's writes (last-writer-wins fix)
@@ -140,6 +143,11 @@ function persistSessionIndex({ compact = false } = {}) {
     if (locked) releaseLock(lockPath);
   }
 }
+
+function persistSessionIndex(opts) {
+  persistSessionIndexAsync(opts).catch(() => {});
+}
+export { persistSessionIndexAsync };
 
 export function indexMeeting(dbPath, meetingId, sessionId) {
   if (!sessionId) return;

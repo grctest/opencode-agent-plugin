@@ -150,9 +150,8 @@ export function buildSummonPrompt(summonedPersona, requester, issue, roundContri
       return `- ${id} [${c.participant_id}] (${c.type}): ${sanitizeForDisplay(c.content).slice(0, 280)}`;
     })
     .join("\n");
-  const recentBlock = recentContributions.length > 0
-    ? `### Recent Relevant Contributions (relevance-scored, top 4)\n${recentContributions}`
-    : "*(No prior contributions yet)*";
+  const recentBlockRaw = recentContributions.length > 0 ? recentContributions : "*(No prior contributions yet)*";
+  const recentBlock = delimitContext(recentBlockRaw, "PEER_CONTRIBUTIONS");
 
   const roundContext = buildRoundContext(currentRound, maxRounds);
   const expertise = Array.isArray(summonedPersona.expertise)
@@ -160,7 +159,7 @@ export function buildSummonPrompt(summonedPersona, requester, issue, roundContri
     : summonedPersona.expertise || "general";
   const style = summonedPersona.communication_style || "Direct and professional";
   const sopSnippet = stateOfPlay
-    ? `\n### State of Play — Decisions (what’s settled, build on it)\n${sanitizeForDisplay(stateOfPlay, 700)}\n`
+    ? delimitContext(sanitizeForDisplay(stateOfPlay, 700), "STATE_OF_PLAY")
     : "";
 
   return `## Guest Expert — ${safePersonaName} (${summonedPersona.tier}) summoned by ${safeRequesterName} (${requester.config.tier})
@@ -175,7 +174,7 @@ ${sanitizeForDisplay(expertise, 300)}
 ${sanitizeForDisplay(style, 300)}
 
 ${delimitContext(safeIssue, "SUMMON_ISSUE")}
-${sopSnippet}
+${sopSnippet ? `### State of Play — Decisions (what's settled, build on it)\n${sopSnippet}\n` : ""}### Recent Relevant Contributions (relevance-scored, top 4)
 ${recentBlock}
 
 Round: ${roundContext}

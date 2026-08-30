@@ -129,3 +129,19 @@ export function resolveLoomTools(agentToolsConfig) {
     loom_request_next: !!loom.loom_request_next,
   };
 }
+
+function deepFreeze(obj) {
+  if (obj && typeof obj === "object" && !Object.isFrozen(obj)) {
+    Object.freeze(obj);
+    for (const v of Object.values(obj)) deepFreeze(v);
+  }
+  return obj;
+}
+export function createMeetingConfig(directory, overrides = {}) {
+  const base = getConfig(directory);
+  const merged = JSON.parse(JSON.stringify(base));
+  for (const [k, v] of Object.entries(overrides)) {
+    merged[k] = v;
+  }
+  return deepFreeze(merged);
+}

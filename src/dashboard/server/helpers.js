@@ -115,13 +115,14 @@ export const SECURITY_HEADERS = {
   "X-Frame-Options": "DENY",
 };
 
-export const HTML_SHELL = `<!DOCTYPE html>
+export function getHtmlShell(nonce) {
+  return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Loom Dashboard</title>
-  <script>
+  <script nonce="${nonce}">
     (function() {
       var t = localStorage.getItem("loom-theme") || "system";
       if (t !== "system") document.documentElement.setAttribute("data-theme", t);
@@ -134,5 +135,7 @@ export const HTML_SHELL = `<!DOCTYPE html>
   <script type="module" src="/assets/app.js"></script>
 </body>
 </html>`;
+}
+export const HTML_SHELL = getHtmlShell("static-nonce-placeholder");
 
 export const PACKAGE_VERSION = getPackageVersion();

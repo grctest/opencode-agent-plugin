@@ -48,8 +48,8 @@ export function restoreStateFromDb({ db, stateManager, meetingId, options }) {
       agenda: r.agenda,
       tier: r.tier,
       model: r.provider_id && r.model_id ? { providerID: r.provider_id, modelID: r.model_id } : undefined,
-      tags: ["general"],
-      expertise: [],
+      tags: Array.isArray(r.tags) && r.tags.length ? r.tags : ["general"],
+      expertise: Array.isArray(r.expertise) ? r.expertise : [],
       known_biases: r.known_biases,
       communication_style: r.communication_style,
       preferred_contribution_types: r.preferred_contribution_types,
@@ -97,6 +97,16 @@ export function restoreStateFromDb({ db, stateManager, meetingId, options }) {
     next_contribution_id: Math.max(db.getMaxContributionId() ?? 0, ...contributions.map(c=>c.id ?? 0), 0) + 1,
     state_of_play: meeting.state_of_play ?? "",
   });
+  // Restore artifact if previously synthesized (otherwise extend loses deliverable)
+  try {
+    const artifact = db.getArtifact ? (db.getArtifact(meetingId) ?? db.getArtifact()) : null;
+    if (artifact && artifact.content) stateManager.setArtifact(artifact);
+  } catch {}
+  // Restore objections if persisted (stateManager keeps in-memory)
+  try {
+    const objections = db.getObjections?.(meetingId) ?? null;
+    if (Array.isArray(objections) && objections.length) stateManager.setObjections(objections);
+  } catch {}
 
   const summaries = db.getRoundSummaries(meetingId);
   const roundMap = new Map();

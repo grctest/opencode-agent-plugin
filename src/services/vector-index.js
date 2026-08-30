@@ -1,4 +1,6 @@
 import { Logger, extractErrorInfo } from "../logger.js";
+import { TUNING } from "../config/defaults.js";
+import { getConfig } from "../config.js";
 import { embedText, getEmbeddingDim, getEmbeddingMaxTokens } from "./embedding-service.js";
 
 const vectorLogger = new Logger();
@@ -15,42 +17,14 @@ export class VectorIndex {
     this.#database = database;
   }
 
-  /**
-   * Indexes a completed round's summary and contributions into the vector store.
-   * @param {number} roundNumber
-   * @param {string} roundSummary
-   * @param {Array} contributions - contribution objects from this round
-   * @returns {Promise<number>} number of chunks indexed
-   */
-  async indexRound(roundNumber, roundSummary, contributions = []) {
-    let indexed = 0;
+  async #indexChunks(pending, label) {
     const dim = getEmbeddingDim();
-    const pending = [];
-
-    if (roundSummary && roundSummary.trim()) {
-      const chunks = this.#chunkText(roundSummary, `Round ${roundNumber} summary`);
-      for (const chunk of chunks) {
-        const chunkId = this.#database.storeFabricChunk(chunk, roundNumber, "round_summary");
-        if (chunkId != null) pending.push({ chunkId, text: chunk });
-      }
-    }
-
-    for (const contrib of contributions) {
-      if (!contrib.content) continue;
-      const text = `[${contrib.participant_id}] (${contrib.type}): ${contrib.content}`;
-      const chunks = this.#chunkText(text, `Round ${roundNumber} contribution`);
-      for (const chunk of chunks) {
-        const chunkId = this.#database.storeFabricChunk(chunk, roundNumber, "contribution");
-        if (chunkId != null) pending.push({ chunkId, text: chunk });
-      }
-    }
-
-    // Batch embed with concurrency 4
-    const concurrency = 4;
+    let indexed = 0;
     let failedEmbeds = 0;
+    const concurrency = 4;
     for (let i = 0; i < pending.length; i += concurrency) {
       const batch = pending.slice(i, i + concurrency);
-      const embeddings = await Promise.all(batch.map((p) => embedText(p.text).catch((e) => { vectorLogger.warn("embed_failed", `Failed to embed chunk for round ${roundNumber}`, extractErrorInfo(e)); return null; })));
+      const embeddings = await Promise.all(batch.map((p) => embedText(p.text).catch((e) => { vectorLogger.warn("embed_failed", `Failed to embed chunk for ${label}`, extractErrorInfo(e)); return null; })));
       for (let j = 0; j < batch.length; j++) {
         const emb = embeddings[j];
         if (emb) {
@@ -61,14 +35,40 @@ export class VectorIndex {
     }
     if (indexed === 0 && failedEmbeds > 0) {
       try { this.#database.setSemanticDegraded?.(true); } catch {}
-      vectorLogger.warn("embed_all_failed", `All embeds failed for round ${roundNumber}: ${failedEmbeds}/${pending.length} — semantic degraded`, { indexed, failedEmbeds, total: pending.length });
+      vectorLogger.warn("embed_all_failed", `All embeds failed for ${label}: ${failedEmbeds}/${pending.length} — semantic degraded`, { indexed, failedEmbeds, total: pending.length });
     } else if (indexed > 0) {
       try { this.#database.setSemanticDegraded?.(false); } catch {}
-      if (failedEmbeds > 0) {
-        vectorLogger.warn("embed_partial_failed", `Partial embed failure for round ${roundNumber}: ${failedEmbeds}/${pending.length} (some chunks indexed)`, { indexed, failedEmbeds, total: pending.length });
+      if (failedEmbeds > 0) vectorLogger.warn("embed_partial_failed", `Partial embed failure for ${label}: ${failedEmbeds}/${pending.length}`, { indexed, failedEmbeds, total: pending.length });
+    }
+    return { indexed, failedEmbeds };
+  }
+
+  /**
+   * Indexes a completed round's summary and contributions into the vector store.
+   * @param {number} roundNumber
+   * @param {string} roundSummary
+   * @param {Array} contributions - contribution objects from this round
+   * @returns {Promise<number>} number of chunks indexed
+   */
+  async indexRound(roundNumber, roundSummary, contributions = []) {
+    const pending = [];
+    if (roundSummary && roundSummary.trim()) {
+      const chunks = this.#chunkText(roundSummary, `Round ${roundNumber} summary`);
+      for (const chunk of chunks) {
+        const chunkId = this.#database.storeFabricChunk(chunk, roundNumber, "round_summary");
+        if (chunkId != null) pending.push({ chunkId, text: chunk });
       }
     }
-
+    for (const contrib of contributions) {
+      if (!contrib.content) continue;
+      const text = `[${contrib.participant_id}] (${contrib.type}): ${contrib.content}`;
+      const chunks = this.#chunkText(text, `Round ${roundNumber} contribution`);
+      for (const chunk of chunks) {
+        const chunkId = this.#database.storeFabricChunk(chunk, roundNumber, "contribution");
+        if (chunkId != null) pending.push({ chunkId, text: chunk });
+      }
+    }
+    const { indexed } = await this.#indexChunks(pending, `round ${roundNumber}`);
     vectorLogger.debug("round_indexed", `Indexed ${indexed} chunks for round ${roundNumber}`);
     return indexed;
   }
@@ -80,34 +80,13 @@ export class VectorIndex {
    */
   async indexContext(context) {
     if (!context || !context.trim()) return 0;
-    let indexed = 0;
-    const dim = getEmbeddingDim();
     const chunks = this.#chunkText(context, "User context");
     const pending = [];
     for (const chunk of chunks) {
       const chunkId = this.#database.storeFabricChunk(chunk, 0, "context");
       if (chunkId != null) pending.push({ chunkId, text: chunk });
     }
-    const concurrency = 4;
-    let failedEmbeds = 0;
-    for (let i = 0; i < pending.length; i += concurrency) {
-      const batch = pending.slice(i, i + concurrency);
-      const embeddings = await Promise.all(batch.map((p) => embedText(p.text).catch((e) => { vectorLogger.warn("embed_failed", `Failed to embed chunk for context`, extractErrorInfo(e)); return null; })));
-      for (let j = 0; j < batch.length; j++) {
-        const emb = embeddings[j];
-        if (emb) {
-          this.#database.storeFabricEmbedding(batch[j].chunkId, emb, dim);
-          indexed++;
-        } else { failedEmbeds++; }
-      }
-    }
-    if (indexed === 0 && failedEmbeds > 0) {
-      try { this.#database.setSemanticDegraded?.(true); } catch {}
-      vectorLogger.warn("embed_context_partial_failed", `All context embeds failed: ${failedEmbeds}/${pending.length} — semantic degraded`, { indexed, failedEmbeds });
-    } else if (indexed > 0) {
-      try { this.#database.setSemanticDegraded?.(false); } catch {}
-      if (failedEmbeds > 0) vectorLogger.warn("embed_context_partial_failed", `Partial context embed failure: ${failedEmbeds}/${pending.length}`, { indexed, failedEmbeds });
-    }
+    const { indexed } = await this.#indexChunks(pending, "context");
     return indexed;
   }
 
@@ -118,7 +97,9 @@ export class VectorIndex {
    * @param {number} excludeRound - round to exclude (current round)
    * @returns {Promise<Array<{content: string, round: number, distance: number}>>}
    */
-  async retrieveRelevant(queryText, topK = 5, excludeRound = -1) {
+  async retrieveRelevant(queryText, topK = null, excludeRound = -1) {
+    const defaultTopK = (()=>{ try{ return getConfig()?.tuning?.VEC_SEARCH_TOPK ?? TUNING.VEC_SEARCH_TOPK; } catch{ return TUNING.VEC_SEARCH_TOPK; }})();
+    if (topK == null) topK = defaultTopK;
     if (!queryText || !queryText.trim()) return [];
     try {
       // Prefer meeting-persisted dim to avoid drift when global model swapped
@@ -155,10 +136,12 @@ export class VectorIndex {
    * available, falling back to the ×4 char heuristic only if tokenization fails.
    */
   #chunkText(text, sourceLabel = "") {
-    const maxTokens = getEmbeddingMaxTokens();
+    let maxTokens;
+    try { maxTokens = getEmbeddingMaxTokens(); } catch { maxTokens = getConfig()?.tuning?.FABRIC_CHUNK_MAX_TOKENS ?? TUNING.FABRIC_CHUNK_MAX_TOKENS; }
+    const tuningCpt = (()=>{ try{ return getConfig()?.tuning?.CONTEXT_CHAR_PER_TOKEN ?? TUNING.CONTEXT_CHAR_PER_TOKEN; } catch{ return TUNING.CONTEXT_CHAR_PER_TOKEN; }})();
     // Heuristic: dense tokens (CJK/code) need tighter chars per token
     const isDense = /[\u3040-\u9FFF\uAC00-\uD7AF]/.test(text) || (text.match(/[A-Za-z]{30,}/) != null);
-    const charsPerToken = isDense ? 2 : 4;
+    const charsPerToken = isDense ? 2 : tuningCpt;
     const maxChunkChars = Math.max(64, (maxTokens - 8) * charsPerToken);
     const paragraphs = text.split(/\n\n+/).filter((p) => p.trim().length > 0);
     const chunks = [];

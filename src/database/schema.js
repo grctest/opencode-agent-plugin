@@ -84,6 +84,8 @@ export function initSchema(db) {
       known_biases TEXT,
       communication_style TEXT,
       preferred_contribution_types TEXT,
+      tags TEXT,
+      expertise TEXT,
       UNIQUE(meeting_id, name)
     );
 
@@ -91,8 +93,8 @@ export function initSchema(db) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
       participant_id TEXT NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
-      round INTEGER NOT NULL,
-      type TEXT NOT NULL,
+      round INTEGER NOT NULL CHECK(round >= 0),
+      type TEXT NOT NULL CHECK(type IN ('contribution','pass','query_response','perspective_response','critique_response','evidence_response','summoned_response','vote_response')),
       content TEXT NOT NULL,
       target_which TEXT,
       batch_id TEXT,
@@ -104,22 +106,22 @@ export function initSchema(db) {
     CREATE TABLE IF NOT EXISTS turn_requests (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
-      participant_id TEXT NOT NULL,
-      target_participant_id TEXT,
-      round INTEGER,
+      participant_id TEXT NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+      target_participant_id TEXT REFERENCES participants(id) ON DELETE SET NULL,
+      round INTEGER CHECK(round >= 0),
       content TEXT NOT NULL,
-      priority INTEGER NOT NULL DEFAULT 0,
+      priority INTEGER NOT NULL DEFAULT 0 CHECK(priority >= 1 AND priority <= 10),
       created_at TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS agent_errors (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
-      participant_id TEXT NOT NULL,
-      round INTEGER NOT NULL,
+      participant_id TEXT NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+      round INTEGER NOT NULL CHECK(round >= 0),
       error_type TEXT NOT NULL,
       error_message TEXT,
-      attempts INTEGER NOT NULL DEFAULT 0,
+      attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0),
       created_at TEXT NOT NULL
     );
 
@@ -194,11 +196,12 @@ export function initSchema(db) {
     CREATE TABLE IF NOT EXISTS fabric_chunks (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
-      round INTEGER NOT NULL,
-      chunk_index INTEGER NOT NULL DEFAULT 0,
+      round INTEGER NOT NULL CHECK(round >= 0),
+      chunk_index INTEGER NOT NULL DEFAULT 0 CHECK(chunk_index >= 0),
       content TEXT NOT NULL,
-      source TEXT NOT NULL DEFAULT 'round_summary',
-      created_at TEXT NOT NULL
+      source TEXT NOT NULL DEFAULT 'round_summary' CHECK(source IN ('round_summary','contribution','context')),
+      created_at TEXT NOT NULL,
+      UNIQUE(meeting_id, chunk_index)
     );
     CREATE INDEX IF NOT EXISTS idx_fabric_chunks_meeting ON fabric_chunks(meeting_id);
     CREATE INDEX IF NOT EXISTS idx_fabric_chunks_meeting_round ON fabric_chunks(meeting_id, round);
@@ -207,7 +210,7 @@ export function initSchema(db) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
       persona_name TEXT NOT NULL,
-      tier TEXT NOT NULL,
+      tier TEXT NOT NULL CHECK(tier IN ('junior','mid','senior','principal','civilian')),
       tags TEXT NOT NULL,
       embedding_text TEXT NOT NULL,
       created_at TEXT NOT NULL

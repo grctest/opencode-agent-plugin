@@ -1,4 +1,7 @@
 
+import { TUNING } from "../config/defaults.js";
+import { getConfig } from "../config.js";
+
 export async function runMeeting() {
     await this.initialize();
 
@@ -65,7 +68,8 @@ export async function _runWeavingLoop() {
     let continueWeaving = true;
     let iterations = 0;
     const maxRounds = this._stateManager?.getMaxRounds?.() ?? 10;
-    const MAX_ITERATIONS = Math.max(10, maxRounds + 5);
+    const tuningMax = getConfig()?.tuning?.MAX_ITERATIONS ?? TUNING.MAX_ITERATIONS;
+    const MAX_ITERATIONS = Math.max(tuningMax, maxRounds + 5);
     while (continueWeaving) {
       if (++iterations > MAX_ITERATIONS) {
         this._logger.error("weaving_loop_guard", `Weaving loop exceeded ${MAX_ITERATIONS} iterations — forcing timeout (possible max_rounds corruption)`);

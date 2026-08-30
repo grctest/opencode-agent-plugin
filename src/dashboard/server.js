@@ -20,6 +20,7 @@ import {
   clampOffset,
   SECURITY_HEADERS,
   HTML_SHELL,
+  getHtmlShell,
   PACKAGE_VERSION,
 } from "./server/helpers.js";
 import { createPollSystem } from "./server/poll.js";
@@ -113,11 +114,13 @@ export function startDashboard(directory, port) {
         if (guard) return guard;
 
         if (url.pathname === "/" || url.pathname === "/index.html") {
-          return new Response(HTML_SHELL, {
+          const nonce = crypto.randomUUID().replace(/-/g, "");
+          const html = getHtmlShell(nonce);
+          return new Response(html, {
             headers: {
               "Content-Type": "text/html; charset=utf-8",
               "Cache-Control": "no-cache",
-              "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'",
+              "Content-Security-Policy": `default-src 'self'; script-src 'self' 'nonce-${nonce}'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'`,
               "X-Content-Type-Options": "nosniff",
               "X-Frame-Options": "DENY",
             },

@@ -22,7 +22,7 @@ export function renderMarkdown(content) {
   const cached = mdCache.get(content);
   if (cached !== undefined) return cached;
   const raw = marked.parse(content, { async: false });
-  const sanitized = DOMPurify.sanitize(raw, { FORBID_TAGS: ["svg", "math", "style", "script", "iframe", "object", "embed", "form", "input", "link"] });
+  const sanitized = DOMPurify.sanitize(raw, { FORBID_TAGS: ["svg", "math", "style", "script", "iframe", "object", "embed", "form", "input", "link", "img", "meta", "video", "base", "audio", "template"], FORBID_ATTR: ["style"] });
   mdCache.set(content, sanitized);
   while (mdCache.size > MD_CACHE_MAX) {
     const firstKey = mdCache.keys().next().value;

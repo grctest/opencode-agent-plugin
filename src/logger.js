@@ -1,21 +1,45 @@
+import { TUNING } from "./config/defaults.js";
+import { getConfig } from "./config.js";
+
 const LogLevel = { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3, FATAL: 4 };
 
 const LEVEL_LABELS = ['DEBUG', 'INFO', 'WARN', 'ERROR', 'FATAL'];
 
-// Ring buffer of recent log lines — bounded memory so the dashboard can tail recent activity without file I/O.
-const RING_BUFFER_SIZE = 500;
-const logRing = [];
+// Ring buffer of recent log lines — O(1) circular, bounded memory so the dashboard can tail recent activity without file I/O.
+function getRingSize() { try { return getConfig()?.tuning?.RING_BUFFER_SIZE ?? TUNING.RING_BUFFER_SIZE; } catch { return TUNING.RING_BUFFER_SIZE; } }
+let ringBuffer = new Array(TUNING.RING_BUFFER_SIZE);
+let ringHead = 0;
+let ringCount = 0;
 let ringSeq = 0;
 const globalThrottleMap = new Map();
 
+function orderedRing() {
+  const cap = getRingSize();
+  if (ringCount < cap && ringBuffer.length <= cap) {
+    // Not yet wrapped and cap hasn't shrunk
+    return ringBuffer.slice(0, ringCount).filter(Boolean);
+  }
+  // Wrapped or cap changed — reconstruct in chronological order
+  const out = [];
+  const effectiveCap = Math.min(cap, ringCount);
+  const start = ringCount >= cap ? ringHead : 0;
+  for (let i = 0; i < effectiveCap; i++) {
+    const idx = (start + i) % cap;
+    const e = ringBuffer[idx];
+    if (e) out.push(e);
+  }
+  return out;
+}
+
 export function getRecentLogs(limit = 100, minLevel = null, meetingId = null) {
   const minIdx = minLevel ? LEVEL_LABELS.indexOf(String(minLevel).toUpperCase()) : -1;
-  let rows = logRing.filter((e) => (minIdx < 0 || LEVEL_LABELS.indexOf(e.level) >= minIdx));
+  let rows = orderedRing().filter((e) => (minIdx < 0 || LEVEL_LABELS.indexOf(e.level) >= minIdx));
   if (meetingId) {
     const short = meetingId.slice(0, 8);
     rows = rows.filter((e) => e.fullMeetingId === meetingId || e.meetingId === short);
   }
-  const n = Math.max(1, Math.min(limit, RING_BUFFER_SIZE));
+  const cap = getRingSize();
+  const n = Math.max(1, Math.min(limit, cap));
   if (rows.length <= n) return rows;
   return rows.slice(rows.length - n);
 }
@@ -104,18 +128,43 @@ export class Logger {
   }
 
   #redact(details) {
-    if (!details || typeof details !== "object") return details;
-    try {
-      const str = JSON.stringify(details);
-      if (/authorization|api[_-]?key|bearer|token/i.test(str)) {
-        const redactedStr = str.replace(/(authorization|api[_-]?key|bearer|token)(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,}\]]+)/gi, (m, k, sep, val) => {
-          const isQuoted = val.startsWith('"') || val.startsWith("'");
-          return `${k}${sep}${isQuoted ? '"[REDACTED]"' : '[REDACTED]'}`;
-        });
-        return JSON.parse(redactedStr);
+    if (details == null) return details;
+    if (typeof details === "string") {
+      return details.replace(/(authorization|api[_-]?key|bearer|token|password|secret|client[_-]?secret|private[_-]?key|credentials)(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,}\]]+)/gi, (m, k, sep, val) => {
+        const isQuoted = val.startsWith('"') || val.startsWith("'");
+        return `${k}${sep}${isQuoted ? '"[REDACTED]"' : '[REDACTED]'}`;
+      }).replace(/Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi, "Bearer [REDACTED]").replace(/Basic\s+[A-Za-z0-9+/]+=*/gi, "Basic [REDACTED]");
+    }
+    if (typeof details !== "object") return details;
+    const SECRET_KEY_RE = /authorization|api[_-]?key|bearer|token|password|secret|client[_-]?secret|private[_-]?key|credentials/i;
+    const seen = new WeakSet();
+    const walk = (val) => {
+      if (val == null) return val;
+      if (typeof val === "string") {
+        if (/^(Bearer|Basic)\s+/i.test(val)) return "[REDACTED]";
+        return val;
       }
-    } catch {}
-    return details;
+      if (typeof val !== "object") return val;
+      if (seen.has(val)) return "[Circular]";
+      seen.add(val);
+      if (Array.isArray(val)) return val.map((v) => walk(v));
+      const out = {};
+      for (const [k, v] of Object.entries(val)) {
+        if (SECRET_KEY_RE.test(k)) {
+          out[k] = "[REDACTED]";
+        } else if (typeof v === "string" && /^(Bearer|Basic)\s+/i.test(v) && /auth/i.test(k)) {
+          out[k] = "[REDACTED]";
+        } else {
+          out[k] = walk(v);
+        }
+      }
+      return out;
+    };
+    try {
+      return walk(details);
+    } catch {
+      return { redacted: true };
+    }
   }
 
   #log(level, context, message, details) {
@@ -132,9 +181,24 @@ export class Logger {
       ...(safeDetails !== null ? { details: safeDetails } : {}),
       timestamp: new Date().toISOString(),
     };
-    // Ring buffer push (audit 07 EH6): O(1), bounded at RING_BUFFER_SIZE.
-    logRing.push(entry);
-    if (logRing.length > RING_BUFFER_SIZE) logRing.shift();
+    // Ring buffer push: O(1) circular, bounded at getRingSize() (tunable).
+    const cap = getRingSize();
+    // Resize buffer if cap changed
+    if (ringBuffer.length !== cap) {
+      const ordered = orderedRing();
+      ringBuffer = new Array(cap);
+      ringHead = 0;
+      ringCount = 0;
+      for (const e of ordered.slice(-cap)) {
+        ringBuffer[ringHead] = e;
+        ringHead = (ringHead + 1) % cap;
+        ringCount++;
+      }
+      if (ringCount >= cap) ringHead = ringCount % cap;
+    }
+    ringBuffer[ringHead] = entry;
+    ringHead = (ringHead + 1) % cap;
+    if (ringCount < cap) ringCount++;
     let full;
     try {
       full = JSON.stringify(entry);

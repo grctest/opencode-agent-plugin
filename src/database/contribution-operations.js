@@ -218,7 +218,7 @@ export function getParticipantStatus(db, meetingId, participantId) {
 export function getAllParticipantsWithStatus(db, meetingId) {
   return db
     .prepare(
-      `SELECT id, name, persona, agenda, tier, provider_id, model_id, session_id, session_version, status, reflection, known_biases, communication_style, preferred_contribution_types
+      `SELECT id, name, persona, agenda, tier, provider_id, model_id, session_id, session_version, status, reflection, known_biases, communication_style, preferred_contribution_types, tags, expertise
          FROM participants WHERE meeting_id = ?`,
     )
     .all(meetingId)
@@ -237,6 +237,8 @@ export function getAllParticipantsWithStatus(db, meetingId) {
       known_biases: safeParseJsonArray(r.known_biases),
       communication_style: r.communication_style ?? null,
       preferred_contribution_types: safeParseJsonArray(r.preferred_contribution_types),
+      tags: safeParseJsonArray(r.tags),
+      expertise: safeParseJsonArray(r.expertise),
     }));
 }
 

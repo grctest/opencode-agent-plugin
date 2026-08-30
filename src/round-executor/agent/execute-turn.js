@@ -9,6 +9,7 @@ import { incrementKeyedCounter, recordLatency } from "../../metrics.js";
 import { extractErrorInfo } from "../../logger.js";
 import { buildToolsMap, buildToolsMapWithoutLoom } from "../tools.js";
 import { truncateLoomOutputs } from "../../utils/text.js";
+import { isSafeBashCommand } from "../../utils/sanitize.js";
 
 export async function executeAgentTurn(participant, model, timeoutMs, promptContext) {
   const config = getConfig();
@@ -128,6 +129,23 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
     }
 
     let effective1 = truncateToolResults(toolResults1, agentToolsConfig);
+    // Arg sandbox: reject unsafe bash args even if command is allowlisted
+    for (const tr of effective1) {
+      if (tr.tool === "bash" && typeof tr.input === "string" && !isSafeBashCommand(tr.input)) {
+        this._logger.warn("bash_unsafe_args_blocked", `Blocked unsafe bash args for ${participant.config.name}: ${tr.input.slice(0,120)}`);
+        tr.status = "error";
+        tr.error = "Blocked: unsafe bash args (--upload-pack/-exec/-R)";
+        tr.output = null;
+      } else if (tr.tool === "bash" && tr.input && typeof tr.input === "object") {
+        const cmd = typeof tr.input.command === "string" ? tr.input.command : JSON.stringify(tr.input);
+        if (!isSafeBashCommand(cmd)) {
+          this._logger.warn("bash_unsafe_args_blocked", `Blocked unsafe bash args for ${participant.config.name}: ${cmd.slice(0,120)}`);
+          tr.status = "error";
+          tr.error = "Blocked: unsafe bash args (--upload-pack/-exec/-R)";
+          tr.output = null;
+        }
+      }
+    }
 
     const loomSynthesisCalls = effective1.filter(t => isSynthesisLoom(t.tool) && t.status === "completed" && t.output);
     const sameTurnEnabled = !!agentToolsConfig?.sameTurnSynthesis;
