@@ -5,6 +5,7 @@ import { QUERY_MODES, QUERY_MODE_NAMES, researchTools } from "../../prompts/quer
 import { extractAgentResponse, mapToolResults } from "../../shared.js";
 import { degrade } from "../../utils/degrade.js";
 import { Logger } from "../../logger.js";
+import { resolveCaller, resolveModel, buildBatchId } from "./shared.js";
 const logger = new Logger();
 
 function normalizeQueries(args) {
@@ -72,34 +73,19 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
             .filter((q) => q.participant && q.participant.status !== "failed" && q.participant.status !== "passed" && q.participant.status !== "muted");
           const skipped = queries.filter((q) => !resolved.some((r) => r.targetId === q.targetId)).map((q) => ({ target: q.targetId, error: "ineligible target (unknown/self/failed/passed/muted)" }));
 
-          let caller = allParticipants.find((p) => p.session_id === context.sessionID) || null;
-          if (!caller) caller = allParticipants.find((p) => p?.status === "speaking") || null;
-          // Last spoken in this round is most likely invoker when session_id mismatches (tool called mid-turn)
-          if (!caller) {
-            try {
-              const weave = stateManager.getWeave?.() ?? [];
-              const roundWeave = weave.filter(c => c.round === stateManager.getCurrentRound());
-              if (roundWeave.length > 0) {
-                const lastId = roundWeave[roundWeave.length - 1].participant_id;
-                caller = allParticipants.find(p => p.config.id === lastId) || null;
-              }
-            } catch {}
-          }
-          if (!caller) caller = allParticipants.find((p) => p?.status !== "failed" && p?.status !== "passed" && p?.status !== "muted") || null;
+          let caller = resolveCaller(allParticipants, stateManager.getWeave?.() ?? [], context.sessionID);
           const sourceName = caller?.config?.name ?? "Unknown";
 
           const results = [...skipped];
-          const fallbackForCheck = `inline-${stateManager.getState?.()?.id ?? meetingInfo.meetingId}-${stateManager.getCurrentRound?.() ?? 0}-${caller?.config?.id ?? "unknown"}`;
+          const fallbackForCheck = buildBatchId(stateManager.getState?.()?.id ?? meetingInfo.meetingId, stateManager.getCurrentRound?.() ?? 0, caller?.config?.id);
           const batchIdForCheck = (() => {
             try {
-              const allParts = stateManager.getParticipants();
-              let cfb = allParts.find(p => p.session_id === context.sessionID) || null;
-              if (!cfb) cfb = allParts.find(p => p?.status === "speaking") || null;
-              if (!cfb) cfb = caller;
+              const cfb = resolveCaller(allParticipants, stateManager.getWeave?.() ?? [], context.sessionID) || caller;
               return cfb?.currentBatchId ?? fallbackForCheck;
             } catch { return fallbackForCheck; }
           })();
-          for (const { participant: target, question, mode } of resolved) {
+           for (const { participant: target, question, mode } of resolved) {
+            if (context.abort?.aborted || context.signal?.aborted) break;
             const meta = QUERY_MODES[mode];
             // Idempotent: reuse existing response for this batch+target+question (retry guard)
             try {
@@ -114,19 +100,7 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
               }
             } catch {}
             try {
-              let model = (() => {
-                try { return engine.getParticipantModel ? engine.getParticipantModel(target) : null; } catch { return null; }
-              })();
-              if (!model) {
-                // Fallback: borrow any other participant's resolvable model rather than failing the peer response
-                try {
-                  for (const p of stateManager.getParticipants()) {
-                    if (!p || p.status === "failed") continue;
-                    const m = (() => { try { return engine.getParticipantModel ? engine.getParticipantModel(p) : null; } catch { return null; } })();
-                    if (m) { model = m; break; }
-                  }
-                } catch {}
-              }
+              let model = resolveModel(engine, target, stateManager);
               if (!model) {
                 logger.warn("participant_model_missing", `No model resolvable for ${target.config.id} — ${meta.contributionType} skipped`, { participant: target.config.id });
                 results.push({ target: target.config.id, mode, error: "peer model unavailable — could not respond (no model assignment); treat their claim as unverified" });
@@ -180,12 +154,9 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
 
               // Persist as a typed contribution grouped under the invoker's batch
               try {
-                const allParts = stateManager.getParticipants();
-                let callerForBatch = allParts.find(p => p.session_id === context.sessionID) || null;
-                if (!callerForBatch) callerForBatch = allParts.find(p => p?.status === "speaking") || null;
-                if (!callerForBatch) callerForBatch = caller;
+                const callerForBatch = resolveCaller(allParticipants, stateManager.getWeave?.() ?? [], context.sessionID) || caller;
                 // Deterministic fallback keeps batch linkable: meetingId-round-callerId
-                const fallbackBatch = `inline-${stateManager.getState?.()?.id ?? meetingInfo.meetingId}-${stateManager.getCurrentRound?.() ?? 0}-${caller?.config?.id ?? "unknown"}`;
+                const fallbackBatch = buildBatchId(stateManager.getState?.()?.id ?? meetingInfo.meetingId, stateManager.getCurrentRound?.() ?? 0, caller?.config?.id);
                 const batchId = callerForBatch?.currentBatchId ?? caller?.currentBatchId ?? fallbackBatch;
                 const currentRound = stateManager.getCurrentRound();
                 let roundObj = null;

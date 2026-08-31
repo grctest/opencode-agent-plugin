@@ -110,7 +110,7 @@ export function initSchema(db) {
       target_participant_id TEXT REFERENCES participants(id) ON DELETE SET NULL,
       round INTEGER CHECK(round >= 0),
       content TEXT NOT NULL,
-      priority INTEGER NOT NULL DEFAULT 0 CHECK(priority >= 1 AND priority <= 10),
+      priority INTEGER NOT NULL DEFAULT 1 CHECK(priority >= 1 AND priority <= 10),
       created_at TEXT NOT NULL
     );
 

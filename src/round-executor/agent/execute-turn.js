@@ -148,8 +148,9 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
     }
 
     const loomSynthesisCalls = effective1.filter(t => isSynthesisLoom(t.tool) && t.status === "completed" && t.output);
+    const loomPassCall = effective1.find(t => t.tool === "loom_pass" && t.status !== "error");
     const sameTurnEnabled = !!agentToolsConfig?.sameTurnSynthesis;
-    const needsSynthesis = sameTurnEnabled && loomSynthesisCalls.length > 0 && agentText1 != null && String(agentText1).trim() !== "[PASS]" && String(agentText1).trim().length > 0;
+    const needsSynthesis = sameTurnEnabled && loomSynthesisCalls.length > 0 && !loomPassCall && agentText1 != null && String(agentText1).trim().length > 0;
     const cappedLoomCalls = truncateLoomOutputs(loomSynthesisCalls, 12000, 3500);
 
     let finalText = agentText1;
@@ -259,8 +260,8 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
       throw new Error("Empty agent response");
     }
 
-    if (finalText.trim() === "[PASS]" && finalToolResults.length > 0) {
-      this._logger.info("pass_with_tools", `${participant.config.name} passed but executed ${finalToolResults.length} tool(s) — attaching tool_calls to pass`, {
+    if (loomPassCall && finalToolResults.length > 0) {
+      this._logger.info("pass_with_tools", `${participant.config.name} passed via loom_pass but executed ${finalToolResults.length} tool(s) — attaching tool_calls to pass`, {
         participant: participant.config.id,
         round: currentRound,
       });

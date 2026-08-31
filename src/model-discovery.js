@@ -125,31 +125,6 @@ export function assignModelsByTier(available, sessionModel, roles) {
   return assignments;
 }
 
-/** Formats the model assignment plan as a markdown table for user review. */
-export function formatModelPlan(plan) {
-  const lines = [
-    "## Proposed Model Assignment",
-    "",
-    "| Tier | Model | Provider | Cost |",
-    "|------|-------|----------|------|",
-  ];
-
-  lines.push(
-    `| Orchestrator | ${plan.orchestrator.modelName} | ${plan.orchestrator.providerID} | ${formatCost(plan.orchestrator, plan.available)} |`,
-  );
-
-  for (const p of plan.participants) {
-    lines.push(
-      `| ${p.tier} | ${p.modelName} | ${p.providerID} | ${formatCost(p, plan.available)} |`,
-    );
-  }
-
-  lines.push("");
-  lines.push(`Available models: ${plan.available.length}`);
-
-  return lines.join("\n");
-}
-
 /** Formats the cost of a model assignment for display. */
 function formatCost(assignment, available) {
   const model = available.find(

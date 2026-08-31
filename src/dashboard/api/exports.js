@@ -61,7 +61,7 @@ export function exportMarkdown(meetingId) {
       for (const tr of turnRequests) {
         const participant = participants.find((p) => p.id === tr.participant_id);
         const name = participant?.name ?? tr.participant_id;
-        lines.push(`- **[${name}]** P${tr.priority}: ${tr.content}`);
+        lines.push(`- **[${name}]** P${tr.priority}: ${tr.reason ?? tr.content}`);
       }
       lines.push("");
     }
@@ -137,7 +137,7 @@ export function exportJSON(meetingId) {
         targetParticipantId: tr.target_participant_id,
         round: tr.round,
         priority: tr.priority,
-        content: tr.content,
+        content: tr.reason ?? tr.content,
         createdAt: tr.created_at,
       })),
       errors: errors.map(e => ({
@@ -213,7 +213,7 @@ export function exportJSON(meetingId) {
       for (const tr of turnRequests) {
         const participant = participants.find((p) => p.id === tr.participant_id);
         const name = participant?.name ?? tr.participant_id;
-        yield `- **[${name}]** P${tr.priority}: ${tr.content}\n`;
+        yield `- **[${name}]** P${tr.priority}: ${tr.reason ?? tr.content}\n`;
       }
       yield `\n`;
     }

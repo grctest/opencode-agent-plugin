@@ -166,13 +166,14 @@ export function getContributionsCount() {
     return row?.count ?? 0;
   }
 
-export function getContributionsSince(sinceId) {
+export function getContributionsSince(sinceId, limit = 500) {
+    const n = Math.min(Math.max(limit ?? 500, 0), 500);
     return this._db
       .prepare(
         `SELECT id, participant_id, round, type, content, target_which, batch_id, tool_calls, prompt_context, created_at
-         FROM contributions WHERE id > ? ORDER BY id ASC`,
+         FROM contributions WHERE id > ? ORDER BY id ASC LIMIT ?`,
       )
-      .all(sinceId)
+      .all(sinceId, n)
       .map(mapContributionRow);
 }
 

@@ -204,7 +204,7 @@ export function countPersonaVecEmbeddings(db, meetingId, dim = 384) {
   try {
     if (actualMeetingId) {
       const row = db.prepare(
-        `SELECT COUNT(*) as count FROM persona_embeddings WHERE meeting_id = ?`
+        `SELECT COUNT(*) as count FROM ${vecTableName("persona_embeddings", safeDim)} WHERE rowid IN (SELECT id FROM persona_embeddings WHERE meeting_id = ?)`
       ).get(actualMeetingId);
       return row?.count ?? 0;
     }

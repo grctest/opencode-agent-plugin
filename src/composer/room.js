@@ -229,7 +229,8 @@ export async function composeRoomWithSimilarity(question, database) {
   }
 
   const cfgRounds = getConfig()?.defaultMaxRounds;
-  const estimatedRounds = Number.isFinite(cfgRounds) ? cfgRounds : (complexity === "high" ? 4 : complexity === "medium" ? 3 : 2);
+  const baseRounds = complexity === "high" ? 4 : complexity === "medium" ? 3 : 2;
+  const estimatedRounds = Number.isFinite(cfgRounds) ? Math.max(baseRounds - 1, Math.min(baseRounds + 1, cfgRounds)) : baseRounds;
   const derivedTags = deriveTags(participants);
 
   return {
@@ -249,7 +250,8 @@ export async function composeRoomWithSimilarity(question, database) {
 function composeRoomByKeyword(question, personas, roles, complexity, count, used, participants) {
   if (typeof question !== 'string' || question.length === 0) {
     const cfgRounds = getConfig()?.defaultMaxRounds;
-  const estimatedRounds = Number.isFinite(cfgRounds) ? cfgRounds : (complexity === "high" ? 4 : complexity === "medium" ? 3 : 2);
+  const baseRounds = complexity === "high" ? 4 : complexity === "medium" ? 3 : 2;
+  const estimatedRounds = Number.isFinite(cfgRounds) ? Math.max(baseRounds - 1, Math.min(baseRounds + 1, cfgRounds)) : baseRounds;
     const derivedTags = deriveTags(participants);
     return {
       participants,
@@ -293,7 +295,8 @@ function composeRoomByKeyword(question, personas, roles, complexity, count, used
   }
 
   const cfgRounds = getConfig()?.defaultMaxRounds;
-  const estimatedRounds = Number.isFinite(cfgRounds) ? cfgRounds : (complexity === "high" ? 4 : complexity === "medium" ? 3 : 2);
+  const baseRounds = complexity === "high" ? 4 : complexity === "medium" ? 3 : 2;
+  const estimatedRounds = Number.isFinite(cfgRounds) ? Math.max(baseRounds - 1, Math.min(baseRounds + 1, cfgRounds)) : baseRounds;
   const derivedTags = deriveTags(participants);
   const reason = "keyword-based (embedding model unavailable)";
 

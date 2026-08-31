@@ -66,7 +66,7 @@ export async function summarizeRound(round, state, promptOrchestrator, getHighes
 
   // Filter to only substantive contributions; keep evidence_response only when tool-backed; exclude passes
   const summaryContributions = round.contributions.filter((c) => {
-    if (String(c.content ?? "").trim() === "[PASS]") return false;
+    if (c.type === "pass") return false;
     if (!SUMMARY_TYPES.has(c.type)) return false;
     if (c.type === "evidence_response" && !(c.tool_calls && c.tool_calls.length > 0)) return false;
     return true;

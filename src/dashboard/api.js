@@ -40,6 +40,10 @@ export class DashboardApi {
   _openedAt = 0;
   /** @type {number} */
   _fileMtimeMs = 0;
+  /** @type {number} */
+  #walMtime = 0;
+  /** @type {number} */
+  #shmMtime = 0;
 
   /** @type {Map<string, DashboardApi>} */
   static cache = new Map();
@@ -98,6 +102,8 @@ export class DashboardApi {
     } catch {
       // DB file may have been deleted between cache check and stat — not fatal
     }
+    try { this.#walMtime = statSync(this._dbPath + "-wal").mtimeMs; } catch {}
+    try { this.#shmMtime = statSync(this._dbPath + "-shm").mtimeMs; } catch {}
   }
 
   getMtimeMs() {
@@ -123,11 +129,19 @@ export class DashboardApi {
       try {
         const stat = statSync(this._dbPath);
         const mtimeMs = stat.mtimeMs;
-        if (mtimeMs !== this._fileMtimeMs) {
+        let walMtime = 0, shmMtime = 0;
+        try { walMtime = statSync(this._dbPath + "-wal").mtimeMs; } catch {}
+        try { shmMtime = statSync(this._dbPath + "-shm").mtimeMs; } catch {}
+        const mainChanged = mtimeMs !== this._fileMtimeMs;
+        const walChanged = walMtime !== this.#walMtime;
+        const shmChanged = shmMtime !== this.#shmMtime;
+        if (mainChanged || walChanged || shmChanged) {
           try { if (!this._db?.closed) this._db.close(); } catch {}
           this._db = new Database(this._dbPath, { readonly: true });
           try { this._db.exec("PRAGMA busy_timeout = 5000"); } catch {}
           this._fileMtimeMs = mtimeMs;
+          this.#walMtime = walMtime;
+          this.#shmMtime = shmMtime;
         }
       } catch {
         // DB file may have been deleted or locked — will retry on next access
@@ -171,13 +185,14 @@ export class DashboardApi {
     return queriesHelpers.getContributionsSince.apply(this, args);
   }
 
-  getTurnRequests() {
+  getTurnRequests(limit = 500) {
+    const n = Math.min(Math.max(limit ?? 500, 0), 500);
     return this._db
       .prepare(
         `SELECT id, participant_id, target_participant_id, round, content, priority, created_at
-         FROM turn_requests ORDER BY id ASC`,
+         FROM turn_requests ORDER BY id ASC LIMIT ?`,
       )
-      .all()
+      .all(n)
       .map(mapTurnRequest);
   }
 
@@ -186,13 +201,14 @@ export class DashboardApi {
     return row?.max_id ?? 0;
   }
 
-  getTurnRequestsSince(sinceId) {
+  getTurnRequestsSince(sinceId, limit = 500) {
+    const n = Math.min(Math.max(limit ?? 500, 0), 500);
     return this._db
       .prepare(
         `SELECT id, participant_id, target_participant_id, round, content, priority, created_at
-         FROM turn_requests WHERE id > ? ORDER BY id ASC`,
+         FROM turn_requests WHERE id > ? ORDER BY id ASC LIMIT ?`,
       )
-      .all(sinceId)
+      .all(sinceId, n)
       .map(mapTurnRequest);
   }
 

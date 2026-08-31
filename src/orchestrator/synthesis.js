@@ -22,7 +22,7 @@ export async function _synthesize() {
       const t = String(c.type ?? "");
       if (t === "pass") return false;
       const txt = String(c.content ?? "").trim();
-      return txt !== "" && txt !== "[PASS]";
+      return txt !== "";
     });
     if (substantiveForSynthesis.length === 0) {
       const output = `# Deliberation Output\n\n## Decision\nNo output could be generated — all participants passed without contributing.\n\n## Reasoning\nAll ${participants.length} participants chose to pass. This may indicate the question was unclear or participants had nothing to add.\n\n## Action Items\n- Rephrase the question with more specific context\n- Add participants with more targeted expertise\n\n## Confidence\nLow (no contributions received)`;

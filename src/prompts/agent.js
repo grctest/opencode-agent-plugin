@@ -79,6 +79,7 @@ export function buildAgentSystemPrompt(participant) {
         if (loom.loom_vote) tools.push('loom_vote');
         if (loom.loom_summon) tools.push('loom_summon');
         if (loom.loom_request_next) tools.push('loom_request_next');
+        if (loom.loom_pass) tools.push('loom_pass');
         const toolList = tools.length ? tools.join(', ') : 'none enabled';
         return `
 ## Research Tools — Tool Ladder (use at most one research tool per turn unless an evidence request demands more)
@@ -98,6 +99,7 @@ Loom Interaction Tools — real tool use (required, auditable):
  - **loom_vote**: call a vote with lettered options (A) ... B) ...). All active peers vote in parallel; tally returned inline for synthesis.
  - **loom_summon**: summon a guest expert persona. Returned inline for synthesis.
  - **loom_request_next**: request to speak next with priority/reason. Fire-and-forget for orchestrator turn-order planning next round.
+ - **loom_pass**: pass on your turn when you have nothing new to contribute. Include a reason. The deliberation ends when all participants pass.
 All loom_* calls are real tool calls logged in your Tool use tab and create timeline entries under you. When you call loom_query/loom_vote/loom_summon, peer answers/tally are returned to you within this same turn — wait for the tool result and synthesize it before finishing your response.
 
 Quality:
@@ -177,6 +179,20 @@ ${doctrine}
         - Bracket tags like [QUERY: @id], [EVIDENCE: @id], [CALL_VOTE] are obsolete and execute nothing.
         Reference others by participant_id from Recent Contributions, e.g. [#12].
   5. Stay in character — persona and agenda shape framing, not facts.
+
+  ## WHEN TO PASS
+
+  Call the loom_pass tool when:
+  - You have no new evidence, data, or tool output to introduce
+  - Your perspective is already represented in State of Play (check Agreements/Decisions)
+  - The last round covered your expertise angle thoroughly
+  - You're repeating a point already made (check Recent Contributions)
+
+  Include a reason explaining why you're passing (e.g., "covered by #3", "not my expertise").
+
+  Do NOT pass just because you were challenged — challenges are opportunities to defend with evidence. Pass only when you genuinely have nothing new to add.
+
+  The deliberation ends naturally when all active participants pass. Your thoughtful pass is as valuable as a contribution — it signals the debate has reached its natural conclusion.
   ${toolSection}
  `;
 

@@ -9,6 +9,7 @@ import * as meetingOps from "./database/meeting-operations.js";
 import * as contribOps from "./database/contribution-operations.js";
 import * as vectorOps from "./database/vector-operations.js";
 import { loadSessionIndex, indexMeeting as _indexMeeting, unindexMeeting as _unindexMeeting, getDatabasesBySessionId as _getDatabasesBySessionId } from "./database/session-index.js";
+import { notifyDatabaseWrite } from "./services/write-notifier.js";
 
 export { isoNow };
 export { loadSessionIndex, _indexMeeting as indexMeeting, _unindexMeeting as unindexMeeting, _getDatabasesBySessionId as getDatabasesBySessionId };
@@ -138,6 +139,8 @@ export class MeetingDatabase {
 
   #_txnSeq = 0;
 
+  #notify(table) { notifyDatabaseWrite(this.#meetingId, table); }
+
   async transaction(fn) {
     const spName = `loom_txn_${++this.#_txnSeq}`;
     this.#db.exec(`SAVEPOINT ${spName}`);
@@ -152,58 +155,58 @@ export class MeetingDatabase {
     }
   }
 
-  initializeMeeting(input) { return meetingOps.initializeMeeting(this.#db, this.#meetingId, input); }
-  upsertMeeting(input) { return meetingOps.upsertMeeting(this.#db, this.#meetingId, input); }
-  insertParticipants(participants) { return meetingOps.insertParticipants(this.#db, this.#meetingId, participants); }
-  logError(context, message, details = null, severity = 'error') { return meetingOps.logError(this.#db, this.#meetingId, context, message, details, severity); }
+  initializeMeeting(input) { const r = meetingOps.initializeMeeting(this.#db, this.#meetingId, input); this.#notify("meetings"); return r; }
+  upsertMeeting(input) { const r = meetingOps.upsertMeeting(this.#db, this.#meetingId, input); this.#notify("meetings"); return r; }
+  insertParticipants(participants) { const r = meetingOps.insertParticipants(this.#db, this.#meetingId, participants); this.#notify("participants"); return r; }
+  logError(context, message, details = null, severity = 'error') { const r = meetingOps.logError(this.#db, this.#meetingId, context, message, details, severity); this.#notify("error_log"); return r; }
   getErrorLog(meetingId) { return meetingOps.getErrorLog(this.#db, meetingId); }
   getFabric() { return meetingOps.getFabric(this.#db, this.#meetingId); }
-  setFabric(fabric) { return meetingOps.setFabric(this.#db, this.#meetingId, fabric); }
+  setFabric(fabric) { const r = meetingOps.setFabric(this.#db, this.#meetingId, fabric); this.#notify("meetings"); return r; }
   getStateOfPlay() { return meetingOps.getStateOfPlay(this.#db, this.#meetingId); }
-  setStateOfPlay(stateOfPlay) { return meetingOps.setStateOfPlay(this.#db, this.#meetingId, stateOfPlay); }
-  setSemanticDegraded(flag = true) { return meetingOps.setSemanticDegraded(this.#db, this.#meetingId, flag); }
-  setPersistenceDegraded(flag = true) { return meetingOps.setPersistenceDegraded(this.#db, this.#meetingId, flag); }
-  updateMeetingTags(meetingId, tags) { return meetingOps.updateMeetingTags(this.#db, meetingId, tags); }
-  addOrchestratorMessage(msgType, role, content, round = null) { return meetingOps.addOrchestratorMessage(this.#db, this.#meetingId, msgType, role, content, round); }
+  setStateOfPlay(stateOfPlay) { const r = meetingOps.setStateOfPlay(this.#db, this.#meetingId, stateOfPlay); this.#notify("meetings"); return r; }
+  setSemanticDegraded(flag = true) { const r = meetingOps.setSemanticDegraded(this.#db, this.#meetingId, flag); this.#notify("meetings"); return r; }
+  setPersistenceDegraded(flag = true) { const r = meetingOps.setPersistenceDegraded(this.#db, this.#meetingId, flag); this.#notify("meetings"); return r; }
+  updateMeetingTags(meetingId, tags) { const r = meetingOps.updateMeetingTags(this.#db, meetingId, tags); this.#notify("meetings"); return r; }
+  addOrchestratorMessage(msgType, role, content, round = null) { const r = meetingOps.addOrchestratorMessage(this.#db, this.#meetingId, msgType, role, content, round); this.#notify("orchestrator_messages"); return r; }
   getOrchestratorMessages(meetingId) { return meetingOps.getOrchestratorMessages(this.#db, meetingId); }
   getMaxOrchestratorMessageId() { return meetingOps.getMaxOrchestratorMessageId(this.#db, this.#meetingId); }
   getRound() { return meetingOps.getRound(this.#db, this.#meetingId); }
-  setRound(round) { return meetingOps.setRound(this.#db, this.#meetingId, round); }
-  setMaxRounds(maxRounds) { return meetingOps.setMaxRounds(this.#db, this.#meetingId, maxRounds); }
+  setRound(round) { const r = meetingOps.setRound(this.#db, this.#meetingId, round); this.#notify("meetings"); return r; }
+  setMaxRounds(maxRounds) { const r = meetingOps.setMaxRounds(this.#db, this.#meetingId, maxRounds); this.#notify("meetings"); return r; }
   getStatus() { return meetingOps.getStatus(this.#db, this.#meetingId); }
-  setStatus(status) { return meetingOps.setStatus(this.#db, this.#meetingId, status); }
-  setReflectingParticipants(participantIds) { return meetingOps.setReflectingParticipants(this.#db, this.#meetingId, participantIds); }
-  setQueryingParticipants(participantIds) { return meetingOps.setQueryingParticipants(this.#db, this.#meetingId, participantIds); }
-  setEvidenceParticipants(participantIds) { return meetingOps.setEvidenceParticipants(this.#db, this.#meetingId, participantIds); }
-  setSummoningParticipants(participantIds) { return meetingOps.setSummoningParticipants(this.#db, this.#meetingId, participantIds); }
+  setStatus(status) { const r = meetingOps.setStatus(this.#db, this.#meetingId, status); this.#notify("meetings"); return r; }
+  setReflectingParticipants(participantIds) { const r = meetingOps.setReflectingParticipants(this.#db, this.#meetingId, participantIds); this.#notify("meetings"); return r; }
+  setQueryingParticipants(participantIds) { const r = meetingOps.setQueryingParticipants(this.#db, this.#meetingId, participantIds); this.#notify("meetings"); return r; }
+  setEvidenceParticipants(participantIds) { const r = meetingOps.setEvidenceParticipants(this.#db, this.#meetingId, participantIds); this.#notify("meetings"); return r; }
+  setSummoningParticipants(participantIds) { const r = meetingOps.setSummoningParticipants(this.#db, this.#meetingId, participantIds); this.#notify("meetings"); return r; }
   getMeeting() { return meetingOps.getMeeting(this.#db, this.#meetingId); }
-  setNextSpeaker(nextSpeakerId) { return meetingOps.setNextSpeaker(this.#db, this.#meetingId, nextSpeakerId); }
-  setStats(statsJson) { return meetingOps.setStats(this.#db, this.#meetingId, statsJson); }
+  setNextSpeaker(nextSpeakerId) { const r = meetingOps.setNextSpeaker(this.#db, this.#meetingId, nextSpeakerId); this.#notify("meetings"); return r; }
+  setStats(statsJson) { const r = meetingOps.setStats(this.#db, this.#meetingId, statsJson); this.#notify("meetings"); return r; }
   getOpencodeSessionId() { return meetingOps.getOpencodeSessionId(this.#db, this.#meetingId); }
 
-  addContribution(meetingId, contribution) { return contribOps.addContribution(this.#db, meetingId, contribution, () => this.getRound()); }
+  addContribution(meetingId, contribution) { const r = contribOps.addContribution(this.#db, meetingId, contribution, () => this.getRound()); this.#notify("contributions"); return r; }
   getContributions(meetingId) { return contribOps.getContributions(this.#db, meetingId); }
   getRecentContributions(meetingId, count) { return contribOps.getRecentContributions(this.#db, meetingId, count); }
   getContributionContext(contributionId) { return contribOps.getContributionContext(this.#db, contributionId); }
-  addTurnRequest(meetingId, turnRequest) { return contribOps.addTurnRequest(this.#db, meetingId, turnRequest); }
-  ensureParticipantRow(participantId, name = participantId, tier = "mid") { return contribOps.ensureParticipantRow(this.#db, this.#meetingId, participantId, name, tier); }
-  addContributionWithTurnRequest(meetingId, contribution, turnRequest) { return contribOps.addContributionWithTurnRequest(this.#db, meetingId, contribution, turnRequest, () => this.getRound()); }
+  addTurnRequest(meetingId, turnRequest) { const r = contribOps.addTurnRequest(this.#db, meetingId, turnRequest); this.#notify("turn_requests"); return r; }
+  ensureParticipantRow(participantId, name = participantId, tier = "mid") { const r = contribOps.ensureParticipantRow(this.#db, this.#meetingId, participantId, name, tier); this.#notify("participants"); return r; }
+  addContributionWithTurnRequest(meetingId, contribution, turnRequest) { const r = contribOps.addContributionWithTurnRequest(this.#db, meetingId, contribution, turnRequest, () => this.getRound()); this.#notify("contributions"); return r; }
   getTurnRequests(meetingId) { return contribOps.getTurnRequests(this.#db, meetingId); }
   getMaxContributionId() { return contribOps.getMaxContributionId(this.#db, this.#meetingId); }
-  setParticipantSessionId(participantId, sessionId) { return contribOps.setParticipantSessionId(this.#db, this.#meetingId, participantId, sessionId); }
-  setParticipantStatus(participantId, status) { return contribOps.setParticipantStatus(this.#db, this.#meetingId, participantId, status); }
-  setParticipantReflection(participantId, reflection) { return contribOps.setParticipantReflection(this.#db, this.#meetingId, participantId, reflection); }
+  setParticipantSessionId(participantId, sessionId) { const r = contribOps.setParticipantSessionId(this.#db, this.#meetingId, participantId, sessionId); this.#notify("participants"); return r; }
+  setParticipantStatus(participantId, status) { const r = contribOps.setParticipantStatus(this.#db, this.#meetingId, participantId, status); this.#notify("participants"); return r; }
+  setParticipantReflection(participantId, reflection) { const r = contribOps.setParticipantReflection(this.#db, this.#meetingId, participantId, reflection); this.#notify("participants"); return r; }
   getParticipantStatus(participantId) { return contribOps.getParticipantStatus(this.#db, this.#meetingId, participantId); }
   getAllParticipantsWithStatus() { return contribOps.getAllParticipantsWithStatus(this.#db, this.#meetingId); }
-  setRoundSummary(round, summary) { return contribOps.setRoundSummary(this.#db, this.#meetingId, round, summary); }
+  setRoundSummary(round, summary) { const r = contribOps.setRoundSummary(this.#db, this.#meetingId, round, summary); this.#notify("rounds"); return r; }
   getRoundSummaries(meetingId) { return contribOps.getRoundSummaries(this.#db, meetingId); }
-  saveArtifact(artifact) { return contribOps.saveArtifact(this.#db, this.#meetingId, artifact); }
+  saveArtifact(artifact) { const r = contribOps.saveArtifact(this.#db, this.#meetingId, artifact); this.#notify("artifacts"); return r; }
   getArtifact(meetingId) { return contribOps.getArtifact(this.#db, meetingId); }
-  recordAgentError(meetingId, participantId, round, errorType, errorMessage, attempts) { return contribOps.recordAgentError(this.#db, meetingId, participantId, round, errorType, errorMessage, attempts); }
+  recordAgentError(meetingId, participantId, round, errorType, errorMessage, attempts) { const r = contribOps.recordAgentError(this.#db, meetingId, participantId, round, errorType, errorMessage, attempts); this.#notify("agent_errors"); return r; }
   getAgentErrors(meetingId) { return contribOps.getAgentErrors(this.#db, meetingId); }
   getTranscriptData(meetingId) { return contribOps.getTranscriptData(this.#db, meetingId, (id) => this.getRoundSummaries(id)); }
   getParticipantModel(participantId) { return contribOps.getParticipantModel(this.#db, this.#meetingId, participantId); }
-  saveMeetingMetrics(metrics) { return contribOps.saveMeetingMetrics(this.#db, this.#meetingId, metrics); }
+  saveMeetingMetrics(metrics) { const r = contribOps.saveMeetingMetrics(this.#db, this.#meetingId, metrics); this.#notify("meeting_metrics"); return r; }
   getRecentMeetingMetrics(limit = 20) { return contribOps.getRecentMeetingMetrics(this.#db, limit); }
 
   storeFabricEmbedding(chunkId, embedding, dim = 384) { return vectorOps.storeFabricEmbedding(this.#db, chunkId, embedding, dim); }
@@ -213,7 +216,7 @@ export class MeetingDatabase {
   storePersonaEmbedding(personaName, tier, tags, embeddingText, embedding, dim = 384) { return vectorOps.storePersonaEmbedding(this.#db, this.#meetingId, personaName, tier, tags, embeddingText, embedding, dim); }
   searchPersonaEmbeddings(queryEmbedding, tier, topK = 5, dim = 384) { return vectorOps.searchPersonaEmbeddings(this.#db, this.#meetingId, queryEmbedding, tier, topK, dim); }
   countPersonaEmbeddings() { return vectorOps.countPersonaEmbeddings(this.#db, this.#meetingId); }
-  countPersonaVecEmbeddings(dim = 384) { return vectorOps.countPersonaVecEmbeddings(this.#db, dim); }
+  countPersonaVecEmbeddings(dim = 384) { return vectorOps.countPersonaVecEmbeddings(this.#db, this.#meetingId, dim); }
   clearPersonaEmbeddings() { return vectorOps.clearPersonaEmbeddings(this.#db, this.#meetingId); }
   getPersonaEmbeddingByName(personaName, dim = 384) { return vectorOps.getPersonaEmbeddingByName(this.#db, this.#meetingId, personaName, dim); }
   getPersonaEmbeddingsByNames(personaNames, dim = 384) { return vectorOps.getPersonaEmbeddingsByNames(this.#db, this.#meetingId, personaNames, dim); }

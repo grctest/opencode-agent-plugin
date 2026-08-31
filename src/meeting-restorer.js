@@ -2,11 +2,9 @@ import { getTierConfig } from "./shared.js";
 import { parseReflections, parseStats } from "./shared.js";
 import { indexMeeting } from "./database.js";
 import { Logger, LoomError, extractErrorInfo } from "./logger.js";
+import { TERMINAL_STATUSES } from "./constants.js";
 
 const restorerLogger = new Logger();
-
-/** Terminal statuses that must never silently reopen as mid-deliberation (audit 05 LS1). */
-const TERMINAL_STATUSES = new Set(["converged", "cancelled", "timeout", "max_rounds_reached", "aborted"]);
 
 /**
  * Restores in-memory meeting state from the database.

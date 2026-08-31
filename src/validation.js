@@ -17,10 +17,6 @@ export function parseAgentResponse(participantId, response, tier) {
   if (!text || text.trim().length < 3) return null;
   if (text.length < 10 && /^[.\s]+$/.test(text)) return null;
 
-  if (text === "[PASS]") {
-    return { participant_id: participantId, content: "[PASS]", type: "pass", request_next: null, query: null, evidence: null, summon: null, vote: null };
-  }
-
   // Parse raw response (extracts type prefix and request_next directive)
   const parsed = parseAgentResponseRaw(response, tier);
   if (!parsed) return null;

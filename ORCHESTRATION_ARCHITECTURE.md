@@ -1,6 +1,6 @@
 # The Loom Orchestration Architecture
 
-**Schema version:** `PRAGMA user_version = 1` (`LATEST_SCHEMA_VERSION` in `src/database/schema.js:10`) — `meetings.status ∈ {initializing,weaving,converged,timeout,cancelled,aborted,max_rounds_reached}` — last verified against `package@0.1.0` + DB `user_version 1`.
+**Schema version:** `PRAGMA user_version = 2` (`LATEST_SCHEMA_VERSION` in `src/database/schema.js:10`) — `meetings.status ∈ {initializing,weaving,converged,timeout,cancelled,aborted,max_rounds_reached}` — fresh DBs enforce `CHECK(status IN …)` + `CHECK(tier IN …)` + `UNIQUE(meeting_id,chunk_index)` + FKs; no migration path (fresh-slate install, session wipe on delete). Last verified against `package@0.1.0` + DB `user_version 2`.
 
 A complete technical reference for how the Loom multi-agent deliberation system works, from user input to final output. Every LLM prompt, every data structure, every decision point. Written for someone who cannot read the source code.
 
@@ -12,7 +12,7 @@ A complete technical reference for how the Loom multi-agent deliberation system 
 | `sessionID` / `parentSessionId` | opencode chat session that owns the meeting (parent of all ephemeral sessions) | `client.session.create({parentID})` |
 | `opencodeSessionId` | Duplicate of parent session ID persisted in `meetings.opencode_session_id` for resume | `database/session-index.js` |
 | `ephemeralSessionId` | Short-lived child session per agent per round (round-scoped) | `session-manager.js:createEphemeralSession` |
-| `orchestratorSessionId` | One persistent session for moderation/summary/turn-order | `session-manager.js:promptOrchestrator` |
+| `orchestratorSessionId` | One persistent session for summary/turn-order | `session-manager.js:promptOrchestrator` |
 | `weave` | In-memory `StateManager.weave` == `contributions` table rows == `data.rounds[].contributions` | `services/state-manager.js` |
 | `fabric` | Legacy name for `meetings.fabric` (initial user context); now superseded by `state_of_play` but retained in DB for compat | `fabric-manager.js` (alias: `state-of-play`) |
 
@@ -27,7 +27,7 @@ A complete technical reference for how the Loom multi-agent deliberation system 
 5. [Round Execution](#5-round-execution)
 6. [Turn Ordering](#6-turn-ordering)
 7. [LLM Session Architecture](#7-llm-session-architecture)
-8. [Moderator System](#8-moderator-system)
+8. [Agent-Driven Termination](#8-agent-driven-termination)
 9. [Turn Order System](#9-turn-order-system)
 10. [Convergence Detection](#10-convergence-detection)
 11. [State of Play](#11-state-of-play)
@@ -57,12 +57,12 @@ When a user types `/knit` with a question, this is what happens:
 2. **Model assignment** — Each agent is assigned an LLM model. Principal/senior tiers get the top available model (the session's model when present); remaining tiers get the next-best unused models. Explicit per-participant `model`/`model_override` fields win over automatic assignment. The discovery pool can be narrowed with a per-session model filter (`/enable_knit_models` / `/disable_knit_models`, Section 26).
 3. **Rounds execute** — A round is a single sequential prompt phase:
    - Each agent speaks in turn via a **round-scoped ephemeral session** (one session per participant per round), seeing the state of play, vector-RAG context, and recent contributions.
-   - Agents write **untyped prose** — there are no `[PROPOSE]`/`[CHALLENGE]` type tags anymore; following agents interpret content directly (`[PASS]` alone remains the pass signal).
-   - During their turn agents can invoke **loom_\* interaction tools** (`loom_query`, `loom_vote`, `loom_summon`, `loom_request_next`) alongside research tools. These are plugin-registered tools that execute server-side during `session.prompt`: peer answers, ballots, and tallies are returned **inline in the same turn** and folded back into the speaker's final contribution via an optional same-turn synthesis pass (Section 22).
+   - Agents write **untyped prose** — there are no `[PROPOSE]`/`[CHALLENGE]` type tags anymore; following agents interpret content directly. Agents call `loom_pass` when they have nothing new to contribute.
+   - During their turn agents can invoke **loom_\* interaction tools** (`loom_query`, `loom_vote`, `loom_summon`, `loom_request_next`, `loom_pass`) alongside research tools. These are plugin-registered tools that execute server-side during `session.prompt`: peer answers, ballots, and tallies are returned **inline in the same turn** and folded back into the speaker's final contribution via an optional same-turn synthesis pass (Section 22).
 4. **Round summarization** — After all agents speak, an LLM clerk summary is generated every round (Established / Contested / Evidence / Open bullets), degrading to a deterministic digest when the LLM returns empty (Section 13).
 5. **State of play update** — The state of play (decisions, agreements, disagreements, open questions, key facts, files involved) is regenerated from the full weave.
-6. **Moderator check + turn order planning** — The moderator — gated behind conflict heuristics so it rarely fires — may rule `converge` or `break`; otherwise turn order for the next round is planned from `loom_request_next` requests (Sections 8–9).
-7. **Termination** — Deterministic: (a) moderator converge after the minimum round count, (b) all participants passed or failed, or (c) the round limit reached. The wall-clock hard timeout is disabled by default (`defaultMeetingTimeoutMs: 0` = no limit); stall watchdog (inactivity), token budget exhaustion, and user cancellation still terminate the meeting.
+6. **Turn order planning** — `planTurnOrder()` produces the next round's ordered participant list from `loom_request_next` requests (Section 9).
+7. **Termination** — Deterministic: (a) all participants have called `loom_pass` or failed, (b) the round limit reached, or (c) hard timeout/stall/token budget fires. The wall-clock hard timeout is disabled by default (`defaultMeetingTimeoutMs: 0` = no limit); stall watchdog (inactivity), token budget exhaustion, and user cancellation still terminate the meeting.
 8. **Synthesis** — One agent (typically the principal) synthesizes all contributions into a structured artifact with Decision, Reasoning, Action Items, Dissenting Views, Open Questions, and Confidence, then self-critiques it.
 9. **Output** — A concise chat summary plus a full markdown report saved to `.opencode/loom/meetings/<meetingId>.md`. The live dashboard can be started with `/loom_viz`.
 
@@ -98,13 +98,13 @@ Composition is deterministic content-similarity; no `seed` parameter exists — 
 
 There is **no LLM domain detection** — the now-removed `domain` pipeline was replaced by embedding-based selection.
 
-1. All personas are loaded from JSON files (`personas/<tier>/*.json`, or legacy `<tier>.json` arrays) and embedded into the meeting database via `PersonaIndex.indexAll()` (tables `persona_embeddings` + `vec_persona_embeddings`, FK to `meetings(id)`).
-2. For each role tier in the role list, `PersonaIndex.search(question, tier, 5)` returns the 5 most similar personas for that tier; the first persona not already used is selected.
+1. All personas are loaded from JSON files (`personas/<tier>/*.json`, or legacy `<tier>.json` arrays) and embedded into the meeting database via `PersonaIndex.indexAll()` (tables `persona_embeddings` + `vec_persona_embeddings_${dim}`, FK to `meetings(id)`, `CHECK(tier IN …)` + `UNIQUE(meeting_id,name)`).
+2. For each role tier in the role list, `PersonaIndex.search(question, tier, 5)` returns the 5 most similar personas for that tier (vector `vec_persona_embeddings_${dim} MATCH` filtered by tier, with fallback keyword scoring when vector unavailable); the first persona not already used is selected. Cache key is `model|quant|persona|tier|dim|fingerprint` (model-aware, `TUNING.EMBEDDING_CACHE_MAX` LRU).
 3. Selection is deterministic given the same question and persona index.
 4. Meeting-level `tags` are derived from the selected participants' most common tags (top 3).
-5. Estimated rounds: high=4, medium=3, low=2.
+5. Estimated rounds: `base` high=4/medium=3/low=2 clamped to `±1` around `getConfig().defaultMaxRounds` (default 3) — `estimated = clamp(base, cfg-1, cfg+1)` (fresh DB: `participants.tags`/`expertise` persisted).
 
-If the embedding service is unavailable, composition falls back to an empty room and the handler falls back gracefully.
+If the embedding service is unavailable, composition falls back to keyword-based `composeRoomByKeyword` (token overlap + `maxCosineDistance` relevance floor `minScore = max(1, floor(2*(1-maxDistance+0.15)))`), not an empty room; civilian generalist fills gaps.
 
 **Custom rooms:** Passing `participants` to `/knit` skips composition entirely. Each participant requires `name`, `persona`, `agenda`, `tier` (an `id` is derived; `tags`/`expertise` default to `["general"]`).
 
@@ -273,7 +273,7 @@ Senior doctrine: name the irreversible commitment and its mitigation/rollback...
    evidence request demands more)
 
 Available: websearch, webfetch, read, glob, grep, bash, loom_vector_search,
-           loom_query, loom_vote, loom_summon, loom_request_next    (only enabled ones listed)
+           loom_query, loom_vote, loom_summon, loom_request_next, loom_pass    (only enabled ones listed)
 
 Ladder: loom_vector_search (recall what was said → cheapest) → websearch (verify current
         fact) → read/grep/glob (verify local file) → webfetch (deep dive ONLY after a search hit)
@@ -288,9 +288,10 @@ Quality:
 
 Notes:
 
-- The tool list is assembled from `agentTools` config: built-ins plus the loom tools (`loom_vector_search`, `loom_query`, `loom_vote`, `loom_summon`, `loom_request_next`). When agent tools are disabled, the entire tool section is omitted.
+- The tool list is assembled from `agentTools` config: built-ins plus the loom tools (`loom_vector_search`, `loom_query`, `loom_vote`, `loom_summon`, `loom_request_next`, `loom_pass`). When agent tools are disabled, the entire tool section is omitted. System prompt cache `systemPromptCache` is `TUNING.SYSTEM_PROMPT_CACHE_MAX` 50 LRU via `getSystemPromptCacheMax()` and keyed by `hashConfig` which now includes `agentTools` digest (`enabled|loom|builtIn|maxCalls|sameTurn`) — changing `agentTools` busts cache.
 - `known_biases`: when a persona has more than two biases, they are deterministically rotated based on the participant name hash, so different agents surface different biases first.
-- There is no type-tag rule anywhere in the contract — agents write prose; `[PASS]` alone means pass.
+- There is no type-tag rule anywhere in the contract — agents write prose; calling `loom_pass` means pass.
+- Transcript `Live` block budgets `code 320 / prose 220` via `truncateAtSentence` (sentence-boundary, not mid-word `slice`).
 
 ### The User Prompt (Weighted Golden Sandwich)
 
@@ -370,7 +371,7 @@ Note the structure:
 
 ### What Agents Produce
 
-An agent response is **untyped prose** (or exactly `[PASS]`). `parseAgentResponseRaw` → Zod `AgentResponseSchema` no longer looks for type tags or directives:
+An agent response is **untyped prose** (or a `loom_pass` tool call). `parseAgentResponseRaw` → Zod `AgentResponseSchema` no longer looks for type tags or directives:
 
 - Any legacy bracket tag prefix (`[PROPOSE]`, `[CHALLENGE]`, …) is stripped from the content; the stored type is always `"contribution"`. Following agents interpret the full content directly.
 - All structured directive fields (`request_next`, `query`, `evidence`, `summon`, `vote`) are schema-validated but always `null` — peer interactions happen exclusively through real loom tools.
@@ -384,7 +385,7 @@ An agent response is **untyped prose** (or exactly `[PASS]`). `parseAgentRespons
 Edge cases:
 
 - **Tool-only turn** — no text but executed tools: a stub contribution ("[TOOL-ONLY TURN — no text produced; tool evidence preserved]") is stored carrying the `tool_calls`.
-- **`[PASS]` with tool calls** — the pass is persisted as a contribution preserving its research evidence (`(N tool call(s) preserved)` progress line).
+- **`loom_pass` tool call** — the pass is persisted as a contribution with the reason string, preserving any tool evidence.
 - There is **no hard word-limit enforcement** on contributions (the old `maxContributionWords` setting was removed); length contracts are prompt-level only.
 
 ---
@@ -410,7 +411,7 @@ For each agent (in turn order):
 9. Sanitizes content, parses the untyped response, stores the contribution plus any tool-derived turn request (Section 4).
 10. Runs the **same-turn synthesis pass** when loom interaction tools succeeded and text was produced (Section 4).
 
-Failure handling: a failed turn goes through the retry → fallback-model ladder before the agent is marked `failed` (Section 16). Because inline tools execute during `session.prompt`, a retry after a timeout can mean peer contributions exist in the weave without appearing in that turn's `tool_calls` — logged explicitly (`attempt_failed_possible_tool_side_effects`). Agents responding exactly `[PASS]` are set to `passed`.
+Failure handling: a failed turn goes through the retry → fallback-model ladder before the agent is marked `failed` (Section 16). Because inline tools execute during `session.prompt`, a retry after a timeout can mean peer contributions exist in the weave without appearing in that turn's `tool_calls` — logged explicitly (`attempt_failed_possible_tool_side_effects`). Agents calling `loom_pass` are set to `passed`.
 
 **Example mid-round flow:**
 
@@ -427,10 +428,9 @@ After the prompt phase:
 1. **Round summarization** (`summarizeRound`, Section 13) — LLM clerk summary every round; deterministic digest on empty responses.
 2. **State of play update** — `updateStateOfPlay(weave, question, tags)` regenerates the structured summary (Section 11).
 3. **Vector indexing** — `VectorIndex.indexRound()` embeds the round summary and contributions asynchronously, raced against a 5s guard timer (best-effort; timeout logs and continues).
-4. **Moderator check** — gated by conflict heuristics; may rule `converge` or `break` (Section 8).
-5. **Turn order planning** — unless the moderator forced a `break`, `planTurnOrder()` produces the next round's ordered participant list (Section 9).
-6. **Termination checks** — moderator converge, all participants passed/failed, or `current_round >= max_rounds` (Section 10).
-7. **Contribution-mix steering** — if the round contained ≥3 challenges/dissents and no synthesis-type consolidation, a steering hint is queued for the next round's first speaker ("consolidate positions before opening a new challenge"). Cheap and prompt-level; no LLM call.
+4. **Turn order planning** — `planTurnOrder()` produces the next round's ordered participant list (Section 9).
+5. **Termination checks** — all participants passed/failed, or `current_round >= max_rounds` (Section 10).
+6. **Contribution-mix steering** — if the round contained ≥3 challenges/dissents and no synthesis-type consolidation, a steering hint is queued for the next round's first speaker ("consolidate positions before opening a new challenge"). Cheap and prompt-level; no LLM call.
 
 The round summary and state of play are persisted to the database.
 
@@ -441,8 +441,6 @@ The round summary and state of play are persisted to the database.
 **Default order:** Agents speak in composition order (the order they appear in the participants array). There is no randomization.
 
 **Turn request override:** At the end of each round, `planTurnOrder()` is invoked with the round's `loom_request_next` tool requests (Section 9). The resulting JSON array of participant IDs is stored as the `planned_turn_order` and applied by `RoundInitializer.filterActiveParticipants()` at the start of the next round (the plan is cleared after being applied).
-
-**Moderator break ruling:** If the moderator rules `break`, the directed participant (by ID) is set as `next_speaker_id`; `reorderForNextSpeaker()` moves them to position 0 for the next round, and no LLM turn-order planning runs.
 
 **Skip-passed logic:** From round 3 onward, a participant who passed within the last 2 rounds (lookback window of 10 contributions) and carries no stored reflection is excluded from the active list for the next round — but only if at least one participant remains active. A progress message is emitted (e.g. *"⏭️ Skipped: Agent X (inactive, no new reflections)"*).
 
@@ -461,7 +459,7 @@ Parent Session (user's opencode chat)
   ├── Ephemeral Session: Architect Lead (round-scoped, created at phase start) → deleted after the round
   ├── Ephemeral Session: Security Engineer (round-scoped)                     → deleted after the round
   ├── Inline ephemeral prompts: query/vote/summon targets (created + deleted per call via runEphemeralPrompt)
-  ├── Orchestrator Session: ONE persistent session for moderation/summary/turn-order calls → deleted at meeting close
+   ├── Orchestrator Session: ONE persistent session for summary/turn-order calls → deleted at meeting close
   ├── Synth Session: Synthesizer (draft + critique)                           → deleted after use
   └── ...
 ```
@@ -539,83 +537,48 @@ Each model used by agents tracks consecutive failures via the circuit breaker (S
 
 ---
 
-## 8. Moderator System
+## 8. Agent-Driven Termination
 
-The moderator is a **narrow process-governance safety net**, not a meeting driver. It exists only to catch deadlock/circularity that heuristics flag, and it is deliberately biased toward *continuing*: a `converge` ruling is deferred until `minRounds`, and most meetings never trigger an LLM ruling at all because of the gates below.
+Termination is agent-driven: agents call the `loom_pass` tool when they have nothing new to contribute. The meeting ends when all active participants have passed.
 
-### When the Moderator Is Consulted
+### The `loom_pass` Tool
 
-`checkAndProcess()` runs every round, but the LLM ruling is **gated by thresholds** (`moderatorTrigger`, defaults `{ minContributions: 3, recentChallenges: 2, lookbackWindow: 4 }`) — it short-circuits without spending tokens when conditions aren't met:
-
-1. Fewer than 3 contributions in the current round → `{ action: "continue" }` immediately.
-2. Fewer than 2 challenges/dissents in the last 4 contributions → `{ action: "continue" }` immediately.
-3. **Consensus short-circuit:** if none of the recent contributions are challenges or dissents → `{ action: "continue" }` immediately (the moderator exists to resolve conflict; if everyone agrees there's nothing to resolve).
-
-When thresholds are exceeded, the situation is refined (a "circular argument" situation or a "repeated challenger: X has challenged/dissented 3+ times in the last 6 contributions across rounds" situation) and the moderator LLM evaluates the rubric below.
-
-### The Moderator Prompt
-
-`buildModeratorPrompt` produces a rubric-scored ruling request:
+Defined in `src/plugin/tools/pass.js`, `loom_pass` is a structured tool call that replaces text-based `[PASS]` signals:
 
 ```
-You are the MODERATOR — process governor, not participant. You do not contribute
-domain opinions. You govern flow. Default bias: KEEP DELIBERATING. Only converge
-when deliberation is genuinely exhausted.
-
-## Governance Doctrine (longer deliberation default)
-Favor thoroughness over speed...
-
-## Rubric — score 0-2 each
-- NEW_INFO: does last round introduce evidence/tool output not already in State-of-Play?
-- ENTRENCHMENT: same 2 participants exchanging challenge↔challenge without a third voice?
-- COVERAGE: have ≥70% of active participants contributed meaningfully this round?
-- DISSENT_DEPTH: substantive unresolved disputes that deserve more voices?
-
-Ruling policy (bias toward continue):
-- converge ONLY if NEW_INFO=0 AND COVERAGE≥1 AND (ENTRENCHMENT≥1 OR DISSENT_DEPTH=0)
-- break if ENTRENCHMENT=2 — redirect to the under-heard voice
-- otherwise continue
-
-## Your Previous Rulings (for consistency — don't contradict without new evidence)
-...
-
-## Current State of Play
-...(full state of play, with NEW_INFO scoring guidance)...
-
-## Situation Flagged by Heuristics
-Participant mid_security_engineer has challenged/dissented 3+ times in the
-last 6 contributions across rounds. Possible circular argument or deadlock.
-
-## Deliberation State
-Round: 4/6 (minRounds enforced externally — you may still return synthesize, it will be deferred)
-Contributions so far: 14
-Recent contributions (last up to 7):
-  - [challenge] mid_security_engineer [tools:websearch]: JWT revocation is unsolved...
-
-## Respond With Your Ruling — EXACT FORMAT REQUIRED
-<ruling>
-decision: <one sentence: continue | redirect to <name> | converge>
-next_speaker: <participant_id or "synthesize" or "continue">
-reason: <one sentence referencing rubric scores>
-</ruling>
-
-IMPORTANT: Respond ONLY with the <ruling> block. No other text.
+loom_pass({ reason: "covered by #3" })
 ```
 
-### Ruling Types
+**Args:**
+- `reason` (optional string, max 200 chars) — why the agent is passing
 
-1. **converge** — `next_speaker: "synthesize"` (or the decision mentions converge/wrap up). The deliberation ends — but only if `current_round >= minRounds` (default 2); otherwise convergence is deferred with a progress message ("Moderator wants to end early, but minimum rounds (2) not yet reached.").
-2. **break** — `next_speaker: "<participant_id or name>"`. A specific agent speaks first next round. The target must be an active (non-passed, non-failed) participant.
-3. **continue** — anything else (including parse failure). No intervention.
+**Returns:**
+```json
+{ "passed": true, "reason": "covered by #3" }
+```
 
-### Ruling Processing
+### How Pass Detection Works
 
-- **Deferred convergence** below `minRounds` — the moderator can't end the meeting too early.
-- **Rulings are tracked** (ring buffer, up to 50; last 10 embedded in prompts) for consistency.
-- **Break targets only active participants** — a `break` for a passed/failed agent is ignored.
-- **Fallback parsing:** if no `<ruling>` block parses, keyword fallback looks for "converge"/"synthesize"/"wrap up"; otherwise the raw text becomes the decision and the action is `continue`.
-- A `break` ruling sets `next_speaker_id` and skips LLM turn-order planning for the round.
-- The moderator only ever runs via `#promptOrchestrator` with type `"moderation"` (fast-path-routable, Section 21).
+1. Agent calls `loom_pass` during its turn
+2. Tool returns `{ passed: true, reason: "..." }` with metadata
+3. In `execute-turn.js`, detect `loom_pass` in tool results → skip same-turn synthesis
+4. In `_handlePromptResult`, check `metadata.passed === true` → apply pass logic:
+   - Set `p.status = "passed"`
+   - Persist via `db.setParticipantStatus(id, "passed")`
+   - Store pass contribution with reason string as content
+5. All-passed check in `_finalizeRound` transitions to `"converged"`
+
+### Termination Conditions
+
+| Condition | What it does |
+|-----------|--------------|
+| All participants have called `loom_pass` or failed (`activeCount === 0`) | natural end — highest priority |
+| `current_round >= max_rounds` | guaranteed termination |
+| Hard timeout / stall / token budget / user cancellation | extrinsic stops |
+
+The absolute wall-clock timeout is disabled by default (`defaultMeetingTimeoutMs: 0` = no limit); stall watchdog, token budget, and user cancellation remain as extrinsic stops and proceed to synthesis.
+
+Terminal statuses: `converged`, `cancelled`, `timeout`, `max_rounds_reached`, `aborted`.
 
 ---
 
@@ -637,7 +600,7 @@ After the turn completes, the executor scans the stored `tool_calls` for `loom_r
 
 ### Turn Request Resolution (`planTurnOrder`)
 
-Running at the end of each round (unless the moderator forced a `break`):
+Running at the end of each round:
 
 1. **No requests** → return the default composition order of all non-failed participants (no LLM call).
 2. **Single valid request** → programmatically move the requesting agent to position 0 (no LLM call).
@@ -690,17 +653,16 @@ Note: config keys `maxTurnRequestsPerRound`, `turnRequestThresholds.autoGrant`, 
 
 ## 10. Convergence Detection
 
-Convergence is deterministic and integrated into round finalization — there is no separate LLM "convergence check" anymore (the old weighted 9-check and 2-check protocols were removed).
+Convergence is deterministic and integrated into round finalization — there is no separate LLM "convergence check" anymore.
 
 The meeting terminates when any of these hold after a round:
 
 | Condition | What it does |
 |-----------|--------------|
-| Moderator rules `converge` (after `minRounds`, default 2) | natural end — highest priority |
-| All participants have passed or failed (`activeCount === 0`) | early termination |
+| All participants have called `loom_pass` or failed (`activeCount === 0`) | natural end — highest priority |
 | `current_round >= max_rounds` | guaranteed termination |
 
-The old `convergence` argument (`consensus` / `majority` / `moderator_forces`) was removed from the `/knit` contract entirely; the `meetings.convergence` column persists only as a display label (see `docs/removing-convergence-system.md`). Termination is deterministic (see table above). The absolute wall-clock timeout is disabled by default (stall watchdog, token budget, and user cancellation remain as extrinsic stops) and proceeds to synthesis.
+The `meetings.convergence` column persists only as a display label (set to `"agent_driven"`). Termination is deterministic (see table above). The absolute wall-clock timeout is disabled by default (stall watchdog, token budget, and user cancellation remain as extrinsic stops) and proceeds to synthesis.
 
 Terminal statuses: `converged`, `cancelled`, `timeout`, `max_rounds_reached`, `aborted` (the last two surface via the state machine but are not produced by the current orchestration paths; `max_rounds_reached` is reserved).
 
@@ -1016,7 +978,7 @@ If the draft is accurate, grounded, and complete, respond with exactly: [NO_CHAN
   objections: [],      // collected at synthesis time
   tags: ["engineering", "security"],
   next_contribution_id: 14,
-  next_speaker_id: null,          // set by moderator "break" ruling
+  next_speaker_id: null,          // set by planTurnOrder or loom_pass redirect
   planned_turn_order: [],         // planned for next round
   opencode_session_id: "...",     // for session-indexing
 }
@@ -1024,23 +986,23 @@ If the draft is accurate, grounded, and complete, respond with exactly: [NO_CHAN
 
 ### Immutability
 
-`getState()` returns deep-frozen copies. All mutations go through targeted `StateManager` methods:
+`getState()` returns deep-frozen copies (`structuredClone` + `deepFreeze` + `freezeTierConfig`; `createMeetingConfig()` deep-freezes via `JSON.parse(JSON.stringify(TUNING))` per-meeting). All mutations go through targeted `StateManager` methods:
 
 ```javascript
-stateManager.transitionTo("weaving")            // validated state machine
+stateManager.transitionTo("weaving")            // validated TRANSITIONS table
 stateManager.addContribution(obj)               // atomic addition
 stateManager.setStateOfPlay(summary)            // regenerated each round
 stateManager.setPlannedTurnOrder(ids)           // for next round
-stateManager.setNextSpeakerId(id)               // moderator break
+stateManager.setNextSpeakerId(id)               // turn order planning
 stateManager.reorderForNextSpeaker(id)          // established for next round
 stateManager.addParticipantReflection(id, text)
 ```
 
-`transitionTo` validates against the state machine (`initializing → weaving; weaving → converged/cancelled/timeout/max_rounds_reached/aborted`; terminal states are absorbing). `forceTransitionTo` bypasses validation and is reserved for the extension escape hatch.
+`transitionTo` validates against `StateManager.TRANSITIONS` (`initializing → weaving/cancelled/aborted/timeout`; `weaving → converged/cancelled/timeout/max_rounds_reached/aborted`; terminals absorbing). `forceTransitionTo` now allows `initializing→weaving` for stuck-in-initializing extension plus all terminal→`weaving` (resume), else throws; `orchestrator.close()` is idempotent (`#closed` guard, nulls `_database/_sessionManager/_roundExecutor`).
 
 ### Persistence
 
-State is persisted via the `PersistenceService` after each round finalization and after terminal events (`#persistState`), atomically updating `meetings` with round, status, fabric, state_of_play, next_speaker_id, stats. On resume, `restoreStateFromDb()` reconstructs the in-memory state from the database (participants, weave, rounds, turn requests, next speaker, call stats).
+State is persisted via the `PersistenceService` after each round finalization and after terminal events (`#persistState`), atomically updating `meetings` with round, status, fabric, state_of_play, next_speaker_id, stats, `semantic_degraded`. Fresh DBs enforce `participants.tags`/`expertise` (FK `meetings(id)`), `UNIQUE(meeting_id,name)` + `UNIQUE(meeting_id,chunk_index)`. On resume, `restoreStateFromDb()` reconstructs from SQLite (participants with `tags/expertise` + `known_biases`/`communication_style`/`preferred_contribution_types`, weave, rounds, `turn_requests` with `FK` + `CHECK(priority 1..10, DEFAULT 1)`, `agent_errors` with `CHECK`, next speaker, call stats) and rehydrates `artifact`/`objections` if synthesized.
 
 ---
 
@@ -1098,10 +1060,9 @@ Per-model failure tracking (`circuitBreaker.failureThreshold: 3`, `circuitBreake
 
 ### Database Errors
 
-Database operations are wrapped in try-catch; best-effort operations log and continue. There is no
-migration machinery — `schema.js` ships exactly one `initSchema()` with the final schema (alpha:
-DBs are wiped whenever a session is deleted). Indexing and other best-effort operations log and
-continue.
+Database operations are wrapped in try-catch; best-effort operations log and continue. Fresh DBs enforce `CHECK(status/tier/round/type/priority)` + `UNIQUE(meeting_id,chunk_index)` + `FK(meetings→participants→contributions)` at `initSchema()` (`user_version 2`); there is no migration machinery — `schema.js` ships `initSchema()` with the final schema (alpha: DBs are wiped whenever a session is deleted, `MIGRATIONS[1]` is no-op). `storeFabricChunk` is always `BEGIN IMMEDIATE` around `MAX+1`+`INSERT` (vector + non-vector), `SAVEPOINT loom_txn_*` for nested `MeetingDatabase.transaction()`. `isSafeBashCommand` post-hoc sandbox in `execute-turn.js:132` blocks `--upload-pack`/`-exec`/`-R`/`--exec` (permissive, allows `git ls-files --cached`).
+
+Indexing and other best-effort operations log and continue.
 
 ### All-Failed / All-Passed Handling
 
@@ -1113,7 +1074,9 @@ Degraded artifacts are produced when every participant fails or everyone passes 
 
 A watchdog monitors activity. If no state update occurs for the configured interval, the meeting is cancelled and passes through to synthesis.
 
-**Configuration:** `stallTimeoutMs` = 600,000ms (10 min), tick interval `WATCHDOG_TICK_MS` = 30,000ms (30s).
+**Configuration:** `stallTimeoutMs` = 600,000ms (10 min), tick interval `WATCHDOG_TICK_MS` = 30,000ms (30s) via `TUNING.WATCHDOG_TICK_MS` (`getConfig().tuning`).
+
+**Mechanism:** `StallWatchdog.start(getStatus, isCancelled)` is idempotent (`start()` touches if already running); `touch()` on `#notifyUpdate` + contributions resets `lastActivityAt`.
 
 **Mechanism:** `StallWatchdog.start(getStatus, isCancelled)` begins a 30s interval. On each tick:
 1. If the process is cancelled or the meeting is in a terminal status, stop the watchdog.
@@ -1151,14 +1114,14 @@ From the database: participants (with personas, tiers, models, status, reflectio
 
 ### The Vector Tables
 
-`VectorIndex` provides semantic retrieval over prior deliberation context, backed by sqlite-vec virtual tables:
+`VectorIndex` provides semantic retrieval over prior deliberation context, backed by sqlite-vec virtual tables (dim-parameterized `vec_*_${dim}` via `vecTableName(prefix,dim)` / `sanitizeDim` helper, `CHECK` + `UNIQUE` on `fabric_chunks`):
 
 | Table | Purpose |
 |-------|---------|
-| `fabric_chunks` | Regular table: chunked content (round summaries, contributions, initial context) |
-| `vec_fabric_chunks` | sqlite-vec virtual table: `embedding float[384]` — used for agent RAG |
-| `persona_embeddings` | Regular table: embedded persona text (`persona_name`, `tier`, `tags`, `embedding_text`) |
-| `vec_persona_embeddings` | sqlite-vec virtual table: `embedding float[384]` — used for room composition |
+| `fabric_chunks` | Regular table: chunked content (`CHECK(source IN ('round_summary','contribution','context'))`, `UNIQUE(meeting_id,chunk_index)`) |
+| `vec_fabric_chunks_${dim}` | sqlite-vec virtual table: `embedding float[${dim}]` — used for agent RAG (dim from `getEmbeddingDim()`, `TUNING.VEC_SEARCH_TOPK`/`FABRIC_CHUNK_MAX_TOKENS`/`CONTEXT_CHAR_PER_TOKEN`) |
+| `persona_embeddings` | Regular table: embedded persona text (`persona_name`, `tier CHECK`, `tags`, `embedding_text`) |
+| `vec_persona_embeddings_${dim}` | sqlite-vec virtual table: `embedding float[${dim}]` — used for room composition (meeting-scoped, tier-filtered) |
 
 ### Embedding Service
 
@@ -1173,13 +1136,13 @@ The `embed()` path tokenizes text, builds `input_ids`/`attention_mask`/`token_ty
 
 ### Chunking Strategy
 
-`#chunkText` splits on paragraphs (`\n\n`), merging paragraphs up to ~`maxTokens × 4` characters (1 token ≈ 4 chars). Each chunk is stored with a source tag: `round_summary`, `contribution`, or `context`.
+`#chunkText` splits on paragraphs (`\n\n`), merging paragraphs up to `maxTokens × charsPerToken` characters (`charsPerToken` 2 for CJK/code-heavy else `TUNING.CONTEXT_CHAR_PER_TOKEN` 4, `maxTokens` from `getEmbeddingMaxTokens()` or `TUNING.FABRIC_CHUNK_MAX_TOKENS` fallback; dense detection `[\u3040-\u9FFF]`). Oversized paragraphs hard-split by sentence/word boundaries. Each chunk is stored with a source tag: `round_summary`, `contribution`, or `context`.
 
 ### Indexing Flow
 
-- **At meeting start** (non-resume): the user context is indexed via `indexContext()` — fire-and-forget.
-- **After each round**: `indexRound(roundNumber, summary, contributions)` chunks and embeds the summary (source `round_summary`) and each contribution (source `contribution`, prefixed `[participant_id] (type):`). Best-effort (`.catch(logger.warn)`).
-- **Personas**: `PersonaIndex.indexAll(personas)` embeds `persona + agenda + tags + expertise` text per persona at composition time (meeting-scoped).
+- **At meeting start** (non-resume): the user context is indexed via `indexContext()` — fire-and-forget (shared `#indexChunks(pending,label)` helper deduplicates `indexRound`/`indexContext`).
+- **After each round**: `indexRound(roundNumber, summary, contributions)` chunks and embeds the summary (source `round_summary`) and each contribution (source `contribution`, prefixed `[participant_id] (type):`). Batch embed concurrency 4, `storeFabricChunk` `BEGIN IMMEDIATE` around `MAX+1`+`INSERT` for both vector/non-vector, `storeFabricEmbedding` via `vecTableName`. Best-effort (`.catch(logger.warn)`); `semantic_degraded` set only when all embeds fail, cleared only on tier-matched `vec` hit (tier-filtered `searchPersonaEmbeddings`).
+- **Personas**: `PersonaIndex.indexAll(personas)` embeds `persona + agenda + tags + expertise` text per persona at composition time (meeting-scoped, cache `model|quant|dim|fingerprint` `TUNING.EMBEDDING_CACHE_MAX` LRU, concurrency 4).
 
 ### Retrieval Flow
 
@@ -1220,7 +1183,7 @@ Agent tooling is split between **built-in OpenCode tools** (web_fetch, read, bas
 
 | Phase | Built-in | Loom Plugin | tool_choice |
 |-------|----------|-------------|-------------|
-| Primary agent turn | `web_fetch`, `web_search`, `read`, `glob`, `grep`, `bash` (allowlisted) | `loom_query`, `loom_vote`, `loom_summon`, `loom_request_next`, `loom_vector_search` | `auto` |
+| Primary agent turn | `web_fetch`, `web_search`, `read`, `glob`, `grep`, `bash` (allowlisted) | `loom_query`, `loom_vote`, `loom_summon`, `loom_request_next`, `loom_pass`, `loom_vector_search` | `auto` |
 | Query/Evidence response (peer) | `web_fetch`, `web_search`, `read`, `loom_vector_search` | *(none)* | `auto` / `required` (evidence) |
 | Vote response (peer) | *(none)* | *(none)* | `none` — bare `[Vote: X]` ballot |
 | Summoned expert | `web_fetch`, `web_search`, `read`, `loom_vector_search` | *(none)* | `auto` |
@@ -1235,9 +1198,10 @@ Agent tooling is split between **built-in OpenCode tools** (web_fetch, read, bas
 | `loom_vote` | `plugin/tools/vote-summon.js` | Call a lettered poll — fan-out to all active participants, inline tally |
 | `loom_summon` | `plugin/tools/vote-summon.js` | Summon a guest expert persona for one additive contribution |
 | `loom_request_next` | `plugin/tools/meta.js` | Request priority speaking slot in next round |
+| `loom_pass` | `plugin/tools/pass.js` | Pass on current turn; deliberation ends when all participants pass |
 | `loom_vector_search` | `plugin/tools/vector-search.js` | Semantic similarity search against prior deliberation chunks |
 
-All loom tools resolve the current meeting from `context.sessionID` via the session-index, then delegate to the in-memory `activeLooms` engine for state/session/database access.
+All loom tools resolve the current meeting from `context.sessionID` via the session-index, then delegate to the in-memory `activeLooms` engine for state/session/database access. Shared helpers `src/plugin/tools/shared.js:1` centralize `resolveCaller` (session→speaking→weave→any), `resolveModel` (borrow any healthy participant model), `buildBatchId` (`inline-${meetingId}-${round}-${callerId}`), and `TERMINAL_STATUSES` (re-exported from `src/constants.js:3`).
 
 ### Tool Registration Chain
 
@@ -1247,6 +1211,7 @@ src/index.js (Loom factory)
   → tool("loom_vote", createVoteSummonTools({ config, resolveMeeting, activeLooms }))
   → tool("loom_summon", ...)
   → tool("loom_request_next", createMetaTools({ config }))
+  → tool("loom_pass", createPassTool({ config }))
   → tool("loom_vector_search", createVectorSearchTool({ config, resolveMeeting }))
 
 When an agent turn starts:
@@ -1279,6 +1244,7 @@ When loom tools are enabled, the system prompt includes:
       "loom_vote": true,
       "loom_summon": true,
       "loom_request_next": true,
+      "loom_pass": true,
       "loom_vector_search": true
     },
     "maxToolCallsPerTurn": 5,
@@ -1292,7 +1258,7 @@ When loom tools are enabled, the system prompt includes:
 | `enabled` | `true` | Master switch for all agent tools |
 | `builtIn.*` | (see above) | Enable built-in tools for agent turns |
 | `builtIn.bash.allowlist` | `["git","ls","wc","head","tail","grep","find"]` | Only these commands via bash |
-| `loom.*` | all `true` | Enable loom plugin tools (query/vote/summon/request_next/vector_search) |
+| `loom.*` | all `true` | Enable loom plugin tools (query/vote/summon/request_next/pass/vector_search) |
 | `maxToolCallsPerTurn` | `5` | Soft limit — exceeding logs a warning (not truncated) |
 | `maxToolOutputTokens` | `4000` | Contract limit on tool output volume (drives server-side truncation) |
 
@@ -1300,11 +1266,11 @@ When loom tools are enabled, the system prompt includes:
 
 | Risk | Mitigation |
 |------|-----------|
-| Prompt injection via tool outputs | Tool outputs feed the final text only; content is sanitized |
-| Bash command execution | Allowlisted commands only; write operations never allowed |
-| Filesystem exposure | `read` restricted to workspace |
-| Embedding model unavailable | `embedText` returns `null`; composition/vec-RAG degrade gracefully |
-| Loom tool side effects on retry | Inline peer contributions persisted via idempotency keys; retried prompts do not duplicate responses |
+| Prompt injection via tool outputs | Tool outputs feed the final text only; content is sanitized + `delimitContext` fenced `PEER_CONTRIBUTIONS`/`STATE_OF_PLAY` in `buildSummonPrompt` |
+| Bash command execution | Allowlisted commands only; post-hoc `isSafeBashCommand` (`--upload-pack`/`-exec`/`-R`/`--exec`, `find -execdir`) in `execute-turn.js:132` (permissive, allows `git ls-files --cached`) |
+| Filesystem exposure | `read` via opencode SDK sandbox; `paths.js:getMeetingDbPath` `realpathSync` jail + `isAssetPathSafe` fullwidth `%` NFC |
+| Embedding model unavailable | `embedText` throws; `retrieveRelevant` catches and returns `[]`, composition falls back to keyword `maxCosineDistance` floor |
+| Loom tool side effects on retry | Inline peer contributions persisted via idempotency keys (`batchId+target+question`, `vote` batch); retried prompts do not duplicate; abort re-checks in `query-evidence.js:102`/`vote-summon.js:142` |
 
 ---
 
@@ -1428,15 +1394,15 @@ All response types flow into the weave and appear in later agents' recent contri
 
 ### How It Works
 
-- **Serving:** `startDashboard(directory, port)` serves an HTML shell + static assets (`/assets/*`) and a JSON API.
-- **Data source:** `DashboardApi` opens each meeting SQLite DB **read-only**, with a 10-DB LRU cache and TTL; connections are re-opened when the DB file's mtime changes (every ≤2s checks), so it reads fresh state without any live coupling to the orchestrator.
-- **Real-time updates:** the server holds SSE clients per meeting (`/api/stream`) and **polls** the DB every 1s (active) or 5s (idle). On changes it broadcasts events: `state`, `contributions`, `orchestrator_messages`, `turn_requests`, `participants`, `agent_error`, `artifact`. Terminal-state and artifact events are broadcast once (dedup via cache).
+- **Serving:** `startDashboard(directory, port)` serves an HTML shell (per-request `Content-Security-Policy: script-src 'nonce-<uuid>'`, inline theme script `nonce` via `getHtmlShell(nonce)`) + static assets (`/assets/*`, `isAssetPathSafe` fullwidth `%` NFC + `realpathSync` jail) and a JSON API (`SECURITY_HEADERS: nosniff/DENY`).
+- **Data source:** `DashboardApi` opens each meeting SQLite DB **read-only**, with a `TUNING.MAX_DB_CACHE_SIZE` (10) LRU cache and TTL; connections are re-opened when the DB file's mtime changes (`DB_REFRESH_INTERVAL_MS` 500ms coalesced, `refreshIfStale()`), so it reads fresh state without live coupling.
+- **Real-time updates:** the server holds SSE clients per meeting (`/api/stream`) and **polls** the DB every 1s (active) or `DASHBOARD_IDLE_TIMEOUT_MS/12` ≈5s idle (adaptive `ACTIVE_POLL_INTERVAL`/`IDLE_POLL_INTERVAL` + `maxClientsForAnyMeeting>3` throttle). Per-meeting `lastMtime` gate skips all 8 queries when `currentMtime===prevMtime`; `broadcast()` uses a 100-event `pendingQueues` backpressure buffer (drains on `desiredSize>0`, drops after 100; `SLOW_CONSUMER_TIMEOUT 30s`). `exportMarkdownStream` is `pull()`-based (not `start` drop). Events: `state`, `contributions` (`prompt_context:null` stripped in SSE, parity with REST `include_context=0`), `orchestrator_messages`, `turn_requests`, `participants`, `agent_error`, `artifact`. Terminal-state and artifact deduped via single `lastArtifactCreatedAt`/`stateStr` cache (not double-emit).
 - **Meeting selection:** `/api/meetings` lists every `meetings/*.db` with question, status, round, convergence, created_at, participant count (sorted newest first). The UI auto-switches to the most recent.
 
 ### UI Tabs
 
 - **Overview** — participants (cards with status/tier/model/reflection, contribution counts), recent contributions, turn requests, errors, an agent-perspective panel, and the final artifact when present.
-- **Timeline** — per-round contribution timeline, orchestrator decision log (moderator rulings, turn-order plans, summaries) interleaved per round, participation matrix, contribution-type chart, and inline reflection/query/evidence/summon/vote rows.
+- **Timeline** — per-round contribution timeline, orchestrator decision log (turn-order plans, summaries) interleaved per round, participation matrix, contribution-type chart, and inline reflection/query/evidence/summon/vote rows.
 - **Output** — the final artifact with structured fields; export actions.
 
 ### Key API Endpoints
@@ -1496,7 +1462,7 @@ The handler wires metadata callbacks to the chat context for live UX:
 - `loom_cancel` — request cancellation (current round completes, then synthesis runs)
 - `loom_debug` — dump internal state of a running Loom (optional `include` filter)
 - `loom_viz` / `loom_stop` — start/stop the dashboard
-- `list_knit_models` — discover available models, preview tier assignments (`createModelPlan` + `formatModelPlan`), showing cost/context/reasoning and current enabled/disabled status. `enable_knit_models` / `disable_knit_models` / `reset_knit_models` — manage a **session-scoped model filter**. The filter restricts which discovered models Loom agents may use; the preview also stages the plan for the next `/knit`. (See Section 26.)
+- `list_knit_models` — discover available models, preview tier assignments (`createModelPlan`), showing cost/context/reasoning and current enabled/disabled status. `enable_knit_models` / `disable_knit_models` / `reset_knit_models` — manage a **session-scoped model filter**. The filter restricts which discovered models Loom agents may use; the preview also stages the plan for the next `/knit`. (See Section 26.)
 
 ### Session Index & Cleanup
 
@@ -1523,12 +1489,12 @@ The handler wires metadata callbacks to the chat context for live UX:
 
 ### In-Memory Metrics (`metrics.js`)
 
-A simple process-wide collector exposed via `/api/metrics` and `getMetricsSnapshot()`:
+A simple process-wide collector exposed via `/api/metrics` and `getMetricsSnapshot()` (circular `latencyBuffers` `TUNING.LATENCY_SAMPLE_LIMIT` 100, O(1) `recordLatency`):
 
-- **Counter** — `llm_calls_by_type` (agent/synthesis).
-- **Latencies** — `llm_prompt_ms`, `synthesis_ms` (last 100 samples; aggregated into count/avg/p50/p95/max).
+- **Counter** — `llm_calls_by_type` (agent/synthesis), `retry_events` (`attempted`/`retry_success`/`exhausted` via `withRetry`), `breaker_events` (`open`/`half_open`/`closed`), `degradation_events`.
+- **Latencies** — `llm_prompt_ms`, `synthesis_ms` (last `LATENCY_SAMPLE_LIMIT` samples; aggregated into count/avg/p50/p95/max via `latencyStats`).
 
-RoundExecution records per-call tokens and `llm_prompt_ms` per agent call; synthesis records its own bucket. Previously defined but never-written counters (turn request grants/denials, reflections, syntheses, meetings, tokens, gauges) were removed as dead code — the remaining live counters are listed above.
+RoundExecution records per-call tokens and `llm_prompt_ms` per agent call; synthesis records its own bucket. `getMetricsSnapshot()` is polled by dashboard `GET /api/metrics` and persisted per-meeting via `meeting_metrics` at synthesis.
 
 ### Per-Meeting Metrics
 
@@ -1536,7 +1502,7 @@ On meeting end the orchestrator persists `meeting_metrics` via `saveMeetingMetri
 
 ### Logging
 
-Structured JSON logs via `Logger` with contexts: `meeting_id` (short form), event name, and fields. Error paths are captured per participant in `agent_errors` and globally in `error_log`. Model-fallback events are observable as `model_fallback`/`model_fallback_failed` log events, an `agent_errors` row with type `model_fallback`, and a `⚠️ … falling back …` progress message.
+Structured JSON logs via `Logger` (circular `ringBuffer` `TUNING.RING_BUFFER_SIZE` 500 O(1) `ringBuffer[head]` + `orderedRing()`, `getRecentLogs` via `orderedRing()`; `getRingSize()` reads `TUNING` live) with recursive `SECRET_KEY_RE` redaction (`authorization|api_key|bearer|token|password|secret|privateKey|credentials` deep walk, `Bearer [REDACTED]`). Contexts: `meeting_id` (short form + `fullMeetingId`), `correlationId`, event name, and fields. Error paths are captured per participant in `agent_errors` and globally in `error_log`. Model-fallback events are observable as `model_fallback`/`model_fallback_failed` log events, an `agent_errors` row with type `model_fallback`, and a `⚠️ … falling back …` progress message.
 
 ---
 
@@ -1583,7 +1549,11 @@ The appendix table lists every model-related configuration key (`fastPathModel`,
 
 ## Appendix: Key Configuration Values
 
-Loaded from `.loomrc.json` (project or `~/.config/opencode/.loomrc.json`), or the legacy `opencode.json` `"loom"` key. Validated and merged over defaults; unknown keys warn and are ignored.
+Loaded from `.loomrc.json` (project or `~/.config/opencode/.loomrc.json`), or the legacy `opencode.json` `"loom"` key. Validated and merged over defaults; unknown keys warn and are ignored. `DEFAULT_CONFIG.tuning` is `JSON.parse(JSON.stringify(TUNING))` deep-clone (not ref) — per-meeting `createMeetingConfig()` deep-freezes.
+
+`TUNING` (23 keys, `src/config/defaults.js:1`): `MAX_ITERATIONS 100` (weaving loop guard `weaving.js:71`), `WATCHDOG_TICK_MS 30000` (`stall-watchdog.js:47`), `RING_BUFFER_SIZE 500` (`logger.js:9`), `SKIP_PASSED_*` (3,10,2), `EXTENSION_EXTRA_ROUNDS_FALLBACK 4`, `MAX_CRITIQUE_RETRIES 2` (`synthesis-coordinator.js:10`), `SYSTEM_PROMPT_CACHE_MAX 50` (`prompts/agent.js:10`), `EMBEDDING_CACHE_MAX 512` (`persona-index.js:15`), `LATENCY_SAMPLE_LIMIT 100` (`metrics.js:19`), `DASHBOARD_IDLE_TIMEOUT_MS 60000` (`poll.js:60`), `MAX_DB_CACHE_SIZE 10` (`dashboard/api.js:11`), `VOTE_TIMEOUT_MS 60000`/`SUMMON_TIMEOUT_MS 90000` (`vote-summon.js:175,317`), `FABRIC_CHUNK_MAX_TOKENS 512`/`VEC_SEARCH_TOPK 10`/`CONTEXT_CHAR_PER_TOKEN 4` (`vector-index.js:101`), `CONTENT_TRUNCATION`/`TRANSCRIPT_BUDGET`/`STATE_OF_PLAY` budgets, `TERMINAL_STATUSES` (`constants.js:3`) central.
+
+DB fresh `meetings`/`participants`/`fabric_chunks` enforce `CHECK` + `UNIQUE` + `FK` at `initSchema()`; `storeFabricChunk` always `BEGIN IMMEDIATE`.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -1591,7 +1561,7 @@ Loaded from `.loomrc.json` (project or `~/.config/opencode/.loomrc.json`), or th
 | `synthesisTimeoutMs` | 180,000 | Synthesis draft/critique call timeout |
 | `maxTurnRequestWords` | 200 | (Reserved — not enforced by current planner) |
 | `defaultMaxRounds` | 3 | Default meeting rounds |
-| `minRounds` | 2 | Minimum rounds before the moderator can end the deliberation |
+| `minRounds` | 2 | Minimum rounds before the meeting can end (agents cannot pass before this) |
 | `fastPathModel` | `""` | Model for cheap orchestrator calls (empty = disabled) |
 | `maxRetryAttempts` | 2 | Retries for session creation / orchestrator prompts |
 | `retryBaseDelayMs` | 1,000 | Base retry delay |
@@ -1604,15 +1574,12 @@ Loaded from `.loomrc.json` (project or `~/.config/opencode/.loomrc.json`), or th
 | `maxTurnRequestsPerRound` | `3` | (Reserved — not exercised) |
 | `maxSummonsPerRound` | `2` | Summoned experts per round |
 | `maxSummonsPerAgent` | `1` | Summons per agent per round |
-| `moderatorTrigger.minContributions` | `3` | Round size gate for moderator consultation |
-| `moderatorTrigger.recentChallenges` | `2` | Challenge/dissent count gate |
-| `moderatorTrigger.lookbackWindow` | `4` | Lookback window for the gate |
 | `circuitBreaker.failureThreshold` | `3` | Consecutive failures before a model is marked unhealthy |
 | `circuitBreaker.resetTimeoutMs` | 300,000 | Half-open test window for an unhealthy model |
 | `modelFallback.enabled` | `true` | Master switch for agent-turn retries + fallback model selection (Section 16) |
 | `modelFallback.maxRetriesPerModel` | `2` | Retries on the same model before falling back |
 | `modelFallback.maxFallbackAttempts` | `1` | Retries on the selected fallback model |
 | `sameTurnSynthesis` | `true` | Peer responses returned inline for same-turn synthesis (Section 22) |
-| `agentTools.*` | (see Section 20) | Tool enablement — built-in tools + loom plugin tools (query/vote/summon/request_next/vector_search) |
+| `agentTools.*` | (see Section 20) | Tool enablement — built-in tools + loom plugin tools (query/vote/summon/request_next/pass/vector_search) |
 | `DEFAULT_EMBEDDING_MODEL` | `"Snowflake/snowflake-arctic-embed-xs"` | Default embedder for PersonaIndex and vector search (warmed up on dashboard start) |
 | `DEFAULT_EMBEDDING_QUANT` | `"onnx/model_int8.onnx"` | ONNX quantization variant used by the embedder |

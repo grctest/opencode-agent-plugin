@@ -410,8 +410,7 @@ export const AgentPerspective = memo(({ participant, stateOfPlay, recentContribu
 export const ORCHESTRATOR_TYPE_META = {
   turn_order: { emoji: "🔄", label: "Turn Planning" },
   summary: { emoji: "📝", label: "Round Summary" },
-  moderation: { emoji: "🛡️", label: "Moderation" },
-  convergence: { emoji: "🎯", label: "Convergence Check" },
+  convergence: { emoji: "🎯", label: "Convergence" },
   orchestrator: { emoji: "🎛️", label: "Orchestrator" },
 };
 
@@ -453,7 +452,7 @@ export const OrchestratorDetailDialog = memo(({ open, onClose, orchestratorMessa
         <div>
           <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Role</span>
           <p className="text-sm text-muted-foreground">
-            Coordinates the deliberation flow — plans turn order, summarizes rounds, checks for convergence, and moderates conflicts.
+            Coordinates the deliberation flow — plans turn order, summarizes rounds, and checks for convergence.
           </p>
         </div>
         {highestTierModel && (

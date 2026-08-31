@@ -10,7 +10,6 @@ import { RoundExecutor } from "../round-executor.js";
 import { RoundService } from "../services/round-service.js";
 import { StateManager } from "../services/state-manager.js";
 import { PersistenceService } from "../services/persistence-service.js";
-import { ModeratorService } from "../services/moderator-service.js";
 import { extractErrorInfo } from "../logger.js";
 
 export async function initialize() {
@@ -51,7 +50,7 @@ export async function initialize() {
           question: this._options.question,
           context: this._options.context,
           maxRounds: this._options.maxRounds,
-          convergence: "moderator_forces", // display-only; termination is deterministic
+          convergence: "agent_driven", // display-only; termination is agent-driven via loom_pass tool
           tags: this._options.tags ?? [],
           parentSessionId: this._options.parentSessionId,
           opencodeSessionId: this._options.opencodeSessionId ?? this._options.parentSessionId,

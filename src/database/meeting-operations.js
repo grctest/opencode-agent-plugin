@@ -46,7 +46,7 @@ export function initializeMeeting(db, meetingId, input) {
       "initializing",
       input.fabric ?? input.context ?? "",
       input.maxRounds,
-      input.convergence ?? "moderator_forces",
+      input.convergence ?? "agent_driven",
       JSON.stringify(input.tags ?? []),
       input.parentSessionId,
       input.opencodeSessionId,
@@ -100,7 +100,7 @@ export function upsertMeeting(db, meetingId, input) {
           tags = ?, parent_session_id = ?, opencode_session_id = ?, embedding_model = ?, embedding_dim = ?, updated_at = ?
         WHERE id = ?
       `).run(
-      input.question, input.context ?? "", input.maxRounds, input.convergence ?? "moderator_forces",
+        input.question, input.context ?? "", input.maxRounds, input.convergence ?? "agent_driven",
       JSON.stringify(input.tags ?? []),
       input.parentSessionId, input.opencodeSessionId,
       input.embedding_model ?? null, input.embedding_dim ?? null, now, meetingId,

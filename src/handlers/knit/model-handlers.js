@@ -1,4 +1,4 @@
-import { createModelPlan, formatModelPlan } from "../../model-discovery.js";
+import { createModelPlan } from "../../model-discovery.js";
 import { discoverModels } from "../../services/model-service.js";
 import { extractErrorInfo } from "../../logger.js";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync, openSync, closeSync, fsyncSync, renameSync } from "node:fs";
@@ -98,12 +98,11 @@ export function createModelHandlers({ client, directory, logger, state }) {
       if (persisted) {
         if (persisted instanceof Set) disabled = persisted;
         else if (persisted.__allowList) {
-          // Lazy migration from old allow-list: disabled = allKeys - enabled
-          // Need allKeys, so defer until available known
-          disabled = persisted.__allowList; // marker, will convert below
+          // Lazy migration from old allow-list: keep wrapper until we have allKeys
+          disabled = persisted;
         }
       }
-      if (disabled !== null && !(disabled instanceof Set && disabled.__allowList)) {
+      if (disabled !== null) {
         setDisabledSet(state, sessionId, disabled);
       }
     } catch {}
@@ -173,8 +172,6 @@ export function createModelHandlers({ client, directory, logger, state }) {
     lines.push("- `/enable_knit_models openai/gpt-4.1`");
     lines.push("- `/disable_knit_models openai/o1`");
     lines.push("- `/reset_knit_models`");
-    lines.push("");
-    lines.push(formatModelPlan(plan));
 
     return lines.join("\n");
   }

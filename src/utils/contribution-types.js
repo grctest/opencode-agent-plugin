@@ -36,9 +36,7 @@ export function isSubstantiveType(type) {
 
 export function isPassContribution(c) {
   if (!c) return false;
-  if (c.type === "pass") return true;
-  const raw = String(c.content ?? "").trim();
-  return raw === "[PASS]" || raw.startsWith("[PASS]");
+  return c.type === "pass";
 }
 
 export function isVoteNoise(c) {

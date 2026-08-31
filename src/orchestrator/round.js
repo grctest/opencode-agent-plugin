@@ -101,38 +101,16 @@ export async function _finalizeRound(updatedRound) {
       }
       this._notifyUpdate();
 
-      // Moderator check (convergence/deadlock)
-      const modResult = await this._moderatorService.checkAndProcess({
-        round: updatedRound,
-        participants: this._stateManager.getParticipants(),
-        weave: this._stateManager.getWeave(),
-        currentRound: this._stateManager.getCurrentRound(),
-        maxRounds: this._stateManager.getMaxRounds(),
-        promptOrchestrator: async (system, model, message) => this._promptOrchestrator(system, model, message, "moderation", updatedRound.number),
-        getHighestTierModel: () => this._getHighestTierModel(),
-        postProgress: async (message) => this._sessionManager.postProgress(message),
-        stateOfPlay: this._stateManager.getStateOfPlay(),
-      });
-
-      if (modResult.action === "converge") {
-        this._stateManager.transitionTo("converged");
-        await this._persistState();
-        return false;
-      }
-
-      if (modResult.action === "break") {
-        this._stateManager.setNextSpeakerId(this._stateManager.getParticipants()[modResult.nextSpeakerIdx]?.config.id ?? null);
-      }
-
-      // Plan turn order for next round (unless moderator forced a break)
-      if (modResult.action !== "break") {
-        const turnRequests = updatedRound.turn_requests || [];
-        const orderedParticipants = await this._moderatorService.planTurnOrder({
+      // Plan turn order for next round
+      const turnRequests = updatedRound.turn_requests || [];
+      if (turnRequests.length > 0) {
+        const { planTurnOrder } = await import("../moderation.js");
+        const orderedParticipants = await planTurnOrder({
           stateOfPlay: this._stateManager.getStateOfPlay(),
           roundSummary: updatedRound.summary || "",
           turnRequests,
           participants: this._stateManager.getParticipants(),
-          promptOrchestrator: async (system, model, message) => this._promptOrchestrator(system, model, message, "turn_order", updatedRound.number),
+          promptFn: async (system, model, message) => this._promptOrchestrator(system, model, message, "turn_order", updatedRound.number),
           getHighestTierModel: () => this._getHighestTierModel(),
         });
         

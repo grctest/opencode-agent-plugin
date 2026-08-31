@@ -10,7 +10,7 @@ You ask a question. The Loom uses embedding-based similarity search (no LLM doma
 
 Agents deliberate in structured rounds. During a turn an agent isn't limited to writing prose — it interacts with peers directly through real tool calls: `loom_query` queries specific peers (with seven answer modes: factual clarify, stance-taking perspective, forced-research evidence, adversarial critique, risk analysis, assumption surfacing, alternatives), `loom_vote` polls everyone on lettered options, `loom_summon` brings in a guest expert persona, and `loom_request_next` claims speaking priority for the next round. Peer answers, ballots, and tallies are returned **inline within the same turn**, so the speaker synthesizes them into their contribution immediately instead of waiting for future rounds.
 
-Termination is deterministic: everyone passes or fails, the round limit is reached, or a hard timeout or token budget fires. A lightweight moderator acts only as a safety net — consulted just when a round shows repeated challenges/dissents — to direct the next speaker or end the deliberation early (never before the minimum round count). Once the meeting ends, a neutral **synthesizer** produces the final artifact: decisions, action items, unresolved dissent, and a confidence level, then self-critiques its draft against the transcript.
+Termination is deterministic: everyone passes or fails, the round limit is reached, or a hard timeout or token budget fires. Agents pass by calling the `loom_pass` tool — the meeting ends when all active participants have passed. Once the meeting ends, a neutral **synthesizer** produces the final artifact: decisions, action items, unresolved dissent, and a confidence level, then self-critiques its draft against the transcript.
 
 A real-time web dashboard shows every agent contributing as it happens. If you run `/knit` again in the same session, it extends the existing deliberation rather than starting fresh.
 
@@ -19,7 +19,7 @@ A real-time web dashboard shows every agent contributing as it happens. If you r
 - **Auto-composed expert rooms** — personas embedded and matched to your question via local embedding similarity; custom rooms also supported
 - **Structured rounds** — sequential turn-taking with tier-based expectations and priority turn requests
 - **Inline peer interactions** — query peers in seven modes, call votes, summon guest experts; results return within the same turn
-- **Tool-using agents** — web search/fetch, project file inspection, and semantic recall over prior deliberation context
+- **Tool-using agents** — web search/fetch, project file inspection, semantic recall over prior deliberation context, and structured pass via `loom_pass`
 - **Deterministic termination** — pass/fail exhaustion, round limit, hard timeout, or token budget
 - **Minority-report synthesis** — neutral synthesizer emits decisions, reasoning, action items, dissent, and confidence, then self-critiques its draft
 - **Model discovery** — finds available models from your opencode providers, assigns them per tier, restrictable per session
@@ -259,7 +259,7 @@ Project-level equivalent in `.loomrc.json` (same keys, no `"loom"` wrapper):
 
 Environment overrides: `LOOM_<KEY>` applies on top of files for scalar schema keys (e.g. `LOOM_AGENT_TIMEOUT_MS=180000`, `LOOM_MODEL_DIVERSITY=false`). Log verbosity is controlled by `LOOM_LOG_LEVEL` (`DEBUG`|`INFO`|`WARN`|`ERROR`|`FATAL`, default `INFO`). The dashboard binds `127.0.0.1` by default for safety; set `dashboard.host` in config to expose it to your LAN deliberately.
 
-Other available options include agent and synthesis timeouts, moderator triggers, retry policy, max tool calls, meeting timeout, stall detection (`stallTimeoutMs`, default 10 min (600000 ms)), composition relevance floor (`composition.maxCosineDistance`, default 0.85), token budget (`maxTotalTokens`, `0` = unlimited — a runaway meeting ends early and still synthesizes), same-turn synthesis for inline loom tool results (`agentTools.sameTurnSynthesis`), and embedding model selection (`embeddingModel`/`embeddingQuant`).
+Other available options include agent and synthesis timeouts, retry policy, max tool calls, meeting timeout, stall detection (`stallTimeoutMs`, default 10 min (600000 ms)), composition relevance floor (`composition.maxCosineDistance`, default 0.85), token budget (`maxTotalTokens`, `0` = unlimited — a runaway meeting ends early and still synthesizes), same-turn synthesis for inline loom tool results (`agentTools.sameTurnSynthesis`), and embedding model selection (`embeddingModel`/`embeddingQuant`).
 
 ## License
 

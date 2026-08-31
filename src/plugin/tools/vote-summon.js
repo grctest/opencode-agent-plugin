@@ -7,6 +7,7 @@ import { degrade } from "../../utils/degrade.js";
 import * as sharedVoteTally from "../../utils/vote-tally.js";
 import { TUNING } from "../../config/defaults.js";
 import { getConfig } from "../../config.js";
+import { resolveCaller, resolveModel, buildBatchId } from "./shared.js";
 
 export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
   return {
@@ -39,21 +40,8 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
           }
           const allParticipants = stateManager.getParticipants();
           if (!Array.isArray(allParticipants)) return { output: JSON.stringify({ error: "loom_vote: participant list unavailable" }), metadata: { error: true }, title: "loom_vote error" };
-          let caller = allParticipants.find(p => p?.session_id === context.sessionID) || null;
-          // Robust fallback: speaking participant is the caller when session_id mismatches
-          if (!caller) caller = allParticipants.find(p => p?.status === "speaking") || null;
-          if (!caller) {
-            try {
-              const weave = stateManager.getWeave?.() ?? [];
-              const roundWeave = weave.filter(c => c.round === stateManager.getCurrentRound());
-              if (roundWeave.length > 0) {
-                const lastId = roundWeave[roundWeave.length - 1].participant_id;
-                caller = allParticipants.find(p => p.config.id === lastId) || null;
-              }
-            } catch {}
-          }
-          if (!caller) caller = allParticipants.find(p => p?.status !== "failed" && p?.status !== "passed" && p?.status !== "muted") || null;
-          const fallbackBatch = `inline-${stateManager.getState?.()?.id ?? meetingInfo.meetingId}-${stateManager.getCurrentRound?.() ?? 0}-${caller?.config?.id ?? "unknown"}`;
+          let caller = resolveCaller(allParticipants, stateManager.getWeave?.() ?? [], context.sessionID);
+          const fallbackBatch = buildBatchId(stateManager.getState?.()?.id ?? meetingInfo.meetingId, stateManager.getCurrentRound?.() ?? 0, caller?.config?.id);
           const callerBatchId = caller?.currentBatchId ?? fallbackBatch;
           const currentRound = stateManager.getCurrentRound();
           let roundObj = null;
@@ -139,8 +127,10 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
               voterResults.push({ voter: voter.config.id, error: "peer model unavailable — vote not cast (no model assignment)" });
               return;
             }
+            let previousStatus = voter.status;
             try {
-              const previousStatus = voter.status;
+              previousStatus = voter.status;
+              if (context.abort?.aborted || context.signal?.aborted) return;
               voter.status = "speaking";
               try { db.setParticipantStatus(voter.config.id, "speaking"); } catch {}
               const callerForPrompt = caller ?? { config: { name: allParticipants.find(p=>p.status==="speaking")?.config?.name ?? "Unknown", tier: "mid", id: allParticipants.find(p=>p.status==="speaking")?.config?.id ?? "unknown" } };
@@ -198,12 +188,14 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
               // O(1) increment instead of an O(N) weave scan (audit 11 PF5)
               stateManager.incrementParticipantContributions(voter.config.id);
               degrade("vote_response_db_failed", "Failed to persist vote_response — visible in memory only this session", () => db.addContributionWithTurnRequest(stateManager.getState().id, contrib, null), null);
+              if (context.abort?.aborted || context.signal?.aborted) return;
               voter.status = previousStatus;
               try { db.setParticipantStatus(voter.config.id, previousStatus); } catch {}
             } catch (err) {
+              if (context.abort?.aborted || context.signal?.aborted) return;
               voterResults.push({ voter: voter.config.id, error: err.message });
-              voter.status = "listening";
-              try { db.setParticipantStatus(voter.config.id, "listening"); } catch {}
+              voter.status = previousStatus;
+              try { db.setParticipantStatus(voter.config.id, previousStatus); } catch {}
             }
           }));
           // Tally generation — source does not ballot, only voter responses counted

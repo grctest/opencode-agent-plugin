@@ -118,7 +118,7 @@ export function resolveBuiltInTools(agentToolsConfig) {
 
 export function resolveLoomTools(agentToolsConfig) {
   if (!agentToolsConfig?.enabled) return {
-    loom_vector_search: false, loom_query: false, loom_vote: false, loom_summon: false, loom_request_next: false,
+    loom_vector_search: false, loom_query: false, loom_vote: false, loom_summon: false, loom_request_next: false, loom_pass: false,
   };
   const loom = agentToolsConfig.loom ?? {};
   return {
@@ -127,6 +127,7 @@ export function resolveLoomTools(agentToolsConfig) {
     loom_vote: !!loom.loom_vote,
     loom_summon: !!loom.loom_summon,
     loom_request_next: !!loom.loom_request_next,
+    loom_pass: !!loom.loom_pass,
   };
 }
 

@@ -20,7 +20,7 @@ import { collectObjections } from "./objection-collector.js";
 
 import { StateManager } from "./services/state-manager.js";
 import { PersistenceService } from "./services/persistence-service.js";
-import { ModeratorService } from "./services/moderator-service.js";
+
 
 import { SynthesisCoordinator } from "./synthesis-coordinator.js";
 import { updateStateOfPlay } from "./state-of-play.js";
@@ -45,7 +45,6 @@ export class MeetingOrchestrator {
   _meetingId;
   _stateManager;
   _persistenceService;
-  _moderatorService;
   _synthesisCoordinator;
   _roundService;
   _roundInitializer;
@@ -66,7 +65,7 @@ export class MeetingOrchestrator {
   _logger = null;
   _orchestratorMessages = [];
   _resume = false;
-  _callStats = { orchestrator: 0, moderation: 0, summary: 0, synthesis: 0, input_tokens: 0, output_tokens: 0 };
+  _callStats = { orchestrator: 0, summary: 0, synthesis: 0, input_tokens: 0, output_tokens: 0 };
   _personaIndex = null;
   _availableModels = [];
   _maxTotalTokens = 0;
@@ -115,7 +114,6 @@ export class MeetingOrchestrator {
     };
 
     this._stateManager = new StateManager(initialState);
-    this._moderatorService = new ModeratorService();
     this._roundInitializer = new RoundInitializer();
     this._meetingExtender = new MeetingExtender();
     this._stallWatchdog = new StallWatchdog({

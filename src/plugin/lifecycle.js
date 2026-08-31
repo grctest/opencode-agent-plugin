@@ -1,4 +1,5 @@
 import { Logger } from "../logger.js";
+import { TERMINAL_STATUSES } from "../constants.js";
 
 const logger = new Logger();
 
@@ -10,9 +11,7 @@ export function createLifecycleHandlers(activeLooms) {
       seen.add(engine);
       try {
         const state = engine.getState();
-        if (state.status !== "converged" && state.status !== "cancelled" &&
-            state.status !== "timeout" && state.status !== "max_rounds_reached" &&
-            state.status !== "aborted") {
+        if (!TERMINAL_STATUSES.has(state.status)) {
           engine.cancel();
           logger.warn("process_exit", `Marking meeting ${id} as aborted due to process exit`);
         }
@@ -27,9 +26,7 @@ export function createLifecycleHandlers(activeLooms) {
       seen.add(engine);
       try {
         const state = engine.getState();
-        if (state.status !== "converged" && state.status !== "cancelled" &&
-            state.status !== "timeout" && state.status !== "max_rounds_reached" &&
-            state.status !== "aborted") {
+        if (!TERMINAL_STATUSES.has(state.status)) {
           engine.cancel();
           logger.warn("process_exit", `Marking meeting ${id} as aborted due to process exit`);
         }

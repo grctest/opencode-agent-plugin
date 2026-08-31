@@ -59,10 +59,6 @@ export function parseAgentResponseRaw(response, tier) {
     return null;
   }
 
-  if (text === '[PASS]') {
-    return { content: '[PASS]', type: 'pass', request_next: null, query: null, evidence: null, summon: null, vote: null };
-  }
-
   const content = text;
 
   return {

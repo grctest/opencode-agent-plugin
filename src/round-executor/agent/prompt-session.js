@@ -125,7 +125,6 @@ export async function promptChildSession(participant) {
   };
 
   let succeeded = false;
-  let localSucceeded = false;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       const response = await this._executeAgentTurn(participant, activeModel, timeoutMs, promptContext);

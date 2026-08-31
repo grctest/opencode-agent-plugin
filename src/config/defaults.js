@@ -23,8 +23,8 @@ export const TUNING = {
 };
 
 export const DEFAULT_CONFIG = {
-  agentTimeoutMs: 240000,
-  synthesisTimeoutMs: 180000,
+  agentTimeoutMs: 90000,
+  synthesisTimeoutMs: 120000,
   defaultMaxRounds: 3,
   minRounds: 2,
   fastPathModel: "",
@@ -32,7 +32,6 @@ export const DEFAULT_CONFIG = {
   embeddingQuant: "onnx/model_int8.onnx",
   maxSummonsPerRound: 2,
   maxSummonsPerAgent: 1,
-  moderatorTrigger: { minContributions: 3, recentChallenges: 2, lookbackWindow: 4 },
   maxRetryAttempts: 2,
   retryBaseDelayMs: 1000,
   retryMaxDelayMs: 8000,
@@ -43,7 +42,7 @@ export const DEFAULT_CONFIG = {
   dashboard: { host: "127.0.0.1" },
   composition: { maxCosineDistance: 0.85 },
   modelDiversity: true,
-  tuning: TUNING,
+  tuning: JSON.parse(JSON.stringify(TUNING)),
   circuitBreaker: {
     failureThreshold: 3,
     resetTimeoutMs: 300000,
@@ -73,6 +72,7 @@ export const DEFAULT_CONFIG = {
       loom_vote: true,
       loom_summon: true,
       loom_request_next: true,
+      loom_pass: true,
     },
     sameTurnSynthesis: true,
     reflection: {
@@ -106,9 +106,6 @@ export const CONFIG_SCHEMA = {
 };
 
 export const NESTED_SCHEMA = {
-  'moderatorTrigger.minContributions': { type: 'number', min: 1, max: 10 },
-  'moderatorTrigger.recentChallenges': { type: 'number', min: 1, max: 10 },
-  'moderatorTrigger.lookbackWindow': { type: 'number', min: 2, max: 10 },
   'dashboard.host': { type: 'string' },
   'composition.maxCosineDistance': { type: 'number', min: 0.1, max: 1.9 },
   'circuitBreaker.failureThreshold': { type: 'number', min: 1, max: 10 },
@@ -128,6 +125,7 @@ export const NESTED_SCHEMA = {
   'agentTools.loom.loom_vote': { type: 'boolean' },
   'agentTools.loom.loom_summon': { type: 'boolean' },
   'agentTools.loom.loom_request_next': { type: 'boolean' },
+  'agentTools.loom.loom_pass': { type: 'boolean' },
   'agentTools.sameTurnSynthesis': { type: 'boolean' },
   'agentTools.reflection.bash': { type: 'boolean' },
   'agentTools.reflection.glob': { type: 'boolean' },

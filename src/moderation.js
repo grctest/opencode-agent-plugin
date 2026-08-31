@@ -1,6 +1,5 @@
-import { buildModeratorPrompt, buildTurnOrderPrompt } from "./prompts/moderator-prompts.js";
+import { buildTurnOrderPrompt } from "./prompts/turn-order.js";
 import { getConfig } from "./config.js";
-import { LOOKBACK } from "./shared.js";
 import { Logger, extractErrorInfo } from "./logger.js";
 
 /**
@@ -42,150 +41,9 @@ export function extractBalancedJsonArray(text) {
   return null;
 }
 
-/** Parses a moderator's XML ruling into structured fields (decision, next_speaker, reason). */
-export function parseModeratorRuling(text) {
-  let decision = "";
-  let next_speaker = "continue";
-  let reason = "";
-
-  const rulingMatch = text.match(/<ruling>([\s\S]*?)<\/ruling>/i);
-  const content = rulingMatch ? rulingMatch[1] : text;
-
-  const lines = content.split("\n");
-  for (const line of lines) {
-    const trimmed = line.trim();
-    // Accept :  -  –  variants: decision: / decision - / decision – / next_speaker: etc.
-    const norm = trimmed.replace(/[–—]/g, "-").toLowerCase();
-    const mDec = trimmed.match(/^decision\s*[:\-]\s*(.+)$/i);
-    const mNext = trimmed.match(/^next_speaker\s*[:\-]\s*(.+)$/i);
-    const mReason = trimmed.match(/^reason\s*[:\-]\s*(.+)$/i);
-    if (mDec) decision = mDec[1].trim();
-    else if (mNext) next_speaker = mNext[1].trim();
-    else if (mReason) reason = mReason[1].trim();
-    else if (norm.startsWith("decision:")) decision = trimmed.substring(trimmed.indexOf(":") + 1).trim();
-    else if (norm.startsWith("next_speaker:")) next_speaker = trimmed.substring(trimmed.indexOf(":") + 1).trim();
-    else if (norm.startsWith("reason:")) reason = trimmed.substring(trimmed.indexOf(":") + 1).trim();
-  }
-
-  if (!decision) {
-    if (rulingMatch) {
-      const lower = rulingMatch[1].toLowerCase();
-      if (lower.includes("converge") || lower.includes("synthesize") || lower.includes("wrap up")) {
-        next_speaker = "synthesize";
-        decision = "Converge the deliberation";
-      } else {
-        decision = content.slice(0, 200);
-      }
-    } else {
-      decision = text.slice(0, 200);
-    }
-  }
-
-  return { decision, next_speaker, reason };
-}
-
-/**
- * Checks if moderator intervention is needed (circular arguments) and obtains a ruling.
- * Returns an action: continue, break (redirect to specific speaker), or converge (end meeting).
- */
-export async function checkModeratorIntervention(round, participants, weave, currentRound, maxRounds, promptFn, getHighestTierModel, previousRulings = [], stateOfPlay = "") {
-  const trigger = getConfig().moderatorTrigger;
-  if (round.contributions.length < trigger.minContributions) {
-    return { action: "continue", nextSpeakerIdx: -1 };
-  }
-
-  const CHALLENGE_TYPES = new Set(["challenge", "dissent", "critique_response"]);
-  const isChallengeLike = (c) => CHALLENGE_TYPES.has(c.type) || /\b(challenge|dissent|disagree|concern|object|reject)\b/i.test(c.content || "");
-  const recent = round.contributions.slice(-trigger.lookbackWindow);
-  const challengeCount = recent.filter(isChallengeLike).length;
-  if (challengeCount < trigger.recentChallenges) {
-    return { action: "continue", nextSpeakerIdx: -1 };
-  }
-
-  let situation = `Circular argument detected: ${challengeCount} challenges/dissents in the last ${trigger.lookbackWindow} contributions within a single round. The deliberation appears to be going in circles.`;
-
-  if (weave.length >= LOOKBACK.SENDER_HISTORY) {
-    const lastSix = weave.slice(-LOOKBACK.SENDER_HISTORY);
-    const challengeCounts = {};
-    for (const c of lastSix) {
-      if (isChallengeLike(c)) {
-        challengeCounts[c.participant_id] = (challengeCounts[c.participant_id] || 0) + 1;
-      }
-    }
-    const repeatedChallenger = Object.entries(challengeCounts).find(([, n]) => n >= 3);
-    if (repeatedChallenger) {
-      const safeId = String(repeatedChallenger[0]).replace(/[^\w\-]/g, "_").slice(0, 64);
-      situation = `Participant ${safeId} has challenged/dissented 3+ times in the last ${LOOKBACK.SENDER_HISTORY} contributions across rounds. Possible circular argument or deadlock.`;
-    }
-  }
-
-  const lastContributions = weave.slice(-7).map((c) => ({
-    content: c.content || "",
-    type: c.type,
-    participant_id: c.participant_id,
-  }));
-
-  const prompt = buildModeratorPrompt(
-    situation,
-    currentRound,
-    maxRounds,
-    weave.length,
-    lastContributions,
-    previousRulings,
-    stateOfPlay,
-  );
-  const principalModel = getHighestTierModel();
-  if (!principalModel) return { action: "continue", nextSpeakerIdx: -1 };
-
-  try {
-    const result = await promptFn(
-      "You are the deliberation moderator.",
-      principalModel,
-      prompt,
-    );
-
-    const ruling = parseModeratorRuling(result);
-
-    const ns = String(ruling.next_speaker || "continue").toLowerCase().trim();
-  const dec = String(ruling.decision || "").toLowerCase();
-  if (ns === "continue" && (dec.includes("converge") || dec.includes("wrap up"))) {
-    // next_speaker explicitly continue — do not force converge on decision substring match
-    return { action: "continue", nextSpeakerIdx: -1 };
-  }
-  if (
-      ns === "synthesize" ||
-      ns === "converge" ||
-      dec.includes("converge") ||
-      dec.includes("wrap up")
-    ) {
-      return { action: "converge", nextSpeakerIdx: -1 };
-    }
-
-    if (ruling.next_speaker && ruling.next_speaker !== "continue") {
-      const normTarget = ruling.next_speaker.toLowerCase().replace(/\s+/g, "_");
-      const targetIdx = participants.findIndex(
-        (p) =>
-          p.config.id.toLowerCase() === normTarget ||
-          p.config.id.toLowerCase() === ruling.next_speaker.toLowerCase() ||
-          p.config.name.toLowerCase() === ruling.next_speaker.toLowerCase() ||
-          p.config.name.toLowerCase().replace(/\s+/g, "_") === normTarget,
-      );
-      if (targetIdx >= 0 && !["passed", "failed", "muted"].includes(participants[targetIdx].status)) {
-        return { action: "break", nextSpeakerIdx: targetIdx };
-      }
-    }
-
-    return { action: "continue", nextSpeakerIdx: -1 };
-  } catch (err) {
-    const info = extractErrorInfo(err);
-    new Logger().warn("moderator_prompt_failed", "Moderator prompt failed — continuing deliberation", info);
-    return { action: "continue", nextSpeakerIdx: -1 };
-  }
-}
-
 /**
  * Plans turn order for the next round based on agent [REQUEST_NEXT] tags.
- * Uses the moderator via fastPathModel to order participants.
+ * Uses the orchestrator LLM to order participants.
  *
  * @param {Object} params
  * @param {string} params.stateOfPlay - Current state of play

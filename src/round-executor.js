@@ -190,10 +190,24 @@ export class RoundExecutor {
       return;
     }
 
-    if (result.content === "[PASS]") {
+    // Check for loom_pass tool call (primary) or [PASS] text (legacy fallback)
+    const loomPassCall = result.tool_calls?.find(t => t.tool === "loom_pass" && t.status !== "error");
+    const isPass = loomPassCall || result.content === "[PASS]";
+
+    if (isPass) {
       p.status = "passed";
       this._db.setParticipantStatus(p.config.id, "passed");
       round.token_path.push(p.config.id);
+      
+      // Extract reason from loom_pass tool call or default
+      let passReason = "[PASS]";
+      if (loomPassCall) {
+        try {
+          const out = typeof loomPassCall.output === "string" ? JSON.parse(loomPassCall.output) : loomPassCall.output;
+          passReason = out?.reason ?? "passed via loom_pass";
+        } catch { passReason = "passed via loom_pass"; }
+      }
+
       // Audit-first: a pass that executed tools still persists its tool_calls
       // so the research evidence is visible in Tool use.
       if (result.tool_calls && result.tool_calls.length > 0) {
@@ -202,7 +216,7 @@ export class RoundExecutor {
           id: passId,
           round: this._stateManager.getCurrentRound(),
           participant_id: result.participant_id,
-          content: "[PASS]",
+          content: passReason,
           type: "pass",
           targets_which: null,
           batch_id: p.currentBatchId ?? randomUUID(),
@@ -215,7 +229,7 @@ export class RoundExecutor {
         try {
           this._db.addContributionWithTurnRequest(this._stateManager.getMeetingId(), { ...passContribution, round: this._stateManager.getCurrentRound() }, null);
         } catch (err) {
-          this._logger.warn("pass_contribution_db_failed", `Failed to persist [PASS] tool evidence for ${p.config.name}`, extractErrorInfo(err));
+          this._logger.warn("pass_contribution_db_failed", `Failed to persist pass tool evidence for ${p.config.name}`, extractErrorInfo(err));
         }
         this._options.onProgress?.(`${p.config.name} (${p.config.tier}) — passed (${result.tool_calls.length} tool call(s) preserved)`);
       } else {

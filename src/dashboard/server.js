@@ -19,7 +19,6 @@ import {
   clampLimit,
   clampOffset,
   SECURITY_HEADERS,
-  HTML_SHELL,
   getHtmlShell,
   PACKAGE_VERSION,
 } from "./server/helpers.js";
@@ -79,7 +78,7 @@ export function startDashboard(directory, port) {
   initEmbeddingModel();
 
   const pollSystem = createPollSystem(directory);
-  const { sseClients, lastContributionId, lastOrchestratorMsgId, lastInterjectionId, lastErrorId, participantStatusCache, lastMtime, broadcast, pingTimer, restartPollTimer } = pollSystem;
+  const { sseClients, lastContributionId, lastOrchestratorMsgId, lastInterjectionId, lastErrorId, participantStatusCache, broadcast, subscribeToWrites, unsubscribeFromWrites, pingTimer, restartPollTimer } = pollSystem;
   let pollTimer = pollSystem.getPollTimer();
   let currentPollInterval = pollSystem.getCurrentPollInterval();
 
@@ -405,20 +404,16 @@ export function startDashboard(directory, port) {
         if (url.pathname === "/api/export/stream") {
           const { api, meetingId, error } = getMeetingApi(url, directory);
           if (error) return error;
+          const chunks = [...api.exportMarkdownStream(meetingId)];
+          let idx = 0;
           const stream = new ReadableStream({
-            start(controller) {
+            pull(controller) {
               const encoder = new TextEncoder();
-              for (const chunk of api.exportMarkdownStream(meetingId)) {
-                try {
-                  // Backpressure: if desiredSize ≤ 0, skip enqueue this tick (caller will retry on next chunk)
-                  if (controller.desiredSize !== null && controller.desiredSize <= 0) {
-                    // Best-effort: drop chunk rather than OOM — stream remains valid
-                    continue;
-                  }
-                  controller.enqueue(encoder.encode(chunk));
-                } catch {}
+              while (idx < chunks.length) {
+                if (controller.desiredSize !== null && controller.desiredSize <= 0) return;
+                try { controller.enqueue(encoder.encode(chunks[idx++])); } catch { idx++; }
               }
-              try { controller.close(); } catch {}
+              if (idx >= chunks.length) try { controller.close(); } catch {}
             },
           });
           const filename = `loom-${meetingId.slice(0, 8)}-${Date.now()}.md`;
@@ -459,6 +454,7 @@ export function startDashboard(directory, port) {
               }
               clientEntry = { controller, slowSince: null };
               sseClients.get(meetingId).add(clientEntry);
+              if (isFirstClient) subscribeToWrites(meetingId);
               sendSSE(clientEntry.controller, {
                 type: "connected",
                 data: { connected: true },
@@ -468,6 +464,8 @@ export function startDashboard(directory, port) {
             cancel() {
               if (clientEntry) {
                 sseClients.get(meetingId)?.delete(clientEntry);
+                const clients = sseClients.get(meetingId);
+                if (!clients || clients.size === 0) unsubscribeFromWrites(meetingId);
                 clientEntry = null;
               }
             },

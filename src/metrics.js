@@ -19,7 +19,6 @@ const latencyBuffers = {
   llm_prompt_ms: { buf: new Array(TUNING.LATENCY_SAMPLE_LIMIT), head: 0, count: 0 },
   synthesis_ms: { buf: new Array(TUNING.LATENCY_SAMPLE_LIMIT), head: 0, count: 0 },
 };
-const latencies = latencyBuffers;
 
 /** Records a counter increment for a keyed sub-counter (e.g., llm_calls_by_type.agent). */
 export function incrementKeyedCounter(category, key, amount = 1) {

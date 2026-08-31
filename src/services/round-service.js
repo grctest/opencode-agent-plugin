@@ -5,7 +5,7 @@ import { Logger } from "../logger.js";
 /**
  * Handles round execution including prompt phase.
  * Reflections now happen mid-round in runPromptPhase (after each challenge/dissent).
- * Turn order planning is handled separately by the moderator service.
+ * Turn order planning is handled separately by the moderation module.
  */
 export class RoundService {
   /** @type {import("../round-executor.js").RoundExecutor} */

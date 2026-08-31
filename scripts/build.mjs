@@ -26,7 +26,7 @@ async function buildStyles() {
   for (const legacy of ["pure.css", "pure-grids-responsive.css"]) {
     try { const p = join(DASHBOARD_DIST, legacy); if (existsSync(p)) { const { unlinkSync } = await import("node:fs"); unlinkSync(p); console.log(`[build] removed legacy ${legacy}`); } } catch {}
   }
-  const hasBgCard = result.css.includes("bg-card") || result.css.includes("bg-card");
+  const hasBgCard = result.css.includes("bg-card") || result.css.includes("bg-card-foreground");
   const hasFlex = result.css.includes(".flex");
   console.log(`[build] styles.css ${result.css.length} bytes, hasFlex=${hasFlex} hasBgCard=${hasBgCard} warnings=${result.warnings().length}`);
   if (!hasFlex) console.warn("[build] WARNING: Tailwind utilities missing — check @source in src/styles/globals.css");

@@ -12,6 +12,7 @@ import { applyModelFilter } from "./knit/utils.js";
 import { createMeetingCallbacks, buildSummary } from "./knit/callbacks.js";
 import { writeReportFile as writeReportFileHelper, createSessionLock } from "./knit/file-ops.js";
 import { createModelHandlers } from "./knit/model-handlers.js";
+import { existsSync as _existsSyncForKnit, readFileSync as _readFileSyncForKnit } from "node:fs";
 
 export function createKnitHandler(client, directory, activeLooms, agentTools = null) {
   const logger = new Logger();
@@ -32,22 +33,64 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
 
     const { available: allAvailable, sessionModel } = await discoverModels(client, directory, sessionID);
     // Per-session deny-list: reload latest persisted filter for this session (handles external edits / multi-process)
-    let disabledForSession = null;
+    // File is source of truth; use helper logic that handles global fallback + __allowList migration.
+    // Do NOT clobber in-memory Map with stale file when Map already has a fresher value (race).
+    let disabledSet = null;
     try {
-      const p = join(resolveLoomBaseDir(directory), `models-filter-${sessionID}.json`);
-      if (existsSync(p)) {
-        const data = JSON.parse(readFileSync(p, "utf-8"));
-        if (Array.isArray(data.disabledModels)) disabledForSession = new Set(data.disabledModels);
+      // Normalize sessionId like model-handlers does (handles null/undefined)
+      const normSessionId = sessionID ?? context.sessionID ?? context.sessionId ?? context.session_id ?? null;
+      const filterKey = normSessionId || "__global__";
+      // Try per-session file first, then global fallback (same as loadPersistedFilter)
+      let persisted = null;
+      const perSessionPath = join(resolveLoomBaseDir(directory), normSessionId ? `models-filter-${normSessionId}.json` : "models-filter.json");
+      if (existsSync(perSessionPath)) {
+        const data = JSON.parse(readFileSync(perSessionPath, "utf-8"));
+        if (Array.isArray(data.disabledModels)) persisted = new Set(data.disabledModels);
+        else if (Array.isArray(data.enabledModels)) persisted = { __allowList: new Set(data.enabledModels) };
+      } else if (normSessionId) {
+        const globalPath = join(resolveLoomBaseDir(directory), "models-filter.json");
+        if (existsSync(globalPath)) {
+          const gData = JSON.parse(readFileSync(globalPath, "utf-8"));
+          if (Array.isArray(gData.disabledModels)) persisted = new Set(gData.disabledModels);
+          else if (Array.isArray(gData.enabledModels)) persisted = { __allowList: new Set(gData.enabledModels) };
+        }
       }
-      if (disabledForSession) {
-        state.disabledModelsBySession.set(sessionID, disabledForSession);
-      } else if (state.disabledModelsBySession.has(sessionID)) {
-        disabledForSession = state.disabledModelsBySession.get(sessionID);
+      if (persisted) {
+        if (persisted instanceof Set) {
+          disabledSet = persisted;
+          state.disabledModelsBySession.set(filterKey, persisted);
+        } else if (persisted.__allowList) {
+          // Lazy migration: keep wrapper until we have allKeys (available list) below
+          disabledSet = persisted;
+          state.disabledModelsBySession.set(filterKey, persisted);
+        }
+      } else {
+        // No file — use in-memory Map if present (handles disable→knit race where file not yet visible)
+        disabledSet = state.disabledModelsBySession.get(filterKey) ?? state.disabledModelsBySession.get(sessionID) ?? null;
+      }
+      // Handle lazy __allowList migration now that we have allAvailable
+      if (disabledSet && disabledSet.__allowList) {
+        const allKeys = new Set(allAvailable.map((m) => `${m.providerID}/${m.modelID}`));
+        const enabled = disabledSet.__allowList;
+        const migrated = new Set([...allKeys].filter((k) => !enabled.has(k)));
+        disabledSet = migrated;
+        state.disabledModelsBySession.set(filterKey, migrated);
+        // Persist migrated deny-list for next time (best effort)
+        try {
+          const p = join(resolveLoomBaseDir(directory), normSessionId ? `models-filter-${normSessionId}.json` : "models-filter.json");
+          const { mkdirSync, writeFileSync, openSync, closeSync, fsyncSync, renameSync } = await import("node:fs");
+          mkdirSync(resolveLoomBaseDir(directory), { recursive: true });
+          const tmp = `${p}.tmp.${process.pid}`;
+          writeFileSync(tmp, JSON.stringify({ disabledModels: [...migrated] }, null, 2));
+          try { const fd = openSync(tmp, "r"); fsyncSync(fd); closeSync(fd); } catch {}
+          renameSync(tmp, p);
+        } catch {}
       }
     } catch (err) {
       logger.warn("model_filter_reload_failed", "Failed to reload per-session model filter", extractErrorInfo(err));
+      disabledSet = state.disabledModelsBySession.get(sessionID) ?? null;
     }
-    const disabledSet = disabledForSession ?? state.disabledModelsBySession.get(sessionID) ?? null;
+    // Ensure available is filtered - this is the critical line that enforces deny-list for both participants and orchestrator
     const available = applyModelFilter(allAvailable, disabledSet);
 
     let existingMeeting = null;

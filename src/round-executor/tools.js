@@ -18,6 +18,7 @@ export function buildToolsMap(config) {
     if (loom.loom_vote) toolsMap.loom_vote = true;
     if (loom.loom_summon) toolsMap.loom_summon = true;
     if (loom.loom_request_next) toolsMap.loom_request_next = true;
+    if (loom.loom_pass) toolsMap.loom_pass = true;
   }
   return toolsMap;
 }
