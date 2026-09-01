@@ -105,7 +105,6 @@ export async function discoverModels(client, directory, sessionID) {
           cost: m.cost || { input: 0, output: 0 },
           limit: m.limit || { context: 128000, output: 4096 },
           reasoning: m.capabilities?.reasoning || m.reasoning || false,
-          temperature: m.capabilities?.temperature || m.temperature || false,
         });
       }
     }
@@ -123,7 +122,6 @@ export async function discoverModels(client, directory, sessionID) {
       cost: { input: 0, output: 0 },
       limit: { context: 128000, output: 4096 },
       reasoning: false,
-      temperature: true,
     });
   }
 
@@ -256,8 +254,11 @@ export function getHighestTierModel(participants) {
 }
 
 /**
- * Selects a random healthy model from the available pool, excluding the failing model.
- * Uses the circuit breaker to determine which models are healthy.
+ * Selects a deterministic healthy fallback model, excluding the failing model.
+ * Health is determined by circuit breaker (including global unhealthy).
+ * Preference is quality-sorted (active + context + reasoning), not random,
+ * so the same failure always yields the same best-available fallback and
+ * flaky models are not re-probed via random chance.
  * @param {{providerID: string, modelID: string}} currentModel - The model that failed
  * @param {Array<AvailableModel>} availableModels - All discovered models
  * @param {import("../utils/retry.js").CircuitBreaker} circuitBreaker - Circuit breaker instance
@@ -267,7 +268,9 @@ export function selectFallbackModel(currentModel, availableModels, circuitBreake
   const healthy = circuitBreaker.getHealthyModels(availableModels)
     .filter((m) => !(m.providerID === currentModel.providerID && m.modelID === currentModel.modelID));
   if (healthy.length === 0) return null;
-  const picked = healthy[Math.floor(Math.random() * healthy.length)];
+  // Deterministic: highest quality first (matches assignment scoring), stable tie-breaker
+  const sorted = sortModelsByQuality(healthy);
+  const picked = sorted[0];
   return { providerID: picked.providerID, modelID: picked.modelID };
 }
 

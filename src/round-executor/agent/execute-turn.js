@@ -31,8 +31,8 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
   const isLoomTool = (name) => name?.startsWith("loom_") && name !== "loom_vector_search";
 
   const truncateToolResults = (trs, agentToolsConfig) => {
-    const maxToolCalls = agentToolsConfig?.maxToolCallsPerTurn ?? 8;
-    const maxOutputTokens = agentToolsConfig?.maxToolOutputTokens ?? 6000;
+    const maxToolCalls = agentToolsConfig?.maxToolCallsPerTurn ?? 200;
+    const maxOutputTokens = agentToolsConfig?.maxToolOutputTokens ?? 60000;
     if (trs.length > maxToolCalls) {
       this._logger.warn("tool_call_limit", `${participant.config.name} executed ${trs.length} tool calls (limit ${maxToolCalls}) — storing all for audit, synthesis prompt will be bounded`);
     }
@@ -75,18 +75,10 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
     const agentToolsConfig = config.agentTools;
 
     const offeredTools = Object.keys(toolsMap);
-    this._logger.info("agent_tools_offered", `${participant.config.name} offered ${offeredTools.length} tool(s)`, {
-      participant: participant.config.id,
-      round: currentRound,
-      tools: offeredTools,
-      tool_choice: offeredTools.length > 0 ? "auto" : "none",
-    });
-
-    const result1 = await this._sessionManager.getContract().prompt({
+        const result1 = await this._sessionManager.getContract().prompt({
       sessionId: ephemeralSessionId,
       system: promptContext.system_prompt,
       model,
-      temperature: participant.tier_config.temperature,
       parts: [{ type: "text", text: promptContext.user_prompt }],
       tools: toolsMap,
       toolChoice: Object.keys(toolsMap).length > 0 ? "auto" : undefined,
@@ -134,13 +126,6 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
           model,
         });
       } else {
-        this._logger.info("tool_results_none", `${participant.config.name} made 0 tool calls (LLM responded with text only)`, {
-          participant: participant.config.id,
-          round: currentRound,
-          offeredTools: Object.keys(toolsMap),
-          partTypeCounts: partTypes.reduce((acc, t) => { acc[t] = (acc[t] ?? 0) + 1; return acc; }, {}),
-          model,
-        });
       }
     }
 
@@ -175,12 +160,12 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
     if (needsSynthesis) {
       let remainingMs = timeoutMs;
       let synthRan = false;
-      if (this._deadline) {
+      if (this._deadline && Number.isFinite(this._deadline) && this._deadline !== Infinity) {
         const remaining = this._deadline - Date.now();
-        if (remaining < 6000) {
-          this._logger.warn("synthesis_deadline_skipped", `Skipping same-turn synthesis for ${participant.config.name} — deadline ${remaining}ms remaining`);
+        if (remaining < 15000) {
+          this._logger.warn("synthesis_deadline_skipped", `Skipping same-turn synthesis for ${participant.config.name} — deadline ${remaining}ms remaining (needs 15s)`);
         } else {
-          remainingMs = Math.min(timeoutMs, remaining - 1000);
+          remainingMs = Math.min(timeoutMs, Math.max(15000, remaining - 1000));
           const synthesisToolsMap = buildToolsMapWithoutLoom(config, { activeCount: activeCountExec });
           const loomOutputs = cappedLoomCalls.map(tc => {
             const out = typeof tc.output === "string" ? tc.output : JSON.stringify(tc.output);
@@ -197,7 +182,6 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
             sessionId: ephemeralSessionId,
             system: promptContext.system_prompt,
             model,
-            temperature: participant.tier_config.temperature,
             parts: [
               { type: "text", text: promptContext.user_prompt },
               ...(result1.data.parts ?? []).filter(p => p.type === "text" && p.text).slice(-1).map(p => ({ type: "text", text: p.text })),
@@ -273,7 +257,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
           prompt_context: promptContext,
         };
       }
-      throw new Error("Empty agent response");
+      throw new Error(`Empty agent response — model ${model?.providerID}/${model?.modelID} / ${participant.config.id}, tools: ${Object.keys(toolsMap).join(',')}, prompt ${promptContext.user_prompt?.length ?? 0} chars`);
     }
 
     if (loomPassCall && finalToolResults.length > 0) {
@@ -307,14 +291,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
     response.tool_calls = mapToolResults(finalToolResults);
     if (!response.tool_calls) response.tool_calls = [];
 
-    this._logger.info("tool_calls_stored", `${participant.config.name} storing ${response.tool_calls.length} tool call(s) for contribution`, {
-      participant: participant.config.id,
-      round: currentRound,
-      toolCount: response.tool_calls.length,
-      tools: response.tool_calls.map(t => ({ tool: t.tool, status: t.status ?? null, hasError: !!t.error })),
-    });
-
-    const requestNextFromTools = extractRequestNextFromToolResults(finalToolResults);
+        const requestNextFromTools = extractRequestNextFromToolResults(finalToolResults);
     if (requestNextFromTools && !response.request_next) {
               const cap = getPriorityCap(participant.config.tier);
       response.request_next = {

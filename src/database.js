@@ -9,6 +9,7 @@ import * as meetingOps from "./database/meeting-operations.js";
 import * as contribOps from "./database/contribution-operations.js";
 import * as vectorOps from "./database/vector-operations.js";
 import * as forumOps from "./database/forum-operations.js";
+import * as toolAuditOps from "./database/tool-audit-operations.js";
 import { loadSessionIndex, indexMeeting as _indexMeeting, unindexMeeting as _unindexMeeting, getDatabasesBySessionId as _getDatabasesBySessionId } from "./database/session-index.js";
 import { notifyDatabaseWrite } from "./services/write-notifier.js";
 
@@ -235,6 +236,14 @@ export class MeetingDatabase {
     if (r) this.#notify("forum_comments");
     return r;
   }
+
+  addToolAudit({ participantId, round, batchId, tool, input, output, status, title }) {
+    const r = toolAuditOps.addToolAudit(this.#db, this.#meetingId, { participantId, round, batchId, tool, input, output, status, title });
+    this.#notify("tool_audit");
+    return r;
+  }
+  getToolAudits() { return toolAuditOps.getToolAudits(this.#db, this.#meetingId); }
+  getToolAuditsForParticipant(participantId, round) { return toolAuditOps.getToolAuditsForParticipant(this.#db, this.#meetingId, participantId, round); }
 
   close() {
     try {

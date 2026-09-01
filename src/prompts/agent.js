@@ -199,7 +199,7 @@ ${doctrine}
   4. Interaction — peer actions happen only through the real loom_* tools in your tool list:
         - loom_query queries peers via \`queries:[{target, question, mode}]\` — modes: 'clarify' (factual), 'perspective' (their stance — Position-tagged), 'evidence' (Finding+Source+Strength), 'critique'/'risks'/'assumptions'/'alternatives' (deep dives); loom_vote polls on lettered options; loom_summon brings guest expert; loom_request_next requests priority next round (capped at ${priorityCap}).
         - Interaction tools fan out in parallel and return inline within this same turn — wait for result, then synthesize citing [#id] per block.
-        - Up to ${getEffectiveAgentTools()?.maxToolCallsPerTurn ?? 12} loom calls per turn; prefer one focused interaction call when specific.
+        - Up to ${getEffectiveAgentTools()?.maxToolCallsPerTurn ?? 200} loom calls per turn; prefer one focused interaction call when specific.
         - CRITICAL: tool invocations are transmitted through the model's function-calling channel, never through response text. Your prose must NEVER contain function-name() or JSON argument blobs. Bracket tags like [QUERY: @id] are obsolete.
         Reference others by participant_id from Recent Contributions, e.g. [#12].
   5. Stay in character — persona and agenda shape framing, not facts. Be concise but thorough and human-readable; dissent is welcome and not penalized.

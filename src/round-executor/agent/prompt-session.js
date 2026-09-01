@@ -29,14 +29,24 @@ export async function promptChildSession(participant) {
   const baseTimeoutMs = Number.isFinite(baseTimeoutMsRaw) ? Math.max(10000, Math.min(600000, baseTimeoutMsRaw)) : 240000;
   const timeoutMsBase = baseTimeoutMs;
   let timeoutMs = timeoutMsBase;
-  if (this._deadline) {
+  if (this._deadline && Number.isFinite(this._deadline) && this._deadline !== Infinity) {
     const remaining = this._deadline - Date.now();
-    if (remaining <= 2000) {
-      timeoutMs = 5000;
-    } else if (remaining < 10000) {
-      timeoutMs = Math.max(5000, Math.min(timeoutMsBase, remaining - 1000));
-    } else {
-      timeoutMs = Math.min(timeoutMsBase, remaining - 1000);
+    // Only clamp when meeting deadline is actually constraining; never punish
+    // a healthy 60-120s base timeout down to 5s — that guaranteed failure for
+    // tool-heavy turns (loom_query/vote/summon each need 60-90s). Use a 30s
+    // floor and only shave off 1s buffer when well clear of expiry.
+    if (Number.isFinite(remaining) && remaining < timeoutMsBase) {
+      if (remaining <= 5000) {
+        // Deadline truly imminent — allow a degraded but non-trivial window
+        // rather than 5s (which always times out). Let the weaving loop's
+        // deadline_exceeded guard handle skipping remaining speakers instead.
+        timeoutMs = Math.max(15000, Math.min(timeoutMsBase, remaining - 500));
+        this._logger.warn("deadline_clamped_floor", `${participant.config.name} — deadline ${remaining}ms remaining, using degraded ${timeoutMs}ms timeout (floor 15s)`);
+      } else if (remaining < 30000) {
+        timeoutMs = Math.max(20000, Math.min(timeoutMsBase, remaining - 1000));
+      } else {
+        timeoutMs = Math.min(timeoutMsBase, remaining - 1000);
+      }
     }
   }
 
@@ -121,7 +131,6 @@ export async function promptChildSession(participant) {
   // session.prompt and persist their own contributions immediately. If an attempt
   // times out or errors after those side effects landed, the retry's response will
   // not contain those ToolParts — the audit trail lives in the weave rows instead.
-  // We surface this explicitly so "tool_results_none" after a retry is explainable.
   const warnPossibleSideEffects = (err) => {
     this._logger.warn("attempt_failed_possible_tool_side_effects", `${participant.config.name} — attempt failed after inline loom tools may have executed; peer contributions may exist in the weave without appearing in this turn's tool_calls`, {
       participant: participant.config.id,
@@ -158,10 +167,21 @@ export async function promptChildSession(participant) {
     } catch { return []; }
   };
 
-  const trySynthesisFromExisting = async (modelForSynthesis, remainingTimeout) => {
-  try {
-    const existing = collectExistingLoomResults();
-    if (existing.length === 0) return null;
+   const trySynthesisFromExisting = async (modelForSynthesis, remainingTimeout) => {
+   try {
+     const existing = collectExistingLoomResults();
+     if (existing.length === 0) return null;
+     // If requested model is globally/per-model unhealthy, switch to best healthy for recovery
+     let synthesisModel = modelForSynthesis;
+     if (!this._circuitBreaker.isHealthy(synthesisModel)) {
+       const alt = selectFallbackModel(synthesisModel, this._availableModels, this._circuitBreaker);
+       if (alt) {
+         this._logger.info("synthesis_recovery_model_switched", `Synthesis recovery for ${participant.config.name} switching from unhealthy ${this._modelKey(synthesisModel)} to ${this._modelKey(alt)}`);
+         synthesisModel = alt;
+       } else {
+         this._logger.warn("synthesis_recovery_no_healthy", `Synthesis recovery for ${participant.config.name} — no healthy model available, proceeding with ${this._modelKey(synthesisModel)} anyway`);
+       }
+     }
     // Build loomOutputs text from existing contributions for synthesis (mirrors execute-turn synthesis)
     const loomOutputsRaw = existing.map((c) => {
       const src = c.prompt_context?.source_participant_id ? `batch ${c.prompt_context.source_batch_id ?? c.batch_id}` : `batch ${c.batch_id}`;
@@ -181,10 +201,10 @@ export async function promptChildSession(participant) {
     try { ephemeralSessionId = await this._options.createEphemeralSession(participant); this._sessionManager.registerSessionMeeting(ephemeralSessionId, this._stateManager.getMeetingId()); } catch { return null; }
     const synthRemaining = (() => {
       let rem = remainingTimeout;
-      if (this._deadline) {
+      if (this._deadline && Number.isFinite(this._deadline) && this._deadline !== Infinity) {
         const dl = this._deadline - Date.now();
-        if (dl < 6000) return 0;
-        rem = Math.min(remainingTimeout, dl - 1000);
+        if (dl < 15000) return 0;
+        rem = Math.min(remainingTimeout, Math.max(15000, dl - 1000));
       }
       return rem;
     })();
@@ -193,13 +213,12 @@ export async function promptChildSession(participant) {
       return null;
     }
     this._logger.info("synthesis_recovery", `Attempting synthesis recovery for ${participant.config.name} with ${existing.length} existing loom result(s)`, { batchId: participant.currentBatchId, existingCount: existing.length, remainingMs: synthRemaining });
-    let result2;
+     let result2;
     try {
       result2 = await this._sessionManager.getContract().prompt({
         sessionId: ephemeralSessionId,
         system: promptContext.system_prompt,
-        model: modelForSynthesis,
-        temperature: participant.tier_config.temperature,
+        model: synthesisModel,
         parts: [
           { type: "text", text: promptContext.user_prompt },
           { type: "text", text: synthesisInstruction },
@@ -261,7 +280,7 @@ export async function promptChildSession(participant) {
         }
       } catch {}
       response.prompt_context = promptContext;
-      this._recordModelSuccess(modelForSynthesis);
+      this._recordModelSuccess(synthesisModel);
       this._options.onAgentComplete?.(participant.config.id, response.content);
       return response;
   } catch (e) {
@@ -277,7 +296,7 @@ export async function promptChildSession(participant) {
       succeeded = true;
       localSucceeded = true;
       if (consumedHint) consumedHint = "";
-      return response;
+      return { result: response, error: null };
     } catch (err) {
       lastError.value = err;
       const info = extractErrorInfo(err);
@@ -300,9 +319,10 @@ export async function promptChildSession(participant) {
       // Recovery: if we already have loom results for this batch, synthesize from them instead of re-executing tools
       if (hasExisting && attempt < maxRetries) {
         const remainingForRecovery = (() => {
-          if (this._deadline) {
+          if (this._deadline && Number.isFinite(this._deadline) && this._deadline !== Infinity) {
             const rem = this._deadline - Date.now();
-            return Math.max(5000, Math.min(timeoutMs, rem - 1000));
+            if (rem < 15000) return 15000;
+            return Math.max(15000, Math.min(timeoutMs, rem - 1000));
           }
           return timeoutMs;
         })();
@@ -312,7 +332,7 @@ export async function promptChildSession(participant) {
           localSucceeded = true;
           if (consumedHint) consumedHint = "";
           this._logger.info("synthesis_recovery_success", `${participant.config.name} recovered via synthesis from existing loom batch ${participant.currentBatchId}`);
-          return recovered;
+          return { result: recovered, error: null };
         }
         // If recovery failed, fall through to normal retry with cached tool guards
         this._logger.warn("synthesis_recovery_skipped", `${participant.config.name} — recovery failed, proceeding to normal retry (loom tools will return reused results)`);
@@ -320,15 +340,20 @@ export async function promptChildSession(participant) {
 
       if (attempt < maxRetries) {
         let delay = Math.min(1000 * Math.pow(2, attempt) + Math.random() * 500, 8000);
-        if (this._deadline) {
+        if (this._deadline && Number.isFinite(this._deadline) && this._deadline !== Infinity) {
           const remaining = this._deadline - Date.now();
-          delay = Math.min(delay, Math.max(0, remaining - 2000));
+          // Need at least 20s to make a retry worthwhile (tool-heavy turns need it)
+          if (remaining < 20000) {
+            this._logger.warn("prompt_retry_skipped_deadline", `${participant.config.name} — skipping retry, deadline imminent (${remaining}ms remaining, need 20s)`);
+            break;
+          }
+          delay = Math.min(delay, Math.max(0, remaining - 5000));
           if (delay <= 0) {
             this._logger.warn("prompt_retry_skipped_deadline", `${participant.config.name} — skipping retry, deadline imminent`);
             break;
           }
         }
-        this._logger.warn("prompt_retry", `${participant.config.name} — attempt ${attempt + 1}/${maxRetries + 1} failed on ${this._modelKey(activeModel)}, retrying in ${Math.round(delay)}ms`, info);
+        this._logger.warn("prompt_retry", `${participant.config.name} — attempt ${attempt + 1}/${maxRetries + 1} failed on ${this._modelKey(activeModel)}, error: ${info.message}${info.statusCode ? ` (${info.statusCode})` : ''} — retrying in ${Math.round(delay)}ms`, info);
         await new Promise((r) => { const t = setTimeout(r, delay); if (t.unref) t.unref(); });
       }
     }
@@ -349,7 +374,7 @@ export async function promptChildSession(participant) {
   }
 
   this._logger.info("model_fallback", `${participant.config.name} — falling back from ${this._modelKey(activeModel)} to ${this._modelKey(fallbackModel)}`);
-  this._options.onProgress?.(`⚠️ ${participant.config.name}'s model (${this._modelKey(activeModel)}) failed — retrying with ${this._modelKey(fallbackModel)}`);
+   this._options.onProgress?.(`⚠️ ${participant.config.name}'s model (${this._modelKey(activeModel)}) failed: ${lastError.value?.message ?? 'unknown error'} — retrying with ${this._modelKey(fallbackModel)}`);
 
   const fallbackAttempts = fallbackConfig.maxFallbackAttempts;
   for (let attempt = 0; attempt < fallbackAttempts; attempt++) {
@@ -358,7 +383,7 @@ export async function promptChildSession(participant) {
       response._fallback = {
         from: this._modelKey(activeModel),
         to: this._modelKey(fallbackModel),
-        error: lastError.value ? extractErrorInfo(lastError.value).message : "unknown",
+        error: lastError.value ? extractErrorInfo(lastError.value) : "unknown",
       };
       if (lastError.value && isRetryableError(lastError.value)) {
         this._circuitBreaker.recordSuccess(activeModel);
@@ -386,9 +411,10 @@ export async function promptChildSession(participant) {
       const hasExistingFallback = collectExistingLoomResults().length > 0;
       if (hasExistingFallback && attempt + 1 < fallbackAttempts) {
         const remainingForRecoveryFb = (() => {
-          if (this._deadline) {
+          if (this._deadline && Number.isFinite(this._deadline) && this._deadline !== Infinity) {
             const rem = this._deadline - Date.now();
-            return Math.max(5000, Math.min(timeoutMs, rem - 1000));
+            if (rem < 15000) return 15000;
+            return Math.max(15000, Math.min(timeoutMs, rem - 1000));
           }
           return timeoutMs;
         })();
@@ -397,7 +423,7 @@ export async function promptChildSession(participant) {
           recoveredFb._fallback = {
             from: this._modelKey(activeModel),
             to: this._modelKey(fallbackModel),
-            error: lastError.value ? extractErrorInfo(lastError.value).message : "unknown",
+            error: lastError.value ? extractErrorInfo(lastError.value) : "unknown",
           };
           localSucceeded = true;
           if (consumedHint) consumedHint = "";
@@ -408,9 +434,10 @@ export async function promptChildSession(participant) {
 
       if (attempt + 1 < fallbackAttempts) {
         let delay = Math.min(1000 * Math.pow(2, attempt) + Math.random() * 500, 8000);
-        if (this._deadline) {
+        if (this._deadline && Number.isFinite(this._deadline) && this._deadline !== Infinity) {
           const remaining = this._deadline - Date.now();
-          delay = Math.min(delay, Math.max(0, remaining - 2000));
+          if (remaining < 20000) break;
+          delay = Math.min(delay, Math.max(0, remaining - 5000));
           if (delay <= 0) break;
         }
         this._logger.warn("fallback_retry", `${participant.config.name} — fallback attempt ${attempt + 1}/${fallbackAttempts} failed on ${this._modelKey(fallbackModel)}, retrying in ${Math.round(delay)}ms`, info);
@@ -434,7 +461,7 @@ export function recordFallbackFailure(participant, originalModel, fallbackModel,
     : `Model: ${this._modelKey(originalModel)}, No fallback available`;
   this._db.recordAgentError(
     this._stateManager.getMeetingId(), participant.config.id, this._stateManager.getCurrentRound(),
-    "model_fallback", `${fallbackMsg} — ${info.message}`, 1,
+    "model_fallback", `${fallbackMsg} — ${JSON.stringify(info)}`, 1,
   );
   this._logger.error("model_fallback_failed", `${participant.config.name} failed on all models`, {
     original: this._modelKey(originalModel),

@@ -60,22 +60,21 @@ export class SessionContract {
     }
   }
 
-  /**
-   * Sends a single stateless prompt to an existing session. Applies a timeout
-   * (default: `config.agentTimeoutMs`; override with `timeoutMs`).
-   * @param {{
-   *   sessionId: string,
-   *   system: string,
-   *   model: unknown,
-   *   temperature?: number,
-   *   parts?: Array<{ type: string; text: string }>,
-   *   tools?: Record<string, boolean>,
-   *   toolChoice?: string, // NOTE: PromptInput has no tool_choice field (see packages/opencode/src/session/prompt.ts:1499); server ignores this. Kept for future compat; toolChoice is actually determined by format ("required" for json_schema) and defaults to "auto". Evidence/vote "required"/"none" hints are prompt-enforced, not API-enforced.
-   *   timeoutMs?: number,
-   * }} payload
-   * @returns {Promise<{ ok: true, data: object, text: string, tokens?: { input: number; output: number } | null, error: null } | { ok: false, data: null, text: "", tokens: null, error: Error }>}
-   */
-  async prompt({ sessionId, system, model, temperature, parts, tools, toolChoice, timeoutMs, signal }) {
+   /**
+    * Sends a single stateless prompt to an existing session. Applies a timeout
+    * (default: `config.agentTimeoutMs`; override with `timeoutMs`).
+    * @param {{
+    *   sessionId: string,
+    *   system: string,
+    *   model: unknown,
+    *   parts?: Array<{ type: string; text: string }>,
+    *   tools?: Record<string, boolean>,
+    *   toolChoice?: string, // NOTE: PromptInput has no tool_choice field (see packages/opencode/src/session/prompt.ts:1499); server ignores this. Kept for future compat; toolChoice is actually determined by format ("required" for json_schema) and defaults to "auto". Evidence/vote "required"/"none" hints are prompt-enforced, not API-enforced.
+    *   timeoutMs?: number,
+    * }} payload
+    * @returns {Promise<{ ok: true, data: object, text: string, tokens?: { input: number; output: number } | null, error: null } | { ok: false, data: null, text: "", tokens: null, error: Error }>}
+    */
+   async prompt({ sessionId, system, model, parts, tools, toolChoice, timeoutMs, signal }) {
     const config = getConfig();
     try {
       if (signal?.aborted) {
@@ -88,7 +87,6 @@ export class SessionContract {
         body: {
           system,
           model,
-          temperature,
           parts: parts ?? [{ type: "text", text: "" }],
           tools: tools ?? {},
         },
@@ -124,6 +122,8 @@ export class SessionContract {
         const d = assistantError.data ?? {};
         const err = new Error(`${assistantError.name}: ${d.message || JSON.stringify(d)}`);
         if (d.statusCode) err.status = d.statusCode;
+        err.providerError = assistantError.name ?? null;
+        err.providerData = d;
         // Preserve partial response (may contain already-executed ToolParts)
         err.partialData = result.data ?? null;
         throw err;

@@ -145,24 +145,104 @@ function mapContributionRow(r) {
   };
 }
 
+function fetchToolAudits() {
+  try {
+    // tool_audit may not exist on pre-migration DBs — treat as empty
+    const rows = this._db.prepare(
+      `SELECT id, participant_id, round, batch_id, tool, input, output, status, title, created_at FROM tool_audit ORDER BY id ASC`
+    ).all();
+    return rows;
+  } catch { return []; }
+}
+
+function auditRowToToolCall(r) {
+  const isError = r.status === "error";
+  return {
+    tool: r.tool,
+    callID: `audit-${r.id}`,
+    status: r.status ?? "completed",
+    attempted_tool: null,
+    title: r.title ?? null,
+    input: r.input ?? null,
+    output: isError ? null : (r.output ?? null),
+    error: isError ? (r.output ?? null) : null,
+    metadata: null,
+    // Preserve audit ordering tie-breaker
+    _auditId: r.id,
+    _batchId: r.batch_id,
+    _participantId: r.participant_id,
+    _round: r.round,
+  };
+}
+
+function mergeAuditsIntoContributions(contributions) {
+  const audits = fetchToolAudits.call(this);
+  if (!audits || audits.length === 0) return contributions;
+  const auditCalls = audits.map(auditRowToToolCall);
+  const assigned = new Set();
+  // Index contributions by participant+round for fallback
+  const contribByParticipantRound = new Map();
+  for (const c of contributions) {
+    const k = `${c.participant_id}:${c.round}`;
+    if (!contribByParticipantRound.has(k)) contribByParticipantRound.set(k, []);
+    contribByParticipantRound.get(k).push(c);
+  }
+  for (const ac of auditCalls) {
+    if (assigned.has(ac.callID)) continue;
+    // Prefer exact batch match
+    let target = null;
+    if (ac._batchId) {
+      target = contributions.find(c => c.participant_id === ac._participantId && c.round === ac._round && c.batch_id === ac._batchId);
+    }
+    if (!target) {
+      const list = contribByParticipantRound.get(`${ac._participantId}:${ac._round}`) ?? [];
+      target = list[0] ?? null;
+      if (!target) continue;
+    }
+    if (!target) continue;
+    // Deduplicate: if contribution already has same tool+input via LLM ToolPart, skip audit to avoid double entry (solid fallback, not duplicate)
+    const alreadyHas = (target.tool_calls ?? []).some(t => t.tool === ac.tool && String(t.input ?? "") === String(ac.input ?? ""));
+    if (alreadyHas) { assigned.add(ac.callID); continue; }
+    target.tool_calls = [...(target.tool_calls ?? []), ac];
+    assigned.add(ac.callID);
+  }
+  // Cleanup transient keys and sort per contribution by audit id (preserve order)
+  for (const c of contributions) {
+    if (c.tool_calls) {
+      c.tool_calls.sort((a, b) => {
+        const aid = a.callID?.startsWith("audit-") ? Number(a.callID.slice(6)) : 0;
+        const bid = b.callID?.startsWith("audit-") ? Number(b.callID.slice(6)) : 0;
+        if (aid && bid) return aid - bid;
+        if (aid) return 1;
+        if (bid) return -1;
+        return 0;
+      });
+      for (const t of c.tool_calls) { delete t._auditId; delete t._batchId; delete t._participantId; delete t._round; }
+    }
+  }
+  return contributions;
+}
+
 export function getContributions(limit = 100, offset = 0) {
-    return this._db
+    const rows = this._db
       .prepare(
         `SELECT id, participant_id, round, type, content, target_which, batch_id, tool_calls, prompt_context, created_at
          FROM contributions ORDER BY round ASC, id ASC LIMIT ? OFFSET ?`,
       )
       .all(limit, offset)
       .map(mapContributionRow);
+    return mergeAuditsIntoContributions.call(this, rows);
 }
 
 export function getContributionsAfter(afterId, limit = 100) {
-    return this._db
+    const rows = this._db
       .prepare(
         `SELECT id, participant_id, round, type, content, target_which, batch_id, tool_calls, prompt_context, created_at
          FROM contributions WHERE id > ? ORDER BY id ASC LIMIT ?`,
       )
       .all(afterId, limit)
       .map(mapContributionRow);
+    return mergeAuditsIntoContributions.call(this, rows);
 }
 
 export function getContributionsCount() {
@@ -172,14 +252,15 @@ export function getContributionsCount() {
 
 export function getContributionsSince(sinceId, limit = 500) {
     const n = Math.min(Math.max(limit ?? 500, 0), 500);
-    return this._db
+    const rows = this._db
       .prepare(
         `SELECT id, participant_id, round, type, content, target_which, batch_id, tool_calls, prompt_context, created_at
          FROM contributions WHERE id > ? ORDER BY id ASC LIMIT ?`,
       )
       .all(sinceId, n)
       .map(mapContributionRow);
-  }
+    return mergeAuditsIntoContributions.call(this, rows);
+}
 
 export function getForumTopics(tag) {
     let rows;

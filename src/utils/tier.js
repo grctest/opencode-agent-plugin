@@ -41,18 +41,6 @@ export function getRightsForTier(tier) {
   }
 }
 
-/** Returns the default temperature for a tier. */
-export function getDefaultTemperatureForTier(tier) {
-  switch (tier) {
-    case "junior": return 0.7;
-    case "mid":
-    case "civilian": return 0.5;
-    case "senior": return 0.3;
-    case "principal": return 0.2;
-    default: return 0.5;
-  }
-}
-
 /** Splits a "provider/model" string into its components. */
 export function splitModel(model) {
   const idx = model.indexOf("/");
@@ -60,11 +48,10 @@ export function splitModel(model) {
   return { providerID: model.slice(0, idx), modelID: model.slice(idx + 1) };
 }
 
-/** Builds a complete tier config with optional model/temperature overrides. */
+/** Builds a complete tier config with optional model overrides. */
 export function getTierConfig(tier, overrides) {
   return {
     model: overrides?.model ?? "",
-    temperature: overrides?.temperature ?? getDefaultTemperatureForTier(tier),
     reasoning_effort: overrides?.reasoning_effort,
     // system_prompt_addendum removed — tier guidance now comes from persona files via participant.config.tier_guidance
     rights: getRightsForTier(tier),

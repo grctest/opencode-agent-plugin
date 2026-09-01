@@ -5,6 +5,8 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync, openSyn
 import { join } from "node:path";
 import { resolveLoomBaseDir } from "../../paths.js";
 import { applyModelFilter } from "./utils.js";
+import { loadGlobalHealth, clearGlobalUnhealthy, clearAllGlobalUnhealthy, getGlobalUnhealthySet } from "../../services/global-model-health.js";
+import { clearGlobalUnhealthyKey, clearAllGlobalUnhealthyKeys } from "../../utils/retry.js";
 
 function getFilterPath(directory, sessionId) {
   const base = resolveLoomBaseDir(directory);
@@ -91,6 +93,8 @@ export function createModelHandlers({ client, directory, logger, state }) {
   }
   async function handleListKnitModels(args, context) {
     const sessionId = context?.sessionID ?? context?.sessionId ?? context?.session_id ?? null;
+    // Load global unhealthy so list can annotate globally-unhealthy models
+    try { loadGlobalHealth(directory); } catch {}
     // Reload persisted per-session filter at call time (handles external edits / multi-process)
     try {
       const persisted = loadPersistedFilter(directory, sessionId);
@@ -147,10 +151,13 @@ export function createModelHandlers({ client, directory, logger, state }) {
       "|------------|----------|------|---------|-----------|--------|",
     ];
 
+    const globalUnhealthy = (() => { try { return getGlobalUnhealthySet(); } catch { return new Set(); } })();
     for (const m of available) {
       const key = modelKey(m);
       const isEnabled = !disabledSet || !disabledSet.has(key);
-      const status = isEnabled ? "enabled" : "disabled";
+      const isGlobalUnhealthy = globalUnhealthy.has(key);
+      let status = isEnabled ? "enabled" : "disabled";
+      if (isGlobalUnhealthy) status = isEnabled ? "unhealthy (auto)" : "disabled+unhealthy";
       const cost = m.cost.input === 0 && m.cost.output === 0
         ? "free"
         : `$${m.cost.input}/$${m.cost.output}`;
@@ -166,6 +173,9 @@ export function createModelHandlers({ client, directory, logger, state }) {
       lines.push(`**Disabled:** ${disabledSet.size} model(s)`);
     } else {
       lines.push("**All models enabled** (no filter set)");
+    }
+    if (globalUnhealthy.size > 0) {
+      lines.push(`**Unhealthy (auto, requires /enable):** ${globalUnhealthy.size} model(s) — ${[...globalUnhealthy].join(", ")}`);
     }
     lines.push("");
     lines.push("Copy the exact `provider/model` identifier to enable or disable a model:");
@@ -237,10 +247,19 @@ export function createModelHandlers({ client, directory, logger, state }) {
     setDisabledSet(state, sessionId, disabledSet);
     if (added.length > 0) setPendingForSession(state, sessionId, null);
     persistFilter(directory, sessionId, disabledSet);
+    // Also clear global unhealthy (auto-marked) for these models — requires explicit enable
+    let clearedUnhealthy = 0;
+    for (const id of requested) {
+      try {
+        if (clearGlobalUnhealthy(id, directory)) clearedUnhealthy++;
+        clearGlobalUnhealthyKey(id);
+      } catch {}
+    }
     const enabledCount = disabledSet ? available.length - disabledSet.size : available.length;
+    const unhealthyNote = clearedUnhealthy > 0 ? `\n\n✅ Cleared ${clearedUnhealthy} globally unhealthy model(s) (auto-marked).` : "";
     return {
       title: "Models Enabled",
-      output: `Enabled ${requested.length} model(s):\n${requested.map((m) => `- ${m}`).join("\n")}\n\n${enabledCount} model(s) are now available for Loom agents.`,
+      output: `Enabled ${requested.length} model(s):\n${requested.map((m) => `- ${m}`).join("\n")}\n\n${enabledCount} model(s) are now available for Loom agents.${unhealthyNote}`,
     };
   }
 
@@ -327,9 +346,14 @@ export function createModelHandlers({ client, directory, logger, state }) {
         try { unlinkSync(globalPath); } catch {}
       }
     } catch {}
+    // Also clear global unhealthy for this workspace
+    let cleared = 0;
+    try { cleared = clearAllGlobalUnhealthy(directory); } catch {}
+    try { clearAllGlobalUnhealthyKeys(); } catch {}
+    const unhealthyNote = cleared > 0 ? ` Also cleared ${cleared} globally unhealthy model(s).` : "";
     return {
       title: "Model Filter Reset",
-      output: `Model filter cleared for this session. All discovered models are now available for Loom agents (${prevCount} models were previously disabled).`,
+      output: `Model filter cleared for this session. All discovered models are now available for Loom agents (${prevCount} models were previously disabled).${unhealthyNote}`,
     };
   }
 

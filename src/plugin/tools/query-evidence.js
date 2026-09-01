@@ -160,7 +160,6 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
               const res = await sessionManager.runEphemeralPrompt(target, {
                 system: systemPrompt,
                 model,
-                temperature: target.tier_config?.temperature ?? 0.7,
                 parts: [{ type: "text", text: prompt }],
                 tools: researchTools(),
                 timeoutMs: meta.timeoutMs,

@@ -146,32 +146,6 @@ export const ContributionItem = memo(({ contribution, participantName, onDialogO
     }
   };
 
-  const loomCalls = useMemo(() => {
-    let tcs = contribution.tool_calls;
-    if (typeof tcs === "string") {
-      try { const p = JSON.parse(tcs); tcs = Array.isArray(p) ? p : (p && typeof p === "object" ? [p] : []); } catch { tcs = []; }
-      if (typeof tcs === "string") { try { const p2 = JSON.parse(tcs); tcs = Array.isArray(p2) ? p2 : []; } catch { tcs = []; } }
-    }
-    if (!Array.isArray(tcs)) tcs = [];
-    return tcs.filter(tc => (tc.tool ?? tc.attempted_tool ?? "").startsWith("loom_"));
-  }, [contribution.tool_calls]);
-
-  const formatLoomInput = (tc) => {
-    try {
-      const input = typeof tc.input === "string" ? JSON.parse(tc.input) : tc.input;
-      if (tc.tool === "loom_query" || tc.tool === "loom_evidence") {
-        const t = Array.isArray(input.targets) ? input.targets.join(", ") : "";
-        const q = input.question ?? "";
-        return `${t}: ${q.slice(0,80)}`;
-      }
-      if (tc.tool === "loom_vote") return (input.question ?? "").slice(0,80);
-      if (tc.tool === "loom_summon") return `${input.persona_name ?? input.personaName ?? ""}: ${(input.issue ?? "").slice(0,60)}`;
-      if (tc.tool === "loom_request_next") return `P${input.priority} ${input.reason ?? ""}`.slice(0,80);
-      if (input && typeof input === "object") return JSON.stringify(input).slice(0,80);
-      return String(input).slice(0,80);
-    } catch { return tc.input ? String(tc.input).slice(0,80) : ""; }
-  };
-
   const borderClass = BORDER_COLOR_MAP[contribution.type] ?? "border-l-transparent";
 
   return (
@@ -190,23 +164,6 @@ export const ContributionItem = memo(({ contribution, participantName, onDialogO
           <TypeBadge type={contribution.type} />
         </span>
       </div>
-      {loomCalls.length > 0 && (
-        <div className="flex flex-wrap gap-1">
-          {loomCalls.map((tc, i) => {
-            const isError = !!tc.error || tc.status === "error";
-            return (
-              <Tooltip key={tc.callID ?? i}>
-                <TooltipTrigger asChild>
-                  <Badge variant={isError ? "aborted" : "orchestrator"} className="cursor-help">
-                    {tc.tool.replace("loom_", "")}: {formatLoomInput(tc)}
-                  </Badge>
-                </TooltipTrigger>
-                <TooltipContent className="max-w-xs break-words">{tc.tool}: {formatLoomInput(tc)}{tc.error ? ` — ${tc.error}` : ""}</TooltipContent>
-              </Tooltip>
-            );
-          })}
-        </div>
-      )}
       {isLong ? (
         <p className="text-sm text-muted-foreground line-clamp-3">{content.slice(0, 300)}...</p>
       ) : (

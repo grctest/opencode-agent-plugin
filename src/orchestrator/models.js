@@ -15,7 +15,13 @@ export function _getHighestTierModel() {
 
 export function _getAllowedFallbackModel() {
     if (!this._availableModels || this._availableModels.length === 0) return null;
-    const sorted = sortModelsByQuality(this._availableModels);
+    let pool = this._availableModels;
+    // Filter to healthy models if executor is available (respects global unhealthy)
+    if (this._roundExecutor) {
+      try { pool = pool.filter((m) => this._roundExecutor.isModelHealthy(m)); } catch {}
+      if (pool.length === 0) return null;
+    }
+    const sorted = sortModelsByQuality(pool);
     const best = sorted[0];
     return { providerID: best.providerID, modelID: best.modelID };
   }

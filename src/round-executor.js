@@ -8,6 +8,7 @@ import { Logger, extractErrorInfo } from "./logger.js";
 import { sanitizeForPrompt, sanitizeForDisplay, sanitizeAgentOutput } from "./utils/sanitize.js";
 import { CircuitBreaker } from "./utils/retry.js";
 import { selectFallbackModel } from "./services/model-service.js";
+import { loadGlobalHealth, markGlobalUnhealthy } from "./services/global-model-health.js";
 import { incrementKeyedCounter, recordLatency } from "./metrics.js";
 import { extractVoteLetter, buildTally } from "./utils/vote-tally.js";
 import { degrade } from "./utils/degrade.js";
@@ -35,7 +36,7 @@ export class RoundExecutor {
   _tools;
   _availableModels;
 
-  constructor({ db, stateManager, vectorIndex, options, sessionManager, promptParent, getParticipantModel, logError, tools = null, availableModels = [] }) {
+  constructor({ db, stateManager, vectorIndex, options, sessionManager, promptParent, getParticipantModel, logError, tools = null, availableModels = [], directory = null }) {
     this._db = db;
     this._stateManager = stateManager;
     this._vectorIndex = vectorIndex;
@@ -46,6 +47,7 @@ export class RoundExecutor {
     this._logError = logError;
     this._tools = tools;
     this._availableModels = availableModels;
+    this._directory = directory;
     this._failureCounts = new Map();
     this._modelFailureTimes = new Map();
     this._logger = new Logger();
@@ -55,12 +57,15 @@ export class RoundExecutor {
       failureThreshold: cbConfig.failureThreshold,
       resetTimeoutMs: cbConfig.resetTimeoutMs,
     });
+    // Load persisted global unhealthy so this meeting respects prior trips
+    try { loadGlobalHealth(directory); } catch {}
   }
 
   _failedInCurrentRound = 0;
   _deadline = null;
   _roundSessionIds = null;
   _dbFailedThisMeeting = null;
+  _queuedSpeakers = null;
 
   setDeadline(deadline) {
     this._deadline = deadline;
@@ -90,14 +95,53 @@ export class RoundExecutor {
     return `${model.providerID}/${model.modelID}`;
   }
 
-   _recordModelFailure(model) {
-    // Single config read (audit 09 R3): thresholds were captured at construction;
-    // re-reading here could disagree with the breaker's actual configuration.
-    const state = this._circuitBreaker.recordFailure(model);
-    if (state.failures >= this._circuitBreaker.failureThreshold) {
-      this._options.onProgress?.(`⚠️ Model ${this._modelKey(model)} marked unhealthy after ${state.failures} consecutive failures. Will retry in ${this._circuitBreaker.resetTimeoutMs / 60000} minutes.`);
-      this._logger.warn("circuit_breaker", `Model ${this._modelKey(model)} marked unhealthy`, { failures: state.failures });
+    _recordModelFailure(model) {
+     // Single config read (audit 09 R3): thresholds were captured at construction;
+     // re-reading here could disagree with the breaker's actual configuration.
+     const state = this._circuitBreaker.recordFailure(model);
+     const key = this._modelKey(model);
+     if (state.failures >= this._circuitBreaker.failureThreshold) {
+       // Persist globally so all concurrent meetings and future sessions see it
+       try { markGlobalUnhealthy(key, this._directory); } catch {}
+       this._options.onProgress?.(`⚠️ Model ${key} marked unhealthy after ${state.failures} consecutive failures — requires /enable_knit_models to restore.`);
+       this._logger.warn("circuit_breaker", `Model ${key} marked unhealthy`, { failures: state.failures });
+       // Propagate to queued speakers that haven't spoken yet
+       this._reassignQueuedAgents(key);
+     }
     }
+
+   _reassignQueuedAgents(unhealthyKey) {
+     const queue = this._queuedSpeakers;
+     if (!queue || queue.length === 0) return;
+     let reassigned = 0;
+     for (const qp of queue) {
+       try {
+         const curModel = this._getParticipantModel(qp);
+         if (!curModel) continue;
+         const curKey = this._modelKey(curModel);
+         if (curKey !== unhealthyKey) continue;
+         // Confirm it's now unhealthy (global + local)
+         if (this._circuitBreaker.isHealthy(curModel)) continue;
+         const fallback = selectFallbackModel(curModel, this._availableModels, this._circuitBreaker);
+         if (!fallback) {
+           this._logger.warn("queued_model_no_fallback", `${qp.config.name} queued model ${curKey} unhealthy and no healthy fallback available`);
+           continue;
+         }
+         qp.config.model = fallback;
+         // Sync stateManager copy if present
+         try {
+           const smParts = this._stateManager.getParticipants?.() ?? [];
+           const target = smParts.find((s) => s.config?.id === qp.config.id);
+           if (target) target.config.model = fallback;
+         } catch {}
+         this._logger.info("queued_model_reassigned", `${qp.config.name} — queued model ${curKey} unhealthy, reassigned to ${this._modelKey(fallback)} before turn`, { participant: qp.config.id, from: curKey, to: this._modelKey(fallback) });
+         this._options.onProgress?.(`ℹ️ ${qp.config.name}'s scheduled model ${curKey} is unhealthy — switched to ${this._modelKey(fallback)}`);
+         reassigned++;
+       } catch (e) {
+         this._logger.warn("queued_reassign_failed", `Failed to reassign queued model for ${qp?.config?.name}`, { error: e?.message });
+       }
+     }
+     if (reassigned > 0) incrementKeyedCounter('queued_model_reassigned', `count:${reassigned}`);
    }
 
   _recordModelSuccess(model) {
@@ -118,6 +162,7 @@ export class RoundExecutor {
   async runPromptPhase(round, activeParticipants) {
     this._turnOrder = [];
     const remainingSpeakers = [...activeParticipants];
+    this._queuedSpeakers = remainingSpeakers;
     const spokenOrder = []; // Track agents that have spoken this round
     // Round-scoped sessions: one per participant per round (Option A) — cuts ~70% session churn
     this._roundSessionIds = new Map();
@@ -148,10 +193,12 @@ export class RoundExecutor {
       this._roundSessionIds = null;
     }
     // Deadline helper that also marks skipped speakers as passed internally for accounting
+    // Only enforce when deadline is finite (0 = no limit / Infinity)
+    const hasDeadline = this._deadline && Number.isFinite(this._deadline) && this._deadline !== Infinity;
     const skipped = [];
     try {
       while (remainingSpeakers.length > 0) {
-      if (this._deadline && Date.now() > this._deadline - 1000) {
+      if (hasDeadline && Date.now() > this._deadline - 1000) {
         this._logger.warn("deadline_exceeded", `Deadline exceeded mid-round — stopping ${remainingSpeakers.length} remaining speakers`);
         this._options.onProgress?.(`⏱️ Deadline reached — skipping remaining ${remainingSpeakers.length} speakers`);
         skipped.push(...remainingSpeakers.splice(0));
@@ -164,8 +211,8 @@ export class RoundExecutor {
       spokenOrder.push(p);
       this._db.setParticipantStatus(p.config.id, "speaking");
       this._options.onProgress?.(`${p.config.name} (${p.config.tier}) is thinking...`);
-      const result = await this._promptChildSession(p);
-      await this._handlePromptResult(p, result, round);
+      const {result, error} = await this._promptChildSession(p);
+      await this._handlePromptResult(p, result, round, error);
       }
     } finally {
         if (skipped.length > 0) {
@@ -179,20 +226,21 @@ export class RoundExecutor {
           await this._cleanupRoundSessions([...this._roundSessionIds.values()]);
           this._roundSessionIds = null;
         }
+        this._queuedSpeakers = null;
     }
   }
 
-  async _handlePromptResult(p, result, round) {
-    if (!result) {
+  async _handlePromptResult(p, result, round, error) {
+    if (!result || error) {
       p.status = "failed";
       this._failedInCurrentRound++;
       this._db.setParticipantStatus(p.config.id, "failed");
       this._db.recordAgentError(
         this._stateManager.getMeetingId(), p.config.id, this._stateManager.getCurrentRound(),
-        "no_response", "Failed to get response after retries", 2,
+        "no_response", `Failed to get response after retries${error ? `: ${error.message}` : ''}`, 2,
       );
       round.token_path.push(p.config.id);
-      this._options.onProgress?.(`${p.config.name} (${p.config.tier}) — failed to respond, skipping`);
+      this._options.onProgress?.(`${p.config.name} (${p.config.tier}) — failed to respond${error ? `: ${error.message}` : ''}, skipping`);
       this._options.onContribution?.(p.config.name, this._stateManager.getCurrentRound(), "failed_no_response");
       return;
     }

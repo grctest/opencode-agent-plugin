@@ -213,7 +213,7 @@ When you ask a question, the Loom uses **embedding similarity** (not LLM domain 
 | "How do we design our API?" | engineering, creative |
 | "What's our go-to-market strategy?" | business, operations |
 
-Each tier has different behavioral guidance defined in each persona's `tier_guidance` field, blended with a per-tier doctrine line in the agent system prompt. Personas also include a `reflection_guidance` field used when peers solicit their stance via `loom_query mode=perspective`. Personas can be customized by editing the JSON files in the `personas/` directory. The `civilian` tier maps to `mid` seniority/temperature via `utils/tier.js`.
+Each tier has different behavioral guidance defined in each persona's `tier_guidance` field, blended with a per-tier doctrine line in the agent system prompt. Personas also include a `reflection_guidance` field used when peers solicit their stance via `loom_query mode=perspective`. Personas can be customized by editing the JSON files in the `personas/` directory. The `civilian` tier maps to `mid` seniority via `utils/tier.js`.
 
 ## Dashboard
 

@@ -79,7 +79,23 @@ export class MeetingOrchestrator {
     this._client = options.client;
     this._directory = options.directory;
     this._parentSessionId = options.parentSessionId;
-    this._meetingTimeoutMs = options.meetingTimeoutMs ?? getConfig().defaultMeetingTimeoutMs;
+    let rawTimeout = options.meetingTimeoutMs ?? getConfig().defaultMeetingTimeoutMs;
+    // Guard against accidentally short meeting_timeout (e.g. LLM hallucinating 120000).
+    // Anything >0 but <5min is almost certainly a mistake for a multi-round loom
+    // with tool-heavy turns (each turn alone needs up to 120s + 60-90s for loom_query).
+    // Treat suspicious values as disabled (0 = no hard deadline, use stall watchdog).
+    if (Number.isFinite(rawTimeout) && rawTimeout > 0 && rawTimeout < 300000) {
+      try {
+        const c = options.participants?.length ?? 0;
+        if (c === 0 || c * 30000 > rawTimeout) {
+          // Caller context not yet in stateManager, use raw participant count
+        }
+      } catch {}
+      const loggerTmp = new Logger().forMeeting(this._meetingId);
+      loggerTmp.warn("meeting_timeout_clamped", `meeting_timeout ${rawTimeout}ms suspiciously short for loom — disabling hard deadline (0 = no limit, stall watchdog remains)`, { raw: rawTimeout });
+      rawTimeout = 0;
+    }
+    this._meetingTimeoutMs = rawTimeout;
     this._maxTotalTokens = options.maxTotalTokens ?? getConfig().maxTotalTokens ?? 0;
     this._availableModels = options.availableModels ?? [];
 

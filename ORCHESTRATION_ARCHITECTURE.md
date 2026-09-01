@@ -138,14 +138,14 @@ Models are discovered from the connected providers via `discoverModels()` (`prov
 
 Four tiers determine agent behavior, authority, and LLM parameters:
 
-| Tier | Temperature | `loom_request_next` Priority Cap | Rights |
-|------|------------|-------------------------------|--------|
-| junior | 0.7 | 5 | contribute, request_turn |
-| mid | 0.5 | 7 | contribute, request_turn, call_vote |
-| senior | 0.3 | 9 | contribute, request_turn, call_vote |
-| principal | 0.2 | 10 | contribute, request_turn, call_vote |
+| Tier | `loom_request_next` Priority Cap | Rights |
+|------|-------------------------------|--------|
+| junior | 5 | contribute, request_turn |
+| mid | 7 | contribute, request_turn, call_vote |
+| senior | 9 | contribute, request_turn, call_vote |
+| principal | 10 | contribute, request_turn, call_vote |
 
-`civilian` shares mid temperature/cap/rights via `utils/tier.js`. The rights flags are vestigial metadata — actual tool availability is governed by the `agentTools` config (Section 20), not tier rights.
+`civilian` shares mid cap/rights via `utils/tier.js`. The rights flags are vestigial metadata — actual tool availability is governed by the `agentTools` config (Section 20), not tier rights.
 
 **Behavioral guidance is defined in each persona's `tier_guidance` field** (the old static `getPromptForTier` tier strings still exist but are deprecated fallbacks). Each persona file is self-contained and user-editable:
 
@@ -202,7 +202,7 @@ Each agent is loaded from a JSON persona file that also describes how to behave 
     tier_guidance: "...", reflection_guidance: "...",
     model: { providerID: "anthropic", modelID: "claude-sonnet-4-20250514" }
   },
-  tier_config: { temperature: 0.3, rights: { contribute: true, request_turn: true, call_vote: true } },
+  tier_config: { rights: { contribute: true, request_turn: true, call_vote: true } },
   embedding: Float32Array /* loaded at init from persona embeddings when the embedder is available */,
   status: "listening",      // listening | speaking | passed | failed | muted (muted only appears in restored data from older meetings)
   reflection: "The JWT migration makes sense, but token revocation is unsolved.",   // maintained via perspective-mode query answers
@@ -490,7 +490,6 @@ const result = await sessionManager.getContract().prompt({
   sessionId,
   system: buildAgentSystemPrompt(participant),
   model,
-  temperature: participant.tier_config.temperature,
   parts: [{ type: "text", text: buildAgentUserPrompt(...) }],
   tools: toolsMap,   // boolean filter map, e.g. { websearch: true, loom_query: true }
 });
@@ -1359,7 +1358,7 @@ Fan-out to **all active participants** (source + every non-failed/passed/muted p
 Brings in a **guest expert** from the persona pool (matched by name across all tiers; unknown personas are rejected). The summoned agent is not a registered participant — it contributes once.
 
 - **Rate limits:** `maxSummonsPerRound` (2), `maxSummonsPerAgent` (1) — tracked per round.
-- **Model:** the summoning agent's own model; temperature 0.7.
+- **Model:** the summoning agent's own model.
 - **Tools:** `web_fetch`, `web_search`, `read`, `loom_vector_search` (no bash/glob/grep — least privilege for guests).
 - **Prompt** (`buildSummonPrompt`): persona expertise, communication style, requester's issue, recent context (last 4 contributions), round context.
 - **Contribution:** type `summoned_response`, participant id `summoned_<slug>`, content prefixed `[Summoned: <Name> (<tier>)]`.

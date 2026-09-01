@@ -218,6 +218,20 @@ export class Logger {
 export function extractErrorInfo(err) {
   if (err instanceof Error) {
     const info = { message: err.message, stack: err.stack, name: err.name };
+    // Preserve provider-level error details (surface from session-contract)
+    if (err.partialData) {
+      try {
+        const pd = err.partialData;
+        const assistantError = pd?.data?.info?.error;
+        if (assistantError) {
+          info.providerError = assistantError.name ?? null;
+          info.providerData = assistantError.data ?? null;
+          info.statusCode = assistantError.data?.statusCode ?? err.status ?? null;
+        }
+      } catch {}
+    }
+    if (err.status) info.status = err.status;
+    if (err.providerError) info.providerError = err.providerError;
     // Cause chain (Node 16+ Error.cause): surface nested causes so root
     // failures aren't lost behind a generic wrapper.
     if (err.cause) {

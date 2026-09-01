@@ -134,8 +134,44 @@ export async function withRetry(fn, options = {}) {
 }
 
 /**
+ * Global unhealthy registry — cross-meeting persistent until explicitly enabled.
+ * Promoted models never auto-recover via half-open; they require /enable_knit_models.
+ */
+const globalUnhealthyKeys = new Set();
+const allBreakers = new Set();
+
+export function markGlobalUnhealthyKey(key) {
+  if (!key || key === "unknown") return;
+  globalUnhealthyKeys.add(key);
+}
+
+export function clearGlobalUnhealthyKey(key) {
+  globalUnhealthyKeys.delete(key);
+  // Also clear per-instance local breaker state so enable is immediate, not 5 min delayed
+  for (const b of allBreakers) {
+    try { b._clearLocalKey(key); } catch {}
+  }
+}
+
+export function clearAllGlobalUnhealthyKeys() {
+  globalUnhealthyKeys.clear();
+  for (const b of allBreakers) {
+    try { b.clear(); } catch {}
+  }
+}
+
+export function isGlobalUnhealthyKey(key) {
+  return globalUnhealthyKeys.has(key);
+}
+
+export function getGlobalUnhealthyKeys() {
+  return new Set(globalUnhealthyKeys);
+}
+
+/**
  * Circuit breaker with half-open state for gradual recovery.
  * Tracks per-model failures and allows retry testing once the reset timeout elapses.
+ * Global unhealthy keys bypass half-open — they stay unhealthy until explicitly cleared.
  */
 export class CircuitBreaker {
   constructor({ failureThreshold = 3, resetTimeoutMs = 300000, maxSize = 50 } = {}) {
@@ -143,6 +179,7 @@ export class CircuitBreaker {
     this.resetTimeoutMs = resetTimeoutMs;
     this.maxSize = maxSize;
     this.#states = new Map();
+    allBreakers.add(this);
   }
 
   #states;
@@ -151,8 +188,13 @@ export class CircuitBreaker {
     return model ? `${model.providerID}/${model.modelID}` : 'unknown';
   }
 
+  static getModelKey(model) {
+    return CircuitBreaker.#getModelKey(model);
+  }
+
   isHealthy(model) {
     const key = CircuitBreaker.#getModelKey(model);
+    if (globalUnhealthyKeys.has(key)) return false;
     const state = this.#states.get(key);
     if (!state) return true;
 
@@ -181,6 +223,8 @@ export class CircuitBreaker {
     state.status = state.failures >= this.failureThreshold ? 'open' : 'closed';
     if (state.status === 'open') {
       state.nextAttempt = Date.now() + this.resetTimeoutMs;
+      // Promote to global unhealthy — requires explicit /enable_knit_models to recover
+      globalUnhealthyKeys.add(key);
       // Breaker transitions are observable (audit 07 EH3)
       incrementKeyedCounter('breaker_events', `${key}:open`);
     }
@@ -221,5 +265,9 @@ export class CircuitBreaker {
 
   clear() {
     this.#states.clear();
+  }
+
+  _clearLocalKey(key) {
+    this.#states.delete(key);
   }
 }

@@ -16,7 +16,6 @@
  * @property {{ input: number; output: number; cache_read?: number; cache_write?: number }} cost
  * @property {{ context: number; output: number }} limit
  * @property {boolean} reasoning
- * @property {boolean} temperature
  */
 
 /**

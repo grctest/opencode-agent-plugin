@@ -64,11 +64,16 @@ export async function initialize() {
 
       // Ensure a real embedder is loaded; guard with 5s timeout so init never hangs indefinitely (init runs outside stall watchdog)
       try {
-        const { ensureEmbedderInitialized, getEmbeddingDim } = await import("../services/embedding-service.js");
+        const { ensureEmbedderInitialized, isEmbedderInitialized, getEmbeddingDim } = await import("../services/embedding-service.js");
         const modelName = this._options.embedding_model ?? getConfig().embeddingModel ?? null;
+        const wasInitialized = isEmbedderInitialized();
         await this._raceWithGuardTimer(ensureEmbedderInitialized(modelName, getConfig().embeddingQuant), 5000, "embedderInit");
         if (modelName) {
-          this._logger.info("embedder_initialized", `Embedding model loaded: ${modelName} (${getEmbeddingDim()}d)`);
+          if (!wasInitialized && isEmbedderInitialized()) {
+            this._logger.info("embedder_initialized", `Embedding model loaded: ${modelName} (${getEmbeddingDim()}d)`);
+          } else if (wasInitialized) {
+            this._logger.debug("embedder_reused", `Embedding model reused: ${modelName} (${getEmbeddingDim()}d) — already initialized`);
+          }
         }
       } catch (err) {
         this._logger.warn("embedder_init_failed", `Failed to initialize embedding model: ${err.message}`, extractErrorInfo(err));
@@ -148,6 +153,7 @@ export async function initialize() {
         logError: (context, error) => this._logError(context, error),
         tools: this._options.agentTools ?? null,
         availableModels: this._availableModels,
+        directory: this._directory,
       });
 
       this._roundService = new RoundService({ roundExecutor: this._roundExecutor });

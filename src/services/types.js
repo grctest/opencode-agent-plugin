@@ -26,7 +26,6 @@
 
 /**
  * @typedef {Object} TierConfig
- * @property {number} temperature
  * @property {Object} rights
  * @property {boolean} rights.contribute
  * @property {boolean} rights.request_turn
@@ -99,7 +98,6 @@
  * @property {{input:number, output:number}} cost
  * @property {{context:number, output:number}} limit
  * @property {boolean} reasoning
- * @property {boolean} temperature
  */
 
 export {};

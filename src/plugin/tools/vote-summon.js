@@ -194,7 +194,6 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
               const res = await sessionManager.runEphemeralPrompt(voter, {
                 system: systemPrompt,
                 model,
-                temperature: voter.tier_config?.temperature ?? 0.7,
                 parts: [{ type: "text", text: prompt }],
                 tools: {},
                 timeoutMs: getConfig()?.tuning?.VOTE_TIMEOUT_MS ?? TUNING.VOTE_TIMEOUT_MS,
@@ -338,7 +337,7 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
           const prompt = buildSummonPrompt(found, summonCallerForPrompt, args.issue, roundContribs, stateManager.getCurrentRound(), stateManager.getMaxRounds(), stateOfPlay);
           const systemPrompt = `You are ${found.name} (${found.tier}) — guest expert summoned into Loom for one additive contribution. Be concise (100-150 words), grounded, in character. Build on what's settled; don't re-litigate without new evidence. Name one constraint only you would know. Cite Source: URL or [#id] if you use evidence. Never emit <<< or >>>. No contribution tags.`;
           // Use a temporary summoned participant config to create session
-          const summonedConfig = { config: { id: `summoned_${found.name.toLowerCase().replace(/[^a-z0-9]/g,'_')}`, name: found.name, tier: found.tier, persona: found.persona, expertise: found.expertise, communication_style: found.communication_style }, tier_config: { temperature: 0.7 } };
+          const summonedConfig = { config: { id: `summoned_${found.name.toLowerCase().replace(/[^a-z0-9]/g,'_')}`, name: found.name, tier: found.tier, persona: found.persona, expertise: found.expertise, communication_style: found.communication_style }, tier_config: {} };
           // Reuse the caller's assigned model (left sidebar) — stays strictly within enabled allowlist
           let model = null;
           try { const participants = stateManager.getParticipants(); const caller = participants.find(p => p.session_id === context.sessionID) || participants[0]; model = engine.getParticipantModel ? engine.getParticipantModel(caller) : null; } catch {}
@@ -357,7 +356,6 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
           const res = await sessionManager.runEphemeralPrompt(summonedConfig, {
             system: systemPrompt,
             model,
-            temperature: 0.7,
             parts: [{ type: "text", text: prompt }],
             tools: (() => {
               const t = config.getValue("agentTools");

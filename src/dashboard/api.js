@@ -274,7 +274,7 @@ export class DashboardApi {
   getContributionContext(contributionId) {
     const contribution = this._db
       .prepare(
-        `SELECT id, participant_id, round, type, tool_calls, prompt_context, created_at
+        `SELECT id, meeting_id, participant_id, round, type, tool_calls, prompt_context, batch_id, created_at
          FROM contributions WHERE id = ?`,
       )
       .get(contributionId);
@@ -284,6 +284,34 @@ export class DashboardApi {
       .prepare(`SELECT name, persona, agenda, tier, provider_id, model_id, reflection FROM participants WHERE id = ?`)
       .get(contribution.participant_id);
 
+    let toolCalls = normalizeToolCalls(contribution.tool_calls, null) ?? [];
+    // Merge durable forum audits for this contribution's participant+round+batch (Q3: parent shows trigger)
+    try {
+      const audits = this._db.prepare(
+        `SELECT id, tool, input, output, status, title FROM tool_audit WHERE meeting_id = ? AND participant_id = ? AND round = ? AND (batch_id IS NULL OR batch_id = ? OR ? IS NULL) ORDER BY id ASC`
+      ).all(contribution.meeting_id ?? this._db.prepare(`SELECT id FROM meetings LIMIT 1`).get()?.id ?? "", contribution.participant_id, contribution.round, contribution.batch_id ?? null, contribution.batch_id ?? null);
+      // Fallback when tool_audit table missing on pre-migration DBs
+      if (audits && audits.length > 0) {
+        const auditCalls = audits.map(r => ({
+          tool: r.tool,
+          callID: `audit-${r.id}`,
+          status: r.status ?? "completed",
+          attempted_tool: null,
+          title: r.title ?? null,
+          input: r.input ?? null,
+          output: r.status === "error" ? null : (r.output ?? null),
+          error: r.status === "error" ? (r.output ?? null) : null,
+          metadata: null,
+        }));
+        const existingIds = new Set(toolCalls.map(t => t.callID));
+        for (const ac of auditCalls) {
+          if (existingIds.has(ac.callID)) continue;
+          // Avoid duplicate when LLM ToolPart already captured same forum invocation
+          if (toolCalls.some(t => t.tool === ac.tool && String(t.input ?? "") === String(ac.input ?? ""))) continue;
+          toolCalls.push(ac);
+        }
+      }
+    } catch {}
     return {
       contribution_id: contribution.id,
       participant_id: contribution.participant_id,
@@ -296,7 +324,7 @@ export class DashboardApi {
       participant_reflection: participant?.reflection ?? "",
       round: contribution.round,
       type: contribution.type,
-      tool_calls: normalizeToolCalls(contribution.tool_calls, null),
+      tool_calls: toolCalls,
       prompt_context: safeParseJson(contribution.prompt_context),
       created_at: contribution.created_at,
     };

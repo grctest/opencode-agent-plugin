@@ -13,6 +13,7 @@ import { createMeetingCallbacks, buildSummary } from "./knit/callbacks.js";
 import { writeReportFile as writeReportFileHelper, createSessionLock } from "./knit/file-ops.js";
 import { createModelHandlers } from "./knit/model-handlers.js";
 import { existsSync as _existsSyncForKnit, readFileSync as _readFileSyncForKnit } from "node:fs";
+import { loadGlobalHealth, getGlobalUnhealthySet } from "../services/global-model-health.js";
 
 export function createKnitHandler(client, directory, activeLooms, agentTools = null) {
   const logger = new Logger();
@@ -90,8 +91,15 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
       logger.warn("model_filter_reload_failed", "Failed to reload per-session model filter", extractErrorInfo(err));
       disabledSet = state.disabledModelsBySession.get(sessionID) ?? null;
     }
+    // Load global unhealthy (auto-marked by circuit breaker) and filter available
+    let globalUnhealthy = null;
+    try {
+      loadGlobalHealth(directory);
+      globalUnhealthy = getGlobalUnhealthySet();
+    } catch {}
     // Ensure available is filtered - this is the critical line that enforces deny-list for both participants and orchestrator
-    const available = applyModelFilter(allAvailable, disabledSet);
+    let available = applyModelFilter(allAvailable, disabledSet);
+    available = applyModelFilter(available, globalUnhealthy);
 
     let existingMeeting = null;
     if (args.fresh === true) {
@@ -121,7 +129,7 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
     const pendingForSession = state.pendingModelsBySession.get(sessionID) ?? null;
     const explicitModels = args.models ?? pendingForSession;
     if (explicitModels && explicitModels.length > 0) {
-      // Validate explicit models against filtered available (deny-list) — don't inject disabled models
+      // Validate explicit models against filtered available (deny-list + global unhealthy) — don't inject disabled/unhealthy models
       const allowedKeys = new Set(available.map(m => `${m.providerID}/${m.modelID}`));
       const filteredExplicit = [];
       for (const m of explicitModels) {
@@ -130,6 +138,10 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
         const key = `${providerId}/${modelId}`;
         if (disabledSet && disabledSet.has(key)) {
           logger.warn("explicit_model_disabled", `Explicit model ${key} for tier ${m.tier} is disabled for this session — ignoring`);
+          continue;
+        }
+        if (globalUnhealthy && globalUnhealthy.has(key)) {
+          logger.warn("explicit_model_unhealthy", `Explicit model ${key} for tier ${m.tier} is globally unhealthy (requires /enable_knit_models) — ignoring`);
           continue;
         }
         if (!allowedKeys.has(key) && available.length > 0) {
@@ -372,8 +384,8 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
             allowlist: Array.from(new Set([...(agentTools.builtIn?.bash?.allowlist ?? []), "cat", "npm", "bun", "node"])),
           },
         },
-        maxToolCallsPerTurn: Math.max(agentTools.maxToolCallsPerTurn ?? 8, 12),
-        maxToolOutputTokens: Math.max(agentTools.maxToolOutputTokens ?? 6000, 12000),
+        maxToolCallsPerTurn: Math.max(agentTools.maxToolCallsPerTurn ?? 8, 200),
+        maxToolOutputTokens: Math.max(agentTools.maxToolOutputTokens ?? 60000, 120000),
       };
     } else if (agentTools) {
       effectiveAgentTools = { ...agentTools, buildMode: false };

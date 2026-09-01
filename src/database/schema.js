@@ -7,7 +7,7 @@
  * directly; older files run only the migrations they are missing.
  */
 
-export const LATEST_SCHEMA_VERSION = 4;
+export const LATEST_SCHEMA_VERSION = 5;
 
 /**
  * Ordered migrations. MIGRATIONS[n] upgrades a DB at user_version n to n+1.
@@ -66,6 +66,32 @@ export const MIGRATIONS = [
           created_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_forum_comments_topic ON forum_comments(topic_id);
+      `);
+    }
+  },
+  // v4 → v5: durable audit for loom tool invocations (especially forum) — survives even if ToolPart extraction fails
+  (db) => {
+    const tables = new Set(
+      db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name),
+    );
+    if (!tables.has("tool_audit")) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS tool_audit (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+          participant_id TEXT NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+          round INTEGER NOT NULL,
+          batch_id TEXT,
+          tool TEXT NOT NULL,
+          input TEXT,
+          output TEXT,
+          status TEXT NOT NULL DEFAULT 'completed',
+          title TEXT,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_tool_audit_meeting ON tool_audit(meeting_id);
+        CREATE INDEX IF NOT EXISTS idx_tool_audit_participant_round ON tool_audit(meeting_id, participant_id, round);
+        CREATE INDEX IF NOT EXISTS idx_tool_audit_batch ON tool_audit(batch_id);
       `);
     }
   },
@@ -277,6 +303,23 @@ export function initSchema(db) {
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_forum_comments_topic ON forum_comments(topic_id);
+
+    CREATE TABLE IF NOT EXISTS tool_audit (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+      participant_id TEXT NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+      round INTEGER NOT NULL,
+      batch_id TEXT,
+      tool TEXT NOT NULL,
+      input TEXT,
+      output TEXT,
+      status TEXT NOT NULL DEFAULT 'completed',
+      title TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_tool_audit_meeting ON tool_audit(meeting_id);
+    CREATE INDEX IF NOT EXISTS idx_tool_audit_participant_round ON tool_audit(meeting_id, participant_id, round);
+    CREATE INDEX IF NOT EXISTS idx_tool_audit_batch ON tool_audit(batch_id);
   `);
 
   if (isNewDb) {

@@ -85,7 +85,7 @@ export const DEFAULT_CONFIG = {
       glob: false,
       grep: false,
     },
-    maxToolCallsPerTurn: 12,
+    maxToolCallsPerTurn: 200,
     maxToolOutputTokens: 12000,
   },
 };
@@ -136,7 +136,7 @@ export const NESTED_SCHEMA = {
   'agentTools.reflection.bash': { type: 'boolean' },
   'agentTools.reflection.glob': { type: 'boolean' },
   'agentTools.reflection.grep': { type: 'boolean' },
-  'agentTools.maxToolCallsPerTurn': { type: 'number', min: 1, max: 20 },
+  'agentTools.maxToolCallsPerTurn': { type: 'number', min: 1, max: 200 },
   'agentTools.maxToolOutputTokens': { type: 'number', min: 1000, max: 20000 },
   'modelFallback.enabled': { type: 'boolean' },
   'modelFallback.maxRetriesPerModel': { type: 'number', min: 0, max: 5 },

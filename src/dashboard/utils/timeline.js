@@ -240,12 +240,9 @@ export function buildFlatItems(groupedContributions, opts) {
 
       for (const [agentId, agentContribs] of sortedAgentEntries) {
         segItems.push({ type: "agent_turn", agentId, round, contributions: agentContribs });
-        for (const c of agentContribs) {
-          const loomCalls = (c.tool_calls ?? []).filter(tc => (tc.tool ?? tc.attempted_tool ?? "").startsWith("loom_"));
-          for (const tc of loomCalls) {
-            segItems.push({ type: "loom_invocation", invocation: tc, sourceContributionId: c.id, sourceParticipantId: c.participant_id, round });
-          }
-        }
+        // loom_invocation rows intentionally not inserted — tool evidence lives in
+        // the invoker's dialog Tool use tab; timeline shows only result rows
+        // (query_response / evidence_response etc) for the invoked agents.
         if (round === activeRound && isWeaving) {
           for (const c of agentContribs) {
             if ((c.type === "challenge" || c.type === "dissent") && !reflectionsByTarget.has(c.id)) {

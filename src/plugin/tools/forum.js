@@ -18,6 +18,26 @@ export function createForumTools({ config, resolveMeeting, activeLooms }) {
     return { engine, stateManager, db };
   }
 
+  function auditForumTool({ db, stateManager, caller, meetingId, tool, input, output, status = "completed", title = null }) {
+    try {
+      const participantId = caller?.config?.id ?? caller?.id ?? "unknown";
+      const round = stateManager.getCurrentRound?.() ?? stateManager.getState?.()?.round ?? 0;
+      const batchId = caller?.currentBatchId ?? null;
+      // Durable audit — survives even if ToolPart extraction fails (solid, not response-parsing fallback)
+      // Stored in tool_audit table and merged into contributions.tool_calls on fetch.
+      db.addToolAudit({
+        participantId,
+        round,
+        batchId,
+        tool,
+        input,
+        output,
+        status,
+        title,
+      });
+    } catch {}
+  }
+
   return {
     loom_forum_create_topic: tool({
       description:
@@ -57,9 +77,13 @@ export function createForumTools({ config, resolveMeeting, activeLooms }) {
             authorId,
           });
           const payload = { topic_id: result.id, title: args.title.trim(), created_at: result.created_at };
-          return { output: JSON.stringify(payload), metadata: { topic_id: result.id }, title: `loom_forum_create_topic: #${result.id}` };
+          const outputStr = JSON.stringify(payload);
+          auditForumTool({ db, stateManager, caller, meetingId: meetingInfo.meetingId, tool: "loom_forum_create_topic", input: args, output: outputStr, status: "completed", title: `loom_forum_create_topic: #${result.id}` });
+          return { output: outputStr, metadata: { topic_id: result.id }, title: `loom_forum_create_topic: #${result.id}` };
         } catch (e) {
-          return { output: JSON.stringify({ error: `Failed to create topic: ${e.message}` }), metadata: { error: true }, title: "loom_forum_create_topic error" };
+          const errPayload = JSON.stringify({ error: `Failed to create topic: ${e.message}` });
+          auditForumTool({ db, stateManager, caller, meetingId: meetingInfo.meetingId, tool: "loom_forum_create_topic", input: args, output: errPayload, status: "error", title: "loom_forum_create_topic error" });
+          return { output: errPayload, metadata: { error: true }, title: "loom_forum_create_topic error" };
         }
       },
     }),
@@ -89,9 +113,18 @@ export function createForumTools({ config, resolveMeeting, activeLooms }) {
         try {
           const topics = db.listForumTopics({ tag: args.tag ?? undefined });
           const payload = { topics, count: topics.length };
-          return { output: JSON.stringify(payload), metadata: { count: topics.length }, title: `loom_forum_list_topics: ${topics.length} topics` };
+          const outputStr = JSON.stringify(payload);
+          // Audit list — use caller if resolvable, else fallback to unknown participant for durability
+          const listParticipants = stateManager.getParticipants?.() ?? [];
+          const listCaller = resolveCaller(listParticipants, stateManager.getWeave?.() ?? [], context.sessionID);
+          auditForumTool({ db, stateManager, caller: listCaller ?? { id: "unknown", config: { id: "unknown" } }, meetingId: meetingInfo.meetingId, tool: "loom_forum_list_topics", input: args, output: outputStr, status: "completed", title: `loom_forum_list_topics: ${topics.length} topics` });
+          return { output: outputStr, metadata: { count: topics.length }, title: `loom_forum_list_topics: ${topics.length} topics` };
         } catch (e) {
-          return { output: JSON.stringify({ error: `Failed to list topics: ${e.message}` }), metadata: { error: true }, title: "loom_forum_list_topics error" };
+          const errPayload = JSON.stringify({ error: `Failed to list topics: ${e.message}` });
+          const listParticipants = stateManager.getParticipants?.() ?? [];
+          const listCaller = resolveCaller(listParticipants, stateManager.getWeave?.() ?? [], context.sessionID);
+          auditForumTool({ db, stateManager, caller: listCaller ?? { id: "unknown", config: { id: "unknown" } }, meetingId: meetingInfo.meetingId, tool: "loom_forum_list_topics", input: args, output: errPayload, status: "error", title: "loom_forum_list_topics error" });
+          return { output: errPayload, metadata: { error: true }, title: "loom_forum_list_topics error" };
         }
       },
     }),
@@ -121,11 +154,23 @@ export function createForumTools({ config, resolveMeeting, activeLooms }) {
         try {
           const topic = db.getForumTopic(args.topic_id);
           if (!topic) {
-            return { output: JSON.stringify({ error: `Topic #${args.topic_id} not found` }), metadata: { error: true }, title: "loom_forum_read_topic error" };
+            const errPayload = JSON.stringify({ error: `Topic #${args.topic_id} not found` });
+            const readParticipants = stateManager.getParticipants?.() ?? [];
+            const readCaller = resolveCaller(readParticipants, stateManager.getWeave?.() ?? [], context.sessionID);
+            auditForumTool({ db, stateManager, caller: readCaller ?? { id: "unknown", config: { id: "unknown" } }, meetingId: meetingInfo.meetingId, tool: "loom_forum_read_topic", input: args, output: errPayload, status: "error", title: "loom_forum_read_topic error" });
+            return { output: errPayload, metadata: { error: true }, title: "loom_forum_read_topic error" };
           }
-          return { output: JSON.stringify(topic), metadata: { topic_id: topic.id, comment_count: topic.comments.length }, title: `loom_forum_read_topic: #${topic.id}` };
+          const outputStr = JSON.stringify(topic);
+          const readParticipants = stateManager.getParticipants?.() ?? [];
+          const readCaller = resolveCaller(readParticipants, stateManager.getWeave?.() ?? [], context.sessionID);
+          auditForumTool({ db, stateManager, caller: readCaller ?? { id: "unknown", config: { id: "unknown" } }, meetingId: meetingInfo.meetingId, tool: "loom_forum_read_topic", input: args, output: outputStr, status: "completed", title: `loom_forum_read_topic: #${topic.id}` });
+          return { output: outputStr, metadata: { topic_id: topic.id, comment_count: topic.comments.length }, title: `loom_forum_read_topic: #${topic.id}` };
         } catch (e) {
-          return { output: JSON.stringify({ error: `Failed to read topic: ${e.message}` }), metadata: { error: true }, title: "loom_forum_read_topic error" };
+          const errPayload = JSON.stringify({ error: `Failed to read topic: ${e.message}` });
+          const readParticipants = stateManager.getParticipants?.() ?? [];
+          const readCaller = resolveCaller(readParticipants, stateManager.getWeave?.() ?? [], context.sessionID);
+          auditForumTool({ db, stateManager, caller: readCaller ?? { id: "unknown", config: { id: "unknown" } }, meetingId: meetingInfo.meetingId, tool: "loom_forum_read_topic", input: args, output: errPayload, status: "error", title: "loom_forum_read_topic error" });
+          return { output: errPayload, metadata: { error: true }, title: "loom_forum_read_topic error" };
         }
       },
     }),
@@ -165,12 +210,18 @@ export function createForumTools({ config, resolveMeeting, activeLooms }) {
             authorId,
           });
           if (!result) {
-            return { output: JSON.stringify({ error: `Topic #${args.topic_id} not found` }), metadata: { error: true }, title: "loom_forum_add_comment error" };
+            const errPayload = JSON.stringify({ error: `Topic #${args.topic_id} not found` });
+            auditForumTool({ db, stateManager, caller, meetingId: meetingInfo.meetingId, tool: "loom_forum_add_comment", input: args, output: errPayload, status: "error", title: "loom_forum_add_comment error" });
+            return { output: errPayload, metadata: { error: true }, title: "loom_forum_add_comment error" };
           }
           const payload = { comment_id: result.id, topic_id: args.topic_id, created_at: result.created_at };
-          return { output: JSON.stringify(payload), metadata: { comment_id: result.id, topic_id: args.topic_id }, title: `loom_forum_add_comment: #${result.id} on #${args.topic_id}` };
+          const outputStr = JSON.stringify(payload);
+          auditForumTool({ db, stateManager, caller, meetingId: meetingInfo.meetingId, tool: "loom_forum_add_comment", input: args, output: outputStr, status: "completed", title: `loom_forum_add_comment: #${result.id} on #${args.topic_id}` });
+          return { output: outputStr, metadata: { comment_id: result.id, topic_id: args.topic_id }, title: `loom_forum_add_comment: #${result.id} on #${args.topic_id}` };
         } catch (e) {
-          return { output: JSON.stringify({ error: `Failed to add comment: ${e.message}` }), metadata: { error: true }, title: "loom_forum_add_comment error" };
+          const errPayload = JSON.stringify({ error: `Failed to add comment: ${e.message}` });
+          auditForumTool({ db, stateManager, caller, meetingId: meetingInfo.meetingId, tool: "loom_forum_add_comment", input: args, output: errPayload, status: "error", title: "loom_forum_add_comment error" });
+          return { output: errPayload, metadata: { error: true }, title: "loom_forum_add_comment error" };
         }
       },
     }),

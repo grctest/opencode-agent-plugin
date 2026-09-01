@@ -80,7 +80,6 @@ export class SynthesisCoordinator {
           sessionId,
           system: NEUTRAL_SYNTHESIZER_SYSTEM,
           model,
-          temperature: synthesizer.tier_config.temperature,
           parts: [{ type: "text", text: userPrompt }],
           timeoutMs: getConfig().synthesisTimeoutMs,
         });
@@ -219,7 +218,6 @@ ${draftForPrompt}`;
             sessionId,
             system: NEUTRAL_SYNTHESIZER_SYSTEM,
             model,
-            temperature: synthesizer.tier_config.temperature,
             parts: [{ type: "text", text: critiquePrompt }],
             timeoutMs: getConfig().synthesisTimeoutMs,
           });
