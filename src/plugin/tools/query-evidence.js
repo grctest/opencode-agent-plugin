@@ -5,7 +5,7 @@ import { QUERY_MODES, QUERY_MODE_NAMES, researchTools } from "../../prompts/quer
 import { extractAgentResponse, mapToolResults } from "../../shared.js";
 import { degrade } from "../../utils/degrade.js";
 import { Logger } from "../../logger.js";
-import { resolveCaller, resolveModel, buildBatchId } from "./shared.js";
+import { resolveCaller, resolveModel, buildBatchId, findExistingQueryResponse } from "./shared.js";
 const logger = new Logger();
 
 function normalizeQueries(args) {
@@ -67,36 +67,56 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
           const allParticipants = stateManager.getParticipants();
           if (!Array.isArray(allParticipants)) return { output: JSON.stringify({ error: "loom_query: participant list unavailable" }), metadata: { error: true }, title: "loom_query error" };
 
-          // Resolve each query to an eligible target participant
+          let caller = resolveCaller(allParticipants, stateManager.getWeave?.() ?? [], context.sessionID);
+          const activeCountQ = (() => { try { return stateManager.getActiveParticipants().length; } catch { return allParticipants.filter(p=>p.status!=="failed"&&p.status!=="passed").length; }})();
+          if (activeCountQ <= 1) return { output: JSON.stringify({ error: "loom_query unavailable with 1 active participant — use loom_vector_search or loom_summon instead", activeCount: activeCountQ }), metadata: { error: true }, title: "loom_query error" };
+          // Resolve each query to an eligible target participant (exclude self)
           const resolved = queries
             .map((q) => ({ ...q, participant: allParticipants.find((p) => p?.config?.id === q.targetId) }))
-            .filter((q) => q.participant && q.participant.status !== "failed" && q.participant.status !== "passed" && q.participant.status !== "muted");
-          const skipped = queries.filter((q) => !resolved.some((r) => r.targetId === q.targetId)).map((q) => ({ target: q.targetId, error: "ineligible target (unknown/self/failed/passed/muted)" }));
-
-          let caller = resolveCaller(allParticipants, stateManager.getWeave?.() ?? [], context.sessionID);
+            .filter((q) => q.participant && q.participant.status !== "failed" && q.participant.status !== "passed" && q.targetId !== caller?.config?.id);
+          const skipped = queries.filter((q) => !resolved.some((r) => r.targetId === q.targetId)).map((q) => ({ target: q.targetId, error: "ineligible target (unknown/self/failed/passed)" }));
           const sourceName = caller?.config?.name ?? "Unknown";
 
           const results = [...skipped];
-          const fallbackForCheck = buildBatchId(stateManager.getState?.()?.id ?? meetingInfo.meetingId, stateManager.getCurrentRound?.() ?? 0, caller?.config?.id);
+          const currentRound = stateManager.getCurrentRound?.() ?? 0;
+          const meetingIdForBatch = stateManager.getState?.()?.id ?? meetingInfo.meetingId;
+          const fallbackForCheck = buildBatchId(meetingIdForBatch, currentRound, caller?.config?.id);
           const batchIdForCheck = (() => {
             try {
               const cfb = resolveCaller(allParticipants, stateManager.getWeave?.() ?? [], context.sessionID) || caller;
               return cfb?.currentBatchId ?? fallbackForCheck;
             } catch { return fallbackForCheck; }
           })();
+          // All plausible batchIds across retry drift (caller resolution may change after status reset)
+          const allBatchCandidates = (() => {
+            const s = new Set();
+            if (batchIdForCheck) s.add(batchIdForCheck);
+            if (fallbackForCheck) s.add(fallbackForCheck);
+            for (const p of allParticipants) if (p?.currentBatchId) s.add(p.currentBatchId);
+            // deterministic fallback for every participant (covers mis-identified caller)
+            for (const p of allParticipants) s.add(buildBatchId(meetingIdForBatch, currentRound, p?.config?.id));
+            return [...s];
+          })();
            for (const { participant: target, question, mode } of resolved) {
             if (context.abort?.aborted || context.signal?.aborted) break;
             const meta = QUERY_MODES[mode];
-            // Idempotent: reuse existing response for this batch+target+question (retry guard)
+            // Idempotent retry guard: reuse existing response instead of re-prompting peer.
+            // Uses normalized question + broad fallback (batch drift / status reset) per shared helper.
             try {
-              if (batchIdForCheck) {
-                const weave = stateManager.getWeave ? stateManager.getWeave() : [];
-                const existing = weave.find(c => c.batch_id === batchIdForCheck && c.participant_id === target.config.id && c.type === meta.contributionType && c.prompt_context?.question === question);
-                if (existing) {
-                  const raw = (existing.content ?? "").replace(/^\[.+?\]\s*/m, "").trim();
-                  results.push({ target: target.config.id, name: target.config.name, mode, content: raw.slice(0,800), contributionId: existing.id });
-                  continue;
-                }
+              const weave = stateManager.getWeave ? stateManager.getWeave() : [];
+              const existing = findExistingQueryResponse(weave, {
+                batchId: batchIdForCheck,
+                fallbackBatchIds: allBatchCandidates,
+                targetId: target.config.id,
+                contributionType: meta.contributionType,
+                question,
+                sourceId: caller?.config?.id ?? null,
+                round: currentRound,
+              });
+              if (existing) {
+                const raw = (existing.content ?? "").replace(/^\[.+?\]\s*/m, "").trim();
+                results.push({ target: target.config.id, name: target.config.name, mode, content: raw.slice(0,800), contributionId: existing.id, reused: true });
+                continue;
               }
             } catch {}
             try {

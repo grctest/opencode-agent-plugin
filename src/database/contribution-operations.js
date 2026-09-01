@@ -26,10 +26,25 @@ export function addContribution(db, meetingId, contribution, getRoundFn) {
 
 function safeJsonParse(val, fallback = null) {
   if (!val) return fallback;
-  try { return JSON.parse(val); } catch (err) {
+  if (typeof val !== "string") return val;
+  try {
+    const first = JSON.parse(val);
+    if (typeof first === "string" && first.length > 0 && (first[0] === "[" || first[0] === "{" || first[0] === '"')) {
+      try { return JSON.parse(first); } catch { return first; }
+    }
+    return first;
+  } catch (err) {
     dbLogger.warn("json_parse_failed", `Failed to parse JSON field — returning ${fallback === null ? "null" : "fallback"}`, { message: err.message });
     return fallback;
   }
+}
+
+function normalizeToolCalls(val, fallback = null) {
+  const parsed = safeJsonParse(val, fallback);
+  if (Array.isArray(parsed)) return parsed;
+  if (parsed == null) return fallback;
+  if (typeof parsed === "object") return [parsed];
+  return fallback;
 }
 
 export function getContributions(db, meetingId) {
@@ -46,7 +61,7 @@ export function getContributions(db, meetingId) {
     type: r.type,
     targets_which: r.target_which != null ? Number(r.target_which) : null,
     batch_id: r.batch_id ?? null,
-    tool_calls: safeJsonParse(r.tool_calls, null),
+    tool_calls: normalizeToolCalls(r.tool_calls, null),
     prompt_context: safeJsonParse(r.prompt_context, null),
     created_at: r.created_at,
   }));
@@ -66,7 +81,7 @@ export function getRecentContributions(db, meetingId, count) {
     type: r.type,
     targets_which: r.target_which != null ? Number(r.target_which) : null,
     batch_id: r.batch_id ?? null,
-    tool_calls: safeJsonParse(r.tool_calls, null),
+    tool_calls: normalizeToolCalls(r.tool_calls, null),
     prompt_context: safeJsonParse(r.prompt_context, null),
     created_at: r.created_at,
   }));

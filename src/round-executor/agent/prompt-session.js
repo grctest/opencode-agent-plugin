@@ -17,6 +17,11 @@ export async function promptChildSession(participant) {
   try {
 
   const model = this._getParticipantModel(participant);
+  // Ensure per-meeting agentTools override (plan/build) is visible to prompts that call getConfig()
+  try {
+    const eff = this._options?.agentTools ?? this._tools;
+    if (eff) globalThis.__loomAgentToolsOverride = eff;
+  } catch {}
   const config = getConfig();
   const fallbackConfig = config.modelFallback;
 
@@ -41,9 +46,9 @@ export async function promptChildSession(participant) {
   let queryText = recentContribs.length > 0
     ? recentContribs.map((c) => c.content).join("\n")
     : this._stateManager.getQuestion();
-  if (queryText.length > 4000) queryText = queryText.slice(0, 4000);
+  if (queryText.length > 10000) queryText = queryText.slice(0, 10000);
   const ragChunks = this._vectorIndex
-    ? await this._vectorIndex.retrieveRelevant(queryText, 10, currentRound)
+    ? await this._vectorIndex.retrieveRelevant(queryText, 15, currentRound)
     : [];
   const ragContext = ragChunks.length > 0
     ? ragChunks.map((c) => `[Round ${c.round}] ${c.content}`).join("\n\n")
@@ -51,9 +56,10 @@ export async function promptChildSession(participant) {
 
   const recentForPrompt = this._stateManager.getWeave().filter(
     (c) => c.round != null && c.round >= currentRound - 1 && c.type !== "vote_response" && c.type !== "reflection",
-  ).slice(-12);
+  ).slice(-20);
 
-  const systemPrompt = buildAgentSystemPrompt(participant);
+  const activeCountPS = (() => { try { return this._stateManager.getActiveParticipants().length; } catch { return undefined; }})();
+  const systemPrompt = buildAgentSystemPrompt(participant, { activeCount: activeCountPS });
   let steeringHint = "";
   let consumedHint = "";
   // Atomic consume — hintLocked flag prevents double-consume if two promptChildSessions race
@@ -124,6 +130,146 @@ export async function promptChildSession(participant) {
     });
   };
 
+  const collectExistingLoomResults = () => {
+    try {
+      const weave = this._stateManager.getWeave ? this._stateManager.getWeave() : [];
+      const candidates = (() => {
+        const s = new Set();
+        if (participant.currentBatchId) s.add(participant.currentBatchId);
+        const mid = (() => { try { return this._stateManager.getMeetingId?.() ?? this._stateManager.getState?.()?.id ?? null; } catch { return null; }})();
+        const rnd = currentRound;
+        if (mid) {
+          s.add(`inline-${mid}-${rnd}-${participant.config.id}`);
+          const all = this._stateManager.getParticipants?.() ?? [];
+          for (const p of all) if (p?.currentBatchId) s.add(p.currentBatchId);
+          for (const p of all) s.add(`inline-${mid}-${rnd}-${p?.config?.id}`);
+        }
+        return s;
+      })();
+      const existing = weave.filter((c) => {
+        if (c.round !== currentRound) return false;
+        const isBatch = candidates.has(c.batch_id) || candidates.has(c.prompt_context?.source_batch_id);
+        // broader fallback: same round + source_participant_id === this participant
+        const isSourceMatch = c.prompt_context?.source_participant_id === participant.config.id;
+        const isType = ["query_response","evidence_response","perspective_response","critique_response","vote_response","summoned_response"].includes(c.type);
+        return isType && (isBatch || isSourceMatch);
+      });
+      return existing;
+    } catch { return []; }
+  };
+
+  const trySynthesisFromExisting = async (modelForSynthesis, remainingTimeout) => {
+  try {
+    const existing = collectExistingLoomResults();
+    if (existing.length === 0) return null;
+    // Build loomOutputs text from existing contributions for synthesis (mirrors execute-turn synthesis)
+    const loomOutputsRaw = existing.map((c) => {
+      const src = c.prompt_context?.source_participant_id ? `batch ${c.prompt_context.source_batch_id ?? c.batch_id}` : `batch ${c.batch_id}`;
+      const toolHint = c.type === "vote_response" ? "loom_vote" : c.type === "summoned_response" ? "loom_summon" : "loom_query";
+      const content = (c.content ?? "").slice(0, 800);
+      return `Tool ${toolHint} (${c.id}) via ${src} returned:\n${content}`;
+    }).join("\n\n");
+    if (!loomOutputsRaw.trim()) return null;
+    // Truncate similar to execute-turn (12k)
+    const loomOutputs = loomOutputsRaw.slice(0, 12000);
+    const synthesisInstruction = `Loom tool results RECOVERED from earlier attempt (reused, not re-executed — ${existing.length} peer contribution(s) already persisted for batch ${participant.currentBatchId}):\n${loomOutputs}\n\nNow synthesize your final contribution incorporating these responses. Cite [#id] when referencing peer answers. Do not re-call loom_query/loom_vote/loom_summon — you have the results. Stay in character and follow OUTPUT CONTRACT.`;
+    const activeCountExec = (() => { try { return this._stateManager.getActiveParticipants().length; } catch { return undefined; }})();
+    const synthesisToolsMap = buildToolsMapWithoutLoom(config, { activeCount: activeCountExec });
+    // Always create a fresh ephemeral session for recovery — reusing the round-scoped
+    // session risks "session busy" if the timed-out prompt is still draining server-side.
+    let ephemeralSessionId;
+    try { ephemeralSessionId = await this._options.createEphemeralSession(participant); this._sessionManager.registerSessionMeeting(ephemeralSessionId, this._stateManager.getMeetingId()); } catch { return null; }
+    const synthRemaining = (() => {
+      let rem = remainingTimeout;
+      if (this._deadline) {
+        const dl = this._deadline - Date.now();
+        if (dl < 6000) return 0;
+        rem = Math.min(remainingTimeout, dl - 1000);
+      }
+      return rem;
+    })();
+    if (synthRemaining <= 0) {
+      if (ephemeralSessionId) { try { await this._options.deleteEphemeralSession(ephemeralSessionId); } catch {} try { this._sessionManager.unregisterSession(ephemeralSessionId); } catch {} }
+      return null;
+    }
+    this._logger.info("synthesis_recovery", `Attempting synthesis recovery for ${participant.config.name} with ${existing.length} existing loom result(s)`, { batchId: participant.currentBatchId, existingCount: existing.length, remainingMs: synthRemaining });
+    let result2;
+    try {
+      result2 = await this._sessionManager.getContract().prompt({
+        sessionId: ephemeralSessionId,
+        system: promptContext.system_prompt,
+        model: modelForSynthesis,
+        temperature: participant.tier_config.temperature,
+        parts: [
+          { type: "text", text: promptContext.user_prompt },
+          { type: "text", text: synthesisInstruction },
+        ],
+        tools: synthesisToolsMap,
+        toolChoice: Object.keys(synthesisToolsMap).length > 0 ? "auto" : undefined,
+        timeoutMs: synthRemaining,
+      });
+    } finally {
+      if (ephemeralSessionId) {
+        try { await this._options.deleteEphemeralSession(ephemeralSessionId); } catch {}
+        try { this._sessionManager.unregisterSession(ephemeralSessionId); } catch {}
+      }
+    }
+    if (!result2.ok) {
+        this._logger.warn("synthesis_recovery_failed", `Synthesis recovery prompt failed for ${participant.config.name}: ${result2.error?.message ?? "unknown"}`);
+        return null;
+      }
+      // Reuse already-imported helpers (avoid dynamic import overhead in recovery path)
+      const ear = extractAgentResponse;
+      const mtr = mapToolResults;
+      const gpc = getPriorityCap;
+      const sanitize = sanitizeAgentOutput;
+      const parseResp = parseAgentResponse;
+      const { text: agentText2, toolResults: toolResults2 } = ear(result2.data);
+      if (!agentText2 || agentText2.trim().length < 10) {
+        this._logger.warn("synthesis_recovery_empty", `Synthesis recovery for ${participant.config.name} returned empty`);
+        return null;
+      }
+      // Map existing loom contributions as tool_calls for audit, plus any synthesis tools
+      const existingToolCalls = existing.map((c) => ({
+        tool: c.type === "vote_response" ? "loom_vote" : c.type === "summoned_response" ? "loom_summon" : "loom_query",
+        callID: `reused-${c.id}`,
+        status: "completed",
+        output: JSON.stringify({ reused: true, contributionId: c.id, type: c.type, content: (c.content ?? "").slice(0,500) }),
+        title: `reused:${c.type}:${c.id}`,
+        metadata: { reused: true, inline: true },
+      }));
+      const effective2 = mtr(toolResults2 ?? []);
+      const safeContent = sanitize(agentText2);
+      let response = parseResp(participant.config.id, safeContent, participant.config.tier);
+      if (!response) {
+        response = { participant_id: participant.config.id, content: safeContent.slice(0,5000) || "[No content after sanitization]", type: "contribution", request_next: null, query: null, evidence: null, summon: null, vote: null };
+      }
+      response.tool_calls = [...existingToolCalls, ...(effective2 ?? [])];
+      // Extract loom_request_next if present in synthesis tool results
+      try {
+        for (const t of response.tool_calls) {
+          if (t.tool === "loom_request_next" && t.status !== "error") {
+            const inp = typeof t.input === "object" ? t.input : (t.input ? JSON.parse(t.input) : {});
+            const priority = typeof inp.priority === "number" ? inp.priority : parseInt(inp.priority, 10);
+            const reason = typeof inp.reason === "string" ? inp.reason : "";
+            if (Number.isFinite(priority) && reason.trim().length > 0) {
+              const cap = gpc(participant.config.tier);
+              response.request_next = { priority: Math.min(10, Math.max(1, priority), cap), reason: reason.slice(0,200) };
+              break;
+            }
+          }
+        }
+      } catch {}
+      response.prompt_context = promptContext;
+      this._recordModelSuccess(modelForSynthesis);
+      this._options.onAgentComplete?.(participant.config.id, response.content);
+      return response;
+  } catch (e) {
+      this._logger.warn("synthesis_recovery_error", `Synthesis recovery error for ${participant.config.name}: ${e.message}`, extractErrorInfo(e));
+      return null;
+  }
+  };
+
   let succeeded = false;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
@@ -136,7 +282,41 @@ export async function promptChildSession(participant) {
       lastError.value = err;
       const info = extractErrorInfo(err);
       if (isRetryableError(err)) this._recordModelFailure(activeModel);
-      if (attempt > 0 || err?.message === "Empty agent response") warnPossibleSideEffects(err);
+      // Always warn if side effects may exist (not just attempt>0) — check weave
+      const hasExisting = collectExistingLoomResults().length > 0;
+      if (attempt > 0 || err?.message === "Empty agent response" || hasExisting) warnPossibleSideEffects(err);
+
+      // Session lifecycle errors: the round-scoped session is gone, retrying it is futile
+      if (err?.message && /session not found/i.test(err.message)) {
+        this._logger.warn("session_not_found_skip", `${participant.config.name} — session not found, skipping remaining retries, trying fallback`, info);
+        if (this._roundSessionIds?.has(participant.config.id)) {
+          const sid = this._roundSessionIds.get(participant.config.id);
+          try { this._sessionManager.unregisterSession(sid); } catch {}
+          this._roundSessionIds.delete(participant.config.id);
+        }
+        break;
+      }
+
+      // Recovery: if we already have loom results for this batch, synthesize from them instead of re-executing tools
+      if (hasExisting && attempt < maxRetries) {
+        const remainingForRecovery = (() => {
+          if (this._deadline) {
+            const rem = this._deadline - Date.now();
+            return Math.max(5000, Math.min(timeoutMs, rem - 1000));
+          }
+          return timeoutMs;
+        })();
+        const recovered = await trySynthesisFromExisting(activeModel, remainingForRecovery);
+        if (recovered) {
+          succeeded = true;
+          localSucceeded = true;
+          if (consumedHint) consumedHint = "";
+          this._logger.info("synthesis_recovery_success", `${participant.config.name} recovered via synthesis from existing loom batch ${participant.currentBatchId}`);
+          return recovered;
+        }
+        // If recovery failed, fall through to normal retry with cached tool guards
+        this._logger.warn("synthesis_recovery_skipped", `${participant.config.name} — recovery failed, proceeding to normal retry (loom tools will return reused results)`);
+      }
 
       if (attempt < maxRetries) {
         let delay = Math.min(1000 * Math.pow(2, attempt) + Math.random() * 500, 8000);
@@ -189,8 +369,42 @@ export async function promptChildSession(participant) {
     } catch (err) {
       lastError.value = err;
       const info = extractErrorInfo(err);
+      // Don't trip breaker for session lifecycle errors
+      if (err?.message && /session not found/i.test(err.message)) {
+        this._logger.warn("session_not_found_fallback_skip", `${participant.config.name} — session not found on fallback, aborting`, info);
+        if (this._roundSessionIds?.has(participant.config.id)) {
+          const sid = this._roundSessionIds.get(participant.config.id);
+          try { this._sessionManager.unregisterSession(sid); } catch {}
+          this._roundSessionIds.delete(participant.config.id);
+        }
+        break;
+      }
       this._recordModelFailure(fallbackModel);
       warnPossibleSideEffects(err);
+
+      // Fallback recovery: reuse already-persisted loom batch if available
+      const hasExistingFallback = collectExistingLoomResults().length > 0;
+      if (hasExistingFallback && attempt + 1 < fallbackAttempts) {
+        const remainingForRecoveryFb = (() => {
+          if (this._deadline) {
+            const rem = this._deadline - Date.now();
+            return Math.max(5000, Math.min(timeoutMs, rem - 1000));
+          }
+          return timeoutMs;
+        })();
+        const recoveredFb = await trySynthesisFromExisting(fallbackModel, remainingForRecoveryFb);
+        if (recoveredFb) {
+          recoveredFb._fallback = {
+            from: this._modelKey(activeModel),
+            to: this._modelKey(fallbackModel),
+            error: lastError.value ? extractErrorInfo(lastError.value).message : "unknown",
+          };
+          localSucceeded = true;
+          if (consumedHint) consumedHint = "";
+          this._logger.info("synthesis_recovery_success_fallback", `${participant.config.name} recovered via fallback synthesis from existing loom batch ${participant.currentBatchId}`);
+          return recoveredFb;
+        }
+      }
 
       if (attempt + 1 < fallbackAttempts) {
         let delay = Math.min(1000 * Math.pow(2, attempt) + Math.random() * 500, 8000);

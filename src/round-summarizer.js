@@ -81,9 +81,9 @@ export async function summarizeRound(round, state, promptOrchestrator, getHighes
   // Adapt prompt based on whether we have substantive contributions
   const hasSubstantiveContent = formattedContributions.trim().length > 0;
 
-  // Collect evidence signals for richer summary — ordered by tool strength, max 4
+  // Collect evidence signals for richer summary — ordered by tool strength, max 6
   const evidenceContribs = round.contributions
-    .filter(c => c.type === "evidence_response" || c.type === "query_response" || (c.tool_calls && c.tool_calls.length > 0))
+    .filter(c => c.type === "evidence_response" || c.type === "query_response" || c.type === "critique_response" || (c.tool_calls && c.tool_calls.length > 0))
     .sort((a, b) => {
       const strengthScore = (c) => {
         const s = String(c.content).toLowerCase();
@@ -95,11 +95,14 @@ export async function summarizeRound(round, state, promptOrchestrator, getHighes
       return strengthScore(b) - strengthScore(a);
     });
   const evidenceHint = evidenceContribs.length > 0
-    ? `\n## Evidence / Tool Signals (do not invent — use only if cited)\n${evidenceContribs.slice(0, 4).map(c => `- [#${c.id}] ${c.participant_id}: ${c.content.slice(0, 180)}${c.tool_calls ? ` [tools: ${c.tool_calls.map(t=>t.tool).join(',')}]` : ""}`).join("\n")}`
+    ? `\n## Evidence / Tool Signals (do not invent — use only if cited)\n${evidenceContribs.slice(0, 6).map(c => `- [#${c.id}] ${c.participant_id}: ${c.content.slice(0, 350)}${c.tool_calls ? ` [tools: ${c.tool_calls.map(t=>t.tool).join(',')}]` : ""}`).join("\n")}`
     : "";
 
+  // Detect mode for summary shape
+  const isCodeRound = formattedContributions.includes("file=") || formattedContributions.includes("```") || (state.tags || []).some(t => /engineering|code|programming/i.test(t));
+
   const prompt = hasSubstantiveContent
-    ? `You are a concise deliberation clerk. Summarize round ${round.number || "?"} in 60-90 words — no preamble, phrase-style bullets. Prefer longer deliberation nuance over terse collapse. Preserve numbers verbatim — do not round or invent.
+    ? `You are a thorough deliberation clerk. Summarize round ${round.number || "?"} in 180-350 words — sentence style, human-readable first. Concise but thorough; preserve nuance, don't yap. Preserve numbers verbatim — do not round or invent.
 
 ## Question
 ${state.question || "(no question provided)"}
@@ -108,14 +111,15 @@ ${state.question || "(no question provided)"}
 ${formattedContributions}
 ${evidenceHint}
 
-## Output — exactly 4 bullets, each one line:
+## Output — 4-5 bullets, each 1-3 sentences (human-readable, then auditable):
 
-- **Established:** {1-2 decisions/proposals that gained support, with holder [#id] }
-- **Contested:** {what remains disputed and who holds each side — name holders [#id]}
-- **Evidence:** {any tool or vec-grounded evidence introduced this round, with Source or [#id]; or “None”}
-- **Open:** {unresolved questions or next decision needed}
+- **Established:** What gained support this round, with holder [#id] and why it matters (1-2 sentences)
+- **Contested:** What remains disputed — name holders and their distinct positions [#id]; map the spectrum, don’t collapse to “disagreement”
+- **Evidence:** Tool or vec-grounded evidence introduced (Source or [#id] with Strength: strong/weak/inconclusive); or “None — no new evidence this round” — never emit vec: / vec round traces, use State-of-Play or [#id]
+- **Open:** Unresolved questions and what would resolve them (missing evidence / decision needed)
+${isCodeRound ? `- **Code/Files:** Files touched or proposed (file=src/...), diffs status, and test/verification notes` : ""}
 
-Rules: cite [#id] when attributing. Keep Contested holders explicit. Evidence bullet must distinguish “None” from “weak/inconclusive”. Preserve numbers verbatim — do not round, estimate, or invent figures not in contributions.`
+Rules: cite [#id] once per bullet when attributing (grouped, not per clause). Keep Contested holders explicit. Evidence must distinguish “None” from “weak/inconclusive”. Never emit vec: / vec round traces — use [#id] or State-of-Play. Preserve numbers verbatim — do not round, estimate, or invent figures not in contributions. Concise but thorough.`
     : `Summarize this deliberation round. The round contained ${contribCount} contribution(s) but no substantive positions were staked.
 
 ## Question
@@ -127,9 +131,9 @@ Turn requests: ${round.turn_requests.length}
 ${evidenceHint}
 
 ## Instructions
-Provide 60-90 word summary with 4 bullets (Established / Contested / Evidence / Open) noting no substantive deliberation but mentioning contribution types and any turn requests.`;
+Provide 180-350 word summary with 4-5 bullets (Established / Contested / Evidence / Open / Code if applicable) noting no substantive deliberation but mentioning contribution types and any turn requests. Sentence style, human-readable. Preserve numbers verbatim.`;
 
-  const semanticSummary = await promptOrchestrator("You are a concise deliberation clerk. 60-90 words. No preamble. Use short phrases, not sentences. Preserve numbers verbatim — do not round or invent.", model, prompt, "summary");
+  const semanticSummary = await promptOrchestrator("You are a thorough deliberation clerk. 180-350 words. Sentence style, human-readable, concise but thorough. Preserve numbers verbatim — do not round or invent. Never emit vec: traces.", model, prompt, "summary");
 
   if (semanticSummary && semanticSummary.trim().length > 0) {
     return semanticSummary.trim();
@@ -138,8 +142,8 @@ Provide 60-90 word summary with 4 bullets (Established / Contested / Evidence / 
   // Degrade gracefully: keep the round auditable with a deterministic digest
   // rather than failing the meeting over a transient empty LLM response.
   const turnRequestCount = Array.isArray(round.turn_requests) ? round.turn_requests.length : 0;
-  const digestBullets = summaryContributions.slice(0, 8).map((c) =>
-    `- [#${c.id}] ${c.participant_id} [${String(c.type).toUpperCase()}]: ${truncate(c.content ?? "", 140)}`
+  const digestBullets = summaryContributions.slice(0, 10).map((c) =>
+    `- [#${c.id}] ${c.participant_id} [${String(c.type).toUpperCase()}]: ${truncate(c.content ?? "", 300)}`
   );
   if (digestBullets.length === 0) {
     digestBullets.push(`- No substantive positions staked (${contribCount} contribution(s): ${round.contributions.map((c) => c.type).join(", ")})`);

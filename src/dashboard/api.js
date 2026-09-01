@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { existsSync, readdirSync, statSync, readFileSync } from "node:fs";
 import { resolveLoomBaseDir } from "../paths.js";
-import { parseReflections, safeParseJson } from "../utils/db-parsing.js";
+import { parseReflections, safeParseJson, normalizeToolCalls } from "../utils/db-parsing.js";
 import * as queriesHelpers from "./api/queries.js";
 import * as exportsHelpers from "./api/exports.js";
 import { TUNING } from "../config/defaults.js";
@@ -296,7 +296,7 @@ export class DashboardApi {
       participant_reflection: participant?.reflection ?? "",
       round: contribution.round,
       type: contribution.type,
-      tool_calls: safeParseJson(contribution.tool_calls),
+      tool_calls: normalizeToolCalls(contribution.tool_calls, null),
       prompt_context: safeParseJson(contribution.prompt_context),
       created_at: contribution.created_at,
     };
@@ -310,6 +310,18 @@ export class DashboardApi {
       .prepare(`SELECT name, persona, agenda, tier, provider_id, model_id FROM participants WHERE id = ? AND meeting_id = ?`)
       .get(participantId, meetingId);
     return { meeting, participant };
+  }
+  getForumTopics(...args) {
+    return queriesHelpers.getForumTopics.apply(this, args);
+  }
+  getForumTopic(...args) {
+    return queriesHelpers.getForumTopic.apply(this, args);
+  }
+  getMaxForumTopicId() {
+    return queriesHelpers.getMaxForumTopicId.apply(this);
+  }
+  getMaxForumCommentId() {
+    return queriesHelpers.getMaxForumCommentId.apply(this);
   }
   exportMarkdown(...args) {
     return exportsHelpers.exportMarkdown.apply(this, args);

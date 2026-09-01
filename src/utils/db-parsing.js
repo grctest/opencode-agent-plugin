@@ -27,12 +27,39 @@ export function parseStats(raw) {
 
 /**
  * Safe JSON column parse — malformed rows must not 500 the endpoints that read them (audit 10 S4).
+ * Handles double-stringified columns (JSON.stringify(JSON.stringify(arr))) by re-parsing once.
+ * Also normalizes non-array fallback for tool_calls: if parsed value is not array-like, return fallback
+ * so callers can distinguish empty vs corrupted.
  */
 export function safeParseJson(value, fallback = null) {
   if (!value) return fallback;
+  // Already an object/array (e.g., from SSE JSON) — return as-is
+  if (typeof value !== "string") return value;
   try {
-    return JSON.parse(value);
+    const first = JSON.parse(value);
+    // Double-stringified: first parse yields a string that is itself JSON
+    if (typeof first === "string" && first.length > 0 && (first[0] === "[" || first[0] === "{" || first[0] === '"')) {
+      try {
+        return JSON.parse(first);
+      } catch {
+        return first;
+      }
+    }
+    return first;
   } catch {
     return fallback;
   }
+}
+
+/**
+ * Normalizes tool_calls column value to an array or fallback.
+ * Coerces stringified, double-stringified, or already-parsed forms.
+ */
+export function normalizeToolCalls(raw, fallback = null) {
+  const parsed = safeParseJson(raw, fallback);
+  if (Array.isArray(parsed)) return parsed;
+  if (parsed == null) return fallback;
+  // Single object stored without array wrapper
+  if (typeof parsed === "object") return [parsed];
+  return fallback;
 }

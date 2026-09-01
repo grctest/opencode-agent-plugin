@@ -948,8 +948,8 @@ If the draft is accurate, grounded, and complete, respond with exactly: [NO_CHAN
 
 - If the coordinator's synthesis *session* fails, `fallbackSynthesis()` returns a State-of-Play-based artifact (or, absent state of play, categorized proposals/dissent/questions).
 - If synthesis throws entirely, the orchestrator persists a **degraded artifact**: *"Synthesis could not be completed (message)"* with Confidence *Low (synthesis interrupted)*.
-- If **all participants failed** to contribute: *"No output could be generated — all participants failed to respond."*
-- If **all participants passed**: *"No output could be generated — all participants passed without contributing."*
+- If **no substantive contributions exist** (all passed or all failed with no prior output): *"No output could be generated — no substantive contributions were received."*
+- If **some participants failed** but contributions exist from earlier rounds: synthesis proceeds normally with a footnote: *"Deliberation ended early — N of M participants failed (completed X of Y rounds). Synthesis is based on available contributions only."*
 
 ---
 

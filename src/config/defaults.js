@@ -6,7 +6,7 @@ export const TUNING = {
   SKIP_PASSED_LOOKBACK: 10,
   SKIP_PASSED_WINDOW: 2,
   EXTENSION_EXTRA_ROUNDS_FALLBACK: 4,
-  MAX_CRITIQUE_RETRIES: 2,
+  MAX_CRITIQUE_RETRIES: 3,
   SYSTEM_PROMPT_CACHE_MAX: 50,
   EMBEDDING_CACHE_MAX: 512,
   LATENCY_SAMPLE_LIMIT: 100,
@@ -14,18 +14,18 @@ export const TUNING = {
   MAX_DB_CACHE_SIZE: 10,
   VOTE_TIMEOUT_MS: 60_000,
   SUMMON_TIMEOUT_MS: 90_000,
-  CONTENT_TRUNCATION: { question: 2000, result: 800, content: 1200, summary: 200 },
-  TRANSCRIPT_BUDGET: { critiqueChunk: 5500, fullLimit: 8000 },
-  STATE_OF_PLAY: { bucketCap: 5, truncation: 300, reflectionTruncation: 280 },
-  FABRIC_CHUNK_MAX_TOKENS: 512,
-  VEC_SEARCH_TOPK: 10,
+  CONTENT_TRUNCATION: { question: 10000, result: 4000, content: 4000, summary: 800 },
+  TRANSCRIPT_BUDGET: { critiqueChunk: 8000, fullLimit: 24000 },
+  STATE_OF_PLAY: { bucketCap: 8, truncation: 500, reflectionTruncation: 400 },
+  FABRIC_CHUNK_MAX_TOKENS: 768,
+  VEC_SEARCH_TOPK: 15,
   CONTEXT_CHAR_PER_TOKEN: 4,
 };
 
 export const DEFAULT_CONFIG = {
-  agentTimeoutMs: 90000,
-  synthesisTimeoutMs: 120000,
-  defaultMaxRounds: 3,
+  agentTimeoutMs: 120000,
+  synthesisTimeoutMs: 180000,
+  defaultMaxRounds: 4,
   minRounds: 2,
   fastPathModel: "",
   embeddingModel: "Snowflake/snowflake-arctic-embed-xs",
@@ -54,13 +54,17 @@ export const DEFAULT_CONFIG = {
   },
   agentTools: {
     enabled: true,
+    // buildMode: when true, write/edit are allowed (detected from UI plan/build toggle)
+    buildMode: false,
     builtIn: {
       webfetch: true,
       websearch: true,
       read: true,
+      write: false,
+      edit: false,
       bash: {
         enabled: true,
-        allowlist: ["git", "ls", "wc", "head", "tail", "grep", "find"],
+        allowlist: ["git", "ls", "wc", "head", "tail", "grep", "find", "cat", "npm", "bun", "node"],
       },
       glob: true,
       grep: true,
@@ -73,6 +77,7 @@ export const DEFAULT_CONFIG = {
       loom_summon: true,
       loom_request_next: true,
       loom_pass: true,
+      loom_forum: true,
     },
     sameTurnSynthesis: true,
     reflection: {
@@ -80,8 +85,8 @@ export const DEFAULT_CONFIG = {
       glob: false,
       grep: false,
     },
-    maxToolCallsPerTurn: 8,
-    maxToolOutputTokens: 6000,
+    maxToolCallsPerTurn: 12,
+    maxToolOutputTokens: 12000,
   },
 };
 
@@ -126,6 +131,7 @@ export const NESTED_SCHEMA = {
   'agentTools.loom.loom_summon': { type: 'boolean' },
   'agentTools.loom.loom_request_next': { type: 'boolean' },
   'agentTools.loom.loom_pass': { type: 'boolean' },
+  'agentTools.loom.loom_forum': { type: 'boolean' },
   'agentTools.sameTurnSynthesis': { type: 'boolean' },
   'agentTools.reflection.bash': { type: 'boolean' },
   'agentTools.reflection.glob': { type: 'boolean' },

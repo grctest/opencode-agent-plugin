@@ -70,8 +70,8 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
   try {
     this._callStats.agent_prompts++;
     const llmStart = Date.now();
-
-    const toolsMap = buildToolsMap(config);
+    const activeCountExec = (() => { try { return this._stateManager.getActiveParticipants().length; } catch { return undefined; }})();
+    const toolsMap = buildToolsMap(config, { activeCount: activeCountExec });
     const agentToolsConfig = config.agentTools;
 
     const offeredTools = Object.keys(toolsMap);
@@ -119,13 +119,29 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
       // before extraction". If partTypes contains tool-like types here, extraction
       // is at fault; if only text/reasoning, the provider saw no/ignored tools.
       const partTypes = (result1.data?.parts ?? []).map(p => p.type);
-      this._logger.info("tool_results_none", `${participant.config.name} made 0 tool calls (LLM responded with text only)`, {
-        participant: participant.config.id,
-        round: currentRound,
-        offeredTools: Object.keys(toolsMap),
-        partTypeCounts: partTypes.reduce((acc, t) => { acc[t] = (acc[t] ?? 0) + 1; return acc; }, {}),
-        model,
+      const suspiciousParts = (result1.data?.parts ?? []).filter(p => {
+        const t = p.type;
+        return t && !["text","reasoning","step-start","step-finish","snapshot","agent","retry","subtask","file","patch","tool"].includes(t) && (p.tool || p.state || p.input || p.callID || p.toolCallId);
       });
+      if (suspiciousParts.length > 0) {
+        this._logger.warn("tool_extraction_mismatch", `${participant.config.name} offered ${Object.keys(toolsMap).length} tools but extraction yielded 0 — ${suspiciousParts.length} suspicious part(s) with tool shape but non-tool type`, {
+          participant: participant.config.id,
+          round: currentRound,
+          offeredTools: Object.keys(toolsMap),
+          partTypeCounts: partTypes.reduce((acc, t) => { acc[t] = (acc[t] ?? 0) + 1; return acc; }, {}),
+          suspiciousTypes: [...new Set(suspiciousParts.map(p=>p.type))],
+          suspiciousSample: suspiciousParts.slice(0,2).map(p=>({ type: p.type, tool: p.tool ?? p.name, hasState: !!p.state, hasInput: !!p.input })),
+          model,
+        });
+      } else {
+        this._logger.info("tool_results_none", `${participant.config.name} made 0 tool calls (LLM responded with text only)`, {
+          participant: participant.config.id,
+          round: currentRound,
+          offeredTools: Object.keys(toolsMap),
+          partTypeCounts: partTypes.reduce((acc, t) => { acc[t] = (acc[t] ?? 0) + 1; return acc; }, {}),
+          model,
+        });
+      }
     }
 
     let effective1 = truncateToolResults(toolResults1, agentToolsConfig);
@@ -165,7 +181,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
           this._logger.warn("synthesis_deadline_skipped", `Skipping same-turn synthesis for ${participant.config.name} — deadline ${remaining}ms remaining`);
         } else {
           remainingMs = Math.min(timeoutMs, remaining - 1000);
-          const synthesisToolsMap = buildToolsMapWithoutLoom(config);
+          const synthesisToolsMap = buildToolsMapWithoutLoom(config, { activeCount: activeCountExec });
           const loomOutputs = cappedLoomCalls.map(tc => {
             const out = typeof tc.output === "string" ? tc.output : JSON.stringify(tc.output);
             return `Tool ${tc.tool} (${tc.callID}) returned:\n${out.slice(0, 3500)}`;

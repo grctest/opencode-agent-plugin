@@ -6,16 +6,10 @@ import { getHighestTierModel } from "../services/model-service.js";
 
 export async function _synthesize() {
     const participants = this._stateManager.getParticipants();
-    const active = participants.filter((p) => p.status !== "failed").length;
-    const allFailed = active === 0;
-    if (allFailed) {
-      const output = `# Deliberation Output\n\n## Decision\nNo output could be generated — all participants failed to respond.\n\n## Reasoning\nAll ${participants.length} participants encountered errors during the deliberation.\n\n## Action Items\n- Check model connectivity and retry\n- Verify provider authentication\n\n## Confidence\nLow (no contributions received)`;
-      this._saveArtifact({ content: output, format: "markdown", decisions: [], action_items: [], dissent: [], open_questions: [], confidence: "low" });
-      await this._sessionManager.postProgress("⚠️ All participants failed — no synthesis possible.", "error");
-      this._logger.error("all_failed", "All participants failed — no synthesis possible");
-      await this._persistState();
-      return output;
-    }
+    const currentRound = this._stateManager.getCurrentRound();
+    const maxRounds = this._stateManager.getMaxRounds();
+    const failed = participants.filter((p) => p.status === "failed").length;
+    const partialDeliberation = failed > 0;
 
     const weave = this._stateManager.getWeave();
     const substantiveForSynthesis = weave.filter((c) => {
@@ -25,10 +19,13 @@ export async function _synthesize() {
       return txt !== "";
     });
     if (substantiveForSynthesis.length === 0) {
-      const output = `# Deliberation Output\n\n## Decision\nNo output could be generated — all participants passed without contributing.\n\n## Reasoning\nAll ${participants.length} participants chose to pass. This may indicate the question was unclear or participants had nothing to add.\n\n## Action Items\n- Rephrase the question with more specific context\n- Add participants with more targeted expertise\n\n## Confidence\nLow (no contributions received)`;
+      const reason = failed > 0
+        ? `All ${participants.length} participants encountered errors during the deliberation.`
+        : `All ${participants.length} participants chose to pass. This may indicate the question was unclear or participants had nothing to add.`;
+      const output = `# Deliberation Output\n\n## Decision\nNo output could be generated — no substantive contributions were received.\n\n## Reasoning\n${reason}\n\n## Action Items\n- Check model connectivity and retry\n- Rephrase the question with more specific context\n- Add participants with more targeted expertise\n\n## Confidence\nLow (no contributions received)`;
       this._saveArtifact({ content: output, format: "markdown", decisions: [], action_items: [], dissent: [], open_questions: [], confidence: "low" });
-      await this._sessionManager.postProgress("ℹ️ All participants passed — no contributions to synthesize.");
-      this._logger.warn("all_passed", "All participants passed — no contributions to synthesize");
+      await this._sessionManager.postProgress(failed > 0 ? "⚠️ All participants failed — no contributions to synthesize." : "ℹ️ All participants passed — no contributions to synthesize.");
+      this._logger.warn("no_contributions", `No contributions to synthesize (failed: ${failed}, passed: ${participants.length - failed})`);
       await this._persistState();
       return output;
     }
@@ -73,9 +70,21 @@ export async function _synthesize() {
 
     this._callStats.synthesis++;
     await this._persistState();
-    this._saveArtifact(result.artifact ?? { content: result.output, format: "markdown", decisions: [], action_items: [], dissent: [], open_questions: [], confidence: null });
+
+    // Append partial-deliberation footnote if agents failed before completing all rounds
+    let finalOutput = result.output;
+    if (partialDeliberation) {
+      const footnote = `\n\n---\n**Note:** Deliberation ended early — ${failed} of ${participants.length} participants failed (completed ${currentRound - 1} of ${maxRounds} rounds). Synthesis is based on available contributions only.`;
+      finalOutput += footnote;
+      // Also patch the artifact content
+      if (result.artifact) {
+        result.artifact.content = (result.artifact.content || result.output) + footnote;
+      }
+    }
+
+    this._saveArtifact(result.artifact ?? { content: finalOutput, format: "markdown", decisions: [], action_items: [], dissent: [], open_questions: [], confidence: null });
     this._saveMeetingMetrics();
-    return result.output;
+    return finalOutput;
   }
 
 export function _computeQualityTelemetry() {

@@ -52,6 +52,10 @@ export function isRetryableError(err) {
   if (err.name === "AbortError") {
     return false;
   }
+  // Session lifecycle errors are not model errors — retrying the same deleted session is futile
+  if (err.name === "NotFoundError" || (err.message && /session not found/i.test(err.message))) {
+    return false;
+  }
   // Fetch network: status 0 + ECONNRESET/ETIMEDOUT is retryable; prose containing "timeout" is not
   if (err.status === 0 && (err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT')) {
     return true;
@@ -213,5 +217,9 @@ export class CircuitBreaker {
    */
   getHealthyModels(availableModels) {
     return availableModels.filter((m) => this.isHealthy(m));
+  }
+
+  clear() {
+    this.#states.clear();
   }
 }

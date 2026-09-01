@@ -102,13 +102,15 @@ export function getConfigInstance(directory) {
 
 export function resolveBuiltInTools(agentToolsConfig) {
   if (!agentToolsConfig?.enabled) return {
-    webfetch: false, websearch: false, read: false, bash: false, glob: false, grep: false, lsp: false,
+    webfetch: false, websearch: false, read: false, write: false, edit: false, bash: false, glob: false, grep: false, lsp: false,
   };
   const builtIn = agentToolsConfig.builtIn ?? {};
   return {
     webfetch: !!builtIn.webfetch || !!builtIn.web_fetch,
     websearch: !!builtIn.websearch || !!builtIn.web_search,
     read: !!builtIn.read,
+    write: !!builtIn.write,
+    edit: !!builtIn.edit,
     bash: builtIn.bash === true || !!(builtIn.bash && builtIn.bash.enabled),
     glob: !!builtIn.glob,
     grep: !!builtIn.grep,
@@ -118,7 +120,7 @@ export function resolveBuiltInTools(agentToolsConfig) {
 
 export function resolveLoomTools(agentToolsConfig) {
   if (!agentToolsConfig?.enabled) return {
-    loom_vector_search: false, loom_query: false, loom_vote: false, loom_summon: false, loom_request_next: false, loom_pass: false,
+    loom_vector_search: false, loom_query: false, loom_vote: false, loom_summon: false, loom_request_next: false, loom_pass: false, loom_forum: false,
   };
   const loom = agentToolsConfig.loom ?? {};
   return {
@@ -128,6 +130,7 @@ export function resolveLoomTools(agentToolsConfig) {
     loom_summon: !!loom.loom_summon,
     loom_request_next: !!loom.loom_request_next,
     loom_pass: !!loom.loom_pass,
+    loom_forum: !!loom.loom_forum,
   };
 }
 

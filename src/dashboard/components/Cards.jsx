@@ -9,7 +9,7 @@ import { Avatar, AvatarFallback } from "./ui/avatar.tsx";
 import { Spinner } from "./ui/spinner.tsx";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./ui/dialog.tsx";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip.tsx";
-import { ScrollArea } from "./ui/scroll-area.tsx";
+
 import { ChevronRightIcon } from "lucide-react";
 
 marked.setOptions({ breaks: true, gfm: true });
@@ -79,9 +79,9 @@ export const ContentDialog = memo(({ open, onClose, title, className, children }
             <DialogDescription className="sr-only">{title}</DialogDescription>
           </DialogHeader>
         ) : null}
-        <ScrollArea className="flex-1 min-h-0">
+        <div className="flex-1 min-h-0 overflow-y-auto">
           <div className="px-6 py-4">{children}</div>
-        </ScrollArea>
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -147,7 +147,12 @@ export const ContributionItem = memo(({ contribution, participantName, onDialogO
   };
 
   const loomCalls = useMemo(() => {
-    const tcs = contribution.tool_calls ?? [];
+    let tcs = contribution.tool_calls;
+    if (typeof tcs === "string") {
+      try { const p = JSON.parse(tcs); tcs = Array.isArray(p) ? p : (p && typeof p === "object" ? [p] : []); } catch { tcs = []; }
+      if (typeof tcs === "string") { try { const p2 = JSON.parse(tcs); tcs = Array.isArray(p2) ? p2 : []; } catch { tcs = []; } }
+    }
+    if (!Array.isArray(tcs)) tcs = [];
     return tcs.filter(tc => (tc.tool ?? tc.attempted_tool ?? "").startsWith("loom_"));
   }, [contribution.tool_calls]);
 

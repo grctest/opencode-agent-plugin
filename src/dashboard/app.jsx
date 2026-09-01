@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { Sidebar } from "./components/Sidebar.jsx";
 import { OverviewTab } from "./components/OverviewTab.jsx";
 import { TimelineTab } from "./components/TimelineTab.jsx";
+import { ForumTab } from "./components/ForumTab.jsx";
 import { OutputTab } from "./components/OutputTab.jsx";
 import { ErrorBoundary } from "./ErrorBoundary.jsx";
 import { usePersistedState, useMeetingApi, useSSEReset, useEmbeddingStatus } from "./hooks.js";
@@ -78,7 +79,13 @@ function useSSE(meetingId, onEvent) {
           }
           if (errRes.ok) {
             const eData = await errRes.json();
-            if (Array.isArray(eData)) for (const e of eData) onEventRef.current({ type: "agent_error", data: e, timestamp });
+            if (Array.isArray(eData)) {
+              if (eData.length === 0) {
+                onEventRef.current({ type: "agent_errors_cleared", meeting_id: meetingId, timestamp });
+              } else {
+                for (const e of eData) onEventRef.current({ type: "agent_error", data: e, timestamp });
+              }
+            }
           }
           if (omRes.ok) {
             const omData = await omRes.json();
@@ -267,7 +274,7 @@ export function App() {
   const meetings = useMeetingsList();
   const { resetKey } = useSSEReset(selectedMeeting);
   const embeddingStatus = useEmbeddingStatus();
-  const { state, participants, contributions, turnRequests, orchestratorMessages, roundSummaries, agentErrors, artifact, error } = useMeetingApi(selectedMeeting, resetKey);
+  const { state, participants, contributions, turnRequests, orchestratorMessages, roundSummaries, agentErrors, artifact, forumTopics, error } = useMeetingApi(selectedMeeting, resetKey);
   const handleSSEEvent = useCallback((data) => {
     if (data.type === "contributions") {
       const newContribs = data.data;
@@ -275,12 +282,14 @@ export function App() {
     } else if (data.type === "state") window.dispatchEvent(new CustomEvent("loom-state-update", { detail: data.data }));
     else if (data.type === "participants") window.dispatchEvent(new CustomEvent("loom-participants-update", { detail: data.data }));
     else if (data.type === "agent_error") window.dispatchEvent(new CustomEvent("loom-agent-error", { detail: data.data }));
+    else if (data.type === "agent_errors_cleared") window.dispatchEvent(new CustomEvent("loom-agent-errors-cleared", { detail: data }));
     else if (data.type === "artifact") window.dispatchEvent(new CustomEvent("loom-artifact", { detail: data.data }));
     else if (data.type === "turn_requests") {
       const newTrs = data.data;
       if (newTrs && newTrs.length > 0) window.dispatchEvent(new CustomEvent("loom-new-turn-requests", { detail: newTrs }));
     } else if (data.type === "orchestrator_messages") window.dispatchEvent(new CustomEvent("loom-orchestrator-messages", { detail: data.data }));
     else if (data.type === "round_summaries") window.dispatchEvent(new CustomEvent("loom-round-summaries", { detail: data.data }));
+    else if (data.type === "forum_update") window.dispatchEvent(new CustomEvent("loom-forum-update", { detail: data.data }));
   }, []);
   const { connected, reconnectAttempt } = useSSE(selectedMeeting, handleSSEEvent);
   useEffect(() => {
@@ -386,6 +395,7 @@ export function App() {
               <TabsList variant="line" className="w-full justify-start">
                 <TabsTrigger value="overview">Overview</TabsTrigger>
                 <TabsTrigger value="timeline">Timeline</TabsTrigger>
+                <TabsTrigger value="forum">Forum</TabsTrigger>
                 <TabsTrigger value="output">Output</TabsTrigger>
               </TabsList>
               <ErrorBoundary fallbackMessage="Failed to render extension banner">
@@ -429,6 +439,15 @@ export function App() {
                     maxRounds={state?.max_rounds}
                     orchestratorMessages={orchestratorMessages}
                     roundSummaries={roundSummaries}
+                    selectedMeeting={selectedMeeting}
+                  />
+                </ErrorBoundary>
+              </TabsContent>
+              <TabsContent value="forum" className="pt-4">
+                <ErrorBoundary fallbackMessage="Failed to render the forum tab">
+                  <ForumTab
+                    forumTopics={forumTopics}
+                    participantName={participantName}
                     selectedMeeting={selectedMeeting}
                   />
                 </ErrorBoundary>

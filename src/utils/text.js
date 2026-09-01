@@ -22,7 +22,51 @@ export function extractAgentResponse(data) {
   const toolResults = [];
   const reasoningParts = [];
 
+  // Helpers for robust tool extraction (covers alias part types)
+  function pushToolFromStateLike(part, toolName, callID, state, fallbackInput, fallbackOutput, fallbackError) {
+    const status = state?.status ?? part?.status ?? null;
+    if (!status) {
+      toolResults.push({
+        tool: toolName ?? part.tool ?? part.name ?? part.function?.name ?? "unknown_tool",
+        callID: callID ?? part.callID ?? part.id ?? part.toolCallId ?? `tool-${toolResults.length}`,
+        status: "pending",
+        title: state?.title ?? part.title ?? null,
+        input: state?.input ?? fallbackInput ?? part.input ?? part.args ?? part.arguments ?? {},
+        metadata: state?.metadata ?? part.metadata ?? null,
+        error: fallbackError ?? "ToolPart captured without terminal state (pending/unknown)",
+      });
+      return;
+    }
+    const callInput = state?.input ?? fallbackInput ?? part.input ?? part.args ?? part.arguments ?? {};
+    const result = {
+      tool: toolName ?? part.tool ?? part.name ?? part.function?.name ?? "unknown_tool",
+      callID: callID ?? part.callID ?? part.id ?? part.toolCallId ?? `tool-${toolResults.length}`,
+      status,
+      title: state?.title ?? part.title ?? null,
+      input: callInput,
+      metadata: state?.metadata ?? part.metadata ?? null,
+    };
+    if (result.tool === "invalid") {
+      if (typeof callInput?.tool === "string") result.attempted_tool = callInput.tool;
+      result.tool = result.attempted_tool ?? result.tool;
+      result.status = "error";
+      result.error = String(state?.output ?? fallbackOutput ?? callInput?.error ?? "Tool call rejected as invalid");
+    } else if (status === "error") {
+      result.error = state?.error ?? fallbackError ?? part.error ?? null;
+    } else if (status === "completed") {
+      result.output = state?.output ?? fallbackOutput ?? part.output ?? null;
+    }
+    // Preserve original tool name for loom_ auditing even if fallback used
+    if (!result.tool || result.tool === "unknown_tool") {
+      const rawTool = part.tool ?? part.name ?? part.function?.name ?? callInput?.tool;
+      if (typeof rawTool === "string" && rawTool) result.tool = rawTool;
+    }
+    toolResults.push(result);
+  }
+
   for (const part of data.parts) {
+    // Fast fallback: any part that structurally looks like a tool call but arrived with renamed type
+    const looksLikeTool = !!(part && typeof part === "object" && (part.tool || part.function || part.callID || part.toolCallId || part.state?.input !== undefined || part.input !== undefined) && (part.type === "tool" || part.type === "tool_use" || part.type === "tool-call" || part.type === "tool_call" || part.type === "function_call" || part.type === "function-call" || part.type === "dynamic-tool" || part.state));
     switch (part.type) {
       case "text":
         if (!part.ignored && part.text) {
@@ -38,52 +82,72 @@ export function extractAgentResponse(data) {
         }
         break;
 
-      case "tool":
+      case "tool": {
         // ToolPart — session.prompt() auto-executes tools server-side.
         // ToolParts are terminal-state here ("completed" or "error"); attempts that
         // hit an unknown/invalid tool are routed by opencode through the "invalid"
         // tool, whose original tool name + error are embedded in the call input.
-        {
-          const tool = part;
-          const status = tool.state?.status ?? null;
-          if (!status) {
-            // Audit-first: never silently drop a ToolPart. Record it as "pending"
-            // so the dashboard can show an attempted call even when the stream
-            // ended before terminal state.
-            toolResults.push({
-              tool: tool.tool,
-              callID: tool.callID,
-              status: "pending",
-              title: tool.state?.title,
-              input: tool.state?.input ?? {},
-              metadata: tool.state?.metadata ?? null,
-              error: "ToolPart captured without terminal state (pending/unknown)",
-            });
-            break;
-          }
-          const callInput = tool.state?.input ?? {};
-          const result = {
+        const tool = part;
+        const status = tool.state?.status ?? null;
+        if (!status) {
+          // Audit-first: never silently drop a ToolPart. Record it as "pending"
+          // so the dashboard can show an attempted call even when the stream
+          // ended before terminal state.
+          toolResults.push({
             tool: tool.tool,
             callID: tool.callID,
-            status,
+            status: "pending",
             title: tool.state?.title,
-            input: callInput,
+            input: tool.state?.input ?? {},
             metadata: tool.state?.metadata ?? null,
-          };
-          if (tool.tool === "invalid") {
-            // Remember what the agent actually tried so the timeline can show it.
-            if (typeof callInput?.tool === "string") result.attempted_tool = callInput.tool;
-            result.tool = result.attempted_tool ?? result.tool;
-            result.status = "error";
-            result.error = String(tool.state?.output ?? callInput?.error ?? "Tool call rejected as invalid");
-          } else if (status === "error") {
-            result.error = tool.state?.error;
-          } else if (status === "completed") {
-            result.output = tool.state?.output;
-          }
-          toolResults.push(result);
+            error: "ToolPart captured without terminal state (pending/unknown)",
+          });
+          break;
         }
+        const callInput = tool.state?.input ?? {};
+        const result = {
+          tool: tool.tool,
+          callID: tool.callID,
+          status,
+          title: tool.state?.title,
+          input: callInput,
+          metadata: tool.state?.metadata ?? null,
+        };
+        if (tool.tool === "invalid") {
+          // Remember what the agent actually tried so the timeline can show it.
+          if (typeof callInput?.tool === "string") result.attempted_tool = callInput.tool;
+          result.tool = result.attempted_tool ?? result.tool;
+          result.status = "error";
+          result.error = String(tool.state?.output ?? callInput?.error ?? "Tool call rejected as invalid");
+        } else if (status === "error") {
+          result.error = tool.state?.error;
+        } else if (status === "completed") {
+          result.output = tool.state?.output;
+        }
+        toolResults.push(result);
         break;
+      }
+
+      case "tool_use":
+      case "tool-call":
+      case "tool_call":
+      case "function_call":
+      case "function-call":
+      case "dynamic-tool":
+      case "tool_result":
+      case "toolResult": {
+        // Alias part types emitted by some providers/plugins — normalize to same shape
+        // Try state-style, then flat input/output, then args
+        const state = part.state ?? part.result ?? null;
+        const toolName = part.tool ?? part.name ?? part.function?.name ?? part.functionName ?? state?.tool ?? null;
+        const callID = part.callID ?? part.id ?? part.toolCallId ?? part.tool_use_id ?? null;
+        const input = state?.input ?? part.input ?? part.args ?? part.arguments ?? part.function?.arguments ?? null;
+        const output = state?.output ?? part.output ?? part.result ?? null;
+        const error = state?.error ?? part.error ?? null;
+        const status = state?.status ?? part.status ?? (error ? "error" : output != null ? "completed" : null);
+        pushToolFromStateLike(part, toolName, callID, { status, input, output, error, title: part.title ?? state?.title, metadata: part.metadata ?? state?.metadata }, input, output, error);
+        break;
+      }
 
       case "file":
         // FilePart — agent referenced or produced a file; surface as a tool so the
@@ -135,7 +199,19 @@ export function extractAgentResponse(data) {
         }
         break;
 
-      default:
+      default: {
+        // Fallback: if part structurally looks like a tool but type was renamed, capture it
+        if (looksLikeTool) {
+          const state = part.state ?? null;
+          const toolName = part.tool ?? part.name ?? part.function?.name ?? state?.tool ?? null;
+          const callID = part.callID ?? part.id ?? part.toolCallId ?? null;
+          const input = state?.input ?? part.input ?? part.args ?? part.arguments ?? null;
+          const output = state?.output ?? part.output ?? part.result ?? null;
+          const error = state?.error ?? part.error ?? null;
+          const status = state?.status ?? part.status ?? (error ? "error" : output != null ? "completed" : "pending");
+          pushToolFromStateLike(part, toolName, callID, { status, input, output, error, title: part.title, metadata: part.metadata }, input, output, error);
+          break;
+        }
         // Audit-first: unknown part types are logged once so a renamed/future
         // part type (e.g. "tool_use") never silently zeroes the Tool use tab.
         if (!extractAgentResponse._warnedTypes) extractAgentResponse._warnedTypes = new Set();
@@ -144,6 +220,7 @@ export function extractAgentResponse(data) {
           extractAgentResponse._warnedTypes.add(part.type);
         }
         break;
+      }
     }
   }
 

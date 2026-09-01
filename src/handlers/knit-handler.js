@@ -345,6 +345,46 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
 
     const derivedTags = composedRoom?.tags ?? [];
 
+    // Detect plan vs build mode: explicit arg wins, then UI context hint, then global config
+    // This allows live file edits only in build mode to differentiate plan vs build from web UI.
+    const rawBuildMode = args.build_mode ?? args.buildMode ?? args.mode === 'build' ? true : args.mode === 'plan' ? false : null;
+    const contextHintsBuild = /build mode|allow.*edit|live edit/i.test(sanitizedContext + " " + question);
+    const contextHintsPlan = /plan mode|read.only|no edit/i.test(sanitizedContext + " " + question);
+    let detectedBuildMode = null;
+    if (rawBuildMode !== null && rawBuildMode !== undefined) detectedBuildMode = !!rawBuildMode;
+    else if (contextHintsBuild && !contextHintsPlan) detectedBuildMode = true;
+    else if (contextHintsPlan) detectedBuildMode = false;
+    else detectedBuildMode = !!getConfig().agentTools?.buildMode;
+
+    // Effective agentTools for this meeting — enable write/edit in build mode
+    let effectiveAgentTools = agentTools;
+    if (detectedBuildMode && agentTools) {
+      effectiveAgentTools = {
+        ...agentTools,
+        buildMode: true,
+        builtIn: {
+          ...agentTools.builtIn,
+          write: true,
+          edit: true,
+          bash: {
+            ...(typeof agentTools.builtIn?.bash === 'object' ? agentTools.builtIn.bash : { enabled: !!agentTools.builtIn?.bash }),
+            enabled: true,
+            allowlist: Array.from(new Set([...(agentTools.builtIn?.bash?.allowlist ?? []), "cat", "npm", "bun", "node"])),
+          },
+        },
+        maxToolCallsPerTurn: Math.max(agentTools.maxToolCallsPerTurn ?? 8, 12),
+        maxToolOutputTokens: Math.max(agentTools.maxToolOutputTokens ?? 6000, 12000),
+      };
+    } else if (agentTools) {
+      effectiveAgentTools = { ...agentTools, buildMode: false };
+    }
+
+    // Reflect build mode in tags so prompts (user prompt + synthesis) can branch without extra plumbing
+    const effectiveTags = detectedBuildMode ? [...new Set([...derivedTags, "build"])] : [...new Set([...derivedTags, "plan"])];
+
+    // Set global override so agent system prompts (which call getConfig) see per-meeting buildMode without API change
+    try { globalThis.__loomAgentToolsOverride = effectiveAgentTools; } catch {}
+
     const engine = new MeetingOrchestrator({
       client,
       directory,
@@ -356,8 +396,8 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
       participants,
       maxRounds,
       meetingTimeoutMs: args.meeting_timeout,
-      tags: derivedTags,
-      agentTools,
+      tags: effectiveTags,
+      agentTools: effectiveAgentTools,
       availableModels: available,
       ...meetingCallbacks,
     });
@@ -375,9 +415,13 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
       const fullReport = `# Loom Deliberation Output\n\n**Question:** ${safeQuestion}\n\n**Participants:** ${participants.map((p) => `${p.name} (${p.tier})`).join(", ")}\n\n**Rounds:** ${state.current_round}\n\n**Meeting ID:** ${engine.getMeetingId()}\n\n---\n\n${artifact}`;
       const reportPath = writeReportFile(engine.getMeetingId(), fullReport);
 
+      // Always return the full report to the chat — even for partial runs where
+      // synthesis footnotes that some participants failed. The dashboard "output"
+      // tab and the .md file are secondary; the chat is the primary consumer.
+      // tool.execute.after will re-assert the same content for LLM relay.
       return {
         title: `Loom Complete — ${state.current_round} rounds`,
-        output: buildSummary(state, args.question, participants, engine.getMeetingId(), reportPath, artifact),
+        output: fullReport,
         metadata: {
           loom_id: loomId,
           meeting_id: engine.getMeetingId(),
@@ -405,6 +449,7 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
       const mid = engine.getMeetingId();
       if (mid) activeLooms.delete(mid);
       await engine.close();
+      try { delete globalThis.__loomAgentToolsOverride; } catch {}
     }
     });
   }
@@ -469,22 +514,10 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
         const safeOrigQ = sanitizeForDisplay(existingMeeting.question ?? "", 5000);
         const safeNewInput = sanitizeForDisplay(args.question ?? "", 5000);
         const fullReport = `# Loom Deliberation (Extended)\n\n**Original Question:** ${safeOrigQ}\n\n**New Input:** ${safeNewInput}\n\n**Participants:** ${existingParts.map((p) => `${p.name} (${p.tier})`).join(", ")}\n\n**Total Rounds:** ${extState.current_round}\n\n**Meeting ID:** ${extEngine.getMeetingId()}\n\n---\n\n${artifact}`;
-        const reportPath = writeReportFile(extEngine.getMeetingId(), fullReport);
-        const summary = [
-          `**Loom extended** — ${extState.current_round} round${extState.current_round !== 1 ? "s" : ""} total (${extState.status})`,
-          `**Original question:** ${existingMeeting.question}`,
-          `**New input:** ${args.question}`,
-          `**Participants:** ${existingParts.length}`,
-          `**Meeting ID:** ${extEngine.getMeetingId()}`,
-        ];
-        if (reportPath) {
-          summary.push("");
-          summary.push(`Full report saved to \`${reportPath}\`.`);
-        }
-        summary.push("Run `/loom_viz` for the interactive dashboard.");
+        writeReportFile(extEngine.getMeetingId(), fullReport);
         return {
           title: `Loom Extended — ${extState.current_round} rounds`,
-          output: summary.join("\n"),
+          output: fullReport,
           metadata: { loom_id: loomId, meeting_id: extEngine.getMeetingId(), loom_status: extState.status, loom_rounds: extState.current_round, loom_extended: true, loom_participants: existingParts.map((p) => `${p.name} (${p.tier})`).join(", ") },
         };
       } catch (extErr) {

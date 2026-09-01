@@ -8,6 +8,7 @@ import { maintenanceDue, markMaintained, checkIntegrity, cleanupOldErrors, clean
 import * as meetingOps from "./database/meeting-operations.js";
 import * as contribOps from "./database/contribution-operations.js";
 import * as vectorOps from "./database/vector-operations.js";
+import * as forumOps from "./database/forum-operations.js";
 import { loadSessionIndex, indexMeeting as _indexMeeting, unindexMeeting as _unindexMeeting, getDatabasesBySessionId as _getDatabasesBySessionId } from "./database/session-index.js";
 import { notifyDatabaseWrite } from "./services/write-notifier.js";
 
@@ -203,6 +204,7 @@ export class MeetingDatabase {
   saveArtifact(artifact) { const r = contribOps.saveArtifact(this.#db, this.#meetingId, artifact); this.#notify("artifacts"); return r; }
   getArtifact(meetingId) { return contribOps.getArtifact(this.#db, meetingId); }
   recordAgentError(meetingId, participantId, round, errorType, errorMessage, attempts) { const r = contribOps.recordAgentError(this.#db, meetingId, participantId, round, errorType, errorMessage, attempts); this.#notify("agent_errors"); return r; }
+  clearAgentErrors() { const r = contribOps.clearAgentErrors(this.#db, this.#meetingId); this.#notify("agent_errors"); return r; }
   getAgentErrors(meetingId) { return contribOps.getAgentErrors(this.#db, meetingId); }
   getTranscriptData(meetingId) { return contribOps.getTranscriptData(this.#db, meetingId, (id) => this.getRoundSummaries(id)); }
   getParticipantModel(participantId) { return contribOps.getParticipantModel(this.#db, this.#meetingId, participantId); }
@@ -220,6 +222,19 @@ export class MeetingDatabase {
   clearPersonaEmbeddings() { return vectorOps.clearPersonaEmbeddings(this.#db, this.#meetingId); }
   getPersonaEmbeddingByName(personaName, dim = 384) { return vectorOps.getPersonaEmbeddingByName(this.#db, this.#meetingId, personaName, dim); }
   getPersonaEmbeddingsByNames(personaNames, dim = 384) { return vectorOps.getPersonaEmbeddingsByNames(this.#db, this.#meetingId, personaNames, dim); }
+
+  createForumTopic({ title, body, tags, authorId }) {
+    const r = forumOps.createTopic(this.#db, this.#meetingId, { title, body, tags, authorId });
+    this.#notify("forum_topics");
+    return r;
+  }
+  listForumTopics({ tag } = {}) { return forumOps.listTopics(this.#db, this.#meetingId, { tag }); }
+  getForumTopic(topicId) { return forumOps.getTopic(this.#db, this.#meetingId, topicId); }
+  addForumComment(topicId, { body, authorId }) {
+    const r = forumOps.addComment(this.#db, this.#meetingId, topicId, { body, authorId });
+    if (r) this.#notify("forum_comments");
+    return r;
+  }
 
   close() {
     try {

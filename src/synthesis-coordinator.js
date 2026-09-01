@@ -8,8 +8,9 @@ import { incrementKeyedCounter, recordLatency } from "./metrics.js";
 import { withRetry, isRetryableError } from "./utils/retry.js";
 
 function getMaxCritiqueRetries() { try { return getConfig()?.tuning?.MAX_CRITIQUE_RETRIES ?? TUNING.MAX_CRITIQUE_RETRIES; } catch { return TUNING.MAX_CRITIQUE_RETRIES; } }
-// Core required for both modes; Action Items / Proposed Fix group — at least one must be present (see synthesizer.validateSynthesisSections)
-const REQUIRED_SECTIONS = ["Decision", "Reasoning", "Confidence", "Dissenting Views", "Open Questions"];
+// Core required: Executive Summary + Reasoning + Confidence; Decision optional when open-ended (see validateSynthesisSections)
+// Action Items / Proposed Fix group — at least one must be present
+const REQUIRED_SECTIONS = ["Executive Summary", "Reasoning", "Confidence", "Dissenting Views", "Open Questions"];
 const REQUIRED_ACTION_GROUP = ["Action Items", "Proposed Fix"];
 
 export class SynthesisCoordinator {
@@ -137,11 +138,11 @@ export class SynthesisCoordinator {
       }
       return out;
     };
-    const draftChunks = chunkText(text, 5500);
+    const draftChunks = chunkText(text, 8000);
     const draftForPrompt = draftChunks.length === 1
       ? draftChunks[0]
       : draftChunks.map((c,i)=>`--- Draft chunk ${i+1}/${draftChunks.length} ---\n${c}`).join("\n\n");
-    // Build most-contested transcript snippet: last 2 rounds verbatim + top 2 challenge/dissent + top 2 file mentions (code-aware)
+    // Build transcript snippet — thorough, not tiny: include unresolved dissent fully + file mentions + last 2 rounds fuller
     let transcriptSnippet = "";
     try {
       if (transcriptData && Array.isArray(transcriptData.rounds) && transcriptData.rounds.length > 0) {
@@ -152,58 +153,61 @@ export class SynthesisCoordinator {
         const fileMentions = [];
         for (const r of earlier) {
           for (const c of (r.contributions || [])) {
-            if (c.type === "challenge" || c.type === "dissent") contested.push(c);
+            if (c.type === "challenge" || c.type === "dissent" || c.type === "critique_response" || c.type === "perspective_response") contested.push(c);
             if (/(?:file\s*=\s*[^\s]+\.\w+|src\/[^\s]+\.\w+|\b\w+\.(?:tsx|ts|js|jsx)\b|```)/i.test(String(c.content))) fileMentions.push(c);
           }
         }
-        // Most recent contested first, take 2; file mentions also 2 (code boost)
-        const topContested = contested.slice(-2);
-        const topFiles = fileMentions.slice(-2);
+        // Top 4 contested, 4 file mentions — thoroughness
+        const topContested = contested.slice(-4);
+        const topFiles = fileMentions.slice(-4);
         const parts = [];
         if (topContested.length > 0) {
-          parts.push(`### Most contested earlier (top 2 challenge/dissent)\n` + topContested.map(c => `- [#${c.id}] ${c.participant_id} [${c.type}]: ${String(c.content).slice(0, 220)}`).join("\n"));
+          parts.push(`### Most contested earlier (top 4)\n` + topContested.map(c => `- [#${c.id}] ${c.participant_id} [${c.type}]: ${String(c.content).slice(0, 400)}`).join("\n"));
         }
         if (topFiles.length > 0) {
-          parts.push(`### File mentions earlier (top 2)\n` + topFiles.map(c => `- [#${c.id}] ${c.participant_id} [${c.type}]: ${String(c.content).slice(0, 220)}`).join("\n"));
+          parts.push(`### File mentions earlier (top 4)\n` + topFiles.map(c => `- [#${c.id}] ${c.participant_id} [${c.type}]: ${String(c.content).slice(0, 400)}`).join("\n"));
         }
-        // Last two rounds full via formatter fallback if transcript empty
+        // Last two rounds fuller — 400 chars each contribution
         const lastTwoText = lastTwo.map(r => {
-          const cs = (r.contributions || []).map(c => `- [#${c.id}] ${c.participant_id} [${c.type}]: ${String(c.content).slice(0, 220)}`).join("\n");
+          const cs = (r.contributions || []).map(c => `- [#${c.id}] ${c.participant_id} [${c.type}]: ${String(c.content).slice(0, 400)}`).join("\n");
           return `### Round ${r.number} (last)\n${cs || "(no contributions)"}`;
         }).join("\n\n");
         parts.push(lastTwoText);
         const combined = parts.join("\n\n");
-        transcriptSnippet = combined.slice(0, 8000);
+        transcriptSnippet = combined.slice(0, 12000);
         // Fallback to head if combined empty
-        if (!transcriptSnippet.trim()) transcriptSnippet = transcript.slice(0, 8000);
+        if (!transcriptSnippet.trim()) transcriptSnippet = transcript.slice(0, 12000);
       } else {
-        transcriptSnippet = transcript.slice(0, 8000);
+        transcriptSnippet = transcript.slice(0, 12000);
       }
     } catch {
-      transcriptSnippet = transcript.slice(0, 8000);
+      transcriptSnippet = transcript.slice(0, 12000);
     }
 
-    let critiquePrompt = `You are a synthesis auditor reviewing your own synthesis for grounding. You prefer longer, thorough deliberation — do not suppress dissent to fake consensus. Support both conversational and code-analysis (read-only) tasks.
+    let critiquePrompt = `You are a synthesis auditor reviewing your own synthesis for grounding. You prefer longer, thorough deliberation — do not suppress dissent to fake consensus. Support both conversational and code-analysis (plan/build) tasks. Dissent is valuable. Concise but thorough.
 
-Audit checklist (be strict):
-1. Grounding: list any Decision/Action Item/Proposed Fix sentence that is neither cited with [#id]/State-of-Play nor explicitly marked “Proposed — synthesized from [#id]” — those must be marked or cited. For code, novel diffs marked Proposed are allowed; unmarked invented file contents are not.
-2. Attribution: is every Dissenting View credited to correct holder + [#id]? Any omitted significant dissent from transcript?
+Audit checklist (be strict but human-first):
+1. Grounding: any Decision/Action Item/Proposed Fix block lacking a grouped [#id]/State-of-Play/Source cite nor marked “Proposed — synthesized from [#id]” — those must be marked or cited. Grouped per block is fine; don’t demand per-sentence. Never allow vec: / vec round traces.
+2. Attribution: is every Dissenting View credited to correct holder + [#id] + one-line evidence? Merge duplicates from same holder on same evidence (combine [#ids]). Any omitted significant dissent — retrieve and add.
 3. Invention: any number, date, cost, tool result, or file content not in transcript/State-of-Play nor marked Proposed?
-4. Support: any Decision/Action Item/Proposed Fix not supported by at least one contribution or Proposed marking?
-5. Resolved vs Dissent: if Resolved Concerns exists, ensure none reappear as dissent.
-6. Confidence: does the Confidence justification match the rubric? (High≥70% active + 0 unresolved + ≥1 grounded claim)
+4. Support: any Decision/Action Item/Proposed Fix not supported by at least one contribution or Proposed marking — mark Proposed or cite.
+5. Resolved vs Dissent: if Resolved Concerns exists, ensure none reappear as dissent and each resolved is ≤30w summary, not full critique dump.
+6. Confidence: does Confidence justification match rubric? High may have bounded dissent if thorough + grounded — dissent alone is not Low.
+7. Human-first: does Executive Summary exist and read cleanly without citation spam? Are Decision table cells concise (Evidence 30-35w + one cite, Tradeoff 30-35w), not paragraphs? Is Reasoning deduplicated vs Decision (not copy-paste)?
+8. Citation hygiene: no vec: / vec round / [Round X vec] leaked; one grouped cite per block, not spam.
 
-Transcript excerpt for grounding check (most-contested slice — last 2 rounds + top 2 challenge/dissent):
+Transcript excerpt for grounding check (thorough slice — top 4 contested + top 4 file mentions + last 2 rounds fuller):
 ${transcriptSnippet}
 
 If corrections are needed, output the FULL revised synthesis with ALL required sections in order:
+## Executive Summary
 ## Decision
 ## Reasoning
 ${text.toLowerCase().includes("proposed fix") || (transcriptData && String(transcriptData.question||"").toLowerCase().match(/react|src\/|\.tsx|\.ts|bug|in this folder|code/)) ? "## Proposed Fix\n## Action Items\n" : "## Action Items\n"}## Dissenting Views
 ## Open Questions
 ## Confidence
 
-If the draft is accurate, grounded, and complete, respond with exactly: [NO_CHANGES]
+If the draft is accurate, grounded, human-readable, and complete, respond with exactly: [NO_CHANGES]
 
 Draft synthesis${draftChunks.length>1?` (${draftChunks.length} chunks)`: ""}:
 ${draftForPrompt}`;

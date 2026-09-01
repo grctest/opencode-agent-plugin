@@ -49,6 +49,8 @@ const ROUTE_MAP = new Map([
   ["/api/agent_errors", ["GET"]],
   ["/api/agent_contexts", ["GET"]],
   ["/api/agent_context", ["GET"]],
+  ["/api/forum/topics", ["GET"]],
+  ["/api/forum/topic", ["GET"]],
   ["/api/export", ["GET"]],
   ["/api/export/stream", ["GET"]],
   ["/api/stream", ["GET"]],
@@ -355,6 +357,25 @@ export function startDashboard(directory, port) {
           const { api, error } = getMeetingApi(url, directory);
           if (error) return error;
           return Response.json(api.getAgentErrors());
+        }
+
+        if (url.pathname === "/api/forum/topics") {
+          const { api, error } = getMeetingApi(url, directory);
+          if (error) return error;
+          const tag = url.searchParams.get("tag") || undefined;
+          return Response.json({ topics: api.getForumTopics(tag) });
+        }
+
+        if (url.pathname === "/api/forum/topic") {
+          const { api, error } = getMeetingApi(url, directory);
+          if (error) return error;
+          const topicId = Number(url.searchParams.get("topic_id"));
+          if (!Number.isFinite(topicId) || topicId < 1) {
+            return Response.json({ error: "topic_id required" }, { status: 400 });
+          }
+          const topic = api.getForumTopic(topicId);
+          if (!topic) return Response.json({ error: "topic not found" }, { status: 404 });
+          return Response.json(topic);
         }
 
         if (url.pathname === "/api/agent_contexts") {

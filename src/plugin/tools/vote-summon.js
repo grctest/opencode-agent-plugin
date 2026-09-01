@@ -7,7 +7,7 @@ import { degrade } from "../../utils/degrade.js";
 import * as sharedVoteTally from "../../utils/vote-tally.js";
 import { TUNING } from "../../config/defaults.js";
 import { getConfig } from "../../config.js";
-import { resolveCaller, resolveModel, buildBatchId } from "./shared.js";
+import { resolveCaller, resolveModel, buildBatchId, normalizeQuestionForMatch } from "./shared.js";
 
 export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
   return {
@@ -41,20 +41,46 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
           const allParticipants = stateManager.getParticipants();
           if (!Array.isArray(allParticipants)) return { output: JSON.stringify({ error: "loom_vote: participant list unavailable" }), metadata: { error: true }, title: "loom_vote error" };
           let caller = resolveCaller(allParticipants, stateManager.getWeave?.() ?? [], context.sessionID);
-          const fallbackBatch = buildBatchId(stateManager.getState?.()?.id ?? meetingInfo.meetingId, stateManager.getCurrentRound?.() ?? 0, caller?.config?.id);
-          const callerBatchId = caller?.currentBatchId ?? fallbackBatch;
+          const activeCountV = (() => { try { return stateManager.getActiveParticipants().length; } catch { return allParticipants.filter(p=>p.status!=="failed"&&p.status!=="passed").length; }})();
+          if (activeCountV <= 1) return { output: JSON.stringify({ error: "loom_vote unavailable with 1 active participant — use loom_summon or loom_vector_search instead", activeCount: activeCountV }), metadata: { error: true }, title: "loom_vote error" };
           const currentRound = stateManager.getCurrentRound();
+          const meetingIdForBatchV = stateManager.getState?.()?.id ?? meetingInfo.meetingId;
+          const fallbackBatch = buildBatchId(meetingIdForBatchV, currentRound, caller?.config?.id);
+          const callerBatchId = caller?.currentBatchId ?? fallbackBatch;
+          // All plausible batchIds for idempotency (covers status-reset drift)
+          const allBatchCandidatesV = (() => {
+            const s = new Set();
+            if (callerBatchId) s.add(callerBatchId);
+            if (fallbackBatch) s.add(fallbackBatch);
+            for (const p of allParticipants) if (p?.currentBatchId) s.add(p.currentBatchId);
+            for (const p of allParticipants) s.add(buildBatchId(meetingIdForBatchV, currentRound, p?.config?.id));
+            return [...s];
+          })();
+          const normQuestionV = normalizeQuestionForMatch(args.question);
           let roundObj = null;
           try { const st = stateManager.getState(); roundObj = (st.rounds || []).find(r => r.number === currentRound) || null; } catch {}
           // Source snippet for context only — not a vote (source does not ballot, only voters do)
           const sourceSnippet = args.question.slice(0,300);
           // Voters = all other active participants excluding caller
-          const voters = allParticipants.filter(p => (!caller || p.config.id !== caller.config.id) && p.status !== "failed" && p.status !== "passed" && p.status !== "muted");
+          const voters = allParticipants.filter(p => (!caller || p.config.id !== caller.config.id) && p.status !== "failed" && p.status !== "passed");
           const extractVoteLetter = (text) => sharedVoteTally.extractVoteLetter(text);
-          // Idempotent per-question guard: if this batch already polled this exact question (retry or duplicate tool call), reuse existing votes and rebuild tally inline
+          // Idempotent per-question guard: reuse existing votes across any plausible batch (retry guard with normalized match)
+          const findExistingVotes = (weave, batchIds, questionNorm, sourceId, roundNum) => {
+            // exact batch + normalized question
+            for (const bid of batchIds) {
+              const hits = weave.filter(c => c.batch_id === bid && c.type === "vote_response" && normalizeQuestionForMatch(c.prompt_context?.question ?? "") === questionNorm);
+              if (hits.length > 0) return hits;
+            }
+            // broader: same round + source + normalized question
+            if (sourceId != null && roundNum != null) {
+              const broad = weave.filter(c => c.round === roundNum && c.type === "vote_response" && c.prompt_context?.source_participant_id === sourceId && normalizeQuestionForMatch(c.prompt_context?.question ?? "") === questionNorm);
+              if (broad.length > 0) return broad;
+            }
+            return [];
+          };
           try {
             const weave = stateManager.getWeave ? stateManager.getWeave() : [];
-            const existingVotesForQuestion = weave.filter(c => c.batch_id === callerBatchId && c.type === "vote_response" && c.prompt_context?.question === args.question);
+            const existingVotesForQuestion = findExistingVotes(weave, allBatchCandidatesV, normQuestionV, caller?.config?.id ?? null, currentRound);
             if (existingVotesForQuestion.length > 0) {
               const voteResponses = existingVotesForQuestion.map(v => {
                 const raw = (v.content ?? "").replace(/^\[Vote from .+?\]\s*/m, "").trim();
@@ -81,34 +107,43 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
             const payload = { inline: true, question: args.question, tally: tallyContent.slice(0,800), votes: [], note: "Vote completed inline — source only (no voters, source does not ballot)." };
             return { output: JSON.stringify(payload), metadata: { inline: true }, title: "loom_vote:source only" };
           }
-          // Parallel fan-out to voters
+          // Parallel fan-out to voters — with hardened retry guard (any plausible batch + source+round fallback)
           const voteResponses = [];
           const voterResults = [];
-          // Idempotency: if this batch already has a vote from this voter, reuse it (retry guard)
-          const isRetryDuplicate = () => {
+          const hasExistingVote = (voterId) => {
             try {
               const weave = stateManager.getWeave ? stateManager.getWeave() : [];
-              return weave.some(c => c.batch_id === callerBatchId && c.type === "vote_response" && c.participant_id === voter.config?.id);
+              for (const bid of allBatchCandidatesV) {
+                if (weave.some(c => c.batch_id === bid && c.type === "vote_response" && c.participant_id === voterId)) return true;
+              }
+              // broader: same round + source + voter
+              if (caller?.config?.id != null) {
+                return weave.some(c => c.round === currentRound && c.type === "vote_response" && c.participant_id === voterId && c.prompt_context?.source_participant_id === caller.config.id);
+              }
+              return false;
             } catch { return false; }
           };
-          // Pre-check before model fetch to avoid duplicate fan-out on retry
-          const existingVoteContribs = (() => {
+          const findExistingVoteForVoter = (voterId) => {
             try {
               const weave = stateManager.getWeave ? stateManager.getWeave() : [];
-              return weave.filter(c => c.batch_id === callerBatchId && c.type === "vote_response");
-            } catch { return []; }
-          })();
-          // If we already have votes for this batch (retry after timeout), skip fresh fan-out and reuse
-          // This check is per-voter below; for whole batch we still need to collect existing
+              for (const bid of allBatchCandidatesV) {
+                const hit = weave.find(c => c.batch_id === bid && c.type === "vote_response" && c.participant_id === voterId);
+                if (hit) return hit;
+              }
+              if (caller?.config?.id != null) {
+                return weave.find(c => c.round === currentRound && c.type === "vote_response" && c.participant_id === voterId && c.prompt_context?.source_participant_id === caller.config.id) ?? null;
+              }
+              return null;
+            } catch { return null; }
+          };
           await Promise.allSettled(voters.map(async (voter) => {
-            // Idempotent skip: reuse existing vote for this batch+voter instead of re-prompting
+            // Idempotent skip: reuse existing vote for any plausible batch instead of re-prompting
             try {
-              const weave = stateManager.getWeave ? stateManager.getWeave() : [];
-              const existing = weave.find(c => c.batch_id === callerBatchId && c.type === "vote_response" && c.participant_id === voter.config.id);
+              const existing = findExistingVoteForVoter(voter.config.id);
               if (existing) {
                 const raw = (existing.content ?? "").replace(/^\[Vote from .+?\]\s*/m, "").trim();
                 voteResponses.push({ voter: voter.config.name, content: raw });
-                voterResults.push({ voter: voter.config.id, name: voter.config.name, content: raw.slice(0,200) });
+                voterResults.push({ voter: voter.config.id, name: voter.config.name, content: raw.slice(0,200), reused: true });
                 return;
               }
             } catch {}
@@ -263,6 +298,33 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
               if (agentSummons >= cfgMaxAgent) {
                 return { output: JSON.stringify({ error: `Summon limit reached for you this round (${cfgMaxAgent} per agent per round)` }), metadata: { error: true }, title: "loom_summon error" };
               }
+            }
+          } catch {}
+          // Idempotent summon guard (retry-safe): reuse existing summoned_response for same batch+persona+issue
+          try {
+            const stateManagerPre = engine.getStateManager();
+            const weavePre = stateManagerPre.getWeave ? stateManagerPre.getWeave() : [];
+            const curRoundPre = stateManagerPre.getCurrentRound();
+            const meetingIdPre = stateManagerPre.getState?.()?.id ?? meetingInfo.meetingId;
+            const allPartsPre = stateManagerPre.getParticipants();
+            let callerPre = allPartsPre.find(p => p.session_id === context.sessionID) || allPartsPre.find(p => p?.status === "speaking") || null;
+            const fallbackPre = buildBatchId(meetingIdPre, curRoundPre, callerPre?.config?.id ?? null);
+            const batchPre = callerPre?.currentBatchId ?? fallbackPre;
+            const allBatchesPre = new Set([batchPre, fallbackPre]); for (const p of allPartsPre) { if (p?.currentBatchId) allBatchesPre.add(p.currentBatchId); allBatchesPre.add(buildBatchId(meetingIdPre, curRoundPre, p?.config?.id)); }
+            const normIssue = (args.issue ?? "").trim().toLowerCase();
+            const normPersona = (args.persona_name ?? "").trim().toLowerCase();
+            let existingSummon = null;
+            for (const bid of allBatchesPre) {
+              existingSummon = weavePre.find(c => c.batch_id === bid && c.type === "summoned_response" && (c.prompt_context?.persona_name ?? "").trim().toLowerCase() === normPersona && (c.prompt_context?.issue ?? "").trim().toLowerCase() === normIssue);
+              if (existingSummon) break;
+            }
+            if (!existingSummon) {
+              existingSummon = weavePre.find(c => c.round === curRoundPre && c.type === "summoned_response" && c.prompt_context?.source_participant_id === callerPre?.config?.id && (c.prompt_context?.persona_name ?? "").trim().toLowerCase() === normPersona && (c.prompt_context?.issue ?? "").trim().toLowerCase() === normIssue);
+            }
+            if (existingSummon) {
+              const rawSummon = (existingSummon.content ?? "").replace(/^\[Summoned:.+?\]\s*/m, "").trim();
+              const payload = { inline: true, persona_name: args.persona_name, issue: args.issue, guest: found.name, content: rawSummon.slice(0,1200), note: "Summon reused — guest response already exists for this batch, returned inline.", reused: true };
+              return { output: JSON.stringify(payload), metadata: { inline: true, guest: found.name, reused: true }, title: `loom_summon:${found.name} (reused)` };
             }
           } catch {}
           // For summon, we do inline prompt of the guest and return its content for immediate synthesis.

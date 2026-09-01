@@ -1,4 +1,4 @@
-import { parseReflections, safeParseJson } from "../../utils/db-parsing.js";
+import { parseReflections, safeParseJson, normalizeToolCalls } from "../../utils/db-parsing.js";
 
 export function getState() {
     const row = this._db
@@ -127,6 +127,10 @@ export function getMaxOrchestratorMessageId() {
   }
 
 function mapContributionRow(r) {
+  const rawCalls = r.tool_calls;
+  const parsed = normalizeToolCalls(rawCalls, null);
+  // Ensure tool_calls is either array or null (never string) so frontend length/map works
+  const toolCalls = Array.isArray(parsed) ? parsed : (parsed ? [parsed] : null);
   return {
     id: r.id,
     participant_id: r.participant_id,
@@ -135,7 +139,7 @@ function mapContributionRow(r) {
     content: r.content,
     targets_which: r.target_which != null ? Number(r.target_which) : null,
     batch_id: r.batch_id ?? null,
-    tool_calls: safeParseJson(r.tool_calls),
+    tool_calls: toolCalls,
     prompt_context: safeParseJson(r.prompt_context),
     created_at: r.created_at,
   };
@@ -175,5 +179,89 @@ export function getContributionsSince(sinceId, limit = 500) {
       )
       .all(sinceId, n)
       .map(mapContributionRow);
-}
+  }
+
+export function getForumTopics(tag) {
+    let rows;
+    if (tag) {
+      rows = this._db
+        .prepare(
+          `SELECT id, title, tags, author_id, created_at
+           FROM forum_topics
+           WHERE tags IS NOT NULL AND tags LIKE ?
+           ORDER BY created_at DESC`,
+        )
+        .all(`%${tag}%`);
+    } else {
+      rows = this._db
+        .prepare(
+          `SELECT id, title, tags, author_id, created_at
+           FROM forum_topics
+           ORDER BY created_at DESC`,
+        )
+        .all();
+    }
+    return rows.map((r) => {
+      const countRow = this._db
+        .prepare(`SELECT COUNT(*) as cnt FROM forum_comments WHERE topic_id = ?`)
+        .get(r.id);
+      let tags = [];
+      try { tags = JSON.parse(r.tags); } catch {}
+      return {
+        id: r.id,
+        title: r.title,
+        tags,
+        author_id: r.author_id,
+        comment_count: countRow?.cnt ?? 0,
+        created_at: r.created_at,
+      };
+    });
+  }
+
+export function getForumTopic(topicId) {
+    const topic = this._db
+      .prepare(
+        `SELECT id, title, body, tags, author_id, created_at, updated_at
+         FROM forum_topics WHERE id = ?`,
+      )
+      .get(topicId);
+    if (!topic) return null;
+
+    const comments = this._db
+      .prepare(
+        `SELECT id, author_id, body, created_at
+         FROM forum_comments WHERE topic_id = ?
+         ORDER BY created_at ASC`,
+      )
+      .all(topicId);
+
+    let tags = [];
+    try { tags = JSON.parse(topic.tags); } catch {}
+
+    return {
+      id: topic.id,
+      title: topic.title,
+      body: topic.body,
+      tags,
+      author_id: topic.author_id,
+      created_at: topic.created_at,
+      updated_at: topic.updated_at,
+      comments: comments.map((c) => ({
+        id: c.id,
+        author_id: c.author_id,
+        body: c.body,
+        created_at: c.created_at,
+      })),
+    };
+  }
+
+export function getMaxForumTopicId() {
+    const row = this._db.prepare(`SELECT MAX(id) as max_id FROM forum_topics`).get();
+    return row?.max_id ?? 0;
+  }
+
+export function getMaxForumCommentId() {
+    const row = this._db.prepare(`SELECT MAX(id) as max_id FROM forum_comments`).get();
+    return row?.max_id ?? 0;
+  }
 

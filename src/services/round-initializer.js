@@ -56,7 +56,7 @@ export class RoundInitializer {
   filterActiveParticipants(stateManager, round) {
     // Include passed participants so skip logic can actually evaluate them (getActiveParticipants already filters passed → dead)
     const { minRound: SKIP_PASSED_MIN_ROUND, lookback: SKIP_PASSED_LOOKBACK, window: SKIP_PASSED_WINDOW } = getSkipPassedConfig();
-    let activeParticipants = stateManager.getParticipants().filter((p) => p.status !== "failed" && p.status !== "muted");
+    let activeParticipants = stateManager.getParticipants().filter((p) => p.status !== "failed");
     let skipped = [];
 
     if (round.number >= SKIP_PASSED_MIN_ROUND) {

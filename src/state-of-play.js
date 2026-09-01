@@ -58,7 +58,7 @@ export function updateStateOfPlay(weave, question, tags) {
     if (!content) continue;
     if (c.type === "reflection") {
       // Keep reflection visible as a concise fact — header already indicates context
-      content = `[Reflected: ${content.slice(0, 280)}]`;
+      content = `[Reflected: ${content.slice(0, 400)}]`;
     }
 
     if (hasFileMention(content)) {
@@ -79,7 +79,7 @@ export function updateStateOfPlay(weave, question, tags) {
     }
   }
 
-  // Deduplicate by full path lowercased, keep most recent, then take last 5
+  // Deduplicate by full path lowercased, keep most recent, then take last 8
   const dedupMap = new Map();
   for (const f of filesInvolved) {
     const key = f.toLowerCase();
@@ -89,7 +89,7 @@ export function updateStateOfPlay(weave, question, tags) {
   }
   const dedupedFiles = [...dedupMap.values()];
 
-  return formatStateOfPlay({ decisions, agreements, disagreements, openQuestions, keyFacts, filesInvolved: dedupedFiles.slice(-5) }, question, tags);
+  return formatStateOfPlay({ decisions, agreements, disagreements, openQuestions, keyFacts, filesInvolved: dedupedFiles.slice(-8) }, question, tags);
 }
 
 /**
@@ -144,7 +144,7 @@ function classifyByKeywords(content) {
 }
 
 /**
- * Formats structured state-of-play sections into a concise markdown summary.
+ * Formats structured state-of-play sections into a markdown summary — thorough, not terse.
  */
 export function formatStateOfPlay(sections, question, tags) {
   const lines = [];
@@ -152,22 +152,22 @@ export function formatStateOfPlay(sections, question, tags) {
   if (tags?.length > 0) lines.push(`## Tags\n${tags.join(", ")}`);
 
   if (sections.decisions.length > 0) {
-    lines.push(`## Decisions & Proposals\n${sections.decisions.slice(-5).map((d) => `- ${d.slice(0, 300)}`).join("\n")}`);
+    lines.push(`## Decisions & Proposals\n${sections.decisions.slice(-8).map((d) => `- ${d.slice(0, 500)}`).join("\n")}`);
   }
   if (sections.agreements.length > 0) {
-    lines.push(`## Agreements\n${sections.agreements.slice(-5).map((a) => `- ${a.slice(0, 300)}`).join("\n")}`);
+    lines.push(`## Agreements\n${sections.agreements.slice(-8).map((a) => `- ${a.slice(0, 500)}`).join("\n")}`);
   }
   if (sections.disagreements.length > 0) {
-    lines.push(`## Disagreements & Concerns\n${sections.disagreements.slice(-5).map((d) => `- ${d.slice(0, 300)}`).join("\n")}`);
+    lines.push(`## Disagreements & Concerns\n${sections.disagreements.slice(-8).map((d) => `- ${d.slice(0, 500)}`).join("\n")}`);
   }
   if (sections.openQuestions.length > 0) {
-    lines.push(`## Open Questions\n${sections.openQuestions.slice(-5).map((q) => `- ${q.slice(0, 300)}`).join("\n")}`);
+    lines.push(`## Open Questions\n${sections.openQuestions.slice(-8).map((q) => `- ${q.slice(0, 500)}`).join("\n")}`);
   }
   if (sections.keyFacts.length > 0) {
-    lines.push(`## Key Facts\n${sections.keyFacts.slice(-5).map((f) => `- ${f.slice(0, 300)}`).join("\n")}`);
+    lines.push(`## Key Facts\n${sections.keyFacts.slice(-8).map((f) => `- ${f.slice(0, 500)}`).join("\n")}`);
   }
   if (sections.filesInvolved && sections.filesInvolved.length > 0) {
-    lines.push(`## Files Involved\n${sections.filesInvolved.slice(-5).map((f) => `- ${f.slice(0, 120)}`).join("\n")}`);
+    lines.push(`## Files Involved\n${sections.filesInvolved.slice(-8).map((f) => `- ${f.slice(0, 160)}`).join("\n")}`);
   }
 
   return lines.join("\n\n");
@@ -213,7 +213,7 @@ export function formatFinalRoundTranscript(data, participants) {
     return cut + "\n...[truncated]";
   };
   const appendReflections = (lines) => {
-    const reflections = (participants || []).filter((p) => p.reflection).map((p) => `**${p.config.name} (${p.config.tier}) reflection**: ${p.reflection.slice(0, 400).replace(/\n/g, " ")}`);
+    const reflections = (participants || []).filter((p) => p.reflection).map((p) => `**${p.config.name} (${p.config.tier}) reflection**: ${p.reflection.slice(0, 800).replace(/\n/g, " ")}`);
     if (reflections.length > 0) {
       lines.push("### Final Reflections");
       lines.push(...reflections);
@@ -230,23 +230,30 @@ export function formatFinalRoundTranscript(data, participants) {
     lines[0] = `### Round ${round.number} (Final)`;
     appendReflections(lines);
     const joined = lines.join("\n");
-    return truncForTranscript(joined, 8000);
+    return truncForTranscript(joined, 24000);
   }
   const lines = [];
-  // Digest for rounds 1..n-1 (2 lines each, capped)
-  for (let i = 0; i < data.rounds.length - 1; i++) {
-    const r = data.rounds[i];
-    const summary = (r.summary || (r.contributions[0]?.content ?? "")).slice(0, 120).replace(/\n/g, " ");
-    const contested = (r.contributions.find((c) => c.type === "critique_response" || c.type === "perspective_response" || c.type === "challenge" || c.type === "dissent")?.content ?? "").slice(0, 120).replace(/\n/g, " ");
+  // For 2-4 rounds, include fuller digests; for longer, keep last 2 full + earlier digests 400 chars
+  const fullRounds = data.rounds.length <= 4 ? data.rounds : data.rounds.slice(-2);
+  const digestRounds = data.rounds.length <= 4 ? [] : data.rounds.slice(0, -2);
+  for (let i = 0; i < digestRounds.length; i++) {
+    const r = digestRounds[i];
+    const summary = (r.summary || (r.contributions[0]?.content ?? "")).slice(0, 400).replace(/\n/g, " ");
+    const contested = (r.contributions.find((c) => c.type === "critique_response" || c.type === "perspective_response" || c.type === "challenge" || c.type === "dissent")?.content ?? "").slice(0, 400).replace(/\n/g, " ");
+    // Include top file mention for code rounds
+    const fileMention = (r.contributions.find((c) => /file=|src\/.*\.\w+|```/.test(String(c.content)))?.content ?? "").slice(0, 300).replace(/\n/g, " ");
     lines.push(`### Round ${r.number} (digest)`);
     if (summary) lines.push(`Summary: ${summary}`);
     if (contested) lines.push(`Contested: ${contested}`);
+    if (fileMention) lines.push(`Code: ${fileMention}`);
   }
-  const finalRound = data.rounds[data.rounds.length - 1];
-  const finalLines = formatRoundLines(finalRound, participants);
-  finalLines[0] = `### Round ${finalRound.number} (Final)`;
-  lines.push(...finalLines);
+  for (const r of fullRounds) {
+    const ls = formatRoundLines(r, participants);
+    // mark last as final, others as full
+    ls[0] = `### Round ${r.number} ${r === fullRounds[fullRounds.length-1] ? "(Final)" : "(full)"}`;
+    lines.push(...ls);
+  }
   appendReflections(lines);
   const joined2 = lines.join("\n");
-  return truncForTranscript(joined2, 8000);
+  return truncForTranscript(joined2, 24000);
 }

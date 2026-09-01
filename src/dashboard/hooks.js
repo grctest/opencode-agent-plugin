@@ -39,15 +39,53 @@ export function useSSEReset(meetingId) {
  * Applies incremental SSE updates to meeting data state.
  * Returns event handlers to attach to window.
  */
-export function useSSEHandlers({ setContributions, setTurnRequests, setState, setParticipants, setAgentErrors, setArtifact, setOrchestratorMessages, setRoundSummaries }) {
+function hasToolCalls(arr) { return Array.isArray(arr) && arr.length > 0; }
+function mergeToolCalls(prev, next) {
+  // Prefer next if it has tool_calls and prev is empty/null — repairs stale empty snapshot
+  // Otherwise keep prev to avoid overwriting with empty update
+  if (hasToolCalls(next.tool_calls) && !hasToolCalls(prev.tool_calls)) return next;
+  if (hasToolCalls(next.tool_calls) && hasToolCalls(prev.tool_calls) && next.tool_calls.length > prev.tool_calls.length) return next;
+  // Also merge if next has tool_calls string vs array mismatch — normalize already done server-side, but keep latest
+  return prev;
+}
+
+export function useSSEHandlers({ setContributions, setTurnRequests, setState, setParticipants, setAgentErrors, setArtifact, setOrchestratorMessages, setRoundSummaries, setForumUpdateTrigger }) {
   useEffect(() => {
     const handleContributions = (e) => {
       const newContribs = e.detail;
       if (!newContribs || newContribs.length === 0) return;
       setContributions((prev) => {
-        const seen = new Set(prev.map((c) => c.id));
-        const fresh = newContribs.filter((c) => c && c.id != null && !seen.has(c.id));
-        return fresh.length > 0 ? [...prev, ...fresh] : prev;
+        const byId = new Map(prev.map((c) => [c.id, c]));
+        let changed = false;
+        for (const nc of newContribs) {
+          if (!nc || nc.id == null) continue;
+          const existing = byId.get(nc.id);
+          if (!existing) {
+            byId.set(nc.id, nc);
+            changed = true;
+          } else {
+            const merged = mergeToolCalls(existing, nc);
+            if (merged !== existing) {
+              byId.set(nc.id, merged);
+              changed = true;
+            } else if (JSON.stringify(existing) !== JSON.stringify(nc)) {
+              // Content changed but tool_calls not the decider — update to latest to keep content fresh
+              // Only replace if next has at least as much tool evidence
+              const preferNext = hasToolCalls(nc.tool_calls) || !hasToolCalls(existing.tool_calls);
+              if (preferNext) {
+                byId.set(nc.id, nc);
+                changed = true;
+              }
+            }
+          }
+        }
+        if (!changed) {
+          // Fast path: no new ids and no repairs
+          const seen = new Set(prev.map((c) => c.id));
+          const fresh = newContribs.filter((c) => c && c.id != null && !seen.has(c.id));
+          if (fresh.length === 0) return prev;
+        }
+        return Array.from(byId.values()).sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
       });
     };
 
@@ -92,6 +130,10 @@ export function useSSEHandlers({ setContributions, setTurnRequests, setState, se
       }
     };
 
+    const handleAgentErrorsCleared = () => {
+      setAgentErrors([]);
+    };
+
     const handleArtifact = (e) => {
       const artifactData = e.detail;
       if (artifactData) {
@@ -120,14 +162,20 @@ export function useSSEHandlers({ setContributions, setTurnRequests, setState, se
       }
     };
 
+    const handleForumUpdate = () => {
+      setForumUpdateTrigger((t) => t + 1);
+    };
+
     window.addEventListener("loom-new-contributions", handleContributions);
     window.addEventListener("loom-new-turn-requests", handleTurnRequests);
     window.addEventListener("loom-state-update", handleState);
     window.addEventListener("loom-participants-update", handleParticipants);
     window.addEventListener("loom-agent-error", handleAgentError);
+    window.addEventListener("loom-agent-errors-cleared", handleAgentErrorsCleared);
     window.addEventListener("loom-artifact", handleArtifact);
     window.addEventListener("loom-orchestrator-messages", handleOrchestratorMessages);
     window.addEventListener("loom-round-summaries", handleRoundSummaries);
+    window.addEventListener("loom-forum-update", handleForumUpdate);
 
     return () => {
       window.removeEventListener("loom-new-contributions", handleContributions);
@@ -135,9 +183,11 @@ export function useSSEHandlers({ setContributions, setTurnRequests, setState, se
       window.removeEventListener("loom-state-update", handleState);
       window.removeEventListener("loom-participants-update", handleParticipants);
       window.removeEventListener("loom-agent-error", handleAgentError);
+      window.removeEventListener("loom-agent-errors-cleared", handleAgentErrorsCleared);
       window.removeEventListener("loom-artifact", handleArtifact);
       window.removeEventListener("loom-orchestrator-messages", handleOrchestratorMessages);
       window.removeEventListener("loom-round-summaries", handleRoundSummaries);
+      window.removeEventListener("loom-forum-update", handleForumUpdate);
     };
   }, []);
 }
@@ -188,6 +238,8 @@ export function useMeetingApi(meetingId, resetKey) {
   const [artifact, setArtifact] = useState(null);
   const [embeddingModel, setEmbeddingModel] = useState(null);
   const [embeddingDim, setEmbeddingDim] = useState(null);
+  const [forumTopics, setForumTopics] = useState([]);
+  const [forumUpdateTrigger, setForumUpdateTrigger] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const lastPollIdRef = useRef(0);
@@ -255,10 +307,20 @@ export function useMeetingApi(meetingId, resetKey) {
       }
       // Merge with any SSE-delivered rows that arrived during/after the snapshot
       // so a reconnect refetch cannot silently drop freshly broadcast contributions.
+      // Also repair stale empty tool_calls snapshots (P1): prefer the copy that has tool_calls.
       setContributions((prev) => {
         if (prev.length === 0) return all;
         const byId = new Map(all.map((c) => [c.id, c]));
-        for (const p of prev) if (!byId.has(p.id)) byId.set(p.id, p);
+        for (const p of prev) {
+          const existing = byId.get(p.id);
+          if (!existing) {
+            byId.set(p.id, p);
+          } else if (hasToolCalls(p.tool_calls) && !hasToolCalls(existing.tool_calls)) {
+            byId.set(p.id, p);
+          } else if (hasToolCalls(p.tool_calls) && hasToolCalls(existing.tool_calls) && p.tool_calls.length > existing.tool_calls.length) {
+            byId.set(p.id, p);
+          }
+        }
         return Array.from(byId.values()).sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
       });
       if (pageFailure) {
@@ -268,6 +330,14 @@ export function useMeetingApi(meetingId, resetKey) {
       }
       lastPollIdRef.current = Math.max(...all.map((c) => c.id ?? 0), 0);
       window.dispatchEvent(new CustomEvent("loom-initial-contributions", { detail: all }));
+      // Fetch forum topics
+      try {
+        const forumRes = await fetch(`/api/forum/topics?meeting=${id}`, { signal });
+        if (forumRes.ok) {
+          const forumData = await forumRes.json();
+          setForumTopics(forumData.topics ?? []);
+        }
+      } catch {}
     } catch (e) {
       if (e.name !== "AbortError") setError(e.message);
     } finally {
@@ -290,7 +360,18 @@ export function useMeetingApi(meetingId, resetKey) {
     }
   }, [contributions]);
 
-  useSSEHandlers({ setContributions, setTurnRequests, setState, setParticipants, setAgentErrors, setArtifact, setOrchestratorMessages, setRoundSummaries });
+  // Refresh forum topics when update trigger fires
+  useEffect(() => {
+    if (!meetingId || forumUpdateTrigger === 0) return;
+    const controller = new AbortController();
+    fetch(`/api/forum/topics?meeting=${meetingId}`, { signal: controller.signal })
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => { if (data?.topics) setForumTopics(data.topics); })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [meetingId, forumUpdateTrigger]);
+
+  useSSEHandlers({ setContributions, setTurnRequests, setState, setParticipants, setAgentErrors, setArtifact, setOrchestratorMessages, setRoundSummaries, setForumUpdateTrigger });
 
   return {
     state,
@@ -303,6 +384,7 @@ export function useMeetingApi(meetingId, resetKey) {
     artifact,
     embeddingModel,
     embeddingDim,
+    forumTopics,
     loading,
     error,
     refetch: () => fetchMeetingData(meetingId),

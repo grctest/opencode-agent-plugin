@@ -60,19 +60,19 @@ export async function planTurnOrder({ stateOfPlay, roundSummary, turnRequests, p
   // If no requests, return default order (active participants)
   if (!turnRequests || turnRequests.length === 0) {
     return participants
-      .filter((p) => p.status !== "failed" && p.status !== "muted")
+      .filter((p) => p.status !== "failed")
       .map((p) => p.config.id);
   }
 
   // Filter to only valid requests (participant must exist and not be failed)
   const validRequests = turnRequests.filter((req) => {
     const p = participants.find((pp) => pp.config.id === req.participant_id);
-    return p && p.status !== "failed" && p.status !== "muted";
+    return p && p.status !== "failed";
   });
 
   if (validRequests.length === 0) {
     return participants
-      .filter((p) => p.status !== "failed" && p.status !== "muted")
+      .filter((p) => p.status !== "failed")
       .map((p) => p.config.id);
   }
 
@@ -80,7 +80,7 @@ export async function planTurnOrder({ stateOfPlay, roundSummary, turnRequests, p
   if (validRequests.length === 1) {
     const requestedId = validRequests[0].participant_id;
     const ordered = participants
-      .filter((p) => p.status !== "failed" && p.status !== "muted")
+      .filter((p) => p.status !== "failed")
       .map((p) => p.config.id);
     const idx = ordered.indexOf(requestedId);
     if (idx > 0) {
@@ -115,7 +115,7 @@ export async function planTurnOrder({ stateOfPlay, roundSummary, turnRequests, p
       if (Array.isArray(parsed) && parsed.length > 0) {
         // Validate all IDs exist
         const validIds = participants
-          .filter((p) => p.status !== "failed" && p.status !== "muted")
+          .filter((p) => p.status !== "failed")
           .map((p) => p.config.id);
         const ordered = parsed.filter((id) => validIds.includes(id));
         // Add any missing participants at the end
@@ -157,7 +157,7 @@ function fallbackTurnOrder(turnRequests, participants) {
   // Build ordered list: requested participants first, then remaining
   const ordered = sorted.map((r) => r.participant_id);
   const remaining = participants
-    .filter((p) => p.status !== "failed" && p.status !== "muted" && !ordered.includes(p.config.id))
+    .filter((p) => p.status !== "failed" && !ordered.includes(p.config.id))
     .map((p) => p.config.id);
   
   return [...ordered, ...remaining];

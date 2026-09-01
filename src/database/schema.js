@@ -7,7 +7,7 @@
  * directly; older files run only the migrations they are missing.
  */
 
-export const LATEST_SCHEMA_VERSION = 2;
+export const LATEST_SCHEMA_VERSION = 4;
 
 /**
  * Ordered migrations. MIGRATIONS[n] upgrades a DB at user_version n to n+1.
@@ -29,6 +29,45 @@ export const MIGRATIONS = [
   // v1 → v2: add CHECK constraints for status/tier (no users yet, fresh DBs get them via initSchema; existing v1 DBs keep permissive schema)
   (db) => {
     // No-op migration for existing DBs — CHECKs are enforced at application layer via StateManager TRANSITIONS; fresh DBs get them in initSchema
+  },
+  // v2 → v3: remove muted status — convert any existing muted rows to listening
+  (db) => {
+    try {
+      const cols = new Set(db.prepare("PRAGMA table_info(participants)").all().map((c) => c.name));
+      if (cols.has("status")) {
+        db.exec(`UPDATE participants SET status = 'listening' WHERE status = 'muted'`);
+      }
+    } catch {}
+  },
+  // v3 → v4: add forum tables for agent sub-discussions
+  (db) => {
+    const tables = new Set(
+      db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name),
+    );
+    if (!tables.has("forum_topics")) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS forum_topics (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+          title TEXT NOT NULL,
+          body TEXT NOT NULL,
+          tags TEXT,
+          author_id TEXT NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_forum_topics_meeting ON forum_topics(meeting_id);
+
+        CREATE TABLE IF NOT EXISTS forum_comments (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          topic_id INTEGER NOT NULL REFERENCES forum_topics(id) ON DELETE CASCADE,
+          author_id TEXT NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+          body TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_forum_comments_topic ON forum_comments(topic_id);
+      `);
+    }
   },
 ];
 
@@ -79,7 +118,7 @@ export function initSchema(db) {
       model_id TEXT,
       session_id TEXT,
       session_version INTEGER NOT NULL DEFAULT 1,
-      status TEXT NOT NULL DEFAULT 'listening' CHECK(status IN ('listening','speaking','passed','failed','muted','summoned')),
+      status TEXT NOT NULL DEFAULT 'listening' CHECK(status IN ('listening','speaking','passed','failed','summoned')),
       reflection TEXT NOT NULL DEFAULT '',
       known_biases TEXT,
       communication_style TEXT,
@@ -217,6 +256,27 @@ export function initSchema(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_persona_embeddings_meeting ON persona_embeddings(meeting_id);
     CREATE INDEX IF NOT EXISTS idx_persona_embeddings_tier ON persona_embeddings(meeting_id, tier);
+
+    CREATE TABLE IF NOT EXISTS forum_topics (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      tags TEXT,
+      author_id TEXT NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_forum_topics_meeting ON forum_topics(meeting_id);
+
+    CREATE TABLE IF NOT EXISTS forum_comments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      topic_id INTEGER NOT NULL REFERENCES forum_topics(id) ON DELETE CASCADE,
+      author_id TEXT NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+      body TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_forum_comments_topic ON forum_comments(topic_id);
   `);
 
   if (isNewDb) {

@@ -15,6 +15,32 @@ import { Table, TableBody, TableCell, TableRow } from "./ui/table.tsx";
 import { Separator } from "./ui/separator.tsx";
 import { MessageSquareIcon, TriangleAlertIcon, CopyIcon, CheckIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 
+function getToolCallsArray(contribution) {
+  if (!contribution) return [];
+  const raw = contribution.tool_calls;
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === "string" && raw.length > 0) {
+    try {
+      const p = JSON.parse(raw);
+      if (Array.isArray(p)) return p;
+      if (p && typeof p === "object") return [p];
+      if (typeof p === "string") {
+        try { const p2 = JSON.parse(p); if (Array.isArray(p2)) return p2; if (p2 && typeof p2 === "object") return [p2]; } catch {}
+      }
+    } catch {}
+    return [];
+  }
+  return [];
+}
+
+function prettyJson(value) {
+  if (value == null) return "";
+  if (typeof value === "string") {
+    try { const p = JSON.parse(value); return JSON.stringify(p, null, 2); } catch { return value; }
+  }
+  try { return JSON.stringify(value, null, 2); } catch { return String(value); }
+}
+
 const THINKING_TURN_HEIGHT = 56;
 const THINKING_REFLECTION_HEIGHT = 56;
 const THINKING_QUERY_HEIGHT = 56;
@@ -392,6 +418,19 @@ const TimelineTabBase = ({
     setContextLoading(false);
   }, []);
 
+  // P1: resolve live contribution from current contributions array so Tool use tab never shows stale empty snapshot
+  const liveDialogContribution = useMemo(() => {
+    if (!dialogContribution?.contribution) return dialogContribution;
+    const cid = dialogContribution.contribution.id;
+    if (cid == null) return dialogContribution;
+    const live = contributions.find(c => c.id === cid);
+    if (!live) return dialogContribution;
+    // Preserve dialog flags (isReflection etc) but replace contribution with live one
+    return { ...dialogContribution, contribution: live };
+  }, [dialogContribution, contributions]);
+
+  const liveToolCalls = useMemo(() => getToolCallsArray(liveDialogContribution?.contribution), [liveDialogContribution]);
+
   const meetingIdForContext = selectedMeeting ?? (() => {
     try {
       const params = new URLSearchParams(window.location.search);
@@ -404,16 +443,19 @@ const TimelineTabBase = ({
   })();
 
   useEffect(() => {
-    const pc = dialogContribution?.contribution?.prompt_context;
+    const live = liveDialogContribution ?? dialogContribution;
+    const pc = live?.contribution?.prompt_context;
     const hasFullContext = pc && (pc.system_prompt || pc.user_prompt || pc.state_of_play || pc.round_contributions_used);
-    if (activeTab !== "context" || !dialogContribution || hasFullContext || fetchedContext || contextLoading) return;
-    const cid = dialogContribution.contribution.id;
-    const mid = meetingIdForContext || dialogContribution.contribution.meeting_id;
+    if (activeTab !== "context" || !live || hasFullContext || fetchedContext || contextLoading) return;
+    const cid = live.contribution.id;
+    const mid = meetingIdForContext || live.contribution.meeting_id;
     if (!cid || !mid) return;
     let cancelled = false;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
     setContextLoading(true);
     setContextError(null);
-    fetch(`/api/contribution_context?meeting=${mid}&contribution_id=${cid}`)
+    fetch(`/api/contribution_context?meeting=${mid}&contribution_id=${cid}`, { signal: controller.signal })
       .then(async (res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
@@ -429,12 +471,13 @@ const TimelineTabBase = ({
         }
       })
       .catch((err) => {
-        if (!cancelled) setContextError(err.message || "Failed to load context");
+        if (!cancelled) setContextError(err.name === "AbortError" ? "Context request timed out." : (err.message || "Failed to load context"));
       })
       .finally(() => {
+        clearTimeout(timeout);
         if (!cancelled) setContextLoading(false);
       });
-    return () => { cancelled = true; };
+    return () => { cancelled = true; controller.abort(); clearTimeout(timeout); };
   }, [activeTab, dialogContribution, fetchedContext, contextLoading, meetingIdForContext]);
 
   useEffect(() => {
@@ -464,6 +507,7 @@ const TimelineTabBase = ({
     window.addEventListener("loom-sse-error", handler);
     return () => window.removeEventListener("loom-sse-error", handler);
   }, []);
+
 
   const rowHeightFn = useCallback((index, cellProps) => {
     const item = cellProps.items[index];
@@ -528,65 +572,68 @@ const TimelineTabBase = ({
             <ContentDialog
         open={dialogContribution !== null}
         onClose={() => setDialogContribution(null)}
-        title={dialogContribution ? (dialogContribution.isReflection
-          ? `Reflection by ${dialogContribution.participantName}`
-          : dialogContribution.isQueryResponse
-          ? `Query response by ${dialogContribution.participantName}`
-          : dialogContribution.isEvidenceResponse
-          ? `Evidence response by ${dialogContribution.participantName}`
-          : dialogContribution.isSummonedResponse
-          ? `Summoned expert: ${dialogContribution.personaName}`
-          : dialogContribution.isVoteResponse
-          ? `Vote by ${dialogContribution.participantName}`
-          : `${dialogContribution.participantName} — ${dialogContribution.contribution.type}`) : ""}
-        className={dialogContribution ? (dialogContribution.isReflection
+        title={liveDialogContribution ? (liveDialogContribution.isReflection
+          ? `Reflection by ${liveDialogContribution.participantName}`
+          : liveDialogContribution.isQueryResponse
+          ? `Query response by ${liveDialogContribution.participantName}`
+          : liveDialogContribution.isEvidenceResponse
+          ? `Evidence response by ${liveDialogContribution.participantName}`
+          : liveDialogContribution.isSummonedResponse
+          ? `Summoned expert: ${liveDialogContribution.personaName}`
+          : liveDialogContribution.isVoteResponse
+          ? `Vote by ${liveDialogContribution.participantName}`
+          : `${liveDialogContribution.participantName} — ${liveDialogContribution.contribution.type}`) : ""}
+        className={liveDialogContribution ? (liveDialogContribution.isReflection
           ? "border-l-4 border-l-[var(--badge-indigo)]"
-          : dialogContribution.isQueryResponse
+          : liveDialogContribution.isQueryResponse
           ? "border-l-4 border-l-[var(--badge-teal)]"
-          : dialogContribution.isEvidenceResponse
+          : liveDialogContribution.isEvidenceResponse
           ? "border-l-4 border-l-[var(--badge-sky)]"
-          : dialogContribution.isSummonedResponse
+          : liveDialogContribution.isSummonedResponse
           ? "border-l-4 border-l-[var(--badge-violet)]"
-          : dialogContribution.isVoteResponse
+          : liveDialogContribution.isVoteResponse
           ? "border-l-4 border-l-[var(--badge-emerald)]"
           : "border-l-4 border-l-primary") : ""}
       >
-        {dialogContribution && (
+        {(liveDialogContribution ?? dialogContribution) && (
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
             <TabsList variant="line" className="w-full justify-start">
               <TabsTrigger value="response">Response</TabsTrigger>
-              <TabsTrigger value="tools">Tool use</TabsTrigger>
+              <TabsTrigger value="tools">Tool use{liveToolCalls.length > 0 ? ` (${liveToolCalls.length})` : ""}</TabsTrigger>
               <TabsTrigger value="details">Details</TabsTrigger>
               <TabsTrigger value="context">Context</TabsTrigger>
               <TabsTrigger value="errors">Errors</TabsTrigger>
             </TabsList>
             <TabsContent value="response" className="pt-4">
               <div className="typeset typeset-docs max-w-none w-full">
-                <div dangerouslySetInnerHTML={{ __html: renderMarkdown(dialogContribution.contribution.content ?? "") }} />
+                <div dangerouslySetInnerHTML={{ __html: renderMarkdown((liveDialogContribution ?? dialogContribution).contribution.content ?? "") }} />
               </div>
               <div className="flex justify-end pt-3 mt-3 border-t">
-                <Button variant="outline" size="sm" onClick={() => { navigator.clipboard.writeText(dialogContribution.contribution.content ?? ""); }}>
+                <Button variant="outline" size="sm" onClick={() => { navigator.clipboard.writeText((liveDialogContribution ?? dialogContribution).contribution.content ?? ""); }}>
                   <CopyIcon className="size-3.5 mr-1" /> Copy text
                 </Button>
               </div>
             </TabsContent>
             <TabsContent value="tools" className="pt-4">
               <div className="flex flex-col gap-2">
-                {dialogContribution.contribution.tool_calls && dialogContribution.contribution.tool_calls.length > 0 ? (
-                  dialogContribution.contribution.tool_calls.map((tc, i) => {
+                {liveToolCalls.length > 0 ? (
+                  liveToolCalls.map((tc, i) => {
                     const attempted = !!tc.attempted_tool;
                     const failed = !!tc.error || tc.status === "error";
+                    const hasInput = tc.input != null && String(tc.input).length > 0;
+                    const hasOutput = tc.output != null && String(tc.output).length > 0;
                     return (
                       <Card key={tc.callID ?? i} className="py-2">
                         <CardContent className="py-0 flex flex-col gap-1.5">
                           <div className="flex items-center gap-2">
-                            <span className="font-mono text-xs font-semibold">{attempted && tc.attempted_tool !== tc.tool ? `attempted ${tc.attempted_tool}` : tc.tool}</span>
+                            <span className="font-mono text-xs font-semibold">{attempted && tc.attempted_tool !== tc.tool ? `attempted ${tc.attempted_tool}` : (tc.tool ?? "unknown")}</span>
                             {tc.title && <span className="text-xs text-muted-foreground truncate">{tc.title}</span>}
-                            <Badge variant={failed ? "destructive" : "secondary"} className="ml-auto text-[10px]">{failed ? "error" : "ok"}</Badge>
+                            <Badge variant={failed ? "destructive" : "secondary"} className="ml-auto text-[10px]">{failed ? "error" : (tc.status ?? "ok")}</Badge>
                           </div>
-                          {tc.input && <pre className="text-xs bg-muted p-2 rounded whitespace-pre-wrap break-words">{typeof tc.input === "string" ? tc.input : JSON.stringify(tc.input, null, 2)}</pre>}
-                          {tc.output && <pre className="text-xs bg-muted p-2 rounded whitespace-pre-wrap break-words">{typeof tc.output === "string" ? tc.output : JSON.stringify(tc.output, null, 2)}</pre>}
-                          {tc.error && <pre className="text-xs bg-destructive/10 text-destructive p-2 rounded whitespace-pre-wrap break-words">{typeof tc.error === "string" ? tc.error : JSON.stringify(tc.error, null, 2)}</pre>}
+                          {hasInput && <div><div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Input</div><pre className="text-xs bg-muted p-2 rounded whitespace-pre-wrap break-words">{prettyJson(tc.input)}</pre></div>}
+                          {hasOutput && <div><div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Output</div><pre className="text-xs bg-muted p-2 rounded whitespace-pre-wrap break-words">{prettyJson(tc.output)}</pre></div>}
+                          {tc.error && <div><div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Error</div><pre className="text-xs bg-destructive/10 text-destructive p-2 rounded whitespace-pre-wrap break-words">{prettyJson(tc.error)}</pre></div>}
+                          {!hasInput && !hasOutput && !tc.error && <p className="text-xs text-muted-foreground italic">No input/output recorded for this call.</p>}
                         </CardContent>
                       </Card>
                     );
@@ -599,18 +646,19 @@ const TimelineTabBase = ({
             <TabsContent value="details" className="pt-4">
               <Table>
                 <TableBody>
-                  <TableRow><TableCell className="font-medium w-32">Type</TableCell><TableCell><Badge variant={dialogContribution.contribution.type ?? "secondary"}>{dialogContribution.contribution.type}</Badge></TableCell></TableRow>
-                  <TableRow><TableCell className="font-medium">Round</TableCell><TableCell>{dialogContribution.contribution.round}</TableCell></TableRow>
-                  <TableRow><TableCell className="font-medium">Participant</TableCell><TableCell>{dialogContribution.participantName}</TableCell></TableRow>
-                  <TableRow><TableCell className="font-medium">Timestamp</TableCell><TableCell>{relativeTime(dialogContribution.contribution.created_at)}</TableCell></TableRow>
-                  <TableRow><TableCell className="font-medium">Word count</TableCell><TableCell>{(dialogContribution.contribution.content ?? "").split(/\s+/).filter(Boolean).length}</TableCell></TableRow>
-                  <TableRow><TableCell className="font-medium">Contribution ID</TableCell><TableCell className="font-mono">#{dialogContribution.contribution.id}</TableCell></TableRow>
+                  <TableRow><TableCell className="font-medium w-32">Type</TableCell><TableCell><Badge variant={(liveDialogContribution ?? dialogContribution).contribution.type ?? "secondary"}>{(liveDialogContribution ?? dialogContribution).contribution.type}</Badge></TableCell></TableRow>
+                  <TableRow><TableCell className="font-medium">Round</TableCell><TableCell>{(liveDialogContribution ?? dialogContribution).contribution.round}</TableCell></TableRow>
+                  <TableRow><TableCell className="font-medium">Participant</TableCell><TableCell>{(liveDialogContribution ?? dialogContribution).participantName}</TableCell></TableRow>
+                  <TableRow><TableCell className="font-medium">Timestamp</TableCell><TableCell>{relativeTime((liveDialogContribution ?? dialogContribution).contribution.created_at)}</TableCell></TableRow>
+                  <TableRow><TableCell className="font-medium">Word count</TableCell><TableCell>{((liveDialogContribution ?? dialogContribution).contribution.content ?? "").split(/\s+/).filter(Boolean).length}</TableCell></TableRow>
+                  <TableRow><TableCell className="font-medium">Contribution ID</TableCell><TableCell className="font-mono">#{(liveDialogContribution ?? dialogContribution).contribution.id}</TableCell></TableRow>
                 </TableBody>
               </Table>
             </TabsContent>
             <TabsContent value="context" className="pt-4">
               {(() => {
-                const pc = dialogContribution.contribution.prompt_context;
+                const _live = liveDialogContribution ?? dialogContribution;
+                const pc = _live.contribution.prompt_context;
                 const hasFull = pc && (pc.system_prompt || pc.user_prompt || pc.state_of_play);
                 const ctx = hasFull ? pc : (fetchedContext ?? pc);
                 if (contextLoading) return <div className="flex items-center justify-center py-8"><Spinner /> <span className="ml-2 text-sm text-muted-foreground">Loading prompt context...</span></div>;
@@ -627,7 +675,7 @@ const TimelineTabBase = ({
             </TabsContent>
             <TabsContent value="errors" className="pt-4">
               {(() => {
-                const toolCalls = dialogContribution.contribution.tool_calls ?? [];
+                const toolCalls = liveToolCalls;
                 const errors = toolCalls.filter(tc => tc.status === "error" || tc.error);
                 if (errors.length === 0) return <p className="text-sm text-muted-foreground text-center py-4">No errors recorded for this contribution.</p>;
                 return (
@@ -636,10 +684,11 @@ const TimelineTabBase = ({
                       <Card key={tc.callID ?? i} className="py-2 border-destructive/50">
                         <CardContent className="py-0">
                           <div className="flex items-center gap-2 mb-1">
-                            <span className="font-mono text-xs font-semibold">{tc.attempted_tool ? `attempted ${tc.attempted_tool}` : tc.tool}</span>
+                            <span className="font-mono text-xs font-semibold">{tc.attempted_tool ? `attempted ${tc.attempted_tool}` : (tc.tool ?? "unknown")}</span>
                             <Badge variant="destructive" className="ml-auto text-[10px]">error</Badge>
                           </div>
-                          {tc.error && <pre className="text-xs bg-destructive/10 p-2 rounded whitespace-pre-wrap break-words">{typeof tc.error === "string" ? tc.error : JSON.stringify(tc.error, null, 2)}</pre>}
+                          {tc.error && <pre className="text-xs bg-destructive/10 p-2 rounded whitespace-pre-wrap break-words">{prettyJson(tc.error)}</pre>}
+                          {tc.input && <pre className="text-xs bg-muted p-2 rounded whitespace-pre-wrap break-words mt-1">{prettyJson(tc.input)}</pre>}
                         </CardContent>
                       </Card>
                     ))}

@@ -44,6 +44,9 @@ export async function runMeeting() {
         sessionManager: this._sessionManager,
         newPrompt,
       });
+      // Clear breaker history so previously failed models can be retried in new rounds.
+      // Keep current model selection — do not reassign provider_id/model_id.
+      try { this._roundExecutor?.clearBreakerHistory?.(); } catch {}
       // Also index the extension prompt itself for RAG (otherwise next round's retrieve misses it)
       try {
         const { sanitizeForPrompt } = await import("../utils/sanitize.js");

@@ -70,6 +70,13 @@ export class RoundExecutor {
     return this._circuitBreaker.isHealthy(model);
   }
 
+  clearBreakerHistory() {
+    try { this._circuitBreaker?.clear?.(); } catch {}
+    try { this._failureCounts?.clear?.(); } catch {}
+    try { this._modelFailureTimes?.clear?.(); } catch {}
+    this._logger.info("breaker_cleared", "Circuit breaker history cleared for extension");
+  }
+
   getCallStats() {
     return { ...this._callStats };
   }
@@ -332,11 +339,11 @@ export class RoundExecutor {
   async _executeAgentTurn(participant, model, timeoutMs, promptContext) {
     return executeAgentTurnHelper.call(this, participant, model, timeoutMs, promptContext);
   }
-  _buildToolsMap(config) {
-    return buildToolsMapHelper(config);
+  _buildToolsMap(config, opts = {}) {
+    return buildToolsMapHelper(config, opts);
   }
-  _buildToolsMapWithoutLoom(config) {
-    return buildToolsMapWithoutLoomHelper(config);
+  _buildToolsMapWithoutLoom(config, opts = {}) {
+    return buildToolsMapWithoutLoomHelper(config, opts);
   }
 
   _abortControllers = new Set();
@@ -349,19 +356,24 @@ export class RoundExecutor {
   }
 
   async _cleanupRoundSessions(sessionIds) {
-    // Parallel with per-session timeout 3s — no 40s sequential stall
+    // Parallel with per-session timeout 10s — increased from 3s for concurrent meeting load
     const results = await Promise.allSettled(sessionIds.map(async (sid) => {
       try {
         await Promise.race([
           this._sessionManager.deleteEphemeralSession(sid),
-          new Promise((_, rej) => setTimeout(() => rej(new Error("cleanup timeout")), 3000)),
+          new Promise((_, rej) => setTimeout(() => rej(new Error("cleanup timeout")), 10000)),
         ]);
       } catch (err) {
+        // Session already deleted is success (idempotent)
+        if (err?.message && /session not found|not found|404/i.test(err.message)) return;
         throw err;
       }
     }));
     let failed = 0;
     for (const r of results) if (r.status === "rejected") failed++;
     if (failed > 0) this._logger.warn("round_session_cleanup_partial", `${failed}/${sessionIds.length} round sessions failed to delete`);
+    else if (results.some((r) => r.status === "fulfilled")) {
+      // No warning needed on clean path — timeouts now rare at 10s
+    }
   }
 }

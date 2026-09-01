@@ -98,10 +98,20 @@ export class MeetingExtender {
     }
     stateManager.forceTransitionTo("weaving");
 
+    // Clear stale error records so the sidebar doesn't show red marks
+    // against agents that are about to be revived.
+    try { database.clearAgentErrors(); } catch {}
+
+    // Revive previously failed/passed participants for the new rounds.
+    // A lot of time may have passed since the previous round — token allowance
+    // etc. may have been restored. This does not redo the past failed round,
+    // just ensures they participate again going forward. Keep current model
+    // selection (do not reassign provider_id/model_id). Muted is removed.
     for (const p of stateManager.getParticipants()) {
-      if (p.status === "failed" || p.status === "muted") continue;
-      stateManager.setParticipantStatus(p.config.id, "listening");
-      database.setParticipantStatus(p.config.id, "listening");
+      const pid = p.config?.id ?? p.id;
+      if (!pid) continue;
+      stateManager.setParticipantStatus(pid, "listening");
+      database.setParticipantStatus(pid, "listening");
     }
 
     await sessionManager.postProgress(

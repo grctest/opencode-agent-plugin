@@ -69,6 +69,10 @@ export function recordAgentError(db, meetingId, participantId, round, errorType,
     .run(meetingId, participantId, round, errorType, errorMessage ?? null, attempts, isoNow());
 }
 
+export function clearAgentErrors(db, meetingId) {
+  db.prepare("DELETE FROM agent_errors WHERE meeting_id = ?").run(meetingId);
+}
+
 export function getAgentErrors(db, meetingId) {
   return db
     .prepare(

@@ -15,6 +15,8 @@ export function createPollSystem(directory) {
   const participantStatusCache = new Map();
   const lastRoundSummariesHash = new Map();
   const lastArtifactCreatedAt = new Map();
+  const lastForumTopicId = new Map();
+  const lastForumCommentId = new Map();
 
   const SLOW_CONSUMER_TIMEOUT_MS = 30000;
   const pendingQueues = new Map(); // meetingId -> Array<event>
@@ -133,7 +135,22 @@ export function createPollSystem(directory) {
         lastErrorId.set(meetingId, maxErrorId);
         const newErrors = api.getAgentErrorsAfter(prevErrorId);
         for (const err of newErrors) broadcast(meetingId, { type: "agent_error", data: err, timestamp: new Date().toISOString() });
+      } else if ((maxErrorId ?? 0) < prevErrorId) {
+        lastErrorId.set(meetingId, 0);
+        broadcast(meetingId, { type: "agent_errors_cleared", meeting_id: meetingId, timestamp: new Date().toISOString() });
       }
+      // Forum updates
+      try {
+        const maxTopicId = api.getMaxForumTopicId();
+        const prevTopicId = lastForumTopicId.get(meetingId) ?? 0;
+        const maxCommentId = api.getMaxForumCommentId();
+        const prevCommentId = lastForumCommentId.get(meetingId) ?? 0;
+        if (maxTopicId > prevTopicId || maxCommentId > prevCommentId) {
+          lastForumTopicId.set(meetingId, maxTopicId);
+          lastForumCommentId.set(meetingId, maxCommentId);
+          broadcast(meetingId, { type: "forum_update", meeting_id: meetingId, timestamp: new Date().toISOString() });
+        }
+      } catch {}
       // Drain pending backpressure queue
       const pendingQ = pendingQueues.get(meetingId);
       if (pendingQ && pendingQ.length > 0 && clients.size > 0) {
@@ -343,6 +360,14 @@ export function createPollSystem(directory) {
               timestamp: new Date().toISOString(),
             });
           }
+          hadActivity = true;
+        } else if ((maxErrorId ?? 0) < prevErrorId) {
+          lastErrorId.set(meetingId, 0);
+          broadcast(meetingId, {
+            type: "agent_errors_cleared",
+            meeting_id: meetingId,
+            timestamp: new Date().toISOString(),
+          });
           hadActivity = true;
         }
 

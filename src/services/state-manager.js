@@ -99,7 +99,7 @@ export class StateManager {
   }
 
   getActiveParticipants() {
-    return this.#state.participants.filter(p => p.status !== "passed" && p.status !== "failed" && p.status !== "muted");
+    return this.#state.participants.filter(p => p.status !== "passed" && p.status !== "failed");
   }
 
   getPassedCount() {
