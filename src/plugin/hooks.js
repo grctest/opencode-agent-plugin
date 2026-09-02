@@ -10,7 +10,6 @@ const TOOL_REQUIRED_OVERRIDES = {
   knit: ["question"],
   loom_viz: [],
   loom_debug: ["loom_id"],
-  loom_vector_search: ["query"],
   loom_forum_create_topic: ["title", "body"],
   loom_forum_list_topics: [],
   loom_forum_read_topic: ["topic_id"],

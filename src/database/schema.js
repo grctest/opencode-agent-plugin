@@ -258,19 +258,6 @@ export function initSchema(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_meeting_metrics_created ON meeting_metrics(created_at);
 
-    CREATE TABLE IF NOT EXISTS fabric_chunks (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
-      round INTEGER NOT NULL CHECK(round >= 0),
-      chunk_index INTEGER NOT NULL DEFAULT 0 CHECK(chunk_index >= 0),
-      content TEXT NOT NULL,
-      source TEXT NOT NULL DEFAULT 'round_summary' CHECK(source IN ('round_summary','contribution','context')),
-      created_at TEXT NOT NULL,
-      UNIQUE(meeting_id, chunk_index)
-    );
-    CREATE INDEX IF NOT EXISTS idx_fabric_chunks_meeting ON fabric_chunks(meeting_id);
-    CREATE INDEX IF NOT EXISTS idx_fabric_chunks_meeting_round ON fabric_chunks(meeting_id, round);
-
     CREATE TABLE IF NOT EXISTS persona_embeddings (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,

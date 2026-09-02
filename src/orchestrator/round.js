@@ -69,25 +69,7 @@ export async function _finalizeRound(updatedRound) {
       await this._database.transaction(() => {
         this._database.setRoundSummary(updatedRound.number, updatedRound.summary);
         this._database.setStateOfPlay(newStateOfPlay);
-        // addOrchestratorMessage for vector-index timeout is handled separately (best-effort)
       });
-
-      try {
-        await this._raceWithGuardTimer(
-          this._vectorIndex.indexRound(
-            updatedRound.number,
-            updatedRound.summary,
-            updatedRound.contributions,
-          ),
-          5000,
-          "indexRound",
-        );
-      } catch (err) {
-        this._logger.warn("vector_index_round_failed", `Failed to index round ${updatedRound.number} for vector search`, extractErrorInfo(err));
-        try {
-          this._database.addOrchestratorMessage("vector_index_timeout", "assistant", `⚠️ Vector indexing timed out for round ${updatedRound.number} — keyword fallback for that round.`, updatedRound.number);
-        } catch {}
-      }
 
       const contribCount = updatedRound.contributions.length;
       const turnRequestCount = (updatedRound.turn_requests || []).length;

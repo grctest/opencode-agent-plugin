@@ -85,7 +85,6 @@ export function buildAgentSystemPrompt(participant, { activeCount } = {}) {
         const isBuildMode = t.buildMode === true || builtIn.write === true || builtIn.edit === true;
         if (builtIn.write || isBuildMode) tools.push('write');
         if (builtIn.edit || isBuildMode) tools.push('edit');
-        if (t.loom?.loom_vector_search) tools.push('loom_vector_search');
         const loom = t.loom ?? {};
         if (loom.loom_query && !isSolo) tools.push('loom_query');
         if (loom.loom_vote && !isSolo) tools.push('loom_vote');
@@ -96,7 +95,7 @@ export function buildAgentSystemPrompt(participant, { activeCount } = {}) {
           tools.push('loom_forum_create_topic', 'loom_forum_list_topics', 'loom_forum_read_topic', 'loom_forum_add_comment');
         }
         const toolList = tools.length ? tools.join(', ') : 'none enabled';
-        const soloNote = isSolo ? `**Solo mode (1 active participant):** peer query/vote/request_next unavailable — use loom_vector_search for prior deliberation, loom_summon for expertise, or built-in tools (bash/read/websearch).` : "";
+        const soloNote = isSolo ? `**Solo mode (1 active participant):** peer query/vote/request_next unavailable — use loom_summon for expertise, forum, or built-in tools (bash/read/websearch).` : "";
         const modeNote = isBuildMode
           ? `**Mode: BUILD** — you may apply live file edits via write/edit tools. Read first, then edit surgically; preserve style. After editing, note file=src/... and invite peer verification.`
           : `**Mode: PLAN** — read-only: use read/grep/glob to inspect files and propose diffs (\`\`\` file=src/... \`\`\`) but do not write. Diffs will be applied after approval.`;
@@ -107,9 +106,9 @@ Available: ${toolList}
 ${modeNote}
 ${soloNote}
 
-Ladder: ${TOOL_LADDER_LINE}
-For code collaboration: prioritize read/glob/grep first to inspect project files, then recall — file=src/... citations require a read. In BUILD mode you may then write/edit.
-- **loom_vector_search**: “what did [#12] actually say?” — prefer over memory
+ Ladder: ${TOOL_LADDER_LINE}
+For code collaboration: prioritize read/glob/grep first to inspect project files, then recall prior [#id] from recent context — file=src/... citations require a read. In BUILD mode you may then write/edit.
+- **prior [#id]**: cite recent deliberation from State of Play / recent contributions / forum
 - **websearch**: current data, benchmarks, alternatives, precedents
 - **read / grep / glob**: inspect project files referenced in discussion (first for code collaboration)
 - **webfetch**: open a URL returned by websearch (don’t guess URLs)
@@ -234,7 +233,7 @@ ${doctrine}
 /**
  * Builds the user prompt for an agent's turn using the Weighted Golden Sandwich pattern
  */
-export function buildAgentUserPrompt(participant, stateOfPlay, ragContext, recentContributions, round, question, tags = [], userContext = "") {
+export function buildAgentUserPrompt(participant, stateOfPlay, recentContributions, round, question, tags = [], userContext = "") {
   const transcript =
     recentContributions.length === 0
       ? "*(No contributions yet — you are the first to speak)*"
@@ -247,20 +246,10 @@ export function buildAgentUserPrompt(participant, stateOfPlay, ragContext, recen
           })
           .join("\n");
 
-  const ragDelimited = ragContext ? delimitContext(ragContext, "RELEVANT_PRIOR_CONTEXT") : "";
   const stateOfPlayDelimited = stateOfPlay ? delimitContext(stateOfPlay, "STATE_OF_PLAY") : "";
   const transcriptDelimited = delimitContext(transcript, "CONTRIBUTIONS");
   const safeQuestion = delimitContext(escapeDelimiters(sanitizeForDisplay(question, 10000)), "QUESTION");
   const tagContext = tags?.length > 0 ? escapeDelimiters(sanitizeForDisplay(tags.join(", "), 1000)) : null;
-
-  const ragHeader = ragContext
-    ? `## Recall — Vector-Retrieved Prior Context (may be stale — verify before citing)
-
-${ragDelimited}
-
-*Recall is semantically matched prior discussion — useful hint, not canonical. State of Play below is canonical.*
-`
-    : "";
 
   const sopHeader = stateOfPlayDelimited
     ? `## State of Play — CANONICAL (treat as settled unless you challenge with evidence)
@@ -280,7 +269,7 @@ ${delimitContext(sanitizeForDisplay(userContext), "USER_CONTEXT")}
 ${tagContext ? `\n## Tags: ${tagContext}\n` : ""}
 ## Round ${round}
 
-${contextHeader}${sopHeader}${ragHeader}## Live — Recent Contributions
+${contextHeader}${sopHeader}## Live — Recent Contributions
 
 ${transcriptDelimited}
 
@@ -288,7 +277,6 @@ ${transcriptDelimited}
 
 - **State of Play is truth** unless you explicitly challenge it with new evidence or a falsifiable scenario.
 - **Live contributions are the prompt** — engage at least one [#id] per evidence block or explain why you’re opening a new thread. Group citations; don’t spam per sentence.
-- **Recall is hint, not fact** — if Recall contradicts State of Play, prefer State of Play and note the discrepancy succinctly.
 - **Files Involved** (if SoP has them) is file list for code collaboration — build on those paths with file=src/... citations; in BUILD mode you may read then write/edit.
 - **Thoroughness welcome** — 200k window; use headings, evidence blocks, tradeoff tables. Dissent is valuable; don’t force consensus.
 

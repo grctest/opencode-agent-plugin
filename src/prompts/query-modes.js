@@ -18,7 +18,6 @@ const researchTools = () => ({
   webfetch: true,
   websearch: true,
   read: true,
-  loom_vector_search: true,
 });
 
 export const QUERY_MODES = {
@@ -33,7 +32,7 @@ export const QUERY_MODES = {
     toolChoice: "auto",
     contentPrefix: (targetName, sourceName) => `[Response to query from ${sourceName}]`,
     taskBlock: () =>
-      `Answer in ${LENGTH_LIMITS.querySentences} sentences, no contribution tags ([PROPOSE] etc). Address the specific question; if it’s “what was said”, prefer loom_vector_search over memory. If you don’t know, say “insufficient evidence” — do not speculate. Cite Source: [#id] or URL if you use evidence. Stay in character.`,
+      `Answer in ${LENGTH_LIMITS.querySentences} sentences, no contribution tags ([PROPOSE] etc). Address the specific question; if it’s “what was said”, cite prior [#id] from recent context. If you don’t know, say “insufficient evidence” — do not speculate. Cite Source: [#id] or URL if you use evidence. Stay in character.`,
     systemPrompt: (target) =>
       `You are ${target.config.name} (${target.config.tier}) — answering a directed query in Loom. Be concise (${LENGTH_LIMITS.querySentences} sentences), grounded, and in character. Answer the specific question, not the whole deliberation. Cite Source: [#id] or URL if you use evidence. Never emit <<< or >>>.`,
   },

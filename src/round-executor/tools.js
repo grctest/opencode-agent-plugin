@@ -14,7 +14,6 @@ export function buildToolsMap(config, { activeCount } = {}) {
     if (t.lsp) toolsMap.lsp = true;
     const loom = resolveLoomTools(agentToolsConfig);
     const isSolo = Number.isFinite(activeCount) && activeCount <= 1;
-    if (loom.loom_vector_search) toolsMap.loom_vector_search = true;
     if (loom.loom_query && !isSolo) toolsMap.loom_query = true;
     if (loom.loom_vote && !isSolo) toolsMap.loom_vote = true;
     if (loom.loom_summon) toolsMap.loom_summon = true;
@@ -44,7 +43,6 @@ export function buildToolsMapWithoutLoom(config, { activeCount } = {}) {
     if (t.lsp) toolsMap.lsp = true;
     const loom = resolveLoomTools(agentToolsConfig);
     const isSolo = Number.isFinite(activeCount) && activeCount <= 1;
-    if (loom.loom_vector_search) toolsMap.loom_vector_search = true;
     if (loom.loom_request_next && !isSolo) toolsMap.loom_request_next = true;
   }
   return toolsMap;

@@ -2,7 +2,6 @@ import { getConfig } from "../config.js";
 import { MeetingDatabase } from "../database.js";
 import { SessionManager } from "../session-manager.js";
 import { SynthesisCoordinator } from "../synthesis-coordinator.js";
-import { VectorIndex } from "../services/vector-index.js";
 import { PersonaIndex } from "../services/persona-index.js";
 import { getPersonas } from "../composer.js";
 import { restoreStateFromDb } from "../meeting-restorer.js";
@@ -25,7 +24,6 @@ export async function initialize() {
       const db = await MeetingDatabase.create(dbPath, this._meetingId);
       this._database = db;
       this._persistenceService = new PersistenceService(db, this._meetingId);
-      this._vectorIndex = new VectorIndex(db);
 
       this._sessionManager = new SessionManager(this._client, this._directory, this._parentSessionId, this._logger);
       this._sessionManager.setDatabase(db);
@@ -116,27 +114,9 @@ export async function initialize() {
       this._stateManager.transitionTo("weaving");
       await this._persistState();
 
-      if (!this._resume && this._options.context) {
-        const { isEmbedderInitialized: isInit } = await import("../services/embedding-service.js");
-        if (!isInit()) {
-          this._logger.debug("vector_index_skipped", "Skipping context vector indexing — embedding service not initialized");
-        } else {
-          try {
-            await this._raceWithGuardTimer(
-              this._vectorIndex.indexContext(this._options.context),
-              10000,
-              "indexContext",
-            );
-          } catch (err) {
-            this._logger.warn("vector_index_context_failed", "Failed to index context for vector search", extractErrorInfo(err));
-          }
-        }
-      }
-
       this._roundExecutor = new RoundExecutor({
         db,
         stateManager: this._stateManager,
-        vectorIndex: this._vectorIndex,
         options: {
           onAgentComplete: this._options.onAgentComplete,
           onContribution: (...args) => {

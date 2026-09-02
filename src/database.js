@@ -4,7 +4,7 @@ import { Logger, extractErrorInfo } from "./logger.js";
 import { initSchema, runMigrations } from "./database/schema.js";
 import { resolveLoomBaseDir, getMeetingDbPath } from "./paths.js";
 import { ensureDb, getDatabaseClass, isoNow, resolveVecPath } from "./database/connection.js";
-import { maintenanceDue, markMaintained, checkIntegrity, cleanupOldErrors, cleanupOldVectors, initVectorTable, checkpointWal, vacuumIfNeeded } from "./database/maintenance.js";
+import { maintenanceDue, markMaintained, checkIntegrity, cleanupOldErrors, cleanupOldVectors, checkpointWal, vacuumIfNeeded } from "./database/maintenance.js";
 import * as meetingOps from "./database/meeting-operations.js";
 import * as contribOps from "./database/contribution-operations.js";
 import * as vectorOps from "./database/vector-operations.js";
@@ -118,7 +118,6 @@ export class MeetingDatabase {
       }
       initSchema(this.#db);
       runMigrations(this.#db, { logger: dbLogger });
-      initVectorTable(this.#db);
     } catch (err) {
       try { db?.close?.(); } catch {}
       try { this.#db?.close?.(); } catch {}
@@ -212,10 +211,6 @@ export class MeetingDatabase {
   saveMeetingMetrics(metrics) { const r = contribOps.saveMeetingMetrics(this.#db, this.#meetingId, metrics); this.#notify("meeting_metrics"); return r; }
   getRecentMeetingMetrics(limit = 20) { return contribOps.getRecentMeetingMetrics(this.#db, limit); }
 
-  storeFabricEmbedding(chunkId, embedding, dim = 384) { return vectorOps.storeFabricEmbedding(this.#db, chunkId, embedding, dim); }
-  storeFabricChunk(content, round, source = "round_summary", vector = null) { return vectorOps.storeFabricChunk(this.#db, this.#meetingId, content, round, source, vector); }
-  getFabricChunks() { return vectorOps.getFabricChunks(this.#db, this.#meetingId); }
-  searchFabricVectors(queryEmbedding, topK = 5, dim = 384, excludeRound = -1) { return vectorOps.searchFabricVectors(this.#db, this.#meetingId, queryEmbedding, topK, dim, excludeRound); }
   storePersonaEmbedding(personaName, tier, tags, embeddingText, embedding, dim = 384) { return vectorOps.storePersonaEmbedding(this.#db, this.#meetingId, personaName, tier, tags, embeddingText, embedding, dim); }
   searchPersonaEmbeddings(queryEmbedding, tier, topK = 5, dim = 384) { return vectorOps.searchPersonaEmbeddings(this.#db, this.#meetingId, queryEmbedding, tier, topK, dim); }
   countPersonaEmbeddings() { return vectorOps.countPersonaEmbeddings(this.#db, this.#meetingId); }

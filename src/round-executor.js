@@ -21,7 +21,6 @@ export { extractVoteLetter };
 export class RoundExecutor {
   _db;
   _stateManager;
-  _vectorIndex;
   _options;
   _sessionManager;
   _promptParent;
@@ -36,10 +35,9 @@ export class RoundExecutor {
   _tools;
   _availableModels;
 
-  constructor({ db, stateManager, vectorIndex, options, sessionManager, promptParent, getParticipantModel, logError, tools = null, availableModels = [], directory = null }) {
+  constructor({ db, stateManager, options, sessionManager, promptParent, getParticipantModel, logError, tools = null, availableModels = [], directory = null }) {
     this._db = db;
     this._stateManager = stateManager;
-    this._vectorIndex = vectorIndex;
     this._options = options;
     this._sessionManager = sessionManager;
     this._promptParent = promptParent;
@@ -211,7 +209,17 @@ export class RoundExecutor {
       spokenOrder.push(p);
       this._db.setParticipantStatus(p.config.id, "speaking");
       this._options.onProgress?.(`${p.config.name} (${p.config.tier}) is thinking...`);
-      const {result, error} = await this._promptChildSession(p);
+      let promptRes;
+      try {
+        promptRes = await this._promptChildSession(p);
+      } catch (e) {
+        promptRes = { result: null, error: e };
+      }
+      // Normalize: promptChildSession now returns {result,error} but guard null/undefined from old code or thrown non-object
+      if (!promptRes || typeof promptRes !== "object") {
+        promptRes = { result: null, error: new Error("promptChildSession returned null/undefined") };
+      }
+      const { result, error } = promptRes;
       await this._handlePromptResult(p, result, round, error);
       }
     } finally {

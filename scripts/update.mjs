@@ -44,7 +44,6 @@ function verifyToolRegistration() {
   const distPath = join(PROJECT_ROOT, "dist", "loom.js");
   const content = readFileSync(distPath, "utf-8");
   const required = [
-    "loom_vector_search",
     "loom_query",
     "loom_vote",
     "loom_summon",

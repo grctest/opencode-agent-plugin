@@ -120,11 +120,10 @@ export function resolveBuiltInTools(agentToolsConfig) {
 
 export function resolveLoomTools(agentToolsConfig) {
   if (!agentToolsConfig?.enabled) return {
-    loom_vector_search: false, loom_query: false, loom_vote: false, loom_summon: false, loom_request_next: false, loom_pass: false, loom_forum: false,
+    loom_query: false, loom_vote: false, loom_summon: false, loom_request_next: false, loom_pass: false, loom_forum: false,
   };
   const loom = agentToolsConfig.loom ?? {};
   return {
-    loom_vector_search: !!loom.loom_vector_search,
     loom_query: !!loom.loom_query,
     loom_vote: !!loom.loom_vote,
     loom_summon: !!loom.loom_summon,

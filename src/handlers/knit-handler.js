@@ -407,7 +407,7 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
       opencodeSessionId: sessionID,
       participants,
       maxRounds,
-      meetingTimeoutMs: args.meeting_timeout,
+      meetingTimeoutMs: 0,
       tags: effectiveTags,
       agentTools: effectiveAgentTools,
       availableModels: available,
@@ -509,7 +509,7 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
           };
         }),
         maxRounds: existingMeeting.max_rounds,
-        meetingTimeoutMs: args.meeting_timeout,
+        meetingTimeoutMs: 0,
         agentTools,
         availableModels: available,
         ...meetingCallbacks,

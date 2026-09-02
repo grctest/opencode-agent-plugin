@@ -1435,7 +1435,7 @@ On dashboard start, the embedding model is initialized eagerly (status tracked: 
 
 Exposed as a plugin tool (`knit`) — invoked when the user types `/knit <question>`.
 
-**Args:** `question`, `context`, `participants` (custom room), `max_rounds` (default from config: 3), `models` (explicit per-tier assignment, e.g. `[{ tier: "senior", provider_id: "anthropic", model_id: "claude-sonnet-4-..." }]`), `meeting_timeout` (ms, `0` = no limit, max 3600000, default `0`), `dry_run` (preview room without deliberating), `fresh` (replace an existing meeting for the session).
+**Args:** `question`, `context`, `participants` (custom room), `max_rounds` (default from config: 3), `models` (explicit per-tier assignment, e.g. `[{ tier: "senior", provider_id: "anthropic", model_id: "claude-sonnet-4-..." }]`), `dry_run` (preview room without deliberating), `fresh` (replace an existing meeting for the session). Hard deadline disabled — stall watchdog and provider errors are the only extrinsic stops.
 
 ### Handler Flow (`createKnitHandler`)
 

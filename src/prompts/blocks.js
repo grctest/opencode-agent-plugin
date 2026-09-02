@@ -44,7 +44,7 @@ Tools disabled — reflect from deliberation only. Cite [#id] when referencing p
       return `
 ## Research Tools — Reflection (solo — no peers)
 
-No other active participants — peer query/vote unavailable. Ground reflection in loom_vector_search (prior [#id]), loom_summon (expert), or websearch/read for facts. Use loom_forum_* for async sub-discussions.
+No other active participants — peer query/vote unavailable. Ground reflection in prior [#id] (recent context) or loom_summon (expert), or websearch/read for facts. Use loom_forum_* for async sub-discussions.
 
 Tool ladder: ${TOOL_LADDER_LINE}. One call max.
 
@@ -55,14 +55,14 @@ ${TOOL_FAILURE_LINE}`;
       return `
 ## Research Tools — Query (solo — no peers)
 
-No other active participants — loom_query/loom_vote unavailable. Use loom_vector_search for prior deliberation, loom_summon for expertise, or websearch/read for external facts. Use loom_forum_* to start or join async sub-discussions. Cite Source: [#id] or URL if you use one.
+No other active participants — loom_query/loom_vote unavailable. Use loom_summon for expertise, or websearch/read for external facts. Use loom_forum_* to start or join async sub-discussions. Cite Source: [#id] or URL if you use one.
 If tool returns error or 0 hits, write "evidence unavailable — searched X" and answer with "insufficient evidence" qualified.`;
     }
     if (kind === "evidence") {
       return `
 ## Research Tools — Evidence (REQUIRED — solo, no peers)
 
-No other active participants — peer query unavailable. You MUST still call at least one tool: use loom_vector_search for prior deliberation, loom_summon to bring an expert, or websearch/read for external facts. Use loom_forum_* for async sub-discussions. No speculation.
+No other active participants — peer query unavailable. You MUST still call at least one tool: use loom_summon to bring an expert, or websearch/read for external facts. Use loom_forum_* for async sub-discussions. No speculation.
 
 Tool ladder: ${TOOL_LADDER_LINE}. One focused query, then synthesize.
 
@@ -78,7 +78,7 @@ ${TOOL_FAILURE_LINE}`;
 Tool ladder: ${TOOL_LADDER_LINE}. One call max unless evidence request.
 For code analysis in this folder (react, file paths, bug): prioritize read/glob/grep first to inspect the file before revising.
 
-- **loom_vector_search**: recall a prior [#id] you’re citing — prefer this over memory
+- **prior [#id]**: cite recent deliberation from State of Play / recent contributions
 - **websearch**: verify a claim before you revise your stance
 - **webfetch**: open a URL returned by websearch
 - **read / grep / glob**: inspect project files referenced in discussion (first for code analysis)
@@ -90,7 +90,7 @@ ${TOOL_FAILURE_LINE}`;
     return `
 ## Research Tools — Query (optional)
 
-You may call one tool to verify before answering. Prefer loom_vector_search if the answer is “what was said”, websearch if it’s a current fact. Cite Source: [#id] or URL if you use one.
+You may call one tool to verify before answering. Prefer citing prior [#id] if the answer is “what was said”, websearch if it’s a current fact. Cite Source: [#id] or URL if you use one.
 If tool returns error or 0 hits, write “evidence unavailable — searched X” and answer with “insufficient evidence” qualified.`;
   }
   if (kind === "evidence") {

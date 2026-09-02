@@ -28,23 +28,6 @@ export function markMaintained(db) {
   } catch { /* best effort */ }
 }
 
-export function initVectorTable(db, dim = 384) {
-  const safeDim = Number(dim);
-  if (!Number.isFinite(safeDim) || safeDim < 64 || safeDim > 2048 || Math.floor(safeDim) !== safeDim) {
-    dbLogger.warn("vec_table_invalid_dim", `Invalid embedding dimension ${dim} — expected integer 64..2048`, { dim });
-    return;
-  }
-  try {
-    db.exec(`
-        CREATE VIRTUAL TABLE IF NOT EXISTS vec_fabric_chunks_${safeDim} USING vec0(
-          embedding float[${safeDim}]
-        )
-      `);
-  } catch (err) {
-    dbLogger.warn("vec_table_init_failed", "Could not create vector table — sqlite-vec may not be loaded", extractErrorInfo(err));
-  }
-}
-
 export function initPersonaVectorTable(db, dim = 384) {
   const safeDim = Number(dim);
   if (!Number.isFinite(safeDim) || safeDim < 64 || safeDim > 2048 || Math.floor(safeDim) !== safeDim) {
@@ -103,20 +86,5 @@ export function cleanupOldErrors(db) {
 }
 
 export function cleanupOldVectors(db) {
-  try {
-    const countRow = db.prepare("SELECT COUNT(*) as c FROM fabric_chunks").get();
-    const count = countRow?.c ?? 0;
-    if (count <= 200) return;
-    // Keep most recent 200 chunks (by id), delete older
-    const cutoffRow = db.prepare("SELECT id FROM fabric_chunks ORDER BY id DESC LIMIT 1 OFFSET 200").get();
-    if (!cutoffRow) return;
-    const cutoffId = cutoffRow.id;
-    db.prepare("DELETE FROM fabric_chunks WHERE id < ?").run(cutoffId);
-    // Also prune vec tables for deleted ids (best effort)
-    for (const d of [384, 512, 768, 1024]) {
-      try { db.prepare(`DELETE FROM vec_fabric_chunks_${d} WHERE rowid < ?`).run(cutoffId); } catch {}
-    }
-  } catch (err) {
-    dbLogger.debug("cleanup_vectors_failed", "Vector cleanup failed", extractErrorInfo(err));
-  }
+  // Fabric vector cleanup removed with VectorIndex — persona vectors are small and per-meeting; no pruning needed.
 }

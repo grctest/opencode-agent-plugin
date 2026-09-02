@@ -42,7 +42,7 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
           if (!Array.isArray(allParticipants)) return { output: JSON.stringify({ error: "loom_vote: participant list unavailable" }), metadata: { error: true }, title: "loom_vote error" };
           let caller = resolveCaller(allParticipants, stateManager.getWeave?.() ?? [], context.sessionID);
           const activeCountV = (() => { try { return stateManager.getActiveParticipants().length; } catch { return allParticipants.filter(p=>p.status!=="failed"&&p.status!=="passed").length; }})();
-          if (activeCountV <= 1) return { output: JSON.stringify({ error: "loom_vote unavailable with 1 active participant — use loom_summon or loom_vector_search instead", activeCount: activeCountV }), metadata: { error: true }, title: "loom_vote error" };
+          if (activeCountV <= 1) return { output: JSON.stringify({ error: "loom_vote unavailable with 1 active participant — use loom_summon or loom_forum instead", activeCount: activeCountV }), metadata: { error: true }, title: "loom_vote error" };
           const currentRound = stateManager.getCurrentRound();
           const meetingIdForBatchV = stateManager.getState?.()?.id ?? meetingInfo.meetingId;
           const fallbackBatch = buildBatchId(meetingIdForBatchV, currentRound, caller?.config?.id);
@@ -352,7 +352,7 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
             } catch {}
           }
           if (!model) return { output: JSON.stringify({ error: "No model available for summon — no enabled model assigned to any participant in this meeting" }), metadata: { error: true }, title: "loom_summon error" };
-          // Shared ephemeral-prompt primitive (audit 10 MA1) — scoped permissions: only read/webfetch/websearch/loom_vector_search (no bash/glob/grep per guide: least privilege)
+          // Shared ephemeral-prompt primitive (audit 10 MA1) — scoped permissions: only read/webfetch/websearch (no bash/glob/grep per guide: least privilege)
           const res = await sessionManager.runEphemeralPrompt(summonedConfig, {
             system: systemPrompt,
             model,
@@ -363,7 +363,7 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
               if (t?.builtIn?.webfetch || t?.builtIn?.web_fetch) m.webfetch = true;
               if (t?.builtIn?.websearch || t?.builtIn?.web_search) m.websearch = true;
               if (t?.builtIn?.read) m.read = true;
-              if (t?.loom?.loom_vector_search) m.loom_vector_search = true;
+              // loom_vector_search removed — fabric RAG deleted
               return m;
             })(),
             timeoutMs: getConfig()?.tuning?.SUMMON_TIMEOUT_MS ?? TUNING.SUMMON_TIMEOUT_MS,

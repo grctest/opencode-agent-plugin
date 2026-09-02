@@ -29,7 +29,6 @@ import { RoundExecutor } from "./round-executor.js";
 import { StallWatchdog } from "./services/stall-watchdog.js";
 import { RoundInitializer } from "./services/round-initializer.js";
 import { MeetingExtender } from "./services/meeting-extender.js";
-import { VectorIndex } from "./services/vector-index.js";
 import { PersonaIndex } from "./services/persona-index.js";
 import { getPersonas } from "./composer.js";
 import * as weavingHelpers from "./orchestrator/weaving.js";
@@ -50,7 +49,6 @@ export class MeetingOrchestrator {
   _roundInitializer;
   _meetingExtender;
   _stallWatchdog;
-  _vectorIndex;
   _options;
   _client;
   _directory;
@@ -79,23 +77,10 @@ export class MeetingOrchestrator {
     this._client = options.client;
     this._directory = options.directory;
     this._parentSessionId = options.parentSessionId;
-    let rawTimeout = options.meetingTimeoutMs ?? getConfig().defaultMeetingTimeoutMs;
-    // Guard against accidentally short meeting_timeout (e.g. LLM hallucinating 120000).
-    // Anything >0 but <5min is almost certainly a mistake for a multi-round loom
-    // with tool-heavy turns (each turn alone needs up to 120s + 60-90s for loom_query).
-    // Treat suspicious values as disabled (0 = no hard deadline, use stall watchdog).
-    if (Number.isFinite(rawTimeout) && rawTimeout > 0 && rawTimeout < 300000) {
-      try {
-        const c = options.participants?.length ?? 0;
-        if (c === 0 || c * 30000 > rawTimeout) {
-          // Caller context not yet in stateManager, use raw participant count
-        }
-      } catch {}
-      const loggerTmp = new Logger().forMeeting(this._meetingId);
-      loggerTmp.warn("meeting_timeout_clamped", `meeting_timeout ${rawTimeout}ms suspiciously short for loom — disabling hard deadline (0 = no limit, stall watchdog remains)`, { raw: rawTimeout });
-      rawTimeout = 0;
-    }
-    this._meetingTimeoutMs = rawTimeout;
+    // Hard deadline disabled by default (P1 Option A) — meeting_timeout removed from knit.
+    // Stall watchdog (10m inactivity) and provider errors are the only extrinsic stops.
+    // Any explicit value is treated as no limit to avoid LLM hallucinating 120000.
+    this._meetingTimeoutMs = 0;
     this._maxTotalTokens = options.maxTotalTokens ?? getConfig().maxTotalTokens ?? 0;
     this._availableModels = options.availableModels ?? [];
 
@@ -182,10 +167,6 @@ export class MeetingOrchestrator {
 
   getRoundExecutor() {
     return this._roundExecutor;
-  }
-
-  getVectorIndex() {
-    return this._vectorIndex;
   }
 
   cancel() {

@@ -23,8 +23,8 @@ export const TUNING = {
 };
 
 export const DEFAULT_CONFIG = {
-  agentTimeoutMs: 120000,
-  synthesisTimeoutMs: 180000,
+  agentTimeoutMs: 0,
+  synthesisTimeoutMs: 0,
   defaultMaxRounds: 4,
   minRounds: 2,
   fastPathModel: "",
@@ -71,7 +71,6 @@ export const DEFAULT_CONFIG = {
       lsp: false,
     },
     loom: {
-      loom_vector_search: true,
       loom_query: true,
       loom_vote: true,
       loom_summon: true,
@@ -91,8 +90,8 @@ export const DEFAULT_CONFIG = {
 };
 
 export const CONFIG_SCHEMA = {
-  agentTimeoutMs: { type: 'number', min: 10000, max: 600000 },
-  synthesisTimeoutMs: { type: 'number', min: 10000, max: 600000 },
+  agentTimeoutMs: { type: 'number', min: 0, max: 600000 },
+  synthesisTimeoutMs: { type: 'number', min: 0, max: 600000 },
   defaultMaxRounds: { type: 'number', min: 1, max: 10 },
   minRounds: { type: 'number', min: 1, max: 5 },
   fastPathModel: { type: 'string' },
@@ -125,7 +124,6 @@ export const NESTED_SCHEMA = {
   'agentTools.builtIn.glob': { type: 'boolean' },
   'agentTools.builtIn.grep': { type: 'boolean' },
   'agentTools.builtIn.lsp': { type: 'boolean' },
-  'agentTools.loom.loom_vector_search': { type: 'boolean' },
   'agentTools.loom.loom_query': { type: 'boolean' },
   'agentTools.loom.loom_vote': { type: 'boolean' },
   'agentTools.loom.loom_summon': { type: 'boolean' },
@@ -149,4 +147,5 @@ export const DEPRECATED_KEYS = {
   'turnRequestThresholds.autoGrant': 'dormant by design — ordering is planTurnOrder, not autoGrant; key removed',
   'agentTools.loom.loom_evidence': 'merged into loom_query with mode evidence — use loom_query with mode evidence instead',
   'agentTools.loom.loom_type': 'removed — primary agent turns are no longer typed, following agents interpret content directly',
+  'agentTools.loom.loom_vector_search': 'removed — use loom_forum or loom_query for prior context; fabric RAG deleted',
 };

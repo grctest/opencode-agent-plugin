@@ -69,7 +69,7 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
 
           let caller = resolveCaller(allParticipants, stateManager.getWeave?.() ?? [], context.sessionID);
           const activeCountQ = (() => { try { return stateManager.getActiveParticipants().length; } catch { return allParticipants.filter(p=>p.status!=="failed"&&p.status!=="passed").length; }})();
-          if (activeCountQ <= 1) return { output: JSON.stringify({ error: "loom_query unavailable with 1 active participant — use loom_vector_search or loom_summon instead", activeCount: activeCountQ }), metadata: { error: true }, title: "loom_query error" };
+          if (activeCountQ <= 1) return { output: JSON.stringify({ error: "loom_query unavailable with 1 active participant — use loom_summon or loom_forum instead", activeCount: activeCountQ }), metadata: { error: true }, title: "loom_query error" };
           // Resolve each query to an eligible target participant (exclude self)
           const resolved = queries
             .map((q) => ({ ...q, participant: allParticipants.find((p) => p?.config?.id === q.targetId) }))

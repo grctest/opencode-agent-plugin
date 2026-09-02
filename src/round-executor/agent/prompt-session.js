@@ -26,10 +26,13 @@ export async function promptChildSession(participant) {
   const fallbackConfig = config.modelFallback;
 
   const baseTimeoutMsRaw = config.agentTimeoutMs;
-  const baseTimeoutMs = Number.isFinite(baseTimeoutMsRaw) ? Math.max(10000, Math.min(600000, baseTimeoutMsRaw)) : 240000;
+  // 0 = no client timeout, rely on provider errors / stall watchdog (P3)
+  const baseTimeoutMs = baseTimeoutMsRaw === 0 ? 0 : (Number.isFinite(baseTimeoutMsRaw) ? Math.max(10000, Math.min(600000, baseTimeoutMsRaw)) : 240000);
   const timeoutMsBase = baseTimeoutMs;
   let timeoutMs = timeoutMsBase;
-  if (this._deadline && Number.isFinite(this._deadline) && this._deadline !== Infinity) {
+  // Deadline is disabled (P1 Option A -> Infinity), so this block is now no-op for normal runs.
+  // Kept for internal API where meetingTimeoutMs may be set directly.
+  if (timeoutMs !== 0 && this._deadline && Number.isFinite(this._deadline) && this._deadline !== Infinity) {
     const remaining = this._deadline - Date.now();
     // Only clamp when meeting deadline is actually constraining; never punish
     // a healthy 60-120s base timeout down to 5s — that guaranteed failure for
@@ -53,13 +56,6 @@ export async function promptChildSession(participant) {
   const currentRound = this._stateManager.getCurrentRound();
 
   let recentContribs = this._stateManager.getWeave().filter((c) => c.round != null && c.round >= currentRound - 1);
-  let queryText = recentContribs.length > 0
-    ? recentContribs.map((c) => c.content).join("\n")
-    : this._stateManager.getQuestion();
-  if (queryText.length > 10000) queryText = queryText.slice(0, 10000);
-  const ragChunks = this._vectorIndex
-    ? await this._vectorIndex.retrieveRelevant(queryText, 15, currentRound)
-    : [];
   const ragContext = ragChunks.length > 0
     ? ragChunks.map((c) => `[Round ${c.round}] ${c.content}`).join("\n\n")
     : "";
@@ -87,7 +83,6 @@ export async function promptChildSession(participant) {
   const userPromptBase = buildAgentUserPrompt(
     participant,
     this._stateManager.getStateOfPlay(),
-    ragContext,
     recentForPrompt,
     currentRound,
     this._stateManager.getQuestion(),
@@ -101,8 +96,6 @@ export async function promptChildSession(participant) {
     system_prompt: systemPrompt,
     user_prompt: userPrompt,
     state_of_play: this._stateManager.getStateOfPlay(),
-    rag_query_text: queryText,
-    rag_chunks_used: ragChunks.map((c) => `[Round ${c.round}] ${c.content}`),
     recent_contributions: recentForPrompt.map((c) => ({
       id: c.id, participant_id: c.participant_id, type: c.type,
       content: c.content, targets_which: c.targets_which,
@@ -118,8 +111,9 @@ export async function promptChildSession(participant) {
     this._logger.warn("model_unhealthy", `${participant.config.name} — model ${this._modelKey(model)} unhealthy, attempting fallback`);
     const fallback = selectFallbackModel(model, this._availableModels, this._circuitBreaker);
     if (!fallback) {
-      this._logError(`model ${this._modelKey(model)} unhealthy and no fallback available`, new Error("circuit breaker open, no fallback"));
-      return null;
+      const err = new Error("circuit breaker open, no fallback");
+      this._logError(`model ${this._modelKey(model)} unhealthy and no fallback available`, err);
+      return { result: null, error: err };
     }
     activeModel = fallback;
   }
@@ -200,15 +194,15 @@ export async function promptChildSession(participant) {
     let ephemeralSessionId;
     try { ephemeralSessionId = await this._options.createEphemeralSession(participant); this._sessionManager.registerSessionMeeting(ephemeralSessionId, this._stateManager.getMeetingId()); } catch { return null; }
     const synthRemaining = (() => {
-      let rem = remainingTimeout;
+      let rem = remainingTimeout === 0 ? Infinity : remainingTimeout;
       if (this._deadline && Number.isFinite(this._deadline) && this._deadline !== Infinity) {
         const dl = this._deadline - Date.now();
         if (dl < 15000) return 0;
-        rem = Math.min(remainingTimeout, Math.max(15000, dl - 1000));
+        rem = Math.min(rem, Math.max(15000, dl - 1000));
       }
       return rem;
     })();
-    if (synthRemaining <= 0) {
+    if (synthRemaining !== Infinity && synthRemaining <= 0) {
       if (ephemeralSessionId) { try { await this._options.deleteEphemeralSession(ephemeralSessionId); } catch {} try { this._sessionManager.unregisterSession(ephemeralSessionId); } catch {} }
       return null;
     }
@@ -305,26 +299,34 @@ export async function promptChildSession(participant) {
       const hasExisting = collectExistingLoomResults().length > 0;
       if (attempt > 0 || err?.message === "Empty agent response" || hasExisting) warnPossibleSideEffects(err);
 
-      // Session lifecycle errors: the round-scoped session is gone, retrying it is futile
+      // Session lifecycle errors: the round-scoped session is gone, retrying same sid is futile.
+      // Delete stale round-scoped id so next attempt creates a fresh ephemeral (P4).
       if (err?.message && /session not found/i.test(err.message)) {
-        this._logger.warn("session_not_found_skip", `${participant.config.name} — session not found, skipping remaining retries, trying fallback`, info);
+        this._logger.warn("session_not_found_skip", `${participant.config.name} — session not found, removing stale round session and retrying fresh`, info);
         if (this._roundSessionIds?.has(participant.config.id)) {
           const sid = this._roundSessionIds.get(participant.config.id);
           try { this._sessionManager.unregisterSession(sid); } catch {}
           this._roundSessionIds.delete(participant.config.id);
         }
-        break;
+        // Allow one fresh retry with same model before falling back (if retries remain)
+        if (attempt < maxRetries) {
+          this._logger.info("session_not_found_retry_fresh", `${participant.config.name} — will retry with fresh session`);
+          // Fall through to normal retry delay logic (will create fresh session next iteration)
+        } else {
+          break;
+        }
       }
 
       // Recovery: if we already have loom results for this batch, synthesize from them instead of re-executing tools
       if (hasExisting && attempt < maxRetries) {
         const remainingForRecovery = (() => {
+          const effTimeout = timeoutMs === 0 ? Infinity : timeoutMs;
           if (this._deadline && Number.isFinite(this._deadline) && this._deadline !== Infinity) {
             const rem = this._deadline - Date.now();
             if (rem < 15000) return 15000;
-            return Math.max(15000, Math.min(timeoutMs, rem - 1000));
+            return Math.max(15000, Math.min(effTimeout, rem - 1000));
           }
-          return timeoutMs;
+          return effTimeout;
         })();
         const recovered = await trySynthesisFromExisting(activeModel, remainingForRecovery);
         if (recovered) {
@@ -364,13 +366,13 @@ export async function promptChildSession(participant) {
 
   if (!fallbackConfig.enabled) {
     this._recordFallbackFailure(participant, activeModel, null, lastError.value);
-    return null;
+    return { result: null, error: lastError.value ?? new Error("no fallback enabled") };
   }
 
   const fallbackModel = selectFallbackModel(activeModel, this._availableModels, this._circuitBreaker);
   if (!fallbackModel) {
     this._recordFallbackFailure(participant, activeModel, null, lastError.value);
-    return null;
+    return { result: null, error: lastError.value ?? new Error("no healthy fallback") };
   }
 
   this._logger.info("model_fallback", `${participant.config.name} — falling back from ${this._modelKey(activeModel)} to ${this._modelKey(fallbackModel)}`);
@@ -394,29 +396,39 @@ export async function promptChildSession(participant) {
     } catch (err) {
       lastError.value = err;
       const info = extractErrorInfo(err);
-      // Don't trip breaker for session lifecycle errors
-      if (err?.message && /session not found/i.test(err.message)) {
-        this._logger.warn("session_not_found_fallback_skip", `${participant.config.name} — session not found on fallback, aborting`, info);
+      const isSessionNotFoundFb = err?.message && /session not found/i.test(err.message);
+      // Don't trip breaker for session lifecycle errors — remove stale sid so next fallback attempt is fresh
+      if (isSessionNotFoundFb) {
+        this._logger.warn("session_not_found_fallback_skip", `${participant.config.name} — session not found on fallback, removing stale session`, info);
         if (this._roundSessionIds?.has(participant.config.id)) {
           const sid = this._roundSessionIds.get(participant.config.id);
           try { this._sessionManager.unregisterSession(sid); } catch {}
           this._roundSessionIds.delete(participant.config.id);
         }
-        break;
+        // Allow retry with fresh session if fallback attempts remain
+        if (attempt + 1 < fallbackAttempts) {
+          this._logger.info("session_not_found_fallback_retry_fresh", `${participant.config.name} — will retry fallback with fresh session`);
+          // Fall through to fallback_retry delay logic (fresh session next iteration) — don't trip breaker
+        } else {
+          break;
+        }
       }
-      this._recordModelFailure(fallbackModel);
+      if (!isSessionNotFoundFb) {
+        this._recordModelFailure(fallbackModel);
+      }
       warnPossibleSideEffects(err);
 
       // Fallback recovery: reuse already-persisted loom batch if available
       const hasExistingFallback = collectExistingLoomResults().length > 0;
       if (hasExistingFallback && attempt + 1 < fallbackAttempts) {
         const remainingForRecoveryFb = (() => {
+          const effTimeout = timeoutMs === 0 ? Infinity : timeoutMs;
           if (this._deadline && Number.isFinite(this._deadline) && this._deadline !== Infinity) {
             const rem = this._deadline - Date.now();
             if (rem < 15000) return 15000;
-            return Math.max(15000, Math.min(timeoutMs, rem - 1000));
+            return Math.max(15000, Math.min(effTimeout, rem - 1000));
           }
-          return timeoutMs;
+          return effTimeout;
         })();
         const recoveredFb = await trySynthesisFromExisting(fallbackModel, remainingForRecoveryFb);
         if (recoveredFb) {
@@ -447,7 +459,7 @@ export async function promptChildSession(participant) {
   }
 
   this._recordFallbackFailure(participant, activeModel, fallbackModel, lastError.value);
-  return null;
+  return { result: null, error: lastError.value ?? new Error("all models failed") };
   } finally {
     if (!localSucceeded && participant.status === "speaking") participant.status = prevStatus;
     this._hintLocked = false;

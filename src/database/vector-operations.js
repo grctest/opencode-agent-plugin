@@ -1,5 +1,5 @@
 import { Logger, extractErrorInfo } from "../logger.js";
-import { initVectorTable, initPersonaVectorTable } from "./maintenance.js";
+import { initPersonaVectorTable } from "./maintenance.js";
 import { isoNow } from "./connection.js";
 
 const dbLogger = new Logger();
@@ -11,101 +11,6 @@ export function sanitizeDim(dim) {
 }
 export function vecTableName(prefix, dim) {
   return `vec_${prefix}_${sanitizeDim(dim)}`;
-}
-
-export function storeFabricEmbedding(db, chunkId, embedding, dim = 384) {
-  const safeDim = Number(dim);
-  if (!Number.isFinite(safeDim) || safeDim < 64 || safeDim > 2048 || Math.floor(safeDim) !== safeDim) {
-    dbLogger.warn("store_embedding_invalid_dim", `Invalid dim ${dim} for storeFabricEmbedding`, { dim });
-    return;
-  }
-  try {
-    initVectorTable(db, safeDim);
-    db.prepare(
-      `INSERT INTO ${vecTableName("fabric_chunks", safeDim)}(rowid, embedding) VALUES (?, vec_f32(?))`
-    ).run(chunkId, embedding);
-  } catch (err) {
-    dbLogger.debug("store_embedding_failed", "Failed to store fabric embedding", extractErrorInfo(err));
-  }
-}
-
-export function storeFabricChunk(db, meetingId, content, round, source = "round_summary", vector = null) {
-  try {
-    const insertChunk = (rawDb) => {
-      const nextIdx = rawDb.prepare(`SELECT COALESCE(MAX(chunk_index), -1) + 1 as n FROM fabric_chunks WHERE meeting_id = ?`).get(meetingId)?.n ?? 0;
-      const result = rawDb.prepare(
-        `INSERT INTO fabric_chunks (meeting_id, round, chunk_index, content, source, created_at) VALUES (?, ?, ?, ?, ?, ?)`
-      ).run(meetingId, round, nextIdx, content, source, isoNow());
-      return result.lastInsertRowid;
-    };
-
-    if (vector?.embedding) {
-      db.exec("BEGIN IMMEDIATE");
-      try {
-        const chunkId = insertChunk(db);
-        storeFabricEmbedding(db, chunkId, vector.embedding, vector.dim ?? 384);
-        db.exec("COMMIT");
-        return chunkId;
-      } catch (err) {
-        try { db.exec("ROLLBACK"); } catch {}
-        throw err;
-      }
-    }
-
-    // Non-vector branch also needs txn to protect MAX+1 race
-    db.exec("BEGIN IMMEDIATE");
-    try {
-      const chunkId = insertChunk(db);
-      db.exec("COMMIT");
-      return chunkId;
-    } catch (err) {
-      try { db.exec("ROLLBACK"); } catch {}
-      throw err;
-    }
-  } catch (err) {
-    dbLogger.debug("store_chunk_failed", "Failed to store fabric chunk", extractErrorInfo(err));
-    return null;
-  }
-}
-
-export function getFabricChunks(db, meetingId) {
-  try {
-    return db.prepare(
-      `SELECT id, round, chunk_index, content, source FROM fabric_chunks WHERE meeting_id = ? ORDER BY round ASC, chunk_index ASC`
-    ).all(meetingId);
-  } catch {
-    return [];
-  }
-}
-
-export function searchFabricVectors(db, meetingId, queryEmbedding, topK = 5, dim = 384, excludeRound = -1) {
-  const safeDim = Number(dim);
-  if (!Number.isFinite(safeDim) || safeDim < 64 || safeDim > 2048 || Math.floor(safeDim) !== safeDim) {
-    dbLogger.warn("search_invalid_dim", `Invalid dim ${dim} for searchFabricVectors`, { dim });
-    return [];
-  }
-  try {
-    const limit = Math.max(1, Math.floor(Number(topK) || 5));
-    const hasExclude = excludeRound != null && excludeRound !== -1;
-    if (hasExclude) {
-      return db.prepare(`
-        SELECT v.rowid, v.distance, f.content, f.round, f.source
-        FROM ${vecTableName("fabric_chunks", safeDim)} v
-        JOIN fabric_chunks f ON f.id = v.rowid AND f.meeting_id = ?
-        WHERE v.embedding MATCH ? AND k = ? AND f.round != ?
-        ORDER BY v.distance
-      `).all(meetingId, queryEmbedding, limit, excludeRound);
-    }
-    return db.prepare(`
-        SELECT v.rowid, v.distance, f.content, f.round, f.source
-        FROM ${vecTableName("fabric_chunks", safeDim)} v
-        JOIN fabric_chunks f ON f.id = v.rowid AND f.meeting_id = ?
-        WHERE v.embedding MATCH ? AND k = ?
-        ORDER BY v.distance
-      `).all(meetingId, queryEmbedding, limit);
-  } catch {
-    return [];
-  }
 }
 
 export function storePersonaEmbedding(db, meetingId, personaName, tier, tags, embeddingText, embedding, dim = 384) {

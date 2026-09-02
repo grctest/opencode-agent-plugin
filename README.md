@@ -19,7 +19,7 @@ A real-time web dashboard shows every agent contributing as it happens. If you r
 - **Auto-composed expert rooms** — personas embedded and matched to your question via local embedding similarity; custom rooms also supported
 - **Structured rounds** — sequential turn-taking with tier-based expectations and priority turn requests
 - **Inline peer interactions** — query peers in seven modes, call votes, summon guest experts; results return within the same turn
-- **Tool-using agents** — web search/fetch, project file inspection, semantic recall over prior deliberation context, and structured pass via `loom_pass`
+- **Tool-using agents** — web search/fetch, project file inspection, forum sub-discussions, and structured pass via `loom_pass`
 - **Deterministic termination** — pass/fail exhaustion, round limit, hard timeout, or token budget
 - **Minority-report synthesis** — neutral synthesizer emits decisions, reasoning, action items, dissent, and confidence, then self-critiques its draft
 - **Model discovery** — finds available models from your opencode providers, assigns them per tier, restrictable per session
@@ -46,7 +46,7 @@ The installer automatically downloads the default embedding model (`snowflake-ar
 
 ## Embedding Models
 
-The Loom uses vector embeddings for two things: composing the room at meeting start, and RAG-based context retrieval during deliberations. Embedding models are downloaded separately from the plugin and stored in `~/.config/opencode/loom/models/`.
+The Loom uses vector embeddings for composing the room at meeting start (persona matching). Embedding models are downloaded separately from the plugin and stored in `~/.config/opencode/loom/models/`.
 
 ### Downloading Models
 
@@ -89,11 +89,9 @@ Models are stored globally at:
 
 ### How Embedding Models Are Used
 
-1. **Room composition** — At meeting creation, every persona's text (`persona`, `agenda`, `tags`, `expertise`) is embedded into the meeting database. Your `/knit` question is embedded too, and compared against each persona by cosine similarity: for each role slot, the most similar not-yet-used persona in that tier is picked (`PersonaIndex.search`). A finance question gets finance experts; an engineering question gets engineers.
+**Room composition** — At meeting creation, every persona's text (`persona`, `agenda`, `tags`, `expertise`) is embedded into the meeting database. Your `/knit` question is embedded too, and compared against each persona by cosine similarity: for each role slot, the most similar not-yet-used persona in that tier is picked (`PersonaIndex.search`). A finance question gets finance experts; an engineering question gets engineers.
 
-2. **RAG context retrieval** — Round summaries and contributions are chunked, embedded, and indexed. When prompting agents, the system retrieves relevant prior context using cosine similarity, and agents can query the same index directly via `loom_vector_search`.
-
-The embedding model is initialized at plugin startup (`ensureEmbedderInitialized` in `src/index.js:65`, async with 5s race) and separately in the dashboard (`initEmbeddingModel` in `src/dashboard/server/helpers.js:17` with build default). Both use real embeddings; if unavailable, semantic features degrade via keyword fallback with warnings.
+The embedding model is initialized at plugin startup (`ensureEmbedderInitialized` in `src/index.js:65`, async with 5s race) and separately in the dashboard (`initEmbeddingModel` in `src/dashboard/server/helpers.js:17` with build default). Both use real embeddings; if unavailable, room composition degrades via keyword fallback with warnings.
 
 ### Where Meetings Live
 
@@ -161,7 +159,6 @@ loom_viz
 | `max_rounds` | Maximum deliberation rounds (1–10) | `3` |
 | `models` | Explicit per-tier model assignments (`[{tier, provider_id, model_id}]`) | auto-assigned by capability score |
 | `dry_run` | Preview the composed room without deliberating | `false` |
-| `meeting_timeout` | Maximum meeting duration in ms (`0` = no limit, max 3600000) | `0` (no limit — runs until `max_rounds`/stall/token budget) |
 | `fresh` | Force a fresh loom even if a previous meeting exists | `false` |
 
 ### `list_knit_models` arguments

@@ -7,7 +7,6 @@ import { startDashboard } from "./dashboard/server.js";
 import { createKnitHandler } from "./handlers/knit-handler.js";
 import { createConfig, getConfigSource, setDefaultConfigDirectory } from "./config.js";
 import { Logger } from "./logger.js";
-import { VectorIndex } from "./services/vector-index.js";
 import { resolveLoomBaseDir } from "./paths.js";
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_QUANT } from "./services/model-manager.js";
 import { buildQueryPrompt, buildEvidencePrompt, buildVotePrompt, buildSummonPrompt } from "./prompts/interaction-prompts.js";
@@ -48,14 +47,11 @@ export const Loom = async (input) => {
     logger.warn("config_validation", warning);
   }
 
-  // Initialize the real embedding model in the plugin process so every
-  // semantic feature (vector search, reflection targeting, room composition)
-  // uses real embeddings rather than placeholder noise. This mirrors the
-  // dashboard's initEmbeddingModel(), which previously was the only place the
-  // model got loaded. Failures are non-fatal: semantic features degrade visibly.
-  // Single config-driven startup (audit 06 V4): honor the configured model here,
-  // once — orchestrator consumes whatever this loads. Use the config instance
-  // already created with the session directory (not a global no-dir cache).
+  // Initialize the real embedding model in the plugin process so
+  // room composition (PersonaIndex) uses real embeddings rather than
+  // placeholder noise. Fabric vector search removed (P1) — only persona
+  // embeddings remain. Failures are non-fatal: composition degrades to
+  // keyword/tag fallback.
   const startupValues = config.get();
   const resolvedModel = startupValues.embeddingModel ?? DEFAULT_EMBEDDING_MODEL;
   const resolvedQuant = startupValues.embeddingQuant ?? DEFAULT_EMBEDDING_QUANT;
@@ -66,7 +62,7 @@ export const Loom = async (input) => {
     .catch((err) => {
       logger.warn(
         "embedder_init_failed",
-        `Failed to initialize embedding model — semantic features (vector search, reflection targeting, room composition) will be unavailable: ${err.message}`,
+        `Failed to initialize embedding model — room composition will degrade to keyword fallback: ${err.message}`,
       );
     });
   // Expose for handlers to await when composition is imminent

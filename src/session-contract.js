@@ -100,14 +100,16 @@ export class SessionContract {
           signal.addEventListener("abort", abortHandler, { once: true });
         }));
       }
-      const result = await withTimeout(
-        Promise.race(racePromises).finally(() => {
-          if (signal && abortHandler) {
-            try { signal.removeEventListener("abort", abortHandler); } catch {}
-          }
-        }),
-        timeoutMs ?? config.agentTimeoutMs,
-      );
+      const effectiveTimeout = timeoutMs ?? config.agentTimeoutMs;
+      const shouldTimeout = Number.isFinite(effectiveTimeout) && effectiveTimeout > 0;
+      const raced = Promise.race(racePromises).finally(() => {
+        if (signal && abortHandler) {
+          try { signal.removeEventListener("abort", abortHandler); } catch {}
+        }
+      });
+      const result = shouldTimeout
+        ? await withTimeout(raced, effectiveTimeout)
+        : await raced;
 
       if (result.error) {
         throw new Error(result.error.message || JSON.stringify(result.error));

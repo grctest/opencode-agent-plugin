@@ -91,9 +91,13 @@ export function buildConfig(directory) {
     ...nestedParentKeys,
     ...Object.keys(CONFIG_SCHEMA),
   ]);
+  // Silent ignore for opencode core keys that live in same file (e.g. $schema, agent).
+  // Only $schema and agent were observed throwing warnings (seq2,3,5,6,12,13); keep list tight per user note.
+  const SILENT_TOP_LEVEL_KEYS = new Set(["$schema", "agent"]);
   for (const leafPath of collectLeafPaths(userConfig)) {
-    if (knownPaths.has(leafPath)) continue;
     const topLevel = leafPath.split('.')[0];
+    if (SILENT_TOP_LEVEL_KEYS.has(topLevel) || SILENT_TOP_LEVEL_KEYS.has(leafPath)) continue;
+    if (knownPaths.has(leafPath)) continue;
     if (validTopLevelKeys.has(topLevel)) continue;
     if (DEPRECATED_KEYS[leafPath] || DEPRECATED_KEYS[topLevel]) continue;
     warnings.push(`Unknown config key "${leafPath}" ignored.`);

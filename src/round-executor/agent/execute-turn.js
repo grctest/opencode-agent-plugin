@@ -28,7 +28,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
   if (this._abortControllers) this._abortControllers.add(abortController);
 
   const isSynthesisLoom = (name) => ["loom_query","loom_vote","loom_summon"].includes(name);
-  const isLoomTool = (name) => name?.startsWith("loom_") && name !== "loom_vector_search";
+  const isLoomTool = (name) => name?.startsWith("loom_");
 
   const truncateToolResults = (trs, agentToolsConfig) => {
     const maxToolCalls = agentToolsConfig?.maxToolCallsPerTurn ?? 200;
@@ -160,7 +160,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
     if (needsSynthesis) {
       let remainingMs = timeoutMs;
       let synthRan = false;
-      if (this._deadline && Number.isFinite(this._deadline) && this._deadline !== Infinity) {
+      if (timeoutMs !== 0 && this._deadline && Number.isFinite(this._deadline) && this._deadline !== Infinity) {
         const remaining = this._deadline - Date.now();
         if (remaining < 15000) {
           this._logger.warn("synthesis_deadline_skipped", `Skipping same-turn synthesis for ${participant.config.name} — deadline ${remaining}ms remaining (needs 15s)`);

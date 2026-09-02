@@ -47,12 +47,7 @@ export async function runMeeting() {
       // Clear breaker history so previously failed models can be retried in new rounds.
       // Keep current model selection — do not reassign provider_id/model_id.
       try { this._roundExecutor?.clearBreakerHistory?.(); } catch {}
-      // Also index the extension prompt itself for RAG (otherwise next round's retrieve misses it)
-      try {
-        const { sanitizeForPrompt } = await import("../utils/sanitize.js");
-        const safe = sanitizeForPrompt(newPrompt ?? "", 8000);
-        if (safe) await this._vectorIndex.indexContext(safe).catch(()=>{});
-      } catch {}
+      // Note: fabric RAG removed — extension prompt is already in weave / State of Play
     } catch (e) {
       // Extend failed — keep watchdog running for loop, but surface error
       throw e;

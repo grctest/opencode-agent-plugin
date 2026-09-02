@@ -80,13 +80,6 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
             .describe(
               "Model assignments per tier. Use list_knit_models to discover available options.",
             ),
-          meeting_timeout: tool.schema
-            .number()
-            .int()
-            .min(0)
-            .max(3600000)
-            .optional()
-            .describe("Maximum meeting duration in ms (0 = no limit, default 0)"),
           fresh: tool.schema
             .boolean()
             .optional()
