@@ -56,9 +56,16 @@ export async function promptChildSession(participant) {
   const currentRound = this._stateManager.getCurrentRound();
 
   let recentContribs = this._stateManager.getWeave().filter((c) => c.round != null && c.round >= currentRound - 1);
-  const ragContext = ragChunks.length > 0
-    ? ragChunks.map((c) => `[Round ${c.round}] ${c.content}`).join("\n\n")
-    : "";
+
+  // Forum topics for prompt — most recent activity first (max created/latest comment)
+  let forumTopicsForPrompt = [];
+  try {
+    if (this._db?.listForumTopicsForPrompt) {
+      forumTopicsForPrompt = this._db.listForumTopicsForPrompt(10) ?? [];
+    } else if (this._database?.listForumTopicsForPrompt) {
+      forumTopicsForPrompt = this._database.listForumTopicsForPrompt(10) ?? [];
+    }
+  } catch {}
 
   const recentForPrompt = this._stateManager.getWeave().filter(
     (c) => c.round != null && c.round >= currentRound - 1 && c.type !== "vote_response" && c.type !== "reflection",
@@ -88,6 +95,7 @@ export async function promptChildSession(participant) {
     this._stateManager.getQuestion(),
     this._stateManager.getTags(),
     this._stateManager.getContext?.() ?? "",
+    forumTopicsForPrompt,
   );
   const userPrompt = steeringHint ? `${userPromptBase}\n\n${delimitContext(steeringHint, "STEERING_HINT")}` : userPromptBase;
 

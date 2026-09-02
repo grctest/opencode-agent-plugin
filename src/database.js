@@ -225,6 +225,7 @@ export class MeetingDatabase {
     return r;
   }
   listForumTopics({ tag } = {}) { return forumOps.listTopics(this.#db, this.#meetingId, { tag }); }
+  listForumTopicsForPrompt(limit = 10) { return forumOps.listTopicsForPrompt(this.#db, this.#meetingId, limit); }
   getForumTopic(topicId) { return forumOps.getTopic(this.#db, this.#meetingId, topicId); }
   addForumComment(topicId, { body, authorId }) {
     const r = forumOps.addComment(this.#db, this.#meetingId, topicId, { body, authorId });

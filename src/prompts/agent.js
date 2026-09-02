@@ -233,7 +233,7 @@ ${doctrine}
 /**
  * Builds the user prompt for an agent's turn using the Weighted Golden Sandwich pattern
  */
-export function buildAgentUserPrompt(participant, stateOfPlay, recentContributions, round, question, tags = [], userContext = "") {
+export function buildAgentUserPrompt(participant, stateOfPlay, recentContributions, round, question, tags = [], userContext = "", forumTopics = []) {
   const transcript =
     recentContributions.length === 0
       ? "*(No contributions yet — you are the first to speak)*"
@@ -265,11 +265,35 @@ ${delimitContext(sanitizeForDisplay(userContext), "USER_CONTEXT")}
 `
     : "";
 
+  const forumHeader = (() => {
+    const topics = Array.isArray(forumTopics) ? forumTopics.slice(0, 10) : [];
+    if (topics.length === 0) {
+      return `## Forum — Open Threads
+
+_No open threads yet. If you have a sub-problem that needs async discussion, create one with loom_forum_create_topic (check titles first to avoid duplicates)._`;
+    }
+    const lines = topics.map((t) => {
+      const safeTitle = sanitizeForDisplay(String(t.title ?? ""), 100).replace(/\n/g, " ").trim() || "(untitled)";
+      const id = t.id;
+      const count = Number(t.comment_count ?? 0);
+      const countStr = count === 0 ? "0 💬" : `${count} 💬`;
+      const latest = t.latest_commenter_name ? `@${sanitizeForDisplay(String(t.latest_commenter_name), 40)}` : "—";
+      return `- “${safeTitle}” — id: ${id} (${countStr}) latest: ${latest}`;
+    });
+    return `## Forum — Open Threads (most recent activity first — use id to read/comment)
+
+${delimitContext(lines.join("\n"), "FORUM_TOPICS")}
+
+_Read with loom_forum_read_topic {topic_id: id} and comment with loom_forum_add_comment. Before creating a new topic, scan titles above or call loom_forum_list_topics to avoid duplicates._`;
+  })();
+
   return `${safeQuestion}
 ${tagContext ? `\n## Tags: ${tagContext}\n` : ""}
 ## Round ${round}
 
-${contextHeader}${sopHeader}## Live — Recent Contributions
+${contextHeader}${sopHeader}${forumHeader}
+
+## Live — Recent Contributions
 
 ${transcriptDelimited}
 
