@@ -57,19 +57,38 @@ export async function promptChildSession(participant) {
 
   let recentContribs = this._stateManager.getWeave().filter((c) => c.round != null && c.round >= currentRound - 1);
 
-  // Forum topics for prompt — most recent activity first (max created/latest comment)
+  // Forum topics for prompt — most recent activity first
   let forumTopicsForPrompt = [];
   try {
-    if (this._db?.listForumTopicsForPrompt) {
-      forumTopicsForPrompt = this._db.listForumTopicsForPrompt(10) ?? [];
-    } else if (this._database?.listForumTopicsForPrompt) {
-      forumTopicsForPrompt = this._database.listForumTopicsForPrompt(10) ?? [];
+    const dbForForum = this._db ?? this._stateManager?.getDatabase?.() ?? null;
+    if (dbForForum && typeof dbForForum.listForumTopics === "function") {
+      forumTopicsForPrompt = dbForForum.listForumTopics({}) ?? [];
+    } else if (this._stateManager?.getWeave) {
+      // Fallback: derive from contributions if DB not available (should not happen)
+      forumTopicsForPrompt = [];
     }
   } catch {}
 
   const recentForPrompt = this._stateManager.getWeave().filter(
     (c) => c.round != null && c.round >= currentRound - 1 && c.type !== "vote_response" && c.type !== "reflection",
   ).slice(-20);
+
+  // Other participants roster for loom_query target discovery — concrete ids to prevent hallucination
+  let otherParticipantsForPrompt = [];
+  try {
+    const allPs = this._stateManager.getParticipants?.() ?? [];
+    const selfId = participant.config.id;
+    otherParticipantsForPrompt = allPs
+      .filter(p => p.config.id !== selfId && p.status !== "failed")
+      .map(p => ({
+        id: p.config.id,
+        name: p.config.name,
+        tier: p.config.tier,
+        status: p.status,
+        persona: typeof p.config.persona === "string" ? p.config.persona.slice(0, 120) : "",
+      }))
+      .slice(0, 12);
+  } catch {}
 
   const activeCountPS = (() => { try { return this._stateManager.getActiveParticipants().length; } catch { return undefined; }})();
   const systemPrompt = buildAgentSystemPrompt(participant, { activeCount: activeCountPS });
@@ -96,6 +115,7 @@ export async function promptChildSession(participant) {
     this._stateManager.getTags(),
     this._stateManager.getContext?.() ?? "",
     forumTopicsForPrompt,
+    otherParticipantsForPrompt,
   );
   const userPrompt = steeringHint ? `${userPromptBase}\n\n${delimitContext(steeringHint, "STEERING_HINT")}` : userPromptBase;
 

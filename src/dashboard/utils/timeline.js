@@ -153,6 +153,11 @@ export function buildFlatItems(groupedContributions, opts) {
           } else if (c.batch_id) {
             if (!votesByBatch.has(c.batch_id)) votesByBatch.set(c.batch_id, []);
             votesByBatch.get(c.batch_id).push(c);
+          } else {
+            // No batch (legacy or reused drift) - still surface as timeline row via orphan handling
+            const orphanKey = `__orphan_${c.round}_${c.participant_id}`;
+            if (!votesByBatch.has(orphanKey)) votesByBatch.set(orphanKey, []);
+            votesByBatch.get(orphanKey).push(c);
           }
         } else {
           const key = c.participant_id;
@@ -165,17 +170,31 @@ export function buildFlatItems(groupedContributions, opts) {
       for (const [, rcs] of regularByAgent) {
         for (const c of rcs) if (c.batch_id) batchToInvoker.set(c.batch_id, c.participant_id);
       }
+      // Also index source_batch_id from responses so reused batches (drift) resolve without strict batch match
+      for (const [, list] of votesByBatch) {
+        for (const v of list) {
+          const sb = v.prompt_context?.source_batch_id;
+          const sid = v.prompt_context?.source_participant_id;
+          if (sb && sid && !batchToInvoker.has(sb)) batchToInvoker.set(sb, sid);
+        }
+      }
+      for (const [, list] of queryByBatch) {
+        for (const qr of list) {
+          const sb = qr.prompt_context?.source_batch_id;
+          const sid = qr.prompt_context?.source_participant_id;
+          if (sb && sid && !batchToInvoker.has(sb)) batchToInvoker.set(sb, sid);
+        }
+      }
+      for (const [, list] of summonByBatch) {
+        for (const sr of list) {
+          const sb = sr.prompt_context?.source_batch_id;
+          const sid = sr.prompt_context?.source_participant_id;
+          if (sb && sid && !batchToInvoker.has(sb)) batchToInvoker.set(sb, sid);
+        }
+      }
       const findInvokerIdForResponse = (resp) => {
-        if (resp.batch_id && batchToInvoker.has(resp.batch_id)) {
-          const v = batchToInvoker.get(resp.batch_id);
-          if (v && v !== "caller" && v !== "unknown") return v;
-        }
-        // Also match deterministic inline- fallback batches via source_batch_id
-        const srcBatch = resp.prompt_context?.source_batch_id;
-        if (srcBatch && batchToInvoker.has(srcBatch)) {
-          const v = batchToInvoker.get(srcBatch);
-          if (v && v !== "caller" && v !== "unknown") return v;
-        }
+        // Prefer stable source_participant_id over batch_id — batch drifts on retry (reused:true)
+        // so reused vote/query responses must still resolve to invoker and appear as timeline rows.
         const srcId = resp.prompt_context?.source_participant_id ?? resp.prompt_context?.sourceParticipantId ?? resp.prompt_context?.source_participant_name;
         if (srcId && srcId !== "caller" && srcId !== "unknown" && srcId !== "Unknown") {
           // Allow IDs with spaces when they are display names — try to resolve via participantName map
@@ -194,6 +213,16 @@ export function buildFlatItems(groupedContributions, opts) {
         }
         if (resp.prompt_context?.source_participant_id && resp.prompt_context.source_participant_id !== "caller" && resp.prompt_context.source_participant_id !== "unknown") return resp.prompt_context.source_participant_id;
         if (resp.prompt_context?.sourceParticipantId && resp.prompt_context.sourceParticipantId !== "caller" && resp.prompt_context.sourceParticipantId !== "unknown") return resp.prompt_context.sourceParticipantId;
+        // Fallback to batch mapping for non-reused or legacy rows where source may be missing
+        if (resp.batch_id && batchToInvoker.has(resp.batch_id)) {
+          const v = batchToInvoker.get(resp.batch_id);
+          if (v && v !== "caller" && v !== "unknown") return v;
+        }
+        const srcBatch = resp.prompt_context?.source_batch_id;
+        if (srcBatch && batchToInvoker.has(srcBatch)) {
+          const v = batchToInvoker.get(srcBatch);
+          if (v && v !== "caller" && v !== "unknown") return v;
+        }
         let best = null;
         let bestId = -1;
         for (const [, rContribs] of regularByAgent) {

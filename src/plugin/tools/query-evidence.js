@@ -75,7 +75,8 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
           const resolved = queries
             .map((q) => ({ ...q, participant: allParticipants.find((p) => p?.config?.id === q.targetId) }))
             .filter((q) => q.participant && q.participant.status !== "failed" && q.participant.status !== "passed" && q.targetId !== caller?.config?.id);
-          const skipped = queries.filter((q) => !resolved.some((r) => r.targetId === q.targetId)).map((q) => ({ target: q.targetId, error: "ineligible target (unknown/self/failed/passed)" }));
+          const validTargets = allParticipants.filter(p => p.status !== "failed" && p.status !== "passed" && p.config.id !== caller?.config?.id).map(p => `${p.config.id} (${p.config.name}, ${p.config.tier})`).join(", ");
+          const skipped = queries.filter((q) => !resolved.some((r) => r.targetId === q.targetId)).map((q) => ({ target: q.targetId, error: `ineligible target (unknown/self/failed/passed) — valid targets: [${validTargets || "none"}]. Use Other Participants ids verbatim, e.g. "dr_sarah_3", not display names` }));
           const sourceName = caller?.config?.name ?? "Unknown";
 
           const results = [...skipped];
