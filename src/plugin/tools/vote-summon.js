@@ -8,6 +8,7 @@ import * as sharedVoteTally from "../../utils/vote-tally.js";
 import { TUNING } from "../../config/defaults.js";
 import { getConfig } from "../../config.js";
 import { resolveCaller, resolveModel, buildBatchId, normalizeQuestionForMatch } from "./shared.js";
+import { auditLoomTool } from "./audit.js";
 
 export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
   return {
@@ -241,10 +242,14 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
           });
           const tallyContent = tallyLines.join("\n");
           const payload = { inline: true, question: args.question, tally: tallyContent.slice(0,800), votes: voterResults, note: "Vote completed inline — invoker interprets tally (no persisted vote_tally row)." };
-          return { output: JSON.stringify(payload), metadata: { inline: true, voteCount: voterResults.length }, title: `loom_vote:${voterResults.length} votes` };
+          const outStr = JSON.stringify(payload);
+          auditLoomTool({ db, stateManager, caller, meetingId: meetingInfo.meetingId, tool: "loom_vote", input: args, output: outStr, status: "completed", title: `loom_vote:${voterResults.length} votes` });
+          return { output: outStr, metadata: { inline: true, voteCount: voterResults.length }, title: `loom_vote:${voterResults.length} votes` };
         } catch (e) {
           const p = { error: `loom_vote inline failed: ${e.message}`, queued: true, question: args.question };
-          return { output: JSON.stringify(p), metadata: { error: true, queued: true }, title: "loom_vote error" };
+          const errStr = JSON.stringify(p);
+          auditLoomTool({ db, stateManager, caller, meetingId: meetingInfo.meetingId, tool: "loom_vote", input: args, output: errStr, status: "error", title: "loom_vote error" });
+          return { output: errStr, metadata: { error: true, queued: true }, title: "loom_vote error" };
         }
       },
     }),
@@ -420,10 +425,24 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
             }, null);
           } catch {}
           const payload = { inline: true, persona_name: args.persona_name, issue: args.issue, guest: found.name, content, note: "Inline summon — guest perspective returned for synthesis and stored as indented summoned_response row." };
-          return { output: JSON.stringify(payload), metadata: { inline: true, guest: found.name }, title: `loom_summon:${found.name}` };
+          const outStr2 = JSON.stringify(payload);
+          try {
+            const summonStateManager = engine.getStateManager();
+            const summonDb = engine.getDatabase();
+            const summonCaller = stateManager.getParticipants().find(p => p.session_id === context.sessionID) || stateManager.getParticipants().find(p => p?.status === "speaking") || caller;
+            auditLoomTool({ db: summonDb, stateManager: summonStateManager, caller: summonCaller, meetingId: meetingInfo.meetingId, tool: "loom_summon", input: args, output: outStr2, status: "completed", title: `loom_summon:${found.name}` });
+          } catch {}
+          return { output: outStr2, metadata: { inline: true, guest: found.name }, title: `loom_summon:${found.name}` };
         } catch (e) {
           const p = { error: `loom_summon inline failed: ${e.message}`, queued: true, persona_name: args.persona_name, issue: args.issue };
-          return { output: JSON.stringify(p), metadata: { error: true, queued: true }, title: "loom_summon error" };
+          const errStr2 = JSON.stringify(p);
+          try {
+            const summonStateManager = engine.getStateManager();
+            const summonDb = engine.getDatabase();
+            const summonCaller = stateManager.getParticipants().find(p => p.session_id === context.sessionID) || stateManager.getParticipants().find(p => p?.status === "speaking") || caller;
+            auditLoomTool({ db: summonDb, stateManager: summonStateManager, caller: summonCaller, meetingId: meetingInfo.meetingId, tool: "loom_summon", input: args, output: errStr2, status: "error", title: "loom_summon error" });
+          } catch {}
+          return { output: errStr2, metadata: { error: true, queued: true }, title: "loom_summon error" };
         }
       },
     }),

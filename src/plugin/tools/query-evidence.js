@@ -6,6 +6,7 @@ import { extractAgentResponse, mapToolResults } from "../../shared.js";
 import { degrade } from "../../utils/degrade.js";
 import { Logger } from "../../logger.js";
 import { resolveCaller, resolveModel, buildBatchId, findExistingQueryResponse } from "./shared.js";
+import { auditLoomTool } from "./audit.js";
 const logger = new Logger();
 
 function normalizeQueries(args) {
@@ -231,10 +232,15 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
             }
           }
           const inlinePayload = { inline: true, queries, responses: results, note: "Inline query — peer answers returned for synthesis and stored as indented rows." };
-          return { output: JSON.stringify(inlinePayload), metadata: { inline: true, responseCount: results.length - skipped.length }, title: `loom_query:${results.length - skipped.length} responses` };
+          const outputStr = JSON.stringify(inlinePayload);
+          // Durable audit for Tool use tab — captures loom_query even if ToolPart extraction fails or mixed with forum in same turn
+          auditLoomTool({ db, stateManager, caller, meetingId: meetingInfo.meetingId, tool: "loom_query", input: args, output: outputStr, status: "completed", title: `loom_query:${results.length - skipped.length} responses` });
+          return { output: outputStr, metadata: { inline: true, responseCount: results.length - skipped.length }, title: `loom_query:${results.length - skipped.length} responses` };
         } catch (e) {
           const p = { error: `loom_query inline failed: ${e.message}`, queued: true, queries };
-          return { output: JSON.stringify(p), metadata: { error: true, queued: true }, title: "loom_query error" };
+          const errStr = JSON.stringify(p);
+          auditLoomTool({ db, stateManager, caller, meetingId: meetingInfo.meetingId, tool: "loom_query", input: args, output: errStr, status: "error", title: "loom_query error" });
+          return { output: errStr, metadata: { error: true, queued: true }, title: "loom_query error" };
         }
       },
     }),
