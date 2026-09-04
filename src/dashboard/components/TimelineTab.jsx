@@ -602,7 +602,6 @@ const TimelineTabBase = ({
               <TabsTrigger value="tools">Tool use{liveToolCalls.length > 0 ? ` (${liveToolCalls.length})` : ""}</TabsTrigger>
               <TabsTrigger value="details">Details</TabsTrigger>
               <TabsTrigger value="context">Context</TabsTrigger>
-              <TabsTrigger value="errors">Errors</TabsTrigger>
             </TabsList>
             <TabsContent value="response" className="pt-4">
               <div className="typeset typeset-docs max-w-none w-full">
@@ -673,29 +672,7 @@ const TimelineTabBase = ({
                 );
               })()}
             </TabsContent>
-            <TabsContent value="errors" className="pt-4">
-              {(() => {
-                const toolCalls = liveToolCalls;
-                const errors = toolCalls.filter(tc => tc.status === "error" || tc.error);
-                if (errors.length === 0) return <p className="text-sm text-muted-foreground text-center py-4">No errors recorded for this contribution.</p>;
-                return (
-                  <div className="flex flex-col gap-2">
-                    {errors.map((tc, i) => (
-                      <Card key={tc.callID ?? i} className="py-2 border-destructive/50">
-                        <CardContent className="py-0">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="font-mono text-xs font-semibold">{tc.attempted_tool ? `attempted ${tc.attempted_tool}` : (tc.tool ?? "unknown")}</span>
-                            <Badge variant="destructive" className="ml-auto text-[10px]">error</Badge>
-                          </div>
-                          {tc.error && <pre className="text-xs bg-destructive/10 p-2 rounded whitespace-pre-wrap break-words">{prettyJson(tc.error)}</pre>}
-                          {tc.input && <pre className="text-xs bg-muted p-2 rounded whitespace-pre-wrap break-words mt-1">{prettyJson(tc.input)}</pre>}
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </div>
-                );
-              })()}
-            </TabsContent>
+
           </Tabs>
         )}
       </ContentDialog>

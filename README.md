@@ -156,7 +156,7 @@ loom_viz
 | `question` | The question or task to deliberate on | _(required)_ |
 | `context` | Additional context, background files, or constraints | — |
 | `participants` | Custom participant list (name, persona, agenda, tier) | auto-composed via embedding similarity |
-| `max_rounds` | Maximum deliberation rounds (1–10) | `3` |
+| `max_rounds` | Maximum deliberation rounds (1–999) | `3` |
 | `models` | Explicit per-tier model assignments (`[{tier, provider_id, model_id}]`) | auto-assigned by capability score |
 | `dry_run` | Preview the composed room without deliberating | `false` |
 | `fresh` | Force a fresh loom even if a previous meeting exists | `false` |

@@ -348,7 +348,7 @@ export function createKnitHandler(client, directory, activeLooms, agentTools = n
 
     let maxRounds = args.max_rounds ?? getConfig().defaultMaxRounds;
     if (!Number.isFinite(maxRounds) || maxRounds < 1) maxRounds = getConfig().defaultMaxRounds;
-    if (maxRounds > 10) maxRounds = 10;
+    if (maxRounds > 999) maxRounds = 999;
 
     const meetingCallbacks = createMeetingCallbacks(context, logger);
 

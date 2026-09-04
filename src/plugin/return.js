@@ -57,7 +57,7 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
             .number()
             .int()
             .min(1)
-            .max(10)
+            .max(999)
             .optional()
             .describe(
               "Maximum deliberation rounds (default: 3)",
