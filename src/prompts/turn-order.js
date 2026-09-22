@@ -20,8 +20,8 @@ export function buildTurnOrderPrompt(stateOfPlay, roundSummary, turnRequests, pa
     .map((p) => {
       const cnt = p.contributions_count ?? 0;
       const didPass = p.status === "passed" ? " [passed last round]" : "";
-      const hasReflect = p.reflection ? " [has reflection]" : "";
-      return `  - ${p.config.id} (${p.config.name}, ${p.config.tier}, ${cnt} contribs${didPass}${hasReflect})`;
+      const hasPosition = p.state_stance ? " [stance]" : (p.reflection ? " [has reflection]" : "");
+      return `  - ${p.config.id} (${p.config.name}, ${p.config.tier}, ${cnt} contribs${didPass}${hasPosition})`;
     })
     .join("\n");
 

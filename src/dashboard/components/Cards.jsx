@@ -356,7 +356,14 @@ export const AgentPerspective = memo(({ participant, stateOfPlay, recentContribu
             </div>
           </div>
         )}
-        {reflection && (
+        {participant.state_stance ? (
+          <div>
+            <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">State{participant.state_version ? ` (stance@v${participant.state_version})` : ""}</span>
+            <div className="text-xs text-muted-foreground bg-muted rounded-md px-2 py-1.5 max-h-24 overflow-y-auto whitespace-pre-wrap break-words">
+              {participant.state_stance}
+            </div>
+          </div>
+        ) : reflection && (
           <div>
             <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Reflection</span>
             <div className="text-xs text-muted-foreground bg-muted rounded-md px-2 py-1.5 max-h-24 overflow-y-auto whitespace-pre-wrap break-words">

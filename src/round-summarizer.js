@@ -98,6 +98,16 @@ export async function summarizeRound(round, state, promptOrchestrator, getHighes
     ? `\n## Evidence / Tool Signals (do not invent — use only if cited)\n${evidenceContribs.slice(0, 6).map(c => `- [#${c.id}] ${c.participant_id}: ${c.content.slice(0, 350)}${c.tool_calls ? ` [tools: ${c.tool_calls.map(t=>t.tool).join(',')}]` : ""}`).join("\n")}`
     : "";
 
+  // SKILL.state versions line (§5.9): Σ versions when patches exist. No new LLM call.
+  const stateHint = (() => {
+    try {
+      const vs = (state.participants ?? [])
+        .filter((p) => Number.isFinite(p?.state_version) && p.state_version > 0)
+        .map((p) => `${p.config?.name ?? p.config?.id}@v${p.state_version}`);
+      return vs.length > 0 ? `\n## Agent States (carried)\nstate: ${vs.join(", ")}` : "";
+    } catch { return ""; }
+  })();
+
   // Detect mode for summary shape
   const isCodeRound = formattedContributions.includes("file=") || formattedContributions.includes("```") || (state.tags || []).some(t => /engineering|code|programming/i.test(t));
 
@@ -109,7 +119,7 @@ ${state.question || "(no question provided)"}
 
 ## Round ${round.number || "?"} Contributions
 ${formattedContributions}
-${evidenceHint}
+${evidenceHint}${stateHint}
 
 ## Output — 4-5 bullets, each 1-3 sentences (human-readable, then auditable):
 
@@ -128,7 +138,7 @@ ${state.question || "(no question provided)"}
 ## Round ${round.number || "?"}
 Contribution types: ${round.contributions.map((c) => c.type).join(", ")}
 Turn requests: ${round.turn_requests.length}
-${evidenceHint}
+${evidenceHint}${stateHint}
 
 ## Instructions
 Provide 180-350 word summary with 4-5 bullets (Established / Contested / Evidence / Open / Code if applicable) noting no substantive deliberation but mentioning contribution types and any turn requests. Sentence style, human-readable. Preserve numbers verbatim.`;

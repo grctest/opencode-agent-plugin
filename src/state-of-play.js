@@ -219,8 +219,26 @@ export function formatFinalRoundTranscript(data, participants) {
       lines.push(...reflections);
     }
   };
+  // SKILL.state Agent States (final) block (§5.9): stances + top bullets, ≤4k chars,
+  // before Final Reflections. Positions-only, never evidence: the synthesizer must
+  // cite weave [#id] (and Source:/file= where present) for every contested claim;
+  // state bullets without a [#id] trail are unattributed positions, not findings.
+  const appendAgentStates = (lines) => {
+    const states = (participants || []).filter((p) => p.state_stance || (Array.isArray(p.state_bullets) && p.state_bullets.length > 0));
+    if (states.length === 0) return;
+    const block = ["### Agent States (final)", "_Positions only — cite weave [#id] for every contested claim; bullets without a [#id] trail are unattributed positions, not findings._"];
+    for (const p of states) {
+      const name = p.config?.name ?? p.config?.id ?? "unknown";
+      const tier = p.config?.tier ?? "";
+      const stance = String(p.state_stance ?? "").slice(0, 400).replace(/\n/g, " ");
+      const bullets = (p.state_bullets ?? []).slice(0, 4).map((b) => String(b).slice(0, 280).replace(/\n/g, " "));
+      block.push(`**${name} (${tier})${p.state_version ? ` v${p.state_version}` : ""}**: ${stance || "(no stance)"}${bullets.length > 0 ? ` — ${bullets.join(" | ")}` : ""}`);
+    }
+    lines.push(block.join("\n").slice(0, 4000));
+  };
   if (!data.rounds || data.rounds.length === 0) {
     const lines = [];
+    appendAgentStates(lines);
     appendReflections(lines);
     return lines.join("\n");
   }
@@ -228,6 +246,7 @@ export function formatFinalRoundTranscript(data, participants) {
     const round = data.rounds[0];
     const lines = formatRoundLines(round, participants);
     lines[0] = `### Round ${round.number} (Final)`;
+    appendAgentStates(lines);
     appendReflections(lines);
     const joined = lines.join("\n");
     return truncForTranscript(joined, 24000);
@@ -253,6 +272,7 @@ export function formatFinalRoundTranscript(data, participants) {
     ls[0] = `### Round ${r.number} ${r === fullRounds[fullRounds.length-1] ? "(Final)" : "(full)"}`;
     lines.push(...ls);
   }
+  appendAgentStates(lines);
   appendReflections(lines);
   const joined2 = lines.join("\n");
   return truncForTranscript(joined2, 24000);

@@ -3,14 +3,35 @@ import { getConfig } from "../config.js";
 import { escapeDelimiters } from "./delimiters.js";
 import { TOOL_LADDER_LINE, TOOL_FAILURE_LINE, CITATION_LINE } from "./constants.js";
 
-export function getRecentContributionsBlock(contributions, participantId) {
-  if (!contributions || contributions.length === 0) return "";
+export function getRecentContributionsBlock(contributions, participantId) {  if (!contributions || contributions.length === 0) return "";
   const mine = contributions
     .filter((c) => c.participant_id === participantId && c.type !== "pass")
     .slice(-2)
     .map((c) => sanitizeForDisplay(c.content, 1200).slice(0, 1200));
   if (mine.length === 0) return "";
   return `Your last contributions:\n${mine.map((c) => `- "${c.slice(0, 600)}"`).join("\n")}`;
+}
+
+/**
+ * SKILL.state single position line (plan §5.7/§5.9): Σⁱ.stance is the agent's
+ * reflection. Legacy reflection is the fallback only when stance is empty
+ * (meeting start / flag-off / old DB). One line, never both side by side.
+ */
+export function buildPositionLine(target) {
+  const stance = typeof target?.state_stance === "string" && target.state_stance.trim()
+    ? target.state_stance.trim()
+    : (typeof target?.reflection === "string" ? target.reflection.trim() : "");
+  if (!stance) return "";
+  const fromState = typeof target?.state_stance === "string" && target.state_stance.trim();
+  const versionTag = fromState && Number.isFinite(target?.state_version) && target.state_version > 0
+    ? ` (from your state v${target.state_version})`
+    : "";
+  let line = `Your position${versionTag}: "${sanitizeForDisplay(stance.slice(0, 240))}"`;
+  const bullets = Array.isArray(target?.state_bullets) ? target.state_bullets.filter(Boolean).slice(0, 4) : [];
+  if (fromState && bullets.length > 0) {
+    line += `\nYour top bullets: ${sanitizeForDisplay(bullets.join(" | ").slice(0, 600))}`;
+  }
+  return line;
 }
 
 export function buildEvidenceGuidance(kind, { activeCount } = {}) {

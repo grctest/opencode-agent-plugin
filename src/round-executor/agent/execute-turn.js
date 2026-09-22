@@ -232,6 +232,89 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
       finalToolResults = truncateToolResults(finalToolResults, agentToolsConfig);
     }
 
+    // SKILL.state mandatory patch-retry (plan §5.6 step 3): exactly one second pass on
+    // the same ephemeral session when no applied loom_state_patch and the turn was not
+    // a pass. Order is primary → synthesis → patch, so cited [#id]s from inline answers
+    // can enter facts_add. Never fails the turn — prose is preserved, state stays prior.
+    const patchEnabled = !!agentToolsConfig?.enabled && !!agentToolsConfig?.loom?.loom_state_patch;
+    const patchRetryEnabled = agentToolsConfig?.patchRetry !== false;
+    const hasAppliedPatch = (trs) => (trs ?? []).some((t) => t.tool === "loom_state_patch" && t.metadata?.applied === true);
+    let statePatchVersion = (() => {
+      const hit = (finalToolResults ?? []).find((t) => t.tool === "loom_state_patch" && t.metadata?.applied === true);
+      return hit?.metadata?.version ?? null;
+    })();
+    const hasContentForPatch = (finalText && String(finalText).trim().length > 0) || (finalToolResults ?? []).length > 0;
+    if (patchEnabled && patchRetryEnabled && !hasAppliedPatch(finalToolResults) && !loomPassCall && hasContentForPatch) {
+      // Surface primary-pass validation issues so the retry does not repeat identical args blindly
+      let issuesHint = "";
+      try {
+        const failed = (finalToolResults ?? []).find((t) => t.tool === "loom_state_patch" && (t.status === "error" || t.metadata?.validationFailed));
+        const raw = failed?.output ?? failed?.error ?? "";
+        const txt = typeof raw === "string" ? raw : JSON.stringify(raw);
+        if (txt && txt.length > 10) issuesHint = `\nYour previous call failed validation: ${txt.slice(0, 500)}\nFix the args and retry.`;
+      } catch {}
+      const patchInstruction = `Your contribution is recorded. Now call loom_state_patch ONCE to project what should survive: your current stance (1 sentence) + 1-3 bullets across established/contested/open/facts/files (facts need Source: or [#id], optionally with Strength: strong/weak) + exact-text remove entries for outdated bullets. At least one field. No prose needed beyond the call.${issuesHint}`;
+      let patchRemaining = timeoutMs;
+      if (timeoutMs !== 0 && this._deadline && Number.isFinite(this._deadline) && this._deadline !== Infinity) {
+        const remaining = this._deadline - Date.now();
+        if (remaining < 15000) {
+          this._logger.warn("state_patch_retry_skipped_deadline", `Skipping loom_state_patch retry for ${participant.config.name} — deadline ${remaining}ms remaining (needs 15s)`);
+          patchRemaining = 0;
+        } else {
+          patchRemaining = Math.min(timeoutMs, Math.max(15000, remaining - 1000));
+        }
+      }
+      if (patchRemaining !== 0) {
+        try {
+          this._logger.info("state_patch_retry", `Requesting loom_state_patch retry for ${participant.config.name}`, { participant: participant.config.id, round: currentRound });
+          const patchToolsMap = buildToolsMap(config, { activeCount: activeCountExec });
+          const resultP = await this._sessionManager.getContract().prompt({
+            sessionId: ephemeralSessionId,
+            system: promptContext.system_prompt,
+            model,
+            parts: [
+              { type: "text", text: promptContext.user_prompt },
+              ...(result1?.data?.parts ?? []).filter((p) => p.type === "text" && p.text).slice(-1).map((p) => ({ type: "text", text: p.text })),
+              { type: "text", text: patchInstruction },
+            ],
+            tools: patchToolsMap,
+            toolChoice: Object.keys(patchToolsMap).length > 0 ? "auto" : undefined,
+            timeoutMs: patchRemaining,
+            signal: abortController.signal,
+          });
+          if (resultP.ok) {
+            this._recordTokens(resultP);
+            const { toolResults: toolResultsP } = extractAgentResponse(resultP.data);
+            const effectiveP = truncateToolResults(toolResultsP ?? [], agentToolsConfig);
+            if (effectiveP.length > 0) {
+              finalToolResults = truncateToolResults([...finalToolResults, ...effectiveP], agentToolsConfig);
+            }
+            const hitP = effectiveP.find((t) => t.tool === "loom_state_patch" && t.metadata?.applied === true);
+            if (hitP) {
+              statePatchVersion = hitP.metadata?.version ?? null;
+              this._logger.info("state_patch_retry_ok", `${participant.config.name} applied loom_state_patch on retry (v${statePatchVersion ?? "?"})`, { participant: participant.config.id, round: currentRound, version: statePatchVersion });
+            } else {
+              this._logger.warn("state_patch_missed", `${participant.config.name} — no applied loom_state_patch after retry; state stays at prior version`, { participant: participant.config.id, round: currentRound });
+            }
+          } else {
+            this._logger.warn("state_patch_retry_failed", `loom_state_patch retry prompt failed for ${participant.config.name}: ${resultP.error?.message ?? "unknown"}`, { participant: participant.config.id, round: currentRound });
+          }
+        } catch (e) {
+          this._logger.warn("state_patch_retry_error", `loom_state_patch retry error for ${participant.config.name}: ${e?.message ?? e}`, { participant: participant.config.id, round: currentRound });
+        }
+      }
+    }
+    // Operational logging only (§5.10): DEBUG patch/version counts, never gating.
+    try {
+      if (patchEnabled && !loomPassCall) {
+        if (statePatchVersion != null) {
+          this._logger.debug("state_patch_applied", `${participant.config.name} state patch v${statePatchVersion}`, { participant: participant.config.id, round: currentRound, version: statePatchVersion });
+        } else {
+          this._logger.debug("state_patch_missed", `${participant.config.name} — turn produced no applied state patch`, { participant: participant.config.id, round: currentRound });
+        }
+      }
+    } catch {}
+
     if (!finalText) {
       const mappedTools = mapToolResults(finalToolResults);
       if (mappedTools.length > 0) {
@@ -255,6 +338,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
           vote: null,
           tool_calls: mappedTools,
           prompt_context: promptContext,
+          ...(statePatchVersion != null ? { state_patch: { version: statePatchVersion } } : {}),
         };
       }
       throw new Error(`Empty agent response — model ${model?.providerID}/${model?.modelID} / ${participant.config.id}, tools: ${Object.keys(toolsMap).join(',')}, prompt ${promptContext.user_prompt?.length ?? 0} chars`);
@@ -302,6 +386,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
 
     this._recordModelSuccess(model);
     response.prompt_context = promptContext;
+    if (statePatchVersion != null) response.state_patch = { version: statePatchVersion };
     this._options.onAgentComplete?.(participant.config.id, response.content);
     ephemeralSessionIdToDelete = null;
     return response;

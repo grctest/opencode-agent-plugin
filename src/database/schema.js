@@ -7,7 +7,7 @@
  * directly; older files run only the migrations they are missing.
  */
 
-export const LATEST_SCHEMA_VERSION = 5;
+export const LATEST_SCHEMA_VERSION = 6;
 
 /**
  * Ordered migrations. MIGRATIONS[n] upgrades a DB at user_version n to n+1.
@@ -95,6 +95,39 @@ export const MIGRATIONS = [
       `);
     }
   },
+  // v5 → v6: SKILL.state per-agent execution state — participants.state_json + state_patches audit
+  (db) => {
+    const SEED = '{"stance":"","established":[],"contested":[],"open":[],"facts":[],"files":[],"version":0,"updated_round":0,"updated_contribution_id":null}';
+    try {
+      const cols = new Set(
+        db.prepare("PRAGMA table_info(participants)").all().map((c) => c.name),
+      );
+      if (!cols.has("state_json")) {
+        db.exec(`ALTER TABLE participants ADD COLUMN state_json TEXT NOT NULL DEFAULT '${SEED}'`);
+      }
+    } catch {}
+    const tables = new Set(
+      db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name),
+    );
+    if (!tables.has("state_patches")) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS state_patches (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+          participant_id TEXT NOT NULL,
+          round INTEGER NOT NULL,
+          contribution_id INTEGER,
+          version INTEGER NOT NULL,
+          patch_json TEXT NOT NULL,
+          applied_json TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(meeting_id, participant_id, version)
+        );
+        CREATE INDEX IF NOT EXISTS idx_state_patches_meeting ON state_patches(meeting_id);
+        CREATE INDEX IF NOT EXISTS idx_state_patches_participant ON state_patches(meeting_id, participant_id);
+      `);
+    }
+  },
 ];
 
 export function initSchema(db) {
@@ -146,6 +179,7 @@ export function initSchema(db) {
       session_version INTEGER NOT NULL DEFAULT 1,
       status TEXT NOT NULL DEFAULT 'listening' CHECK(status IN ('listening','speaking','passed','failed','summoned')),
       reflection TEXT NOT NULL DEFAULT '',
+      state_json TEXT NOT NULL DEFAULT '{"stance":"","established":[],"contested":[],"open":[],"facts":[],"files":[],"version":0,"updated_round":0,"updated_contribution_id":null}',
       known_biases TEXT,
       communication_style TEXT,
       preferred_contribution_types TEXT,
@@ -307,6 +341,21 @@ export function initSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_tool_audit_meeting ON tool_audit(meeting_id);
     CREATE INDEX IF NOT EXISTS idx_tool_audit_participant_round ON tool_audit(meeting_id, participant_id, round);
     CREATE INDEX IF NOT EXISTS idx_tool_audit_batch ON tool_audit(batch_id);
+
+    CREATE TABLE IF NOT EXISTS state_patches (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+      participant_id TEXT NOT NULL,
+      round INTEGER NOT NULL,
+      contribution_id INTEGER,
+      version INTEGER NOT NULL,
+      patch_json TEXT NOT NULL,
+      applied_json TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(meeting_id, participant_id, version)
+    );
+    CREATE INDEX IF NOT EXISTS idx_state_patches_meeting ON state_patches(meeting_id);
+    CREATE INDEX IF NOT EXISTS idx_state_patches_participant ON state_patches(meeting_id, participant_id);
   `);
 
   if (isNewDb) {

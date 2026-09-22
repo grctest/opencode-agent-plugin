@@ -19,6 +19,7 @@ export function buildToolsMap(config, { activeCount } = {}) {
     if (loom.loom_summon) toolsMap.loom_summon = true;
     if (loom.loom_request_next && !isSolo) toolsMap.loom_request_next = true;
     if (loom.loom_pass) toolsMap.loom_pass = true;
+    if (loom.loom_state_patch) toolsMap.loom_state_patch = true;
     if (loom.loom_forum) {
       toolsMap.loom_forum_create_topic = true;
       toolsMap.loom_forum_list_topics = true;

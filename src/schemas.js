@@ -50,6 +50,21 @@ export const AgentResponseSchema = z.object({
   }).nullable(),
 });
 
+// SKILL.state per-agent patch schema (§5.2) — one static deliberation schema for all meetings.
+export const StatePatchSchema = z.object({
+  stance: z.string().min(1).max(400).optional(),
+  established_add: z.array(z.string().min(1).max(280)).max(3).default([]),
+  contested_add: z.array(z.string().min(1).max(280)).max(3).default([]),
+  open_add: z.array(z.string().min(1).max(280)).max(3).default([]),
+  facts_add: z.array(z.string().min(1).max(280)).max(3).default([]),
+  files_add: z.array(z.string().min(1).max(160)).max(3).default([]),
+  remove: z.array(z.string().min(1).max(280)).max(5).default([]),
+}).strict().refine(
+  (p) => (p.stance !== undefined) || p.established_add.length || p.contested_add.length ||
+          p.open_add.length || p.facts_add.length || p.files_add.length || p.remove.length,
+  { message: "empty patch — at least one field must be set" }
+);
+
 // Raw parsing — no longer type-aware. Agents just write prose; the following
 // agents interpret the full content directly. We keep a single placeholder type.
 export function parseAgentResponseRaw(response, tier) {

@@ -10,6 +10,7 @@ import * as contribOps from "./database/contribution-operations.js";
 import * as vectorOps from "./database/vector-operations.js";
 import * as forumOps from "./database/forum-operations.js";
 import * as toolAuditOps from "./database/tool-audit-operations.js";
+import * as statePatchOps from "./database/state-patch-operations.js";
 import { loadSessionIndex, indexMeeting as _indexMeeting, unindexMeeting as _unindexMeeting, getDatabasesBySessionId as _getDatabasesBySessionId } from "./database/session-index.js";
 import { notifyDatabaseWrite } from "./services/write-notifier.js";
 
@@ -240,6 +241,13 @@ export class MeetingDatabase {
   }
   getToolAudits() { return toolAuditOps.getToolAudits(this.#db, this.#meetingId); }
   getToolAuditsForParticipant(participantId, round) { return toolAuditOps.getToolAuditsForParticipant(this.#db, this.#meetingId, participantId, round); }
+
+  getParticipantState(participantId) { return statePatchOps.getParticipantState(this.#db, this.#meetingId, participantId); }
+  setParticipantState(participantId, state) { const r = statePatchOps.setParticipantState(this.#db, this.#meetingId, participantId, state); this.#notify("participants"); return r; }
+  getAllParticipantStates() { return statePatchOps.getAllParticipantStates(this.#db, this.#meetingId); }
+  addStatePatch(row) { const r = statePatchOps.addStatePatch(this.#db, this.#meetingId, row); this.#notify("state_patches"); return r; }
+  listStatePatches(participantId = null) { return statePatchOps.listStatePatches(this.#db, this.#meetingId, participantId); }
+  getStatePatchCoverage() { return statePatchOps.getStatePatchCoverage(this.#db, this.#meetingId); }
 
   close() {
     try {

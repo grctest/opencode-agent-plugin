@@ -20,6 +20,7 @@ A real-time web dashboard shows every agent contributing as it happens. If you r
 - **Structured rounds** — sequential turn-taking with tier-based expectations and priority turn requests
 - **Inline peer interactions** — query peers in seven modes, call votes, summon guest experts; results return within the same turn
 - **Tool-using agents** — web search/fetch, project file inspection, forum sub-discussions, and structured pass via `loom_pass`
+- **Per-agent carried state** — every turn projects stance + key bullets via `loom_state_patch`, so prompts stay flat and stance flips land in one turn
 - **Deterministic termination** — pass/fail exhaustion, round limit, hard timeout, or token budget
 - **Minority-report synthesis** — neutral synthesizer emits decisions, reasoning, action items, dissent, and confidence, then self-critiques its draft
 - **Model discovery** — finds available models from your opencode providers, assigns them per tier, restrictable per session

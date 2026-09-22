@@ -91,16 +91,42 @@ export function getArtifact() {
   }
 
 export function getParticipants() {
-    const rows = this._db
-      .prepare(
-        `SELECT id, name, persona, agenda, tier, provider_id, model_id, session_id, status, reflection
+    let rows;
+    try {
+      rows = this._db
+        .prepare(
+          `SELECT id, name, persona, agenda, tier, provider_id, model_id, session_id, status, reflection, state_json
          FROM participants ORDER BY tier ASC`,
-      )
-      .all();
+        )
+        .all();
+    } catch {
+      // Pre-SKILL.state DBs lack participants.state_json — degrade to reflection-only
+      rows = this._db
+        .prepare(
+          `SELECT id, name, persona, agenda, tier, provider_id, model_id, session_id, status, reflection
+         FROM participants ORDER BY tier ASC`,
+        )
+        .all();
+    }
     return rows.map((r) => ({
       ...r,
       reflection: parseReflections(r.reflection),
+      ...parseParticipantState(r.state_json),
     }));
+  }
+
+  // SKILL.state carried state for participant cards (stance@v). Missing/corrupt → absent.
+  function parseParticipantState(stateJson) {
+    if (!stateJson) return {};
+    try {
+      const s = typeof stateJson === "string" ? JSON.parse(stateJson) : stateJson;
+      const out = {};
+      if (typeof s?.stance === "string" && s.stance.trim()) out.state_stance = s.stance.trim().slice(0, 400);
+      if (Number.isFinite(s?.version) && s.version > 0) out.state_version = s.version;
+      return out;
+    } catch {
+      return {};
+    }
   }
 
 export function getAgentErrors() {

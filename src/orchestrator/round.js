@@ -59,11 +59,29 @@ export async function runRound() {
 
 export async function _finalizeRound(updatedRound) {
     try {
-      const newStateOfPlay = updateStateOfPlay(
-        this._stateManager.getWeave(),
-        this._stateManager.getQuestion(),
-        this._stateManager.getTags(),
-      );
+      // SKILL.state SoP read-view (plan §5.8): aggregation over per-agent Σⁱ is primary;
+      // legacy full-weave keyword scan is the cold-start fallback (all states empty,
+      // flag off, or old DB). Output markdown shape is unchanged for downstream consumers.
+      // Per-turn cost drops from O(T) scan to O(P × buckets).
+      let newStateOfPlay = "";
+      try {
+        const { aggregateStateOfPlay } = await import("../state-patch.js");
+        const states = typeof this._stateManager.getAllParticipantStates === "function"
+          ? this._stateManager.getAllParticipantStates()
+          : [];
+        newStateOfPlay = aggregateStateOfPlay(
+          states,
+          this._stateManager.getQuestion(),
+          this._stateManager.getTags(),
+        );
+      } catch {}
+      if (!newStateOfPlay) {
+        newStateOfPlay = updateStateOfPlay(
+          this._stateManager.getWeave(),
+          this._stateManager.getQuestion(),
+          this._stateManager.getTags(),
+        );
+      }
       this._stateManager.setStateOfPlay(newStateOfPlay);
       // Atomic: 3 writes in one SAVEPOINT — all-or-nothing
       await this._database.transaction(() => {

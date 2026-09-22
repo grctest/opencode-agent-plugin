@@ -142,6 +142,15 @@ export function restoreStateFromDb({ db, stateManager, meetingId, options }) {
 
   stateManager.setRounds(Array.from(roundMap.values()).sort((a, b) => a.number - b.number));
 
+  // SKILL.state resume: carry Σⁱ forward (plan §5.7). Missing/corrupt rows seed
+  // lazily via getParticipantState() fallback — never fatal.
+  try {
+    if (typeof db.getAllParticipantStates === "function") {
+      const states = db.getAllParticipantStates();
+      if (Array.isArray(states) && states.length > 0) stateManager.restoreParticipantStates(states);
+    }
+  } catch {}
+
   const countByParticipant = {};
   for (const c of contributions) {
     countByParticipant[c.participant_id] = (countByParticipant[c.participant_id] ?? 0) + 1;

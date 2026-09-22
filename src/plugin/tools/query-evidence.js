@@ -221,6 +221,10 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
                     target.reflectionHistory.push({ round: currentRound, text: trimmed, at: Date.now() });
                     if (target.reflectionHistory.length > 5) target.reflectionHistory.shift();
                     db.setParticipantReflection(target.config.id, trimmed);
+                    // SKILL.state single-source-of-truth (§5.7): mark dirty so the
+                    // responder's next mandatory loom_state_patch picks the position
+                    // up as stance (one-turn lag max, no extra LLM call).
+                    try { stateManager.markStateDirty?.(target.config.id); } catch {}
                   } catch {}
                 }
 

@@ -1,7 +1,7 @@
 import { sanitizeForDisplay } from "../utils/sanitize.js";
 import { TIER_ORDER, LENGTH_LIMITS } from "./constants.js";
 import { QUERY_MODES } from "./query-modes.js";
-import { getRecentContributionsBlock, buildEvidenceGuidance, buildSeniorityContext, buildRoundContext } from "./blocks.js";
+import { getRecentContributionsBlock, buildEvidenceGuidance, buildSeniorityContext, buildRoundContext, buildPositionLine } from "./blocks.js";
 import { delimitContext } from "./delimiters.js";
 
 /** Builds a prompt for a queried agent to respond to a direct question from another agent.
@@ -22,7 +22,7 @@ export function buildQueryPrompt(sourceAgent, targetAgent, sourceContribution, q
   const toolSection = buildEvidenceGuidance(meta.guidanceKind);
 
   const recentMine = getRecentContributionsBlock(roundContributions, targetAgent.config.id);
-  const reflectionLine = targetAgent.reflection ? `Your current position: "${sanitizeForDisplay(targetAgent.reflection.slice(0, 240))}"` : "";
+  const reflectionLine = buildPositionLine(targetAgent);
   const sopSnippet = stateOfPlay ? `State of Play — Open Questions (what answer would unblock):\n${sanitizeForDisplay(stateOfPlay, 600)}\n\n` : "";
 
   const header = `## ${mode === "clarify" ? "Direct Query" : `${mode.charAt(0).toUpperCase() + mode.slice(1)} Request`} — to ${sanitizeForDisplay(targetAgent.config.name)} (${targetAgent.config.tier}) from ${safeSourceName} (${sourceAgent.config.tier})
@@ -58,7 +58,7 @@ export function buildEvidencePrompt(sourceAgent, targetAgent, sourceContribution
   const toolSection = buildEvidenceGuidance("evidence");
 
   const recentMine = getRecentContributionsBlock(roundContributions, targetAgent.config.id);
-  const reflectionLine = targetAgent.reflection ? `Your current position: "${sanitizeForDisplay(targetAgent.reflection.slice(0, 240))}"` : "";
+  const reflectionLine = buildPositionLine(targetAgent);
 
   return `## Evidence Request — to ${sanitizeForDisplay(targetAgent.config.name)} (${targetAgent.config.tier}) from ${safeSourceName} (${sourceAgent.config.tier})
 
@@ -91,7 +91,7 @@ export function buildVotePrompt(sourceAgent, targetAgent, sourceContribution, qu
     500
   );
 
-  const reflectionLine = targetAgent.reflection ? `Your current position: "${sanitizeForDisplay(targetAgent.reflection.slice(0, 200))}"` : "";
+  const reflectionLine = buildPositionLine(targetAgent);
   const recentMine = getRecentContributionsBlock(roundContributions, targetAgent.config.id);
   const roundContext = buildRoundContext(currentRound, maxRounds);
   let sopOptions = "";

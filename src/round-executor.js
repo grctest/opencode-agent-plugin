@@ -384,6 +384,34 @@ export class RoundExecutor {
       try { this._db.setParticipantStatus(participant.config.id, "failed"); } catch {}
     }
 
+    // SKILL.state post-store link (plan §5.6 step 4): link Σⁱ to the contribution
+    // that produced it + write the state_patches audit row. Best-effort; never blocks.
+    try {
+      const patchCall = (result.tool_calls ?? []).find((t) => t.tool === "loom_state_patch" && t.metadata?.applied === true);
+      if (patchCall) {
+        try { this._stateManager.linkStateToContribution?.(participant.config.id, id); } catch {}
+        try {
+          const v = patchCall.metadata?.version;
+          if (Number.isFinite(v) && typeof this._db.addStatePatch === "function") {
+            this._db.addStatePatch({
+              participantId: participant.config.id,
+              round: this._stateManager.getCurrentRound(),
+              contributionId: id,
+              version: v,
+              patchJson: patchCall.input,
+              appliedJson: patchCall.output,
+            });
+          }
+        } catch {}
+        // Re-sync participants.state_json so the linked updated_contribution_id persists
+        // (the tool wrote a provisional copy before the contribution id existed).
+        try {
+          const st = this._stateManager.getParticipantState?.(participant.config.id);
+          if (st && typeof this._db.setParticipantState === "function") this._db.setParticipantState(participant.config.id, st);
+        } catch {}
+      }
+    } catch {}
+
     this._options.onContribution?.(participant.config.name, this._stateManager.getCurrentRound(), result.type);
   }
   async _promptChildSession(participant) {

@@ -74,8 +74,10 @@ export class RoundInitializer {
         const lastPassRound = lastPass.round;
         const roundsSincePass = round.number - lastPassRound;
         if (roundsSincePass > SKIP_PASSED_WINDOW) return true;
-        const hasReflection = !!p.reflection;
-        return hasReflection;
+        // SKILL.state single source of truth (§5.7): stance first, reflection fallback.
+        // Carrying a stance keeps the agent active — same rule as reflection today.
+        const hasPosition = !!(p.state_stance || p.reflection);
+        return hasPosition;
       });
       if (filtered.length > 0 && filtered.length < activeParticipants.length) {
         skipped = activeParticipants.filter((p) => !filtered.includes(p)).map((p) => p.config.name);

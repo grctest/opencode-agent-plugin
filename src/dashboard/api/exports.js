@@ -34,9 +34,21 @@ export function exportMarkdown(meetingId) {
     lines.push(`## Participants`);
     lines.push("");
     for (const p of participants) {
-      lines.push(`- **${p.name}** (${p.tier}) — ${p.provider_id ?? "unknown"}/${p.model_id ?? "unknown"}`);
+      lines.push(`- **${p.name}** (${p.tier}) — ${p.provider_id ?? "unknown"}/${p.model_id ?? "unknown"}${p.state_stance ? ` — stance@v${p.state_version ?? 0}: ${p.state_stance}` : ""}`);
     }
     lines.push("");
+
+    const withState = participants.filter((p) => p.state_stance);
+    if (withState.length > 0) {
+      lines.push(`## Agent States`);
+      lines.push("");
+      lines.push(`_Positions only — cite weave [#id] for contested claims._`);
+      lines.push("");
+      for (const p of withState) {
+        lines.push(`- **${p.name}** (${p.tier}${p.state_version ? ` v${p.state_version}` : ""}): ${p.state_stance}`);
+      }
+      lines.push("");
+    }
 
     const roundMap = new Map();
     for (const c of contributions) {
@@ -119,6 +131,7 @@ export function exportJSON(meetingId) {
         agenda: p.agenda,
         model: p.provider_id && p.model_id ? `${p.provider_id}/${p.model_id}` : null,
         status: p.status,
+        ...(p.state_stance ? { stance: p.state_stance, state_version: p.state_version ?? 0 } : {}),
       })),
       contributions: contributions.map(c => ({
         id: c.id,

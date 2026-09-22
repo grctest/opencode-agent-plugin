@@ -41,6 +41,16 @@ export const OverviewTab = memo(({
   const totalCalls = useMemo(() => CALL_COUNTER_KEYS.reduce((sum, key) => sum + (Number(stats[key]) || 0), 0), [stats]);
   const totalInputTokens = useMemo(() => Number(stats.input_tokens) || 0, [stats]);
   const totalOutputTokens = useMemo(() => Number(stats.output_tokens) || 0, [stats]);
+  // SKILL.state operational coverage (§5.10): % primary turns with an applied patch.
+  // Debug visibility only — never gating, no averages or token totals.
+  const patchCoverage = useMemo(() => {
+    try {
+      const primary = (contributions ?? []).filter((c) => c.type === "contribution");
+      if (primary.length === 0) return null;
+      const patched = primary.filter((c) => (c.tool_calls ?? []).some((t) => t.tool === "loom_state_patch" && (t.metadata?.applied === true || t.status === "completed")));
+      return { pct: Math.round((patched.length / primary.length) * 100), patched: patched.length, total: primary.length };
+    } catch { return null; }
+  }, [contributions]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -61,6 +71,11 @@ export const OverviewTab = memo(({
           )}
           <ContributionTypeChart contributions={contributions} />
           <ContributionTimeline contributions={contributions} />
+          {patchCoverage && (
+            <div className="text-xs text-muted-foreground" title="Share of primary turns that projected state via loom_state_patch (operational visibility only)">
+              State patches: {patchCoverage.pct}% of primary turns ({patchCoverage.patched}/{patchCoverage.total})
+            </div>
+          )}
         </div>
 
         {/* Right column: knit message query in textarea */}

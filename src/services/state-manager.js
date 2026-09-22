@@ -1,6 +1,7 @@
 import { getTierConfig } from "../shared.js";
 import { Logger } from "../logger.js";
 import { getConfig } from "../config.js";
+import { emptyAgentState } from "../state-patch.js";
 
 /**
  * Manages in-memory meeting state with validated transitions.
@@ -35,6 +36,102 @@ export class StateManager {
   constructor(initialState) {
     this.#state = initialState;
     this.#logger = new Logger().forMeeting(initialState.id);
+    // SKILL.state per-agent execution states (plan §5.7): id -> AgentState.
+    // Owned exclusively by each agent's own loom_state_patch calls; never shared-write.
+    this.participantStates = new Map();
+    this.stateDirty = new Set();
+  }
+
+  /** Lazily initializes and returns a clone of agent id's Σⁱ (Σ_0 when absent). */
+  getParticipantState(id) {
+    const existing = this.participantStates.get(id);
+    if (existing) return structuredClone(existing);
+    // Seed from legacy reflection when available (fallback reconciliation, §5.7)
+    let seed = null;
+    try {
+      const p = this.getParticipant(id);
+      if (p?.reflection && typeof p.reflection === "string" && p.reflection.trim()) {
+        seed = {
+          stance: p.reflection.trim().slice(0, 400),
+          established: [], contested: [], open: [], facts: [], files: [],
+          version: 0, updated_round: this.#state.current_round ?? 0,
+          updated_contribution_id: null, rebuilt: true,
+        };
+      }
+    } catch {}
+    if (!seed) {
+      seed = emptyAgentState();
+    }
+    this.participantStates.set(id, structuredClone(seed));
+    this._mirrorStateToParticipant(id, seed);
+    return structuredClone(seed);
+  }
+
+  /** Stores a clone of agent id's Σⁱ (caller guarantees ownership). */
+  setParticipantState(id, next) {
+    this.participantStates.set(id, structuredClone(next));
+    this.stateDirty.delete(id);
+    this._mirrorStateToParticipant(id, next);
+  }
+
+  /** Mirrors stance/version/top-bullets onto the participant row for peer prompts
+   *  (single position line, §5.9) and synthesis/dashboard read-views. */
+  _mirrorStateToParticipant(id, state) {
+    try {
+      const p = this.getParticipant(id);
+      if (!p || !state) return;
+      p.state_stance = typeof state.stance === "string" ? state.stance : "";
+      p.state_version = Number.isFinite(state.version) ? state.version : 0;
+      const bullets = [
+        ...(state.established ?? []).slice(0, 1),
+        ...(state.contested ?? []).slice(0, 1),
+        ...(state.open ?? []).slice(0, 1),
+        ...(state.facts ?? []).slice(0, 1),
+      ].filter(Boolean).slice(0, 4);
+      p.state_bullets = bullets;
+    } catch {}
+  }
+
+  /** Links Σⁱ to the contribution that produced it (post-store, best-effort). */
+  linkStateToContribution(id, contributionId) {
+    const s = this.participantStates.get(id);
+    if (!s) return;
+    s.updated_contribution_id = contributionId;
+    this.participantStates.set(id, s);
+  }
+
+  /** All states with holder attribution for SoP aggregation + synthesis. */
+  getAllParticipantStates() {
+    const out = [];
+    for (const p of this.#state.participants) {
+      const s = this.participantStates.get(p.config.id);
+      out.push({
+        id: p.config.id,
+        name: p.config.name ?? p.config.id,
+        tier: p.config.tier ?? "",
+        state: s ? structuredClone(s) : this.getParticipantState(p.config.id),
+      });
+    }
+    return out;
+  }
+
+  /** Bulk-load states (resume/extension path). */
+  restoreParticipantStates(list) {
+    if (!Array.isArray(list)) return;
+    for (const { participant_id, state } of list) {
+      if (!participant_id || !state) continue;
+      this.participantStates.set(participant_id, structuredClone(state));
+      this._mirrorStateToParticipant(participant_id, state);
+    }
+  }
+
+  /** Marks a responder dirty after a perspective answer (picked up by next patch, §5.7). */
+  markStateDirty(id) {
+    this.stateDirty.add(id);
+  }
+
+  isStateDirty(id) {
+    return this.stateDirty.has(id);
   }
 
   getState() {
@@ -415,6 +512,17 @@ export class StateManager {
   }
 
   buildSharedState() {
+    // Summary-only state inclusion (plan §5.7): counts + versions, not full bullets,
+    // to avoid inflating the structuredClone per-round cost. Full states persist via DB.
+    let state_patch_summary = null;
+    try {
+      const entries = [...this.participantStates.entries()];
+      if (entries.length > 0) {
+        state_patch_summary = Object.fromEntries(
+          entries.map(([id, s]) => [id, { version: s?.version ?? 0, updated_round: s?.updated_round ?? 0 }]),
+        );
+      }
+    } catch {}
     return {
       meeting_id: this.#state.id,
       round: this.#state.current_round,
@@ -423,6 +531,7 @@ export class StateManager {
       contributions: structuredClone(this.#state.weave),
       status: this.#state.status,
       state_of_play: this.#state.state_of_play ?? "",
+      ...(state_patch_summary ? { state_patch_summary } : {}),
     };
   }
 

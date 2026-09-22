@@ -69,9 +69,26 @@ export async function promptChildSession(participant) {
     }
   } catch {}
 
+  // SKILL.state O_t: latest-only observation — current-round live contributions only
+  // (plan §5.1/§5.6; tightened from round >= cur-1, ≤20). Prior rounds arrive via
+  // Σⁱ (own state) + shared SoP digest, never raw replay.
   const recentForPrompt = this._stateManager.getWeave().filter(
-    (c) => c.round != null && c.round >= currentRound - 1 && c.type !== "vote_response" && c.type !== "reflection",
-  ).slice(-20);
+    (c) => c.round != null && c.round === currentRound && c.type !== "vote_response" && c.type !== "reflection",
+  ).slice(-12);
+
+  // SKILL.state Σⁱ_t: own carried state for this agent (plan §5.1/§5.6).
+  // Fetched only when the tool is enabled — flag-off prompts stay byte-identical
+  // to legacy (no MY_STATE block, no guidance lines). Follows the same effective-
+  // tools resolution as buildAgentSystemPrompt (per-meeting override wins).
+  let myState = null;
+  try {
+    let eff = null;
+    try { eff = globalThis.__loomAgentToolsOverride ?? null; } catch {}
+    if (!eff) { try { eff = getConfig()?.agentTools ?? null; } catch {} }
+    if (eff?.enabled && eff?.loom?.loom_state_patch && typeof this._stateManager.getParticipantState === "function") {
+      myState = this._stateManager.getParticipantState(participant.config.id);
+    }
+  } catch { myState = null; }
 
   // Other participants roster for loom_query target discovery — concrete ids to prevent hallucination
   let otherParticipantsForPrompt = [];
@@ -116,6 +133,7 @@ export async function promptChildSession(participant) {
     this._stateManager.getContext?.() ?? "",
     forumTopicsForPrompt,
     otherParticipantsForPrompt,
+    myState,
   );
   const userPrompt = steeringHint ? `${userPromptBase}\n\n${delimitContext(steeringHint, "STEERING_HINT")}` : userPromptBase;
 
@@ -129,6 +147,7 @@ export async function promptChildSession(participant) {
       content: c.content, targets_which: c.targets_which,
     })),
     reflection: participant.reflection || null,
+    state_version: myState?.version ?? 0,
     question: this._stateManager.getQuestion(),
     tags: this._stateManager.getTags(),
     round: currentRound,

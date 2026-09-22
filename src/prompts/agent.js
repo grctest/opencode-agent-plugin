@@ -4,6 +4,7 @@ import { getConfig } from "../config.js";
 import { escapeDelimiters, delimitContext } from "./delimiters.js";
 import { LENGTH_LIMITS, TOOL_LADDER_LINE, TOOL_FAILURE_LINE } from "./constants.js";
 import { buildTierDoctrine } from "./blocks.js";
+import { renderMyStateMarkdown } from "../state-patch.js";
 
 import { TUNING } from "../config/defaults.js";
 const systemPromptCache = new Map();
@@ -91,6 +92,7 @@ export function buildAgentSystemPrompt(participant, { activeCount } = {}) {
         if (loom.loom_summon) tools.push('loom_summon');
         if (loom.loom_request_next && !isSolo) tools.push('loom_request_next');
         if (loom.loom_pass) tools.push('loom_pass');
+        if (loom.loom_state_patch) tools.push('loom_state_patch');
         if (loom.loom_forum) {
           tools.push('loom_forum_create_topic', 'loom_forum_list_topics', 'loom_forum_read_topic', 'loom_forum_add_comment');
         }
@@ -121,6 +123,7 @@ Loom Interaction Tools — real tool use (required, auditable):${isSolo ? "" : `
   - **loom_summon**: summon a guest expert persona. Returned inline.${isSolo ? "" : `
   - **loom_request_next**: request to speak next with priority/reason. For next round planning.`}
   - **loom_pass**: pass when you have nothing new. Include reason. Ends when all pass — not a failure to dissent.
+  - **loom_state_patch**: call ONCE per turn to project what survives — your stance + 1-3 bullets. Prose alone does not carry forward. Only patched state appears in your future State block.
 Forum — async sub-discussions between participants:
   - **loom_forum_create_topic**: propose a sub-problem or question — pass \`title, body, tags?\`. Returns topic_id.
   - **loom_forum_list_topics**: browse existing topics — optional tag filter. Returns titles + comment counts.
@@ -233,7 +236,7 @@ ${doctrine}
 /**
  * Builds the user prompt for an agent's turn using the Weighted Golden Sandwich pattern
  */
-export function buildAgentUserPrompt(participant, stateOfPlay, recentContributions, round, question, tags = [], userContext = "", forumTopics = [], otherParticipants = []) {
+export function buildAgentUserPrompt(participant, stateOfPlay, recentContributions, round, question, tags = [], userContext = "", forumTopics = [], otherParticipants = [], myState = null) {
   const transcript =
     recentContributions.length === 0
       ? "*(No contributions yet — you are the first to speak)*"
@@ -257,6 +260,21 @@ export function buildAgentUserPrompt(participant, stateOfPlay, recentContributio
 ${stateOfPlayDelimited}
 `
     : "";
+
+  // SKILL.state per-agent slice (§5.5): own carried state, rendered from runtime-validated
+  // Σⁱ only (never model prose). A.2 markers are literal; inner content is delimiter-escaped.
+  // Rendered only when the caller passes a state (tool enabled) — flag-off prompts are
+  // byte-identical to legacy. No auto-injected Recall block exists anymore (vector-RAG
+  // recall was deleted; the loom_vector_search tool is gone per DEPRECATED_KEYS) —
+  // the prompt is strictly (P, Σ, O) when enabled.
+  const showState = myState !== null && myState !== undefined;
+  const myStateInner = showState ? renderMyStateMarkdown(myState) : "";
+  const myStateHeader = showState ? `## Your State — CARRIED FORWARD (you wrote this via loom_state_patch; update it this turn)
+
+<<<LOOM_MY_STATE>>>_BEGIN_
+${escapeDelimiters(myStateInner)}
+<<<LOOM_MY_STATE>>>_END_
+` : "";
 
   const contextHeader = userContext
     ? `## Original User Context — from the person who asked
@@ -306,11 +324,17 @@ ${delimitContext(lines.join("\n"), "OTHER_PARTICIPANTS")}
 _Use these ids verbatim for loom_query. Example: {target: "dr_sarah_3", question: "...", mode: "perspective"}. Do not invent Strategist/Scout — use ids above that are listening/speaking. Passed/failed are not queryable._`;
   })();
 
+  const stateGuidance = showState
+    ? `- **Your State is yours to maintain** — call loom_state_patch once per turn. Stale bullets you don't remove stay. Pinned facts (with Source/[#id]) are never auto-evicted.
+- **Live is current round only** — anything older you still need must already be in Your State; if it isn't, re-establish it from the digest (don't quote full old prose).
+`
+    : "";
+
   return `${safeQuestion}
 ${tagContext ? `\n## Tags: ${tagContext}\n` : ""}
 ## Round ${round}
 
-${contextHeader}${sopHeader}${forumHeader}${participantsHeader ? `\n${participantsHeader}\n\n` : ""}
+${contextHeader}${sopHeader}${myStateHeader}${forumHeader}${participantsHeader ? `\n${participantsHeader}\n\n` : ""}
 
 ## Live — Recent Contributions
 
@@ -319,7 +343,7 @@ ${transcriptDelimited}
 ## Your Turn — Weighted Guidance
 
 - **State of Play is truth** unless you explicitly challenge it with new evidence or a falsifiable scenario.
-- **Live contributions are the prompt** — engage at least one [#id] per evidence block or explain why you’re opening a new thread. Group citations; don’t spam per sentence.
+${stateGuidance}- **Live contributions are the prompt** — engage at least one [#id] per evidence block or explain why you’re opening a new thread. Group citations; don’t spam per sentence.
 - **Files Involved** (if SoP has them) is file list for code collaboration — build on those paths with file=src/... citations; in BUILD mode you may read then write/edit.
 - **Thoroughness welcome** — 200k window; use headings, evidence blocks, tradeoff tables. Dissent is valuable; don’t force consensus.
 

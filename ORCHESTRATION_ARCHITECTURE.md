@@ -331,11 +331,17 @@ Should we migrate our authentication service to JWT tokens?
 - Refresh tokens on the client are recoverable by design
 <<<LOOM_STATE_OF_PLAY>>>_END_
 
-## Recall — Vector-Retrieved Prior Context (may be stale — verify before citing)
+## Your State — CARRIED FORWARD (you wrote this via loom_state_patch; update it this turn)
 
-<<<LOOM_RELEVANT_PRIOR_CONTEXT>>>_BEGIN_
-[Round 1] The team agreed on phased migration but split on refresh token storage
-<<<LOOM_RELEVANT_PRIOR_CONTEXT>>>_END_
+<<<LOOM_MY_STATE>>>_BEGIN_
+Stance: Short-lived JWTs with server-side refresh rotation.
+Established:
+- phased migration Q1-Q2 starting with auth service
+Contested:
+- client-side refresh storage theft risk
+Open:
+- session handover downtime budget?
+<<<LOOM_MY_STATE>>>_END_
 
 ## Live — Recent Contributions
 
@@ -347,8 +353,9 @@ Should we migrate our authentication service to JWT tokens?
 ## Your Turn — Weighted Guidance
 
 - **State of Play is truth** unless you explicitly challenge it with new evidence or a falsifiable scenario.
+- **Your State is yours to maintain** — call loom_state_patch once per turn. Stale bullets you don't remove stay. Pinned facts (with Source/[#id]) are never auto-evicted.
+- **Live is current round only** — anything older you still need must already be in Your State; if it isn't, re-establish it from the digest (don't quote full old prose).
 - **Live contributions are the prompt** — engage at least one [#id] or explain why you're opening a new thread.
-- **Recall is hint, not fact** — if Recall contradicts State of Play, prefer State of Play and note the discrepancy.
 - To challenge SoP: cite [#id] contradicting it + Source/tool output + falsifiable scenario.
 
 Rules:
@@ -362,10 +369,10 @@ Make your contribution or pass.
 Note the structure:
 
 - **Question (canonical)** + tags + round number lead the prompt.
-- **State of Play**: structured summary of decisions, agreements, disagreements, open questions, key facts (and files involved), derived from ALL prior contributions — explicitly labeled CANONICAL (Section 11).
-- **Recall**: semantically retrieved prior context via the vector index — explicitly labeled as a hint, excluding the current round.
-- **Live contributions**: the last ~12 contributions across the current and previous rounds (`vote_response` rows excluded), each budgeted to ~220 characters (more when carrying code blocks/fences), with stable IDs like `[#4]`.
-- **No reflection section**: the participant's stored reflection is *not* injected into primary turns. It surfaces in peer-facing prompts (query/vote/summon targets see "Your current position: …") and in the synthesis transcript.
+- **State of Play**: structured summary of decisions, agreements, disagreements, open questions, key facts (and files involved) — explicitly labeled CANONICAL (Section 11). Primary path is deterministic aggregation over per-agent states (§11); legacy full-weave keyword scan is the cold-start fallback.
+- **Your State**: the agent's own carried execution state Σⁱ (stance + established/contested/open/facts/files), rendered from runtime-validated `loom_state_patch` calls only — never model prose. Empty states render `(empty — patch it this turn)`. Shown only when `agentTools.loom.loom_state_patch` is on; flag-off prompts are byte-identical to legacy. Prompt invariant: `Aⁱ_r = (P, Σⁱ_r, Oⁱ_r)` — immutable spec, own state, latest observation. (SKILL.state complementary implementation; see `plans/skill-state-complementary-implementation.md`.)
+- **Live contributions**: current-round contributions only (round == r, `vote_response` excluded, ≤12), each budgeted ~800 chars prose / ~1200 chars code, with stable IDs like `[#4]`. Prior rounds arrive via Σⁱ + SoP digest, never raw replay — per-turn prompt footprint is flat in T.
+- **No reflection section**: the participant's stored reflection is *not* injected into primary turns. Σⁱ.stance is the single source of truth for position; legacy reflection is the fallback only when stance is empty. Peer-facing prompts (query/vote/summon targets) see one line: `Your position (from your state vN): "…"` plus top bullets — never both stance and reflection side by side.
 - **Steering hint**: if the orchestrator queued a steering note (contribution-mix nudge), it is appended after the prompt body — consumed exactly once, by the round's first speaker only.
 - **Delimiters**: every untrusted block is wrapped in `<<<LOOM_LABEL>>>_BEGIN_` / `<<<LOOM_LABEL>>>_END_` to prevent prompt injection and boundary confusion. An empty section is omitted.
 
@@ -377,10 +384,11 @@ An agent response is **untyped prose** (or a `loom_pass` tool call). `parseAgent
 - All structured directive fields (`request_next`, `query`, `evidence`, `summon`, `vote`) are schema-validated but always `null` — peer interactions happen exclusively through real loom tools.
 - If parsing fails entirely, the raw sanitized text is stored as a generic contribution so nothing is silently dropped.
 
-**Tool calls** are first-class: `extractAgentResponse()` returns all completed/error ToolParts, and they are mapped onto the response as `tool_calls` (tool name, callID, status, output) for audit and dashboard display. Two tool-derived behaviors:
+**Tool calls** are first-class: `extractAgentResponse()` returns all completed/error ToolParts, and they are mapped onto the response as `tool_calls` (tool name, callID, status, output) for audit and dashboard display. Three tool-derived behaviors:
 
 1. **Turn requests** — if the agent called `loom_request_next`, its `{priority, reason}` is extracted from the tool results and attached as `response.request_next`, capped by tier (`getPriorityCap`: junior 5, mid/civilian 7, senior 9, principal 10).
 2. **Same-turn synthesis** — when `agentTools.sameTurnSynthesis` is on and the turn contains successful `loom_query`/`loom_vote`/`loom_summon` calls, a second prompt on the same ephemeral session presents the tool outputs (each bounded to ~3.5k chars) with the instruction to synthesize the final contribution citing `[#id]` — and offers **no interaction tools** (`buildToolsMapWithoutLoom`) so results can't be re-fetched. The synthesized text replaces the first-pass text when substantive; otherwise the first pass stands.
+3. **Mandatory state patch** — every primary turn must produce one validated `loom_state_patch` call (per-agent execution state Σⁱ: stance + established/contested/open/facts/files). When the primary pass (and synthesis, if any) yields no applied patch and the turn was not a `loom_pass`, a single patch-retry prompt runs **last** on the same ephemeral session (order: primary → synthesis → patch), with prior validation issues quoted so the retry doesn't repeat identical args. Misses never fail the turn — prose is preserved, state stays at its prior version, and a `state_patch_missed` is logged at DEBUG. `loom_pass` turns skip the retry. Toggle: `agentTools.loom.loom_state_patch` (tool) + `agentTools.patchRetry` (retry kill-switch).
 
 Edge cases:
 
@@ -494,7 +502,9 @@ const result = await sessionManager.getContract().prompt({
   tools: toolsMap,   // boolean filter map, e.g. { websearch: true, loom_query: true }
 });
 const { text, toolResults, reasoning } = extractAgentResponse(result.data);
-// ... parse & store; same-turn synthesis pass when loom interaction tools succeeded
+// ... parse & store; same-turn synthesis pass when loom interaction tools succeeded,
+// then the mandatory loom_state_patch retry (order: primary → synthesis → patch,
+// all on the same round-scoped session, so within-step reasoning stays in-session)
 ```
 
 `extractAgentResponse()` handles all Part types:
@@ -705,6 +715,10 @@ engineering, security
 
 ### How It's Derived
 
+Primary path is **deterministic aggregation over per-agent states** (`aggregateStateOfPlay` in `src/state-patch.js`): each bucket collects bullets with holder attribution, dedupes case-insensitively, ranks by holder-count then recency, and takes the top 8; stances surface under Key Facts as `**Name (tier) stance**: …`; files are unioned (last 8). Output markdown shape is identical to the legacy path, so every consumer works untouched. Per-round cost drops from an `O(T)` full-weave scan to `O(P × buckets)`.
+
+Fallback is the legacy `updateStateOfPlay(weave, question, tags)` keyword/type scan, used when all states are empty (meeting start, flag off, old DB). Flag off is therefore a zero-behavior cliff: with no patches, aggregation returns `""` and the legacy scan runs exactly as before.
+
 The orchestrator calls `updateStateOfPlay(weave, question, tags)` which categorizes contributions using **the stored contribution type** (`c.type`) as the primary signal:
 
 | `c.type` | Category |
@@ -755,6 +769,8 @@ The old system appended round summaries to a "fabric" string and compressed it p
 
 Reflections are per-participant belief states: a short statement of where that agent currently stands on the deliberation. They are **no longer produced automatically** — there is no mid-round reflection phase, and challenges/dissents do not trigger reflections.
 
+**SKILL.state single source of truth:** `Σⁱ.stance` **is** the agent's reflection. Legacy `participants.reflection` / `reflectionHistory` is kept for backward compatibility but is no longer a second authority: `perspective`-mode answers still write `reflection` and additionally mark the responder `state_dirty`, so the responder's next mandatory `loom_state_patch` picks the new position up as `stance` (one-turn lag max, no extra LLM call). Peer prompts render one line only — `Your position (from your state vN): "…"` plus top bullets, falling back to `reflection` only when `stance` is empty. Skip-passed and synthesis read `stance` first, `reflection` only when `stance` is empty. Dashboard participant cards show `stance@vN`. See `plans/skill-state-complementary-implementation.md` §5.7.
+
 ### How Reflections Are Maintained Today
 
 The only live write path is **`loom_query` with mode `perspective`**: when an agent solicits a peer's stance on a statement, the peer's answer replaces the peer's stored reflection and is pushed onto a bounded `reflectionHistory` (last 5 entries, in memory) plus persisted via `setParticipantReflection` on the `participants` row. This keeps each agent's "current position" fresh as a side effect of natural peer-to-peer interaction rather than extra LLM calls — the perspective answer *is* their position.
@@ -803,7 +819,7 @@ Rules: cite [#id] when attributing. Keep Contested holders explicit.
 Preserve numbers verbatim — do not round, estimate, or invent.
 ```
 
-The **Evidence/Tool Signals** hint collects up to 4 evidence/query/tool-backed contributions sorted by strength ("Strength: strong" > tool-backed > plain, synthetic `write` excluded), so grounded claims are visible to the summarizer even when filtered out of the main list.
+The **Evidence/Tool Signals** hint collects up to 4 evidence/query/tool-backed contributions sorted by strength ("Strength: strong" > tool-backed > plain, synthetic `write` excluded), so grounded claims are visible to the summarizer even when filtered out of the main list. When patches exist, a `## Agent States (carried)` line (`state: senior@v3, mid@v2`) is appended — no new LLM call.
 
 Runs via the fast-path-routable `#promptOrchestrator` type `"summary"` (Section 21). Transcript is budget-capped at 8k chars with `…[truncated]` marker when exceeded.
 
@@ -875,7 +891,7 @@ engineering, security
 - ...
 
 ## Deliberation Transcript (supporting detail — cite [#id] when using it)
-<<<LOOM_TRANSCRIPT>>> digest of earlier rounds + full final round + Final Reflections <<<END>>>
+<<<LOOM_TRANSCRIPT>>> digest of earlier rounds + full final round + Agent States (final) + Final Reflections <<<END>>>
 
 ## Participants (activity)
 - Architect Lead (senior): 3 contributions
@@ -883,7 +899,9 @@ engineering, security
 
 ## Synthesis Doctrine
 You are not a participant. You are an auditor. Every claim you make must be traceable.
-(grounding / attribution / no-invention / resolved≠dissent / actionability rules)
+(grounding / attribution / no-invention / resolved≠dissent / actionability rules;
+the `### Agent States (final)` block is positions-only — every contested claim still
+needs a weave [#id], and state bullets without a [#id] trail are unattributed positions)
 
 ## Length — per-section budget
 Decision 80-120w · Reasoning 150-250w · Action Items 80-120w ·
@@ -995,6 +1013,10 @@ stateManager.setPlannedTurnOrder(ids)           // for next round
 stateManager.setNextSpeakerId(id)               // turn order planning
 stateManager.reorderForNextSpeaker(id)          // established for next round
 stateManager.addParticipantReflection(id, text)
+stateManager.getParticipantState(id)            // Σⁱ clone (lazy Σ_0 seed)
+stateManager.setParticipantState(id, next)      // Σⁱ store + stance mirror
+stateManager.linkStateToContribution(id, cid)   // Σⁱ ↔ contribution link
+stateManager.getAllParticipantStates()          // SoP aggregation + synthesis
 ```
 
 `transitionTo` validates against `StateManager.TRANSITIONS` (`initializing → weaving/cancelled/aborted/timeout`; `weaving → converged/cancelled/timeout/max_rounds_reached/aborted`; terminals absorbing). `forceTransitionTo` now allows `initializing→weaving` for stuck-in-initializing extension plus all terminal→`weaving` (resume), else throws; `orchestrator.close()` is idempotent (`#closed` guard, nulls `_database/_sessionManager/_roundExecutor`).
@@ -1002,6 +1024,10 @@ stateManager.addParticipantReflection(id, text)
 ### Persistence
 
 State is persisted via the `PersistenceService` after each round finalization and after terminal events (`#persistState`), atomically updating `meetings` with round, status, fabric, state_of_play, next_speaker_id, stats, `semantic_degraded`. Fresh DBs enforce `participants.tags`/`expertise` (FK `meetings(id)`), `UNIQUE(meeting_id,name)` + `UNIQUE(meeting_id,chunk_index)`. On resume, `restoreStateFromDb()` reconstructs from SQLite (participants with `tags/expertise` + `known_biases`/`communication_style`/`preferred_contribution_types`, weave, rounds, `turn_requests` with `FK` + `CHECK(priority 1..10, DEFAULT 1)`, `agent_errors` with `CHECK`, next speaker, call stats) and rehydrates `artifact`/`objections` if synthesized.
+
+### Per-Agent Execution State (SKILL.state)
+
+Each agent owns a bounded structured state `Σⁱ = { stance, established[], contested[], open[], facts[], files[], version, updated_round, updated_contribution_id }` (`src/state-patch.js`). In memory it lives in `StateManager.participantStates` (per-agent ownership — no two agents ever write the same slice); `buildSharedState` carries only a summary (counts + versions) to avoid inflating the per-round clone. Persisted in `participants.state_json` plus an append-only `state_patches` audit table (`UNIQUE(meeting_id, participant_id, version)`, `ON DELETE CASCADE`), schema `user_version 6`. `version++` happens only on successfully applied patches; failed validation, empty patches, and misses mutate nothing and write no row. Resume/extension carries all `Σⁱ` forward (`restoreParticipantStates`); missing/corrupt rows seed deterministically (reflection-seeded when available, else empty, `rebuilt: true`). Operational logging only: DEBUG `state_patch_applied/missed/retry` per turn plus a dashboard Overview coverage tooltip — no benchmark harness. Full spec: `plans/skill-state-complementary-implementation.md`.
 
 ---
 
@@ -1182,7 +1208,7 @@ Agent tooling is split between **built-in OpenCode tools** (web_fetch, read, bas
 
 | Phase | Built-in | Loom Plugin | tool_choice |
 |-------|----------|-------------|-------------|
-| Primary agent turn | `web_fetch`, `web_search`, `read`, `glob`, `grep`, `bash` (allowlisted) | `loom_query`, `loom_vote`, `loom_summon`, `loom_request_next`, `loom_pass`, `loom_vector_search` | `auto` |
+| Primary agent turn | `web_fetch`, `web_search`, `read`, `glob`, `grep`, `bash` (allowlisted) | `loom_query`, `loom_vote`, `loom_summon`, `loom_request_next`, `loom_pass`, `loom_state_patch`, `loom_vector_search` | `auto` |
 | Query/Evidence response (peer) | `web_fetch`, `web_search`, `read`, `loom_vector_search` | *(none)* | `auto` / `required` (evidence) |
 | Vote response (peer) | *(none)* | *(none)* | `none` — bare `[Vote: X]` ballot |
 | Summoned expert | `web_fetch`, `web_search`, `read`, `loom_vector_search` | *(none)* | `auto` |
@@ -1198,6 +1224,7 @@ Agent tooling is split between **built-in OpenCode tools** (web_fetch, read, bas
 | `loom_summon` | `plugin/tools/vote-summon.js` | Summon a guest expert persona for one additive contribution |
 | `loom_request_next` | `plugin/tools/meta.js` | Request priority speaking slot in next round |
 | `loom_pass` | `plugin/tools/pass.js` | Pass on current turn; deliberation ends when all participants pass |
+| `loom_state_patch` | `plugin/tools/state-patch.js` | Project stance + bullets to next round (mandatory per primary turn, one retry) |
 | `loom_vector_search` | `plugin/tools/vector-search.js` | Semantic similarity search against prior deliberation chunks |
 
 All loom tools resolve the current meeting from `context.sessionID` via the session-index, then delegate to the in-memory `activeLooms` engine for state/session/database access. Shared helpers `src/plugin/tools/shared.js:1` centralize `resolveCaller` (session→speaking→weave→any), `resolveModel` (borrow any healthy participant model), `buildBatchId` (`inline-${meetingId}-${round}-${callerId}`), and `TERMINAL_STATUSES` (re-exported from `src/constants.js:3`).
@@ -1211,6 +1238,7 @@ src/index.js (Loom factory)
   → tool("loom_summon", ...)
   → tool("loom_request_next", createMetaTools({ config }))
   → tool("loom_pass", createPassTool({ config }))
+  → tool("loom_state_patch", createStatePatchTool({ config, resolveMeeting, activeLooms }))
   → tool("loom_vector_search", createVectorSearchTool({ config, resolveMeeting }))
 
 When an agent turn starts:
@@ -1244,6 +1272,7 @@ When loom tools are enabled, the system prompt includes:
       "loom_summon": true,
       "loom_request_next": true,
       "loom_pass": true,
+      "loom_state_patch": true,
       "loom_vector_search": true
     },
     "maxToolCallsPerTurn": 5,
@@ -1257,7 +1286,7 @@ When loom tools are enabled, the system prompt includes:
 | `enabled` | `true` | Master switch for all agent tools |
 | `builtIn.*` | (see above) | Enable built-in tools for agent turns |
 | `builtIn.bash.allowlist` | `["git","ls","wc","head","tail","grep","find"]` | Only these commands via bash |
-| `loom.*` | all `true` | Enable loom plugin tools (query/vote/summon/request_next/pass/vector_search) |
+| `loom.*` | all `true` | Enable loom plugin tools (query/vote/summon/request_next/pass/state_patch/vector_search) |
 | `maxToolCallsPerTurn` | `5` | Soft limit — exceeding logs a warning (not truncated) |
 | `maxToolOutputTokens` | `4000` | Contract limit on tool output volume (drives server-side truncation) |
 
@@ -1579,6 +1608,6 @@ DB fresh `meetings`/`participants`/`fabric_chunks` enforce `CHECK` + `UNIQUE` + 
 | `modelFallback.maxRetriesPerModel` | `2` | Retries on the same model before falling back |
 | `modelFallback.maxFallbackAttempts` | `1` | Retries on the selected fallback model |
 | `sameTurnSynthesis` | `true` | Peer responses returned inline for same-turn synthesis (Section 22) |
-| `agentTools.*` | (see Section 20) | Tool enablement — built-in tools + loom plugin tools (query/vote/summon/request_next/pass/vector_search) |
+| `agentTools.*` | (see Section 20) | Tool enablement — built-in tools + loom plugin tools (query/vote/summon/request_next/pass/state_patch/vector_search) |
 | `DEFAULT_EMBEDDING_MODEL` | `"Snowflake/snowflake-arctic-embed-xs"` | Default embedder for PersonaIndex and vector search (warmed up on dashboard start) |
 | `DEFAULT_EMBEDDING_QUANT` | `"onnx/model_int8.onnx"` | ONNX quantization variant used by the embedder |
