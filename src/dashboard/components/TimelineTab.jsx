@@ -409,6 +409,10 @@ const TimelineTabBase = ({
   const [fetchedContext, setFetchedContext] = useState(null);
   const [contextLoading, setContextLoading] = useState(false);
   const [contextError, setContextError] = useState(null);
+  // In-flight fetch key (ref, not state). Guarding on contextLoading state +
+  // listing it in deps re-ran this effect right after starting the fetch, and
+  // the cleanup aborted it while marked cancelled — stranding the spinner.
+  const contextFetchRef = useRef(null);
 
   const handleDialogOpen = useCallback((data) => {
     setDialogContribution(data);
@@ -416,6 +420,7 @@ const TimelineTabBase = ({
     setFetchedContext(null);
     setContextError(null);
     setContextLoading(false);
+    contextFetchRef.current = null;
   }, []);
 
   // P1: resolve live contribution from current contributions array so Tool use tab never shows stale empty snapshot
@@ -446,10 +451,13 @@ const TimelineTabBase = ({
     const live = liveDialogContribution ?? dialogContribution;
     const pc = live?.contribution?.prompt_context;
     const hasFullContext = pc && (pc.system_prompt || pc.user_prompt || pc.state_of_play || pc.round_contributions_used);
-    if (activeTab !== "context" || !live || hasFullContext || fetchedContext || contextLoading) return;
+    if (activeTab !== "context" || !live || hasFullContext || fetchedContext) return;
     const cid = live.contribution.id;
     const mid = meetingIdForContext || live.contribution.meeting_id;
     if (!cid || !mid) return;
+    const key = `${mid}:${cid}`;
+    if (contextFetchRef.current === key) return;
+    contextFetchRef.current = key;
     let cancelled = false;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
@@ -475,16 +483,20 @@ const TimelineTabBase = ({
       })
       .finally(() => {
         clearTimeout(timeout);
-        if (!cancelled) setContextLoading(false);
+        if (!cancelled) {
+          if (contextFetchRef.current === key) contextFetchRef.current = null;
+          setContextLoading(false);
+        }
       });
-    return () => { cancelled = true; controller.abort(); clearTimeout(timeout); };
-  }, [activeTab, dialogContribution, fetchedContext, contextLoading, meetingIdForContext]);
+    return () => { cancelled = true; controller.abort(); clearTimeout(timeout); if (contextFetchRef.current === key) contextFetchRef.current = null; };
+  }, [activeTab, dialogContribution, fetchedContext, meetingIdForContext]);
 
   useEffect(() => {
     if (!dialogContribution) {
       setFetchedContext(null);
       setContextError(null);
       setContextLoading(false);
+      contextFetchRef.current = null;
     }
   }, [dialogContribution]);
 

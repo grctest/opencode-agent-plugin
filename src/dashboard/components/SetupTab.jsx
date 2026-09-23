@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { List } from "react-window";
 import { useStore } from "@nanostores/react";
 import { $setupForm, resetSetupForm } from "../stores/setupForm.js";
 import { Button } from "./ui/button.tsx";
@@ -39,6 +40,35 @@ async function postJSON(url, body) {
 }
 
 const MAX_SEATS = 7;
+
+const MODEL_ROW_HEIGHT = 40;
+
+function ModelRow({ index, style, ariaAttributes, items, disabled, onToggle }) {
+  const m = items[index];
+  if (!m) return null;
+  const off = !m.enabled || m.unhealthy;
+  return (
+    <div style={style} {...ariaAttributes}>
+      <div className="h-full pb-1">
+        <label
+          className={"flex h-full cursor-pointer items-center gap-2.5 rounded-md px-2 text-xs hover:bg-muted/60 " + (off ? "opacity-60" : "")}
+        >
+          <Checkbox
+            checked={!!m.enabled}
+            disabled={disabled}
+            onCheckedChange={(v) => onToggle(m.key, v === true)}
+            aria-label={`${m.enabled ? "Disable" : "Enable"} ${m.key} for Loom agents`}
+          />
+          <span className="min-w-0 flex-1 truncate font-mono" title={m.key}>{m.key}</span>
+          <span className="shrink-0 text-muted-foreground">{formatContext(m.context)}</span>
+          {m.reasoning && <Badge variant="secondary" className="shrink-0 text-[10px]">reasoning</Badge>}
+          <span className="shrink-0 text-muted-foreground">{formatCost(m.cost)}</span>
+          {m.unhealthy && <Badge variant="outline" className="shrink-0 border-amber-500/40 text-[10px] text-amber-600 dark:text-amber-400" title="Failed repeatedly — excluded until re-enabled">unhealthy</Badge>}
+        </label>
+      </div>
+    </div>
+  );
+}
 
 function StepHeader({ steps }) {
   return (
@@ -101,7 +131,6 @@ export function SetupTab({ selectedMeeting, onStarted }) {
   const [catalog, setCatalog] = useState(null);
   const [llm, setLlm] = useState(null);
   const [suggestedByTier, setSuggestedByTier] = useState({});
-  const [modelQuery, setModelQuery] = useState("");
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState(null);
   const [guidance, setGuidance] = useState(null);
@@ -267,7 +296,7 @@ export function SetupTab({ selectedMeeting, onStarted }) {
     setGuidance(null);
   };
 
-  const toggleModel = async (key, enabled) => {
+  const toggleModel = useCallback(async (key, enabled) => {
     setError(null);
     setGuidance(null);
     setBusy("models");
@@ -279,18 +308,17 @@ export function SetupTab({ selectedMeeting, onStarted }) {
     } finally {
       setBusy(null);
     }
-  };
+  }, [refreshLlm]);
+
+  const modelRowKey = useCallback(
+    (index, data) => data.items[index]?.key ?? index,
+    [],
+  );
 
   const enabledModels = useMemo(
     () => (llm?.models ?? []).filter((m) => m.enabled && !m.unhealthy),
     [llm],
   );
-  const filteredModels = useMemo(() => {
-    const q = modelQuery.trim().toLowerCase();
-    const all = llm?.models ?? [];
-    if (!q) return all;
-    return all.filter((m) => m.key.toLowerCase().includes(q) || (m.name ?? "").toLowerCase().includes(q));
-  }, [llm, modelQuery]);
   const enabledCount = enabledModels.length;
   const totalCount = (llm?.models ?? []).length;
 
@@ -301,6 +329,9 @@ export function SetupTab({ selectedMeeting, onStarted }) {
   const seatsMapped = !roomOk || seats.every((s) => s.model && enabledKeys.has(s.model));
   const modelsOk = filterOk && seatsMapped;
   const idleOk = !job?.running;
+  // While a deliberation is weaving, the entire setup form freezes in its
+  // current state — question, rounds, models, seats, and actions all lock.
+  const isFrozen = !!job?.running;
 
   const requirements = useMemo(() => ([
     { key: "question", met: questionOk, label: "Enter a question" },
@@ -374,7 +405,7 @@ export function SetupTab({ selectedMeeting, onStarted }) {
     <div className="flex flex-col gap-5 max-w-4xl pb-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <StepHeader steps={steps} />
-        <Button variant="ghost" size="sm" onClick={clearForm} title="Reset the setup form to empty (running deliberations are unaffected)">
+        <Button variant="ghost" size="sm" onClick={clearForm} disabled={isFrozen} title={isFrozen ? "Locked while a deliberation is running" : "Reset the setup form to empty (running deliberations are unaffected)"}>
           Clear form
         </Button>
       </div>
@@ -427,6 +458,7 @@ export function SetupTab({ selectedMeeting, onStarted }) {
               placeholder="e.g. Should we migrate our authentication from sessions to JWT?"
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
+              disabled={isFrozen}
             />
           </div>
           <div className="flex flex-col gap-1.5">
@@ -437,6 +469,7 @@ export function SetupTab({ selectedMeeting, onStarted }) {
               placeholder="Background, files to consider, constraints…"
               value={context}
               onChange={(e) => setContext(e.target.value)}
+              disabled={isFrozen}
             />
           </div>
           <div className="flex flex-wrap items-center gap-3">
@@ -450,6 +483,7 @@ export function SetupTab({ selectedMeeting, onStarted }) {
                 value={maxRounds}
                 onChange={(e) => setMaxRounds(e.target.value)}
                 className="w-20"
+                disabled={isFrozen}
               />
             </div>
           </div>
@@ -468,7 +502,7 @@ export function SetupTab({ selectedMeeting, onStarted }) {
               </CardDescription>
             </div>
             <div className="ml-auto">
-              <Button variant="outline" size="sm" onClick={() => refreshLlm(true)} disabled={busy !== null} title="Rescan providers (list is otherwise cached for 60s)">
+              <Button variant="outline" size="sm" onClick={() => refreshLlm(true)} disabled={busy !== null || isFrozen} title={isFrozen ? "Locked while a deliberation is running" : "Rescan providers (list is otherwise cached for 60s)"}>
                 Refresh providers
               </Button>
             </div>
@@ -484,48 +518,21 @@ export function SetupTab({ selectedMeeting, onStarted }) {
           ) : totalCount === 0 ? (
             <p className="text-sm text-muted-foreground">No models discovered. Connect a provider (e.g. `opencode auth login`), then hit Refresh providers.</p>
           ) : (
-            <>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="loom-model-search">Filter models</Label>
-                <Input
-                  id="loom-model-search"
-                  placeholder="Search by provider or model name…"
-                  value={modelQuery}
-                  onChange={(e) => setModelQuery(e.target.value)}
-                  className="max-w-sm"
-                />
-              </div>
-              <div
-                className="flex max-h-64 flex-col gap-0.5 overflow-y-auto rounded-lg border p-1.5"
-                role="group"
-                aria-label="Enable or disable models for Loom agents"
-              >
-                {filteredModels.length === 0 && (
-                  <p className="p-2 text-xs text-muted-foreground">No models match “{modelQuery}”.</p>
-                )}
-                {filteredModels.map((m) => {
-                  const off = !m.enabled || m.unhealthy;
-                  return (
-                    <label
-                      key={m.key}
-                      className={"flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-xs hover:bg-muted/60 " + (off ? "opacity-60" : "")}
-                    >
-                      <Checkbox
-                        checked={!!m.enabled}
-                        disabled={busy === "models"}
-                        onCheckedChange={(v) => toggleModel(m.key, v === true)}
-                        aria-label={`${m.enabled ? "Disable" : "Enable"} ${m.key} for Loom agents`}
-                      />
-                      <span className="min-w-0 flex-1 truncate font-mono" title={m.key}>{m.key}</span>
-                      <span className="shrink-0 text-muted-foreground">{formatContext(m.context)}</span>
-                      {m.reasoning && <Badge variant="secondary" className="shrink-0 text-[10px]">reasoning</Badge>}
-                      <span className="shrink-0 text-muted-foreground">{formatCost(m.cost)}</span>
-                      {m.unhealthy && <Badge variant="outline" className="shrink-0 border-amber-500/40 text-[10px] text-amber-600 dark:text-amber-400" title="Failed repeatedly — excluded until re-enabled">unhealthy</Badge>}
-                    </label>
-                  );
-                })}
-              </div>
-            </>
+            <div
+              className="h-64 rounded-lg border p-1.5"
+              role="group"
+              aria-label="Enable or disable models for Loom agents"
+            >
+              <List
+                rowComponent={ModelRow}
+                rowCount={(llm?.models ?? []).length}
+                rowHeight={MODEL_ROW_HEIGHT}
+                rowKey={modelRowKey}
+                rowProps={{ items: llm?.models ?? [], disabled: busy === "models" || isFrozen, onToggle: toggleModel }}
+                overscanCount={4}
+                style={{ height: "100%", width: "100%" }}
+              />
+            </div>
           )}
         </CardContent>
       </Card>
@@ -546,8 +553,8 @@ export function SetupTab({ selectedMeeting, onStarted }) {
                 <Button
                   size="sm"
                   onClick={doPreview}
-                  disabled={!canAutoSelect || !filterOk}
-                  title={!filterOk ? "Enable at least one model in step 2 first" : canAutoSelect ? "Compose a suggested room from your question" : "Enter a question of at least 3 characters first"}
+                  disabled={!canAutoSelect || !filterOk || isFrozen}
+                  title={isFrozen ? "Locked while a deliberation is running" : !filterOk ? "Enable at least one model in step 2 first" : canAutoSelect ? "Compose a suggested room from your question" : "Enter a question of at least 3 characters first"}
                 >
                   {busy === "preview" && <Spinner className="mr-2" />}
                   {busy === "preview" ? "Composing…" : "Auto-select"}
@@ -557,8 +564,8 @@ export function SetupTab({ selectedMeeting, onStarted }) {
                 variant="outline"
                 size="sm"
                 onClick={openAdd}
-                disabled={seats.length >= MAX_SEATS || !filterOk}
-                title={!filterOk ? "Enable at least one model in step 2 first" : seats.length >= MAX_SEATS ? `Room is full (${MAX_SEATS} seats max)` : "Browse the persona catalog and add a seat"}
+                disabled={seats.length >= MAX_SEATS || !filterOk || isFrozen}
+                title={isFrozen ? "Locked while a deliberation is running" : !filterOk ? "Enable at least one model in step 2 first" : seats.length >= MAX_SEATS ? `Room is full (${MAX_SEATS} seats max)` : "Browse the persona catalog and add a seat"}
               >
                 {seats.length === 0 ? "Manually add persona" : "Add persona"}
               </Button>
@@ -629,6 +636,7 @@ export function SetupTab({ selectedMeeting, onStarted }) {
                       <Select
                         value={s.model ?? ""}
                         onValueChange={(v) => setSeats((prev) => prev.map((x, j) => (j === i ? { ...x, model: v } : x)))}
+                        disabled={isFrozen}
                       >
                         <SelectTrigger id={`loom-seat-model-${i}`} size="sm" className="min-w-56 max-w-full font-mono text-xs" aria-label={`Model for ${s.name}`}>
                           <SelectValue placeholder="Select model…" />
@@ -641,10 +649,10 @@ export function SetupTab({ selectedMeeting, onStarted }) {
                       </Select>
                     </div>
                     <div className="mt-0.5 flex flex-wrap items-center gap-2">
-                      <Button variant="outline" size="sm" onClick={() => setSwapIdx(i)} aria-label={`Swap ${s.name} for another persona`}>
+                      <Button variant="outline" size="sm" onClick={() => setSwapIdx(i)} disabled={isFrozen} aria-label={`Swap ${s.name} for another persona`}>
                         Swap
                       </Button>
-                      <Button variant="ghost" size="sm" onClick={() => removeSeat(i)} aria-label={`Remove ${s.name} from the room`}>
+                      <Button variant="ghost" size="sm" onClick={() => removeSeat(i)} disabled={isFrozen} aria-label={`Remove ${s.name} from the room`}>
                         Remove
                       </Button>
                     </div>
@@ -671,6 +679,7 @@ export function SetupTab({ selectedMeeting, onStarted }) {
                 value={extendInput}
                 onChange={(e) => setExtendInput(e.target.value)}
                 aria-label="New input for the current deliberation"
+                disabled={!!job?.running}
               />
               <Button variant="outline" onClick={doExtend} disabled={extendInput.trim().length < 3 || !!job?.running || busy === "extend"}>
                 {busy === "extend" ? "Extending…" : "Extend"}
