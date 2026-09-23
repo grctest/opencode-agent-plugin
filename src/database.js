@@ -157,7 +157,7 @@ export class MeetingDatabase {
     }
   }
 
-  initializeMeeting(input) { const r = meetingOps.initializeMeeting(this.#db, this.#meetingId, input); this.#notify("meetings"); return r; }
+  initializeMeeting(input, opts = {}) { const r = meetingOps.initializeMeeting(this.#db, this.#meetingId, input, opts); this.#notify("meetings"); return r; }
   upsertMeeting(input) { const r = meetingOps.upsertMeeting(this.#db, this.#meetingId, input); this.#notify("meetings"); return r; }
   insertParticipants(participants) { const r = meetingOps.insertParticipants(this.#db, this.#meetingId, participants); this.#notify("participants"); return r; }
   logError(context, message, details = null, severity = 'error') { const r = meetingOps.logError(this.#db, this.#meetingId, context, message, details, severity); this.#notify("error_log"); return r; }

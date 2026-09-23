@@ -97,21 +97,71 @@ export function loadSessionIndex(directory) {
   }
 }
 
-async function persistSessionIndexAsync({ compact = false } = {}) {
+// ─── Bounded, coalesced persistence ──────────────────────────────────────────
+// Previously a lock timeout scheduled an unbounded setTimeout retry chain that
+// logged a WARN every 200ms forever (and every contending persist spawned its
+// own chain — N chains × 5 logs/sec). Now: concurrent persists coalesce into
+// one in-flight run plus a single follow-up, and lock waiting gives up after
+// PERSIST_MAX_WAIT_MS with exactly one WARN. The in-memory map always retains
+// the data, so a dropped persist is flushed by the next successful one.
+const PERSIST_MAX_WAIT_MS = 10000;
+const PERSIST_RETRY_DELAY_MS = 200;
+let persistInFlight = null;
+let persistQueuedOpts = null;
+
+async function persistSessionIndexAsync(opts = {}) {
+  if (persistInFlight) {
+    persistQueuedOpts = { compact: !!(persistQueuedOpts?.compact || opts.compact) };
+    try { await persistInFlight; } catch {}
+    if (persistQueuedOpts) {
+      const next = persistQueuedOpts;
+      persistQueuedOpts = null;
+      return runPersistCoalesced(next);
+    }
+    return;
+  }
+  return runPersistCoalesced(opts);
+}
+
+async function runPersistCoalesced(opts) {
+  persistInFlight = runPersistOnce(opts);
+  try {
+    await persistInFlight;
+  } finally {
+    persistInFlight = null;
+    if (persistQueuedOpts) {
+      const next = persistQueuedOpts;
+      persistQueuedOpts = null;
+      runPersistCoalesced(next).catch(() => {});
+    }
+  }
+}
+
+async function runPersistOnce({ compact = false } = {}) {
   const filePath = getIndexFilePath();
   if (!filePath) {
     indexLogger.warn("session_index_not_loaded", "Skipping session index persistence — loadSessionIndex() was never called");
     return;
   }
   const lockPath = `${filePath}.lock`;
+  const started = Date.now();
+  let attempts = 0;
   let locked = false;
-  try {
+  while (!locked) {
+    attempts++;
     locked = await acquireLock(lockPath);
     if (!locked) {
-      indexLogger.warn("session_index_lock_timeout", "Could not acquire session-index lock — will retry in 200ms");
-      setTimeout(() => persistSessionIndexAsync({ compact }).catch(() => {}), 200);
-      return;
+      if (Date.now() - started >= PERSIST_MAX_WAIT_MS) {
+        indexLogger.warn(
+          "session_index_persist_gave_up",
+          `Could not acquire session-index lock after ${attempts} attempts over ${Date.now() - started}ms — dropping this persist (in-memory index retained, next persist will flush)`,
+        );
+        return;
+      }
+      await new Promise((r) => setTimeout(r, PERSIST_RETRY_DELAY_MS));
     }
+  }
+  try {
     // Re-read inside lock and merge so we don't clobber another process's writes (last-writer-wins fix)
     try {
       const onDisk = JSON.parse(readFileSync(filePath, "utf-8"));

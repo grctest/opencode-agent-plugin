@@ -12,7 +12,7 @@ Agents deliberate in structured rounds. During a turn an agent isn't limited to 
 
 Termination is deterministic: everyone passes or fails, the round limit is reached, or a hard timeout or token budget fires. Agents pass by calling the `loom_pass` tool — the meeting ends when all active participants have passed. Once the meeting ends, a neutral **synthesizer** produces the final artifact: decisions, action items, unresolved dissent, and a confidence level, then self-critiques its draft against the transcript.
 
-A real-time web dashboard shows every agent contributing as it happens. If you run `/knit` again in the same session, it extends the existing deliberation rather than starting fresh.
+A real-time web dashboard is the sole control plane: you preview the suggested room, approve personas (or pick manually) and per-tier models, then start the deliberation. Every agent contribution streams in as it happens, and the final synthesis lives in the dashboard's Output tab — nothing is returned to chat. The Setup tab can extend an existing deliberation with new input rather than starting fresh.
 
 ## Features
 
@@ -23,9 +23,9 @@ A real-time web dashboard shows every agent contributing as it happens. If you r
 - **Per-agent carried state** — every turn projects stance + key bullets via `loom_state_patch`, so prompts stay flat and stance flips land in one turn
 - **Deterministic termination** — pass/fail exhaustion, round limit, hard timeout, or token budget
 - **Minority-report synthesis** — neutral synthesizer emits decisions, reasoning, action items, dissent, and confidence, then self-critiques its draft
-- **Model discovery** — finds available models from your opencode providers, assigns them per tier, restrictable per session
+- **Model discovery** — finds available models from your opencode providers, assigns them per tier, filterable + assignable in the dashboard Setup tab
 - **Real-time dashboard** — live timeline with a full prompt/tool audit trail; Markdown export
-- **Meeting extension** — re-run `/knit` to continue a deliberation with new input
+- **Meeting extension** — extend a deliberation with new input from the dashboard Setup tab
 
 ## Installation
 
@@ -90,7 +90,7 @@ Models are stored globally at:
 
 ### How Embedding Models Are Used
 
-**Room composition** — At meeting creation, every persona's text (`persona`, `agenda`, `tags`, `expertise`) is embedded into the meeting database. Your `/knit` question is embedded too, and compared against each persona by cosine similarity: for each role slot, the most similar not-yet-used persona in that tier is picked (`PersonaIndex.search`). A finance question gets finance experts; an engineering question gets engineers.
+**Room composition** — At meeting creation, every persona's text (`persona`, `agenda`, `tags`, `expertise`) is embedded into the meeting database. Your question is embedded too, and compared against each persona by cosine similarity: for each role slot, the most similar not-yet-used persona in that tier is picked (`PersonaIndex.search`). A finance question gets finance experts; an engineering question gets engineers. The dashboard Setup tab shows the suggestion for approval before anything runs.
 
 The embedding model is initialized at plugin startup (`ensureEmbedderInitialized` in `src/index.js:65`, async with 5s race) and separately in the dashboard (`initEmbeddingModel` in `src/dashboard/server/helpers.js:17` with build default). Both use real embeddings; if unavailable, room composition degrades via keyword fallback with warnings.
 
@@ -108,79 +108,35 @@ Meetings are stored per-project (or globally when no workspace):
 ~/.config/opencode/loom/meetings/<uuid>.md
 ```
 
-Retention is manual — deleting a session cleans up its meetings (`session.deleted` event), or delete `meetings/<uuid>.db*` yourself. `fresh:true` on `/knit` removes the current session's meeting files before starting fresh.
+Retention is manual — deleting a session cleans up its meetings (`session.deleted` event), or delete `meetings/<uuid>.db*` yourself.
 
 ## Quick Start
-
-```
-/knit "Should we migrate our authentication from sessions to JWT?"
-```
-
-`/knit` runs the deliberation directly. The chat shows a concise summary (rounds, participants, decision); the full report is saved to `.opencode/loom/meetings/<id>.md` and is always available in the dashboard's Output tab.
-
-Preview available models before running:
-
-```
-/list_knit_models
-```
-
-`/list_knit_models` lists all discovered models with their exact `provider/model` identifiers, cost, context window, reasoning capability, and current enabled/disabled status. You can restrict which models Loom agents use:
-
-```
-/enable_knit_models openai/gpt-4.1 anthropic/claude-3-5-sonnet
-/disable_knit_models openai/o1
-/reset_knit_models
-```
-
-Launch the dashboard:
 
 ```
 loom_viz
 ```
 
+Open the printed URL in your browser. In the **Setup** tab:
+
+1. Enter your question (plus optional context and max rounds).
+2. In **Models**, enable the models Loom agents may use (at least one).
+3. In **Personas**, **Auto-select** a suggested room or add seats manually from the catalog — each seat shows its assigned model, changeable per seat.
+4. Hit **Approve & start deliberation** and follow along in the Timeline tab. The final synthesis lands in the Output tab and is saved to `.opencode/loom/meetings/<id>.md`.
+
+Nothing is returned to chat — the dashboard is the control plane.
+
+> **Deploy note for contributors:** the dashboard serves from `dist/`, and
+> install copies (not symlinks) `dist/` into your opencode config dir. After
+> changing source, run `npm run bundle` **and** `npm run install:plugin` (or
+> `update:plugin`) — `/loom_stop` + `/loom_viz` alone will keep serving the
+> previously installed copy.
+
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `/knit` | Start (or extend) a multi-agent deliberation |
-| `/list_knit_models` | List available models with enabled/disabled status and tier assignments |
-| `/enable_knit_models` | Enable specific models for Loom agents |
-| `/disable_knit_models` | Disable specific models for Loom agents |
-| `/reset_knit_models` | Reset model filter to default (all models enabled) |
-| `/loom_viz` | Start the real-time dashboard (default port 3210) |
+| `/loom_viz` | Start the dashboard: the sole control plane for deliberations (default port 3210) |
 | `/loom_stop` | Stop the running dashboard |
-
-### `knit` arguments
-
-| Argument | Description | Default |
-|----------|-------------|---------|
-| `question` | The question or task to deliberate on | _(required)_ |
-| `context` | Additional context, background files, or constraints | — |
-| `participants` | Custom participant list (name, persona, agenda, tier) | auto-composed via embedding similarity |
-| `max_rounds` | Maximum deliberation rounds (1–999) | `3` |
-| `models` | Explicit per-tier model assignments (`[{tier, provider_id, model_id}]`) | auto-assigned by capability score |
-| `dry_run` | Preview the composed room without deliberating | `false` |
-| `fresh` | Force a fresh loom even if a previous meeting exists | `false` |
-
-### `list_knit_models` arguments
-
-_No arguments_ — lists all discovered models with `provider/model` identifiers, cost, context window, reasoning capability, current enabled/disabled status, and the proposed tier assignment plan.
-
-### `enable_knit_models` arguments
-
-| Argument | Description | Default |
-|----------|-------------|---------|
-| `models` | Exact `provider/model` identifiers to enable | _(required)_ |
-
-### `disable_knit_models` arguments
-
-| Argument | Description | Default |
-|----------|-------------|---------|
-| `models` | Exact `provider/model` identifiers to disable | _(required)_ |
-
-### `reset_knit_models` arguments
-
-_No arguments_ — clears the filter back to all models.
 
 ### `loom_viz` arguments
 
@@ -217,6 +173,7 @@ Each tier has different behavioral guidance defined in each persona's `tier_guid
 
 Run `/loom_viz` to start the real-time web dashboard. It auto-detects the most recent meeting and streams updates as they happen.
 
+- **Setup** — preview the suggested room, approve personas (or pick manually), approve per-tier models, then start; extend a finished deliberation with new input
 - **Overview** — stats, participation matrix, contribution types, and timeline chart
 - **Timeline** — per-round contributions, turn requests, and orchestrator decisions (moderation, turn ordering, summaries) interleaved; click any item to view full details in a dialog
 - **Output** — the final synthesis artifact: decisions, action items, open questions, dissent, confidence, and full text

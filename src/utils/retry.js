@@ -135,7 +135,7 @@ export async function withRetry(fn, options = {}) {
 
 /**
  * Global unhealthy registry — cross-meeting persistent until explicitly enabled.
- * Promoted models never auto-recover via half-open; they require /enable_knit_models.
+ * Promoted models never auto-recover via half-open; they require re-enabling in the dashboard Setup tab.
  */
 const globalUnhealthyKeys = new Set();
 const allBreakers = new Set();
@@ -223,7 +223,7 @@ export class CircuitBreaker {
     state.status = state.failures >= this.failureThreshold ? 'open' : 'closed';
     if (state.status === 'open') {
       state.nextAttempt = Date.now() + this.resetTimeoutMs;
-      // Promote to global unhealthy — requires explicit /enable_knit_models to recover
+      // Promote to global unhealthy — requires explicit re-enabling in the dashboard Setup tab to recover
       globalUnhealthyKeys.add(key);
       // Breaker transitions are observable (audit 07 EH3)
       incrementKeyedCounter('breaker_events', `${key}:open`);

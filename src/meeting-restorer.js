@@ -29,7 +29,7 @@ export function restoreStateFromDb({ db, stateManager, meetingId, options }) {
   // while preserving all previous rounds/context, then MeetingExtender bumps max_rounds.
   if (TERMINAL_STATUSES.has(meeting.status) && !options?.fresh && !options?.allowExtend) {
     throw new LoomError(
-      `Cannot resume: meeting is already ${meeting.status}. Use a fresh /knit to start over, or pass fresh:true to force.`,
+      `Cannot resume: meeting is already ${meeting.status}. Start a fresh deliberation from the dashboard Setup tab, or extend it from there.`,
       { phase: "resume", recoverable: false, status: meeting.status }
     );
   }

@@ -70,7 +70,7 @@ export { sortModelsByQuality };
  * Principal/senior roles get the session model when available and high-scoring (top 3);
  * otherwise they get the next-best unused models. This avoids blindly preferring a
  * low-quality session model. This is the one source of truth for both the
- * list_knit_models preview plan and the real meeting assignment, so they always agree.
+ * dashboard Setup preview plan and the real meeting assignment, so they always agree.
  * Scoring: active(20) + context/10000 + reasoning(15); cost is display-only.
  * Tie-breaker: deterministic provider/model key; future: latency from recent metrics.
  */

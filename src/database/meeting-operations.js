@@ -5,7 +5,7 @@ import { indexMeeting as _indexMeeting } from "./session-index.js";
 
 const dbLogger = new Logger();
 
-export function initializeMeeting(db, meetingId, input) {
+export function initializeMeeting(db, meetingId, input, opts = {}) {
   try {
     const embCount = db.prepare(`SELECT COUNT(*) as c FROM persona_embeddings WHERE meeting_id = ?`).get(meetingId)?.c ?? 0;
     if (embCount > 0) {
@@ -81,6 +81,7 @@ export function initializeMeeting(db, meetingId, input) {
     throw err;
   }
 
+  if (opts.skipIndex) return;
   const dbPath = db.filename ?? db.name ?? "unknown";
   try {
     // dbPath from filename may be incorrect for in-memory; caller handles indexing

@@ -10,84 +10,10 @@ import { startDashboard } from "../dashboard/server.js";
 import { createEventHandlers, PROGRESS_PATTERN } from "./hooks.js";
 export { PROGRESS_PATTERN };
 
-export function createPluginReturn({ activeLooms, activeDashboardRef, directory, config, handleKnit, handleListKnitModels, handleEnableKnitModels, handleDisableKnitModels, handleResetKnitModels, agentTools }) {
+export function createPluginReturn({ activeLooms, activeDashboardRef, directory, config, agentTools, client = null }) {
   return {
     tool: {
       ...agentTools,
-      knit: tool({
-        description:
-          "Start a multi-agent deliberation session (a 'Loom'). " +
-          "ONLY invoke when the user explicitly types /knit followed by a question. " +
-          "Do NOT invoke for general questions, discussions, or information requests. " +
-          "Run the deliberation directly — do NOT call with dry_run first unless the user explicitly asks for a preview.",
-        args: {
-          question: tool.schema
-            .string()
-            .describe("The question or task for the agents to deliberate on"),
-          context: tool.schema
-            .string()
-            .optional()
-            .describe(
-              "Additional context, background files, or constraints the agents should consider",
-            ),
-          participants: tool.schema
-            .array(
-              tool.schema.object({
-                name: tool.schema.string().describe("Display name for this participant"),
-                persona: tool.schema
-                  .string()
-                  .describe("Who this agent is — their role and personality"),
-                agenda: tool.schema
-                  .string()
-                  .describe(
-                    "What this agent wants to achieve in the deliberation",
-                  ),
-                tier: tool.schema
-                  .string()
-                  .describe(
-                    "Role name (e.g. junior, mid, senior, principal). Determines behavior and rights.",
-                  ),
-              }),
-            )
-            .optional()
-            .describe(
-              "Custom participant list. If omitted, auto-composed from the question.",
-            ),
-          max_rounds: tool.schema
-            .number()
-            .int()
-            .min(1)
-            .max(999)
-            .optional()
-            .describe(
-              "Maximum deliberation rounds (default: 3)",
-            ),
-          dry_run: tool.schema
-            .boolean()
-            .optional()
-            .describe(
-              "Only set true if the user explicitly asked to preview the room before deliberating. Default: false — run directly.",
-            ),
-          models: tool.schema
-            .array(
-              tool.schema.object({
-                tier: tool.schema.enum(["junior", "mid", "senior", "principal"]),
-                provider_id: tool.schema.string().describe("Provider ID for this tier"),
-                model_id: tool.schema.string().describe("Model ID for this tier"),
-              }),
-            )
-            .optional()
-            .describe(
-              "Model assignments per tier. Use list_knit_models to discover available options.",
-            ),
-          fresh: tool.schema
-            .boolean()
-            .optional()
-            .describe("Force a fresh loom even if a previous meeting exists. Default: false"),
-        },
-        execute: handleKnit,
-      }),
-
       loom_status: tool({
         description:
           "Check the status of a running Loom deliberation session. " +
@@ -134,8 +60,9 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
       loom_viz: tool({
         description:
           "Start the Loom deliberation dashboard server. " +
-          "Provides a web UI to visualize deliberation progress in real-time. " +
-          "The dashboard watches for new meetings and auto-switches to the most recent one.",
+          "The dashboard is the sole control plane: compose and approve the room, " +
+          "select models, start/cancel/extend deliberations, and read the final output. " +
+          "Nothing is returned to chat — everything happens in the dashboard.",
         args: {
           port: tool
             .schema
@@ -177,7 +104,13 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
           }
 
           try {
-            const dashboard = startDashboard(directory, port);
+            const dashboard = startDashboard(directory, port, {
+              client,
+              directory,
+              activeLooms,
+              agentTools,
+              ownerSessionId: sessionId,
+            });
             activeDashboardRef.current = dashboard;
             const base = `http://localhost:${dashboard.port}`;
             const url = buildUrl(base);
@@ -187,11 +120,8 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
               "Open in browser:",
               url,
               "",
-              initialMeetingId
-                ? "Showing your current session's deliberation."
-                : sessionId
-                  ? "No deliberation yet for this session — run /knit to start one."
-                  : "Dashboard will show the most recent meeting if available.",
+              "Use the Setup tab to preview the room, approve personas and models, then start the deliberation.",
+              "All output stays in the dashboard (Timeline / Output tabs).",
               "Run /loom_stop when done to free the port.",
             ].join("\n");
           } catch (err) {
@@ -360,47 +290,6 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
           return "No active Loom found with that ID. For completed looms, use the dashboard export feature.";
         },
       }),
-
-      list_knit_models: tool({
-        description: "List all discovered models with their exact identifiers, cost, context window, reasoning capability, current enabled/disabled status, and proposed tier assignments.",
-        args: {},
-        execute: async (args, context) => {
-          return handleListKnitModels(args, context);
-        },
-      }),
-
-      enable_knit_models: tool({
-        description: "Enable specific models for Loom agents. Provide exact 'provider/model' identifiers as shown in list_knit_models output.",
-        args: {
-          models: tool.schema
-            .array(tool.schema.string())
-            .describe("Exact 'provider/model' identifiers to enable (e.g. 'openai/gpt-4.1')"),
-        },
-        execute: async (args, context) => {
-          return handleEnableKnitModels(args, context);
-        },
-      }),
-
-      disable_knit_models: tool({
-        description: "Disable specific models for Loom agents. Provide exact 'provider/model' identifiers as shown in list_knit_models output.",
-        args: {
-          models: tool.schema
-            .array(tool.schema.string())
-            .describe("Exact 'provider/model' identifiers to disable (e.g. 'openai/gpt-4.1')"),
-        },
-        execute: async (args, context) => {
-          return handleDisableKnitModels(args, context);
-        },
-      }),
-
-      reset_knit_models: tool({
-        description: "Reset the model filter to default — all discovered models become available for Loom agents.",
-        args: {},
-        execute: async (args, context) => {
-          return handleResetKnitModels(args, context);
-        },
-      }),
-
 
     },
     ...createEventHandlers({ directory }),

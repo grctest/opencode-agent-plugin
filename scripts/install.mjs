@@ -291,7 +291,7 @@ console.log("══════════════════════�
 console.log("");
 console.log("Next steps:");
 console.log("  1. Restart opencode or reload plugins");
-console.log("  2. Run /list_knit_models to discover available models");
-console.log("  3. Run /knit \"your question\" to start a deliberation");
+console.log("  2. Run /loom_viz and open the printed URL");
+console.log("  3. In the Setup tab: preview the room, approve personas and models, then start the deliberation");
 console.log("");
 logInfo("Done.");

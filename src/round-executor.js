@@ -101,7 +101,7 @@ export class RoundExecutor {
      if (state.failures >= this._circuitBreaker.failureThreshold) {
        // Persist globally so all concurrent meetings and future sessions see it
        try { markGlobalUnhealthy(key, this._directory); } catch {}
-       this._options.onProgress?.(`⚠️ Model ${key} marked unhealthy after ${state.failures} consecutive failures — requires /enable_knit_models to restore.`);
+        this._options.onProgress?.(`⚠️ Model ${key} marked unhealthy after ${state.failures} consecutive failures — re-enable it in the dashboard Setup tab to restore.`);
        this._logger.warn("circuit_breaker", `Model ${key} marked unhealthy`, { failures: state.failures });
        // Propagate to queued speakers that haven't spoken yet
        this._reassignQueuedAgents(key);

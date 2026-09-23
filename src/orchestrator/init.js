@@ -32,7 +32,7 @@ export async function initialize() {
       // Ensure the meeting row exists BEFORE indexing personas.
       // The persona_embeddings table has a FK to meetings(id), so the meeting
       // must be inserted first.  Use upsertMeeting (UPDATE when already present
-      // from the knit-handler composition phase) to avoid cascade-deleting the
+      // from the dashboard composition phase) to avoid cascade-deleting the
       // persona embeddings that were just stored.
       if (this._resume) {
         const restored = restoreStateFromDb({

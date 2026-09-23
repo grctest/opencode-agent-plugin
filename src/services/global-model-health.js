@@ -1,7 +1,7 @@
 /**
  * Global model health registry — cross-meeting unhealthy tracking.
  * Models that trip the circuit breaker are promoted to a global set that
- * persists until explicitly re-enabled via /enable_knit_models or /reset_knit_models.
+ * persists until explicitly re-enabled via the dashboard Setup tab model filter.
  * This prevents " Ling 3.0 died, next agent falls back to Ling again " loops.
  *
  * Storage: .opencode/loom/global-unhealthy.json  (per-workspace base dir) +
@@ -100,7 +100,7 @@ export function markGlobalUnhealthy(modelOrKey, directory = null) {
       writeFileSafe(p, existing);
     }
   } catch {}
-  logger.warn("global_unhealthy_marked", `Model ${key} marked globally unhealthy (requires /enable_knit_models to restore)`);
+  logger.warn("global_unhealthy_marked", `Model ${key} marked globally unhealthy (re-enable in the dashboard Setup tab to restore)`);
   return true;
 }
 

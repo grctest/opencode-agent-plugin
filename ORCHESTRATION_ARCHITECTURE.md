@@ -8,7 +8,7 @@ A complete technical reference for how the Loom multi-agent deliberation system 
 
 | ID | Meaning | Source |
 |---|---|---|
-| `meetingId` / `loomId` | DB primary key for a deliberation (`meetings.id`, UUID) | `paths.js:getMeetingDbPath`, `src/handlers/knit-handler.js` |
+| `meetingId` / `loomId` | DB primary key for a deliberation (`meetings.id`, UUID) | `paths.js:getMeetingDbPath`, `src/dashboard/server/control.js` |
 | `sessionID` / `parentSessionId` | opencode chat session that owns the meeting (parent of all ephemeral sessions) | `client.session.create({parentID})` |
 | `opencodeSessionId` | Duplicate of parent session ID persisted in `meetings.opencode_session_id` for resume | `database/session-index.js` |
 | `ephemeralSessionId` | Short-lived child session per agent per round (round-scoped) | `session-manager.js:createEphemeralSession` |
@@ -43,7 +43,7 @@ A complete technical reference for how the Loom multi-agent deliberation system 
 21. [Fast-Path Model Routing](#21-fast-path-model-routing)
 22. [Inline Peer Interactions: Query, Vote, Summon, Turn Requests](#22-inline-peer-interactions-query-vote-summon-turn-requests)
 23. [Dashboard System](#23-dashboard-system)
-24. [Meeting Lifecycle: From /knit to Report File](#24-meeting-lifecycle-from-knit-to-report-file)
+24. [Meeting Lifecycle: From Setup Tab to Report File](#24-meeting-lifecycle-from-setup-tab-to-report-file)
 25. [Metrics and Observability](#25-metrics-and-observability)
 26. [Model Configuration](#26-model-configuration)
 
@@ -51,10 +51,11 @@ A complete technical reference for how the Loom multi-agent deliberation system 
 
 ## 1. End-to-End Flow Summary
 
-When a user types `/knit` with a question, this is what happens:
+When a user approves and starts a deliberation from the dashboard Setup tab, this is what happens:
 
+0. **Setup approval (always required)** — The user enters a question, previews the suggested room, and must approve every persona seat (agreeing with the suggestion or replacing seats from the persona catalog) plus the per-tier model assignments before anything runs. Nothing starts without explicit `approved: true`.
 1. **Room composition** — The question is analyzed for complexity, then a team of 2–7 agents is assembled without any LLM call: each per-tier role is filled by the persona (from `personas/<tier>/*.json`) whose embedded description is most semantically similar to the question (via `PersonaIndex`). Each agent gets a name, persona description, agenda, tier, and topic tags.
-2. **Model assignment** — Each agent is assigned an LLM model. Principal/senior tiers get the top available model (the session's model when present); remaining tiers get the next-best unused models. Explicit per-participant `model`/`model_override` fields win over automatic assignment. The discovery pool can be narrowed with a per-session model filter (`/enable_knit_models` / `/disable_knit_models`, Section 26).
+2. **Model assignment** — Each agent is assigned an LLM model. Principal/senior tiers get the top available model (the session's model when present); remaining tiers get the next-best unused models. Explicit per-tier `models` selections from Setup win over automatic assignment. The discovery pool can be narrowed with the dashboard model filter (Setup tab, Section 26).
 3. **Rounds execute** — A round is a single sequential prompt phase:
    - Each agent speaks in turn via a **round-scoped ephemeral session** (one session per participant per round), seeing the state of play, vector-RAG context, and recent contributions.
    - Agents write **untyped prose** — there are no `[PROPOSE]`/`[CHALLENGE]` type tags anymore; following agents interpret content directly. Agents call `loom_pass` when they have nothing new to contribute.
@@ -64,7 +65,7 @@ When a user types `/knit` with a question, this is what happens:
 6. **Turn order planning** — `planTurnOrder()` produces the next round's ordered participant list from `loom_request_next` requests (Section 9).
 7. **Termination** — Deterministic: (a) all participants have called `loom_pass` or failed, (b) the round limit reached, or (c) hard timeout/stall/token budget fires. The wall-clock hard timeout is disabled by default (`defaultMeetingTimeoutMs: 0` = no limit); stall watchdog (inactivity), token budget exhaustion, and user cancellation still terminate the meeting.
 8. **Synthesis** — One agent (typically the principal) synthesizes all contributions into a structured artifact with Decision, Reasoning, Action Items, Dissenting Views, Open Questions, and Confidence, then self-critiques it.
-9. **Output** — A concise chat summary plus a full markdown report saved to `.opencode/loom/meetings/<meetingId>.md`. The live dashboard can be started with `/loom_viz`.
+9. **Output** — The run executes as a detached background job (HTTP returns immediately); progress streams via the dashboard Timeline tab and the final synthesis lands in the Output tab plus a full markdown report saved to `.opencode/loom/meetings/<meetingId>.md`. Nothing is returned to chat — the dashboard is the sole control plane, started with `/loom_viz`.
 
 ---
 
@@ -106,7 +107,7 @@ There is **no LLM domain detection** — the now-removed `domain` pipeline was r
 
 If the embedding service is unavailable, composition falls back to keyword-based `composeRoomByKeyword` (token overlap + `maxCosineDistance` relevance floor `minScore = max(1, floor(2*(1-maxDistance+0.15)))`), not an empty room; civilian generalist fills gaps.
 
-**Custom rooms:** Passing `participants` to `/knit` skips composition entirely. Each participant requires `name`, `persona`, `agenda`, `tier` (an `id` is derived; `tags`/`expertise` default to `["general"]`).
+**Custom rooms:** Approving an edited participant list in the Setup tab skips composition entirely. Each participant requires `name`, `persona`, `agenda`, `tier` (an `id` is derived; `tags`/`expertise` default to `["general"]`).
 
 **Prioritization for a meeting row:** the meeting row is inserted into the database *before* composition so the FK constraint on `persona_embeddings(meeting_id)` is satisfied.
 
@@ -116,9 +117,9 @@ Personas live under `<plugin>/personas/<tier>/*.json` (tier directories), with f
 
 ### Step 3: Model Assignment
 
-Models are discovered from the connected providers via `discoverModels()` (`provider.providers` API), with the user session's current model recorded as `sessionModel`. The discovery result may be narrowed by the model filter (`/enable_knit_models` / `/disable_knit_models`, Section 26). If a session model can't be discovered the discovery result is empty (agents just carry their session model).
+Models are discovered from the connected providers via `discoverModels()` (`provider.providers` API), with the user session's current model recorded as `sessionModel`. The discovery result may be narrowed by the dashboard model filter (Setup tab, Section 26). If a session model can't be discovered the discovery result is empty (agents just carry their session model).
 
-`assignModelsToParticipants()` uses `assignModelsByTier()` (a single deterministic engine shared with the `list_knit_models` preview so the two always agree):
+`assignModelsToParticipants()` uses `assignModelsByTier()` (a single deterministic engine shared with the Setup tab suggestion preview so the two always agree):
 
 - Models are sorted by capability score (active + context window + reasoning capability; cost is display-only).
 - **Principal and senior** roles get the top model — the session model if present, else the best available.
@@ -306,7 +307,7 @@ Should we migrate our authentication service to JWT tokens?
 ## Round 3
 
 <<<LOOM_USER_CONTEXT>>>_BEGIN_
-We're a 50-person startup...            (only present when /knit context was provided)
+We're a 50-person startup...            (only present when context was provided in Setup)
 <<<LOOM_USER_CONTEXT>>>_END_
 
 ## State of Play — CANONICAL (treat as settled unless you challenge it with new evidence)
@@ -1115,11 +1116,11 @@ A watchdog monitors activity. If no state update occurs for the configured inter
 
 ## 18. Extension and Resume
 
-### Meeting Extension (continuing in the same chat)
+### Meeting Extension (from the dashboard Setup tab)
 
-When a user runs `/knit` again in a session that already has a meeting (and hasn't passed `fresh`), `handleKnit` routes to `handleExtend` instead of creating a new meeting:
+When a user extends an existing meeting from the Setup tab (`POST /api/meetings/extend` with `meeting_id` + new `question`), `handleExtendMeeting` runs it as a detached background job:
 
-1. The meeting is looked up via the session index (`findMeetingBySessionId`).
+1. The meeting database is resolved directly by ID (`getDbPathForMeeting`); existing participants are read from it.
 2. A `MeetingOrchestrator` is constructed with `resume: true`; `restoreStateFromDb()` rebuilds state from the SQLite DB.
 3. `extendMeeting(newPrompt)` (via `MeetingExtender`) appends the new input to the fabric: `**User Input:** <new prompt>`.
 4. Status is force-transitioned back to `"weaving"`.
@@ -1127,7 +1128,7 @@ When a user runs `/knit` again in a session that already has a meeting (and hasn
 6. All participants are reset to `"listening"`.
 7. The weaving loop runs again from the current round, then synthesis runs again.
 
-`/knit fresh: true` deletes the existing meeting DB first if one exists.
+Extension is rejected with HTTP 409 while another deliberation is running. Every start is a fresh meeting — there is no `fresh` flag anymore.
 
 ### What Survives a Resume
 
@@ -1458,39 +1459,42 @@ On dashboard start, the embedding model is initialized eagerly (status tracked: 
 
 ---
 
-## 24. Meeting Lifecycle: From /knit to Report File
+## 24. Meeting Lifecycle: From Setup Tab to Report File
 
-### The /knit Command
+### The Setup Tab (sole control plane)
 
-Exposed as a plugin tool (`knit`) — invoked when the user types `/knit <question>`.
+Deliberations are created exclusively from the dashboard Setup tab. The plugin exposes only `/loom_viz` (start server) and `/loom_stop`. The Setup flow is:
 
-**Args:** `question`, `context`, `participants` (custom room), `max_rounds` (default from config: 3), `models` (explicit per-tier assignment, e.g. `[{ tier: "senior", provider_id: "anthropic", model_id: "claude-sonnet-4-..." }]`), `dry_run` (preview room without deliberating), `fresh` (replace an existing meeting for the session). Hard deadline disabled — stall watchdog and provider errors are the only extrinsic stops.
+1. **Question** — user enters `question` (required, ≥3 chars), optional `context`, `max_rounds` (default from config: 3).
+2. **Models** — the user toggles the enable/disable filter (`POST /api/llm-models/filter`). At least one model must be enabled before personas can be added. No per-tier pickers here — models are chosen per persona seat in step 3.
+3. **Personas** — the user auto-selects a suggested room or adds seats manually from the catalog (`GET /api/personas`). Adding a seat is the approval; at least 2 seats required. `POST /api/room/preview` runs the same embedding-based `composeRoomWithSimilarity` path as a real run, against a throwaway meeting DB in the OS temp dir (closed, unindexed, and deleted afterwards so it never appears in the meetings list). Falls back to keyword composition only when the throwaway path — or the embedder itself — is unavailable. Returns suggested participants plus suggested per-tier models (`createModelPlan`), which pre-fill each seat's model picker.
+4. **Per-seat models** — every persona row carries its own model picker (defaults from the tier suggestion, changeable to any enabled model). Disabling a model prunes it from seats holding it, blocking start until re-picked.
+5. **Start** — `POST /api/meetings/start` with `{ question, context, max_rounds, participants: [{ …, model: { provider_id, model_id } }], approved: true }` (explicit `approved: true` enforced server-side, HTTP 400 otherwise). Per-seat `model` values validated against the filtered pool (disabled/unhealthy/unknown fall back to tier assignment, then automatic assignment). Hard deadline disabled — stall watchdog and provider errors are the only extrinsic stops.
 
-### Handler Flow (`createKnitHandler`)
+### Control-Plane Flow (`src/dashboard/server/control.js`)
 
-1. Discover models + session model; apply the optional model filter (`list_knit_models` / `enable_knit_models` / `disable_knit_models`, Section 26) to the pool.
-2. If `fresh: true`, delete any existing meeting DB for the session.
-3. If an existing meeting exists (and not `fresh`/`dry_run`) → **extend** (Section 18).
-4. Otherwise compose a room (or use custom participants), assign models (honoring `models` per-tier overrides and per-participant `model`/`model_override`), and (optionally) preview with `dry_run`.
-5. Insert the meeting row (before composition, satisfying the FK for persona embeddings), run composition, insert participants.
-6. Construct `MeetingOrchestrator` (passing the filtered `availableModels` for fallback selection), run `initialize()` + `runMeeting()`.
-7. Write the full report to `.opencode/loom/meetings/<meetingId>.md` and return a concise chat summary (decision line extracted from the artifact's `## Decision` section; suggestions to run `/loom_viz`).
+1. Reject with 409 if a deliberation is already running (single-run lock); reject with 503 if the plugin runtime (opencode client) isn't injected.
+2. Validate `question`/`participants` (2–7 seats, required `name`/`persona`/`agenda`/`tier`, tier whitelist) and clamp `max_rounds` to 1–999.
+3. Discover models + session model; apply the dashboard model filter (Section 26) plus the global-unhealthy set to the pool.
+4. Map explicit per-tier `models` selections (disabled/unhealthy/unknown keys ignored with a warning), then `assignModelsToParticipants()` for the rest.
+5. Create the meeting DB, `initializeMeeting()` (with the launcher session as `parentSessionId`/`opencodeSessionId`), `insertParticipants()`.
+6. Construct `MeetingOrchestrator` (passing the filtered `availableModels` for fallback selection) with dashboard callbacks (no-ops — progress is SSE/DB only), register it in shared `activeLooms`, and run `initialize()` + `runMeeting()` on a **detached promise** — HTTP returns `{ meeting_id }` with 202 immediately.
+7. On completion write the full report to `.opencode/loom/meetings/<meetingId>.md`. Nothing is ever returned to chat.
 
 ### Progress Callbacks
 
-The handler wires metadata callbacks to the chat context for live UX:
-- `onContribution` — title `Loom R<n>: <name> (<type>)` + metadata (`loom_last_contributor`, `loom_last_type`, `loom_round`)
-- `onRoundComplete` — round summary preview
-- `onSynthesisStart` / `onSynthesisComplete` — synthesis status + output preview
-- `onUpdate` — state logging
+Dashboard-first, callbacks are intentionally silent toward chat:
+- `onContribution` / `onRoundComplete` / `onSynthesisStart` / `onSynthesisComplete` — no-ops (progress is visible via SSE/poll + Timeline tab)
+- `onUpdate` — debug state logging only
 
-### Companion Tools
+### Companion Tools & Endpoints
 
 - `loom_status` — check a running Loom (status, round, contributions, meeting ID)
 - `loom_cancel` — request cancellation (current round completes, then synthesis runs)
 - `loom_debug` — dump internal state of a running Loom (optional `include` filter)
-- `loom_viz` / `loom_stop` — start/stop the dashboard
-- `list_knit_models` — discover available models, preview tier assignments (`createModelPlan`), showing cost/context/reasoning and current enabled/disabled status. `enable_knit_models` / `disable_knit_models` / `reset_knit_models` — manage a **session-scoped model filter**. The filter restricts which discovered models Loom agents may use; the preview also stages the plan for the next `/knit`. (See Section 26.)
+- `loom_viz` / `loom_stop` — start/stop the dashboard (the only user commands)
+- `GET /api/llm-models` — discover available models with cost/context/reasoning, enabled/unhealthy status, and the suggested tier assignment plan. `POST /api/llm-models/filter` (`enable`/`disable`/`reset`) — manage the **dashboard-global model filter** (persisted as `models-filter.json`). The filter restricts which discovered models Loom agents may use. (See Section 26.)
+- `GET /api/personas`, `POST /api/room/preview`, `POST /api/meetings/start|-cancel|extend`, `GET /api/jobs` — the Setup control plane.
 
 ### Session Index & Cleanup
 
@@ -1542,16 +1546,16 @@ A recap of every knob that controls which LLM runs an agent or the orchestrator.
 
 `discoverModels()` (`src/services/model-service.js`) reads the connected providers via `client.provider.providers` and records the user session's current model as `sessionModel`. Deprecated models are excluded.
 
-A **per-session deny-list model filter** (`disabledModelsBySession` in the knit handler, persisted per-session as `models-filter-<sessionId>.json` under `resolveLoomBaseDir(directory)`) is maintained with four tools:
-- `/list_knit_models` — lists all discovered models with `provider/model` identifiers, cost, context window, reasoning capability, current enabled/disabled status, plus the proposed tier assignment plan (filtered preview — disabled models never proposed).
-- `/enable_knit_models <id>…` / `/disable_knit_models <id>…` — restrict which discovered models Loom agents may use (`applyModelFilter` deny-list). Default (no filter) = all models; new models are enabled by default; disabling the last model leaves one enabled and warns.
-- `/reset_knit_models` — clears the filter back to "all models" for that session.
+A **dashboard-global deny-list model filter** (persisted as `models-filter.json` under `resolveLoomBaseDir(directory)`) is maintained from the Setup tab:
+- `GET /api/llm-models` — lists all discovered models with `provider/model` identifiers, cost, context window, reasoning capability, enabled/unhealthy status, plus the suggested tier assignment plan (filtered preview — disabled models never proposed).
+- `POST /api/llm-models/filter` with `action: enable|disable` + `models: [<id>…]` — restrict which discovered models Loom agents may use (`applyModelFilter` deny-list). Default (no filter) = all models; new models are enabled by default; disabling the last model leaves one enabled and reports it as `guard_kept`. Enabling a model also clears its global-unhealthy mark.
+- `action: reset` — clears the filter back to "all models" and clears all global-unhealthy marks.
 
-The filter is per-opencode-session (stored via `sessionID`, also persisted per-session file for restart) and is applied to the discovery result before composition, assignment, and the `availableModels` list passed to the orchestrator for fallback selection. Explicit `knit models=[…]` overrides are validated against the filtered available set — disabled models injected via override or stale `pendingModels` are ignored.
+The filter is applied to the discovery result before assignment and to the `availableModels` list passed to the orchestrator for fallback selection. Explicit per-tier `models=[…]` selections from Setup are validated against the filtered available set — disabled/unhealthy/unknown models are ignored with a warning.
 
 ### 2. Tier-Based Assignment
 
-`assignModelsToParticipants()` → `assignModelsByTier()` is the single deterministic assignment engine (shared with the `list_knit_models` preview so both always agree):
+`assignModelsToParticipants()` → `assignModelsByTier()` is the single deterministic assignment engine (shared with the Setup tab suggestion preview so both always agree):
 
 - Models are sorted by a capability score (`scoreModel`: active status + context window + reasoning capability; cost is display-only).
 - Principal/senior roles receive the session model (or the best available); mid/junior get the next-best unused models.
@@ -1562,7 +1566,7 @@ The filter is per-opencode-session (stored via `sessionID`, also persisted per-s
 
 Explicit configuration always wins over automatic assignment:
 
-- **`/knit models=[{ tier, provider_id, model_id }]`** — per-tier override applied at composition (mapped into each participant's `model`).
+- **Setup `models=[{ tier, provider_id, model_id }]`** — per-tier selection applied at meeting start (mapped into each participant's `model`).
 - **Custom rooms** — participants may carry a `model` object `{ providerID, modelID }` or a `model_override` string `"provider/model"` (`buildOverrideMap`). Overridden models are also excluded from the diversity pool so they aren't double-assigned.
 
 ### 4. Orchestrator & Fallback Model Safeguards

@@ -23,6 +23,18 @@ import {
   PACKAGE_VERSION,
 } from "./server/helpers.js";
 import { createPollSystem } from "./server/poll.js";
+import {
+  setControlRuntime,
+  handleListPersonas,
+  handleRoomPreview,
+  handleListLlmModels,
+  handleModelFilter,
+  handleStartMeeting,
+  handleCancelMeeting,
+  handleExtendMeeting,
+  handleJobStatus,
+  cancelAllJobs,
+} from "./server/control.js";
 import { getMeetingDbPath, isValidMeetingId } from "./api/free.js";
 import { getDatabasesBySessionId } from "../database/session-index.js";
 import { findMeetingBySessionId } from "../database/lookup.js";
@@ -41,6 +53,14 @@ const ROUTE_MAP = new Map([
   ["/api/health", ["GET"]],
   ["/api/models", ["GET"]],
   ["/api/models/select", ["POST"]],
+  ["/api/personas", ["GET"]],
+  ["/api/room/preview", ["POST"]],
+  ["/api/llm-models", ["GET"]],
+  ["/api/llm-models/filter", ["POST"]],
+  ["/api/meetings/start", ["POST"]],
+  ["/api/meetings/cancel", ["POST"]],
+  ["/api/meetings/extend", ["POST"]],
+  ["/api/jobs", ["GET"]],
   ["/api/metrics", ["GET"]],
   ["/api/logs", ["GET"]],
   ["/api/participants", ["GET"]],
@@ -76,8 +96,11 @@ function getMeetingApi(url, directory) {
   return { api: DashboardApi.get(dbPath), meetingId };
 }
 
-export function startDashboard(directory, port) {
+export function startDashboard(directory, port, runtimeOpts = null) {
   initEmbeddingModel();
+  if (runtimeOpts) {
+    try { setControlRuntime(runtimeOpts); } catch {}
+  }
 
   const pollSystem = createPollSystem(directory);
   const { sseClients, lastContributionId, lastOrchestratorMsgId, lastInterjectionId, lastErrorId, participantStatusCache, broadcast, subscribeToWrites, unsubscribeFromWrites, pingTimer, restartPollTimer } = pollSystem;
@@ -291,6 +314,38 @@ export function startDashboard(directory, port) {
             embeddingStatus.message = err instanceof Error ? err.message : String(err);
             return Response.json({ error: embeddingStatus.message }, { status: 500 });
           }
+        }
+
+        if (url.pathname === "/api/personas") {
+          return handleListPersonas();
+        }
+
+        if (url.pathname === "/api/room/preview") {
+          return handleRoomPreview(req);
+        }
+
+        if (url.pathname === "/api/llm-models") {
+          return handleListLlmModels(url);
+        }
+
+        if (url.pathname === "/api/llm-models/filter") {
+          return handleModelFilter(req);
+        }
+
+        if (url.pathname === "/api/meetings/start") {
+          return handleStartMeeting(req);
+        }
+
+        if (url.pathname === "/api/meetings/cancel") {
+          return handleCancelMeeting(req);
+        }
+
+        if (url.pathname === "/api/meetings/extend") {
+          return handleExtendMeeting(req);
+        }
+
+        if (url.pathname === "/api/jobs") {
+          return handleJobStatus(url);
         }
 
         if (url.pathname === "/api/metrics") {
@@ -550,6 +605,7 @@ export function startDashboard(directory, port) {
     port: server.port,
     hostname,
     stop: () => {
+      try { cancelAllJobs(); } catch {}
       try { const cur = pollSystem.getPollTimer?.(); if (cur) clearInterval(cur); else if (pollTimer) clearInterval(pollTimer); } catch {}
       try { if (pingTimer) clearInterval(pingTimer); } catch {}
       try { pollSystem.stop?.(); } catch {}

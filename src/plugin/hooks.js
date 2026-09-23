@@ -1,13 +1,9 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { getDatabasesBySessionId, deleteMeetingFiles, deleteMeetingsBySessionId } from "../database.js";
-import { resolveLoomBaseDir } from "../paths.js";
 
 export const PROGRESS_PATTERN =
   /^\[(?:info|warn|error)\] (?:🎬|⚠️|ℹ️|📋|🔄|⏭️|✅|🛑|⏱️|💰|🧵|.*is thinking\.\.\.|Round \d+|Synthesizing|Completed|Error:)/;
 
 const TOOL_REQUIRED_OVERRIDES = {
-  knit: ["question"],
   loom_viz: [],
   loom_debug: ["loom_id"],
   loom_forum_create_topic: ["title", "body"],
@@ -42,32 +38,10 @@ event: async ({ event }) => {
     },
 
     "tool.execute.after": async (input, output) => {
-      if (input.tool !== "knit") return;
-      const meetingId = output.metadata?.meeting_id;
-      if (!meetingId) return;
-      if (output.metadata?.loom_status === "error") return;
-      try {
-        const baseDir = resolveLoomBaseDir(directory);
-        const filePath = join(baseDir, "meetings", `${meetingId}.md`);
-        if (!existsSync(filePath)) return;
-        const fullReport = readFileSync(filePath, "utf-8");
-        if (!fullReport) return;
-        output.output =
-          "Relay the following deliberation output to the user exactly as written. " +
-          "Do not summarize, abbreviate, or reformat it. " +
-          "Output the full content below as your response.\n\n" +
-          fullReport;
-      } catch (err) {
-        // If file read fails, leave the original output unchanged
-      }
-    },
-
-    "experimental.chat.system.transform": async (input, output) => {
-      output.system.push(
-        "When a loom/knit tool completes, its output contains the full deliberation report. " +
-        "Relay the complete output to the user as your response. " +
-        "Do not summarize, reformat, or abbreviate the tool output — present it as-is.",
-      );
+      // Dashboard-first: deliberation output stays in the dashboard (Timeline /
+      // Output tabs) and the per-meeting .md report file. Nothing is relayed
+      // to chat.
+      return;
     },
 
     "experimental.chat.messages.transform": async (_input, output) => {

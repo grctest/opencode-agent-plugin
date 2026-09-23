@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { isAgentSessionClient } from "./client-types.js";
 import { deleteMeetingFiles, deleteMeetingsBySessionId, findMeetingBySessionId, getDbPathForMeeting, getDatabasesBySessionId, loadSessionIndex, MeetingDatabase } from "./database.js";
 import { startDashboard } from "./dashboard/server.js";
-import { createKnitHandler } from "./handlers/knit-handler.js";
 import { createConfig, getConfigSource, setDefaultConfigDirectory } from "./config.js";
 import { Logger } from "./logger.js";
 import { resolveLoomBaseDir } from "./paths.js";
@@ -94,10 +93,9 @@ export const Loom = async (input) => {
 
   const { setupProcessHandlers } = createLifecycleHandlers(activeLooms);
   setupProcessHandlers();
-  const { handleKnit, handleListKnitModels, handleEnableKnitModels, handleDisableKnitModels, handleResetKnitModels } = createKnitHandler(client, directory, activeLooms, agentTools);
 
   const activeDashboardRef = { current: activeDashboard };
-  const pluginReturn = createPluginReturn({ activeLooms, activeDashboardRef, directory, config, handleKnit, handleListKnitModels, handleEnableKnitModels, handleDisableKnitModels, handleResetKnitModels, agentTools });
+  const pluginReturn = createPluginReturn({ activeLooms, activeDashboardRef, directory, config, agentTools, client });
   return pluginReturn;
 };
 

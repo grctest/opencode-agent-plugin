@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { createRoot } from "react-dom/client";
 import { Sidebar } from "./components/Sidebar.jsx";
+import { SetupTab } from "./components/SetupTab.jsx";
 import { OverviewTab } from "./components/OverviewTab.jsx";
 import { TimelineTab } from "./components/TimelineTab.jsx";
 import { ForumTab } from "./components/ForumTab.jsx";
@@ -257,7 +258,9 @@ function useMeetingsList() {
 export function App() {
   const [selectedMeeting, setSelectedMeeting] = useState("");
   const [theme, setTheme] = useState(() => localStorage.getItem("loom-theme") ?? "system");
-  const [activeTab, setActiveTab] = usePersistedState("active-tab", "overview");
+  // Key versioned (v2) when the Setup tab was introduced so pre-existing stored
+  // tabs (e.g. timeline) don't override the new Setup default on first load.
+  const [activeTab, setActiveTab] = usePersistedState("active-tab-v2", "setup");
   const [collapsedMap, setCollapsedMap] = usePersistedState("collapsed-rounds", {});
   const collapsedRounds = collapsedMap[selectedMeeting] ?? [];
   const setCollapsedRounds = useCallback((updater) => {
@@ -393,6 +396,7 @@ export function App() {
           <main className="flex-1 overflow-y-auto p-6">
             <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
               <TabsList variant="line" className="w-full justify-start">
+                <TabsTrigger value="setup">Setup</TabsTrigger>
                 <TabsTrigger value="overview">Overview</TabsTrigger>
                 <TabsTrigger value="timeline">Timeline</TabsTrigger>
                 <TabsTrigger value="forum">Forum</TabsTrigger>
@@ -401,6 +405,14 @@ export function App() {
               <ErrorBoundary fallbackMessage="Failed to render extension banner">
                 <ExtensionBanner banner={extensionBanner} onDismiss={dismissExtensionBanner} />
               </ErrorBoundary>
+              <TabsContent value="setup" className="pt-4">
+                <ErrorBoundary fallbackMessage="Failed to render the setup tab">
+                  <SetupTab
+                    selectedMeeting={selectedMeeting}
+                    onStarted={(id) => { setSelectedMeeting(id); setActiveTab("timeline"); }}
+                  />
+                </ErrorBoundary>
+              </TabsContent>
               <TabsContent value="overview" className="pt-4">
                 <ErrorBoundary fallbackMessage="Failed to render the overview tab">
                   {state && (
