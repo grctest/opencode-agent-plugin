@@ -24,6 +24,20 @@ export const STATE_PATCH_CAPS = {
   fileMax: 160,
   addsPerCall: 3,
   removesPerCall: 5,
+  // Bounded pin tier. Evidence with Source:/[#id] is exempt from FIFO eviction
+  // because its relevance is often recognized late — but an *unbounded* pin set
+  // breaks the paper's sufficient-statistic property: only the first `buckets`
+  // entries are ever rendered, so pins beyond that are invisible AND
+  // un-removable (the model cannot remove text it cannot see), growing O(T) in
+  // storage and structuredClone cost for no reasoning value. Instead the newest
+  // `pinnedFacts` pins are protected and older pins degrade to evictable.
+  //
+  // Invariant: pinnedFacts === buckets, so an all-pinned facts bucket never
+  // stores more than the prompt renders — stored ⊆ visible ⊆ removable.
+  pinnedFacts: 8,
+  // Newest N entries per bucket are never FIFO-evicted, so a single 3-add call
+  // cannot immediately churn the context it just wrote.
+  reserve: 2,
 };
 
 export function emptyAgentState() {
@@ -60,12 +74,13 @@ export function applyStatePatch(prev, patch) {
     updated_round: base.updated_round ?? 0,
     updated_contribution_id: base.updated_contribution_id ?? null,
   };
-  const applied = { stance: false, added: {}, removed: [], evicted: [] };
-  const unmatched = [];
+  const applied = { stance: false, added: {}, removed: [], evicted: [], overCap: [], skipped: [] };  const unmatched = [];
 
   const removeKeys = new Set((patch.remove ?? []).map(key));
 
-  // 1. Null-deletion: remove exact matches from every bucket + stance
+  // 1. Null-deletion: remove normalized matches (trim + collapse whitespace +
+  // lowercase) from every bucket + stance. Not literal string equality — see
+  // STATE_PATCH_REMOVE_MATCH_NOTE for the contract the tool description advertises.
   if (removeKeys.size) {
     for (const bucket of ["established", "contested", "open", "facts", "files"]) {
       const before = next[bucket].length;
@@ -89,7 +104,8 @@ export function applyStatePatch(prev, patch) {
     }
   }
 
-  // 2. Stance overwrite (paper's key mutation; empty string clears)
+  // 2. Stance overwrite (paper's key mutation). Clearing is done by `remove`ing
+  // the current stance (step 1) — the schema requires stance to be non-empty.
   if (patch.stance !== undefined) {
     next.stance = norm(patch.stance).slice(0, STATE_PATCH_CAPS.stanceMax);
     applied.stance = true;
@@ -99,32 +115,81 @@ export function applyStatePatch(prev, patch) {
   const isPinned = (bucket, item) =>
     bucket === "facts" && /(source:|#\d+)/i.test(item);
 
+  // FIFO eviction honoring the pin tier + the newest-entry reserve. Reusable so
+  // the ungrounded-fact quarantine (which appends to `open` from inside the
+  // facts pass) is capped and reported like any other write.
+  //
+  // Pin policy (facts only): a bullet carrying `Source:`/`[#id]` is evidence,
+  // and evidence whose relevance is recognized late must survive. The newest
+  // `pinnedFacts` pins are protected outright; older pins *degrade* to
+  // evictable rather than accumulating forever. Demotions are reported so the
+  // model learns its oldest evidence fell off instead of silently forgetting.
+  const enforceCap = (bucket, cap) => {
+    const reserve = STATE_PATCH_CAPS.reserve;
+    const evictableRange = () => Math.max(0, next[bucket].length - reserve);
+    const isProtected = (idx) => {
+      if (idx >= evictableRange()) return true;
+      if (bucket !== "facts" || !isPinned(bucket, next[bucket][idx])) return false;
+      // A pin is protected only while fewer than `pinnedFacts` newer pins exist.
+      let newerPins = 0;
+      for (let j = idx + 1; j < next[bucket].length; j++) {
+        if (isPinned(bucket, next[bucket][j])) newerPins++;
+      }
+      return newerPins < STATE_PATCH_CAPS.pinnedFacts;
+    };
+    while (next[bucket].length > cap) {
+      let victimIdx = -1;
+      for (let i = 0; i < evictableRange(); i++) {
+        if (!isProtected(i)) { victimIdx = i; break; }
+      }
+      if (victimIdx < 0) {
+        // Everything left is a protected pin or inside the reserve. Over-cap is
+        // tolerated (never silently drop live evidence) but must be reported.
+        applied.overCap.push({ bucket, length: next[bucket].length, cap });
+        break;
+      }
+      const wasPin = bucket === "facts" && isPinned(bucket, next[bucket][victimIdx]);
+      applied.evicted.push({ bucket, item: next[bucket].splice(victimIdx, 1)[0], demoted: wasPin });
+    }
+  };
+
   const addTo = (bucket, items, cap = STATE_PATCH_CAPS.buckets, limit = bucket === "files" ? STATE_PATCH_CAPS.fileMax : STATE_PATCH_CAPS.bulletMax) => {
-    applied.added[bucket] = [];
+    applied.added[bucket] = applied.added[bucket] ?? [];
     const seen = new Set(next[bucket].map(key));
     for (const raw of items ?? []) {
-      let item = bucket === "files" ? normalizeFileSnippet(raw) : norm(raw).slice(0, limit);
+      const item = bucket === "files" ? normalizeFileSnippet(raw) : norm(raw).slice(0, limit);
       if (!item || seen.has(key(item))) continue;
-      // cross-bucket move: if same text lives in a sibling bucket, remove it there first
-      // (keeps established/contested disjoint without model bookkeeping;
-      //  never auto-moves a pinned fact out — explicit remove required)
+      // Cross-bucket move: if the same text lives in a sibling bucket, drop it
+      // there first so buckets stay disjoint without model bookkeeping. A
+      // pinned fact is never auto-moved — explicit remove is required. When
+      // that blocks the move we skip the add entirely, otherwise the pinned
+      // fact would be duplicated into the destination bucket.
+      let moveBlocked = false;
       if (bucket !== "files") {
         for (const sib of ["established", "contested", "open", "facts"]) {
           if (sib === bucket) continue;
           const idx = next[sib].findIndex((it) => key(it) === key(item));
-          if (idx >= 0) {
-            if (isPinned(sib, next[sib][idx]) && sib === "facts") continue;
-            next[sib].splice(idx, 1);
-            applied.removed.push(`${sib}→${bucket}`);
+          if (idx < 0) continue;
+          if (isPinned(sib, next[sib][idx])) {
+            moveBlocked = true;
+            break;
           }
+          next[sib].splice(idx, 1);
+          applied.removed.push(`${sib}→${bucket}`);
         }
       }
-      // ungrounded fact quarantine (§5.1a): facts without Source/[#id] land in open as unverified
+      if (moveBlocked) {
+        applied.skipped.push({ bucket, item, reason: "pinned_in_facts" });
+        continue;
+      }
+      // Ungrounded fact quarantine (§5.1a): facts without Source/[#id] land in
+      // `open` marked unverified, and go through the same cap/FIFO path.
       if (bucket === "facts" && !isPinned(bucket, item)) {
         const q = item.endsWith("(unverified)") ? item : `${item} (unverified)`;
-        if (!seen.has(key(q)) && !next.open.some((it) => key(it) === key(q))) {
+        if (!next.open.some((it) => key(it) === key(q))) {
           next.open.push(q);
           applied.added.open = [...(applied.added.open ?? []), q];
+          enforceCap("open", STATE_PATCH_CAPS.buckets);
         }
         continue;
       }
@@ -132,14 +197,7 @@ export function applyStatePatch(prev, patch) {
       seen.add(key(item));
       applied.added[bucket].push(item);
     }
-    // FIFO respecting pins + 2-newest reserve
-    while (next[bucket].length > cap) {
-      const victimIdx = next[bucket].findIndex(
-        (it, idx) => !isPinned(bucket, it) && idx < next[bucket].length - 2,
-      );
-      if (victimIdx < 0) break; // all pinned or only reserve remains — over cap tolerated, reported
-      applied.evicted.push({ bucket, item: next[bucket].splice(victimIdx, 1)[0] });
-    }
+    enforceCap(bucket, cap);
   };
 
   addTo("established", patch.established_add);
@@ -149,7 +207,7 @@ export function applyStatePatch(prev, patch) {
   addTo("files", patch.files_add);
 
   next.version = (base.version ?? 0) + 1;
-  return { next, applied, unmatched, evicted: applied.evicted };
+  return { next, applied, unmatched, evicted: applied.evicted, overCap: applied.overCap, skipped: applied.skipped };
 }
 
 /** Renders one agent's Σⁱ as markdown inner block (A.2). Empty → affordance placeholder. */

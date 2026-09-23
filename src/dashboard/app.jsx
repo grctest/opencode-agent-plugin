@@ -277,7 +277,7 @@ export function App() {
   const meetings = useMeetingsList();
   const { resetKey } = useSSEReset(selectedMeeting);
   const embeddingStatus = useEmbeddingStatus();
-  const { state, participants, contributions, turnRequests, orchestratorMessages, roundSummaries, agentErrors, artifact, forumTopics, error } = useMeetingApi(selectedMeeting, resetKey);
+  const { state, participants, contributions, turnRequests, orchestratorMessages, roundSummaries, agentErrors, artifact, forumTopics, statePatchSummary, error } = useMeetingApi(selectedMeeting, resetKey);
   const handleSSEEvent = useCallback((data) => {
     if (data.type === "contributions") {
       const newContribs = data.data;
@@ -426,6 +426,7 @@ export function App() {
                       participantName={participantName}
                       totalRounds={totalRounds}
                       activeRound={activeRound}
+                      statePatchSummary={statePatchSummary}
                     />
                   )}
                 </ErrorBoundary>

@@ -14,8 +14,9 @@ export function getRecentContributionsBlock(contributions, participantId) {  if 
 
 /**
  * SKILL.state single position line (plan §5.7/§5.9): Σⁱ.stance is the agent's
- * reflection. Legacy reflection is the fallback only when stance is empty
- * (meeting start / flag-off / old DB). One line, never both side by side.
+ * authoritative position. The legacy `reflection` field is a distinct fallback
+ * used only when stance is empty (meeting start / flag-off / old DB, or a
+ * perspective answer landed since the last patch). One line, never both.
  */
 export function buildPositionLine(target) {
   const stance = typeof target?.state_stance === "string" && target.state_stance.trim()

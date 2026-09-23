@@ -45,7 +45,21 @@ export class StateManager {
   /** Lazily initializes and returns a clone of agent id's Σⁱ (Σ_0 when absent). */
   getParticipantState(id) {
     const existing = this.participantStates.get(id);
-    if (existing) return structuredClone(existing);
+    if (existing) {
+      const clone = structuredClone(existing);
+      // A perspective query (§5.7) writes the responder's new position into the
+      // legacy `reflection` field and marks the state dirty. Until the agent's
+      // next loom_state_patch overwrites stance, surface that fresh position in
+      // the own-state block so the one-turn lag is not a blind spot.
+      if (this.stateDirty.has(id) && !String(clone.stance ?? "").trim()) {
+        try {
+          const p = this.getParticipant(id);
+          const fresh = typeof p?.reflection === "string" ? p.reflection.trim() : "";
+          if (fresh) clone.stance = fresh.slice(0, 400);
+        } catch {}
+      }
+      return clone;
+    }
     // Seed from legacy reflection when available (fallback reconciliation, §5.7)
     let seed = null;
     try {

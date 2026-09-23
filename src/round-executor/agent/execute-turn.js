@@ -244,6 +244,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
       return hit?.metadata?.version ?? null;
     })();
     const hasContentForPatch = (finalText && String(finalText).trim().length > 0) || (finalToolResults ?? []).length > 0;
+    let patchDeadlineSkipped = false;
     if (patchEnabled && patchRetryEnabled && !hasAppliedPatch(finalToolResults) && !loomPassCall && hasContentForPatch) {
       // Surface primary-pass validation issues so the retry does not repeat identical args blindly
       let issuesHint = "";
@@ -260,6 +261,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
         if (remaining < 15000) {
           this._logger.warn("state_patch_retry_skipped_deadline", `Skipping loom_state_patch retry for ${participant.config.name} — deadline ${remaining}ms remaining (needs 15s)`);
           patchRemaining = 0;
+          patchDeadlineSkipped = true;
         } else {
           patchRemaining = Math.min(timeoutMs, Math.max(15000, remaining - 1000));
         }
@@ -304,13 +306,43 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
         }
       }
     }
+    // Per-turn patch outcome (§5.10 observability, made legible). The retry above
+    // is deliberately non-fatal, so "no patch" has several distinct causes that
+    // a single counter collapses. Recording the cause lets the dashboard explain
+    // coverage without anyone reading logs. Ordered by specificity.
+    const patchAttempted = (finalToolResults ?? []).some((t) => t.tool === "loom_state_patch");
+    const patchRejected = (finalToolResults ?? []).some(
+      (t) => t.tool === "loom_state_patch" && (t.status === "error" || t.metadata?.validationFailed || t.metadata?.persistenceFailed),
+    );
+    const patchOutcome = !patchEnabled
+      ? "disabled"
+      : loomPassCall
+        ? "exempt_pass"
+        : statePatchVersion != null
+          ? "applied"
+          : patchDeadlineSkipped
+            ? "skipped_deadline"
+            : patchRejected
+              ? "rejected"
+              : patchAttempted
+                ? "unverified"
+                : "never_attempted";
+    let patchOutcomeDetail = null;
+    if (patchOutcome === "skipped_deadline") patchOutcomeDetail = "retry skipped: <15s remained on the meeting deadline";
+    if (patchOutcome === "rejected") {
+      const bad = (finalToolResults ?? []).find(
+        (t) => t.tool === "loom_state_patch" && (t.status === "error" || t.metadata?.validationFailed || t.metadata?.persistenceFailed),
+      );
+      patchOutcomeDetail = String(bad?.output ?? bad?.error ?? "validation/persistence failure").slice(0, 300);
+    }
+
     // Operational logging only (§5.10): DEBUG patch/version counts, never gating.
     try {
       if (patchEnabled && !loomPassCall) {
         if (statePatchVersion != null) {
-          this._logger.debug("state_patch_applied", `${participant.config.name} state patch v${statePatchVersion}`, { participant: participant.config.id, round: currentRound, version: statePatchVersion });
+          this._logger.debug("state_patch_applied", `${participant.config.name} state patch v${statePatchVersion}`, { participant: participant.config.id, round: currentRound, version: statePatchVersion, outcome: patchOutcome });
         } else {
-          this._logger.debug("state_patch_missed", `${participant.config.name} — turn produced no applied state patch`, { participant: participant.config.id, round: currentRound });
+          this._logger.debug("state_patch_missed", `${participant.config.name} — turn produced no applied state patch`, { participant: participant.config.id, round: currentRound, outcome: patchOutcome, detail: patchOutcomeDetail });
         }
       }
     } catch {}
@@ -327,6 +359,8 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
         const reqNext = extractRequestNextFromToolResults(finalToolResults);
         this._recordModelSuccess(model);
         ephemeralSessionIdToDelete = null;
+        const toolOnlyCtx = { ...(promptContext ?? {}), state_patch_outcome: patchOutcome };
+        if (patchOutcomeDetail) toolOnlyCtx.state_patch_detail = patchOutcomeDetail;
         return {
           participant_id: participant.config.id,
           content: "[TOOL-ONLY TURN — no text produced; tool evidence preserved]",
@@ -337,7 +371,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
           summon: null,
           vote: null,
           tool_calls: mappedTools,
-          prompt_context: promptContext,
+          prompt_context: toolOnlyCtx,
           ...(statePatchVersion != null ? { state_patch: { version: statePatchVersion } } : {}),
         };
       }
@@ -387,6 +421,19 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
     this._recordModelSuccess(model);
     response.prompt_context = promptContext;
     if (statePatchVersion != null) response.state_patch = { version: statePatchVersion };
+    // Persist the per-turn patch outcome on the already-persisted prompt_context
+    // blob — avoids a schema migration just for observability, and the dashboard
+    // reads it straight off the contribution.
+    if (response.prompt_context && typeof response.prompt_context === "object") {
+      response.prompt_context.state_patch_outcome = patchOutcome;
+      if (patchOutcomeDetail) response.prompt_context.state_patch_detail = patchOutcomeDetail;
+    } else {
+      response.state_patch = {
+        ...(response.state_patch ?? {}),
+        outcome: patchOutcome,
+        ...(patchOutcomeDetail ? { detail: patchOutcomeDetail } : {}),
+      };
+    }
     this._options.onAgentComplete?.(participant.config.id, response.content);
     ephemeralSessionIdToDelete = null;
     return response;

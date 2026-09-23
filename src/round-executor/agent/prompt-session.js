@@ -55,8 +55,6 @@ export async function promptChildSession(participant) {
 
   const currentRound = this._stateManager.getCurrentRound();
 
-  let recentContribs = this._stateManager.getWeave().filter((c) => c.round != null && c.round >= currentRound - 1);
-
   // Forum topics for prompt — most recent activity first
   let forumTopicsForPrompt = [];
   try {

@@ -92,7 +92,10 @@ export function restoreStateFromDb({ db, stateManager, meetingId, options }) {
       prompt_context: c.prompt_context ?? null,
       created_at: c.created_at,
     })),
-    next_contribution_id: Math.max(db.getMaxContributionId() ?? 0, ...contributions.map(c=>c.id ?? 0), 0) + 1,
+    // nextContributionId() pre-increments (++), so the stored value must be the
+    // last used id — NOT max+1, or every post-resume id runs one ahead of
+    // SQLite's autoincrement and state_patches.contribution_id dangles.
+    next_contribution_id: Math.max(db.getMaxContributionId() ?? 0, ...contributions.map(c=>c.id ?? 0), 0),
     state_of_play: meeting.state_of_play ?? "",
   });
   // Restore artifact if previously synthesized (otherwise extend loses deliverable)

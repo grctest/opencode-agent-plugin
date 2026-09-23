@@ -36,21 +36,53 @@ export const OverviewTab = memo(({
   participantName,
   totalRounds,
   activeRound,
+  statePatchSummary,
 }) => {
   const stats = state?.stats ?? {};
   const totalCalls = useMemo(() => CALL_COUNTER_KEYS.reduce((sum, key) => sum + (Number(stats[key]) || 0), 0), [stats]);
   const totalInputTokens = useMemo(() => Number(stats.input_tokens) || 0, [stats]);
   const totalOutputTokens = useMemo(() => Number(stats.output_tokens) || 0, [stats]);
-  // SKILL.state operational coverage (§5.10): % primary turns with an applied patch.
-  // Debug visibility only — never gating, no averages or token totals.
+  // SKILL.state operational coverage (§5.10). Deliberately NOT derived from
+  // tool_calls status alone: a rejected loom_state_patch returns a normal
+  // tool result (status "completed") with metadata.error, so counting
+  // `status === "completed"` inflated coverage with failures. Ground truth is
+  // the per-turn outcome enum recorded by the executor, cross-checked against
+  // the durable state_patches audit rows and participants whose version moved.
   const patchCoverage = useMemo(() => {
     try {
       const primary = (contributions ?? []).filter((c) => c.type === "contribution");
       if (primary.length === 0) return null;
-      const patched = primary.filter((c) => (c.tool_calls ?? []).some((t) => t.tool === "loom_state_patch" && (t.metadata?.applied === true || t.status === "completed")));
-      return { pct: Math.round((patched.length / primary.length) * 100), patched: patched.length, total: primary.length };
+      const byOutcome = {};
+      let appliedByToolCalls = 0;
+      for (const c of primary) {
+        const outcome = c.prompt_context?.state_patch_outcome;
+        if (typeof outcome === "string" && outcome) byOutcome[outcome] = (byOutcome[outcome] ?? 0) + 1;
+        if ((c.tool_calls ?? []).some((t) => t.tool === "loom_state_patch" && t.metadata?.applied === true)) {
+          appliedByToolCalls++;
+        }
+      }
+      const applied = byOutcome.applied ?? 0;
+      return {
+        pct: Math.round((applied / primary.length) * 100),
+        applied,
+        total: primary.length,
+        byOutcome,
+        appliedByToolCalls,
+        auditRows: statePatchSummary?.auditRows ?? null,
+        agentsWithState: statePatchSummary?.agentsWithState ?? null,
+      };
     } catch { return null; }
-  }, [contributions]);
+  }, [contributions, statePatchSummary]);
+
+  const OUTCOME_LABEL = {
+    applied: "applied",
+    exempt_pass: "passed (exempt)",
+    never_attempted: "never attempted",
+    rejected: "rejected",
+    unverified: "unverified",
+    skipped_deadline: "skipped (deadline)",
+    disabled: "tool disabled",
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -72,8 +104,22 @@ export const OverviewTab = memo(({
           <ContributionTypeChart contributions={contributions} />
           <ContributionTimeline contributions={contributions} />
           {patchCoverage && (
-            <div className="text-xs text-muted-foreground" title="Share of primary turns that projected state via loom_state_patch (operational visibility only)">
-              State patches: {patchCoverage.pct}% of primary turns ({patchCoverage.patched}/{patchCoverage.total})
+            <div className="rounded-lg border p-2.5 text-xs text-muted-foreground" title="Operational visibility only — never gates control flow. 'Applied' counts turns whose state patch actually landed; the rest is broken down by cause so a low number is diagnosable.">
+              <div className="font-medium text-foreground">
+                State patches: {patchCoverage.pct}% of primary turns ({patchCoverage.applied}/{patchCoverage.total})
+              </div>
+              {Object.keys(patchCoverage.byOutcome).length > 0 ? (
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+                  {Object.entries(patchCoverage.byOutcome).map(([k, v]) => (
+                    <span key={k}>{OUTCOME_LABEL[k] ?? k}: {v}</span>
+                  ))}
+                </div>
+              ) : (
+                <div className="mt-1">Per-turn outcomes not recorded for this meeting (older run).</div>
+              )}
+              <div className="mt-1 text-[11px] opacity-80">
+                audit rows: {patchCoverage.auditRows ?? "—"} · agents with state: {patchCoverage.agentsWithState ?? "—"}
+              </div>
             </div>
           )}
         </div>

@@ -18,11 +18,11 @@ export function createStatePatchTool({ config, resolveMeeting, activeLooms }) {
         open_add: tool.schema.array(tool.schema.string().min(1).max(280)).max(3).optional()
           .describe("Unresolved questions (up to 3)"),
         facts_add: tool.schema.array(tool.schema.string().min(1).max(280)).max(3).optional()
-          .describe("Tool-backed or cited facts with Source/[#id] (up to 3)"),
+          .describe("Tool-backed or cited facts with Source/[#id] (up to 3). These are evidence and survive FIFO eviction longer than other bullets, but only the newest few are protected — re-assert anything critical each turn you still rely on."),
         files_add: tool.schema.array(tool.schema.string().min(1).max(160)).max(3).optional()
           .describe("File paths touched (up to 3, e.g. src/auth/jwt.ts)"),
         remove: tool.schema.array(tool.schema.string().min(1).max(280)).max(5).optional()
-          .describe("Exact text of YOUR outdated bullets to delete (up to 5)"),
+          .describe("Text of YOUR outdated bullets to delete (up to 5). Matched case-insensitively after whitespace collapsing — copy the bullet text closely."),
       },
       async execute(args, context) {
         const cfg = config.getValue("agentTools");
@@ -66,26 +66,43 @@ export function createStatePatchTool({ config, resolveMeeting, activeLooms }) {
 
           const { applyStatePatch } = await import("../../state-patch.js");
           const prev = sm.getParticipantState(caller.config.id);
-          const { next, applied, unmatched, evicted } = applyStatePatch(prev, parsed.data);
+          const { next, applied, unmatched, evicted, overCap, skipped } = applyStatePatch(prev, parsed.data);
           next.updated_round = sm.getCurrentRound?.() ?? 0;
+
+          // Persist BEFORE publishing in memory. If the durable write fails we
+          // roll back and report a persistence error so the executor retries,
+          // instead of reporting success with state that only exists in RAM.
+          // (null = DB predates state columns; in-memory-only is legitimate.)
+          let persisted = true;
+          if (typeof db.setParticipantState === "function") {
+            persisted = db.setParticipantState(caller.config.id, next);
+          }
+          if (persisted === false) {
+            return {
+              output: JSON.stringify({
+                error: "state persistence failed — patch NOT applied, retry it",
+                persistenceFailed: true,
+              }),
+              metadata: { error: true, persistenceFailed: true },
+              title: "loom_state_patch error",
+            };
+          }
           // updated_contribution_id filled by executor post-store (§5.6); set provisional here
           sm.setParticipantState(caller.config.id, next);
-          try {
-            if (typeof db.setParticipantState === "function") db.setParticipantState(caller.config.id, next);
-          } catch {}
           try {
             const { auditLoomTool } = await import("./audit.js");
             auditLoomTool({ db, stateManager: sm, caller, meetingId: meetingInfo.meetingId,
               tool: "loom_state_patch", input: args,
-              output: JSON.stringify({ applied: true, version: next.version, appliedCounts: applied }),
+              output: JSON.stringify({ applied: true, version: next.version, added: applied.added,
+                removed: applied.removed, evicted, overCap, skipped }),
               status: "completed", title: `loom_state_patch:v${next.version}` });
           } catch {}
 
           return {
             output: JSON.stringify({ applied: true, version: next.version, added: applied.added,
-              removed: applied.removed, unmatched: unmatched.slice(0, 5), evicted,
+              removed: applied.removed, unmatched: unmatched.slice(0, 5), evicted, overCap, skipped,
               note: "Patch applied to YOUR state only. Shared State of Play aggregates all agents." }),
-            metadata: { applied: true, version: next.version },
+            metadata: { applied: true, version: next.version, persisted: persisted !== false },
             title: `loom_state_patch:v${next.version}`,
           };
         } catch (e) {

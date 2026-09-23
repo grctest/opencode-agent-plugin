@@ -1,6 +1,6 @@
 # SKILL.state — Complementary Per-Agent Implementation for Loom
 
-> **Status:** Planning — approved direction, not yet implemented.
+> **Status:** IMPLEMENTED AND LIVE. All sections below shipped (schema v6, `participants.state_json` + `state_patches`, `loom_state_patch` tool, mandatory patch-retry, Σ/SoP/synthesis wiring, dashboard visibility). Section numbers are retained as the implementation's traceability anchors to this spec. Post-implementation audit fixes (resume contribution-id off-by-one, pinned-fact cross-bucket duplication, unverified-fact cap bypass, false-success on persistence failure, coverage-metric over-count) are folded into §5.2, §5.3, §5.6, §5.7 and §5.10 below.
 > **Reference:** Badhe, Tiwari, Chung — *SKILL.state: Scalable Long-Horizon Agent Skills* (arXiv:2608.26263v3, 2 Sep 2026). Referred to below as "the paper".
 > **Loom refs:** `ORCHESTRATION_ARCHITECTURE.md`, `src/prompts/agent.js`, `src/round-executor/agent/prompt-session.js`, `src/round-executor/agent/execute-turn.js`, `src/state-of-play.js`, `src/schemas.js`, `src/plugin/tools/pass.js`, `src/plugin/tools/query-evidence.js`.
 > **Decisions locked in prior conversation:** (1) per-agent stance slice, not quorum joint-write; (2) mandatory `loom_state_patch` tool call every primary turn; (3) tool-channel, never prose-JSON parsing; (4) complement provenance, never replace it; (5) operational logging only — no benchmark/evaluation harness.
@@ -101,7 +101,7 @@ Key empirical claims we are reproducing in spirit: flat prompt (§5.2 Table 1), 
 |---|---|---|
 | Single agent loop | **Per-agent loop** `i ∈ participants`. Each agent owns `Σⁱ_t`. Rounds interleave agents deterministically; within an agent's own subsequence the paper's loop holds exactly. | Sidesteps paper §7 concurrent-write problem: no two agents ever write the same `Σⁱ`. |
 | `P` | `question + tags + userContext + system prompt + roster` | Immutable within a meeting. `/knit` extension creates `P' = P + new brief`, bumps `meeting.revision`, carries all `Σⁱ` forward. |
-| `Σ_t` | `Σⁱ_t = { stance, established[], contested[], open[], facts[], files[], version, updated_round }` (§5.2) | Bounded (caps below). Fully replaces keyword-derived per-agent view. |
+| `Σ_t` | `Σⁱ_t = { stance, established[], contested[], open[], facts[], files[], version, updated_round }` (§5.2) | **Bounded by construction:** every bucket holds ≤ `buckets` (8) items (≤ `buckets + reserve` transiently, reported as `overCap`), `stance` ≤ 400ch, bullets ≤ 280ch, files ≤ 160ch. The pin tier (§5.2) keeps the newest `pinnedFacts` evidence items exempt from FIFO while degrading older pins, so `|Σⁱ| ≤ ~13k` chars worst case — matching the paper's sufficient-statistic property. |
 | `O_t` | `SoP digest (shared read-view, ≤2000ch) + live current-round contribs only (≤12, ≤800/1200ch each) + inline peer answers for this turn` | **Faithfulness note:** strict paper `O_t` is latest-observation-only with zero history. Loom needs same-round peer engagement (`[#id]` cites), so this is `Stateful-minus-full-history`: shared digest + current-round live only, never prior rounds, never full weave. Tightened from today's `round >= r-1, ≤20` window (see §5.1). SoP block is sourced from `Σ`-aggregation instead of full-scan keywords. |
 | `(R_t, ΔΣ_t, a_t)` | `(prose contribution, loom_state_patch args, deliberation action — see §5.1a)` | `R_t` = prose + thinking blocks. Paper generates all three in **one LLM call** with a `{"state_patch","action"}` fence (App. A.4) and validates `ΔΣ` **before** executing `a_t`. We split into prose + separate `loom_state_patch` tool call (same turn, patch-retry last) and store prose before/adjacent to patching — a deliberate tool-channel adaptation. Ordering deviation is documented in §5.6. |
 | Validate + rollback | Tool `execute()` Zod-validation (`.strict()`, caps, non-empty refine); on failure return `error + issues[0..5]`, mutate nothing, executor retries once | Paper §3.2 "deterministic validation & rollback". Provider function-calling schema acts as first-pass grammar constraint (paper §7 future work); Zod is the second pass. |
@@ -234,7 +234,24 @@ export const StatePatchSchema = z.object({
 - Drop adds that are empty after normalization or duplicates (case-insensitive) of existing items.
 - `remove` matches case-insensitively against all four text buckets + `stance` (exact normalized equality). No fuzzy matching — if it doesn't match exactly, it's reported as `unmatched` (non-fatal, other ops still apply).
 
-**Caps enforcement with late-relevance guard (paper §7 failure mode #2):** each text bucket holds ≤8 items. `facts` items containing `Source:` or `[#id]` are **pinned** (never FIFO-evicted; only explicit `remove` deletes them) — tool-backed evidence is exactly the content whose relevance is most often recognized late. The remaining buckets evict oldest-first (FIFO); evictions are reported in the tool result (`evicted: [...]`) so the model sees what fell off. Additionally the two newest items per bucket are **reserve-protected**: FIFO eviction skips them unless the bucket is over cap by ≥2, preventing a single 3-add call from churning just-written context. `remove` continues to require exact normalized match; paraphrase renames are handled as add-new + remove-old in the same call (both reported), never fuzzy-matched — deterministic, no embedding threshold to tune.
+**Caps enforcement with late-relevance guard (paper §7 failure mode #2):** each text bucket holds ≤8 items. `facts` items containing `Source:` or `[#id]` are **pinned** — evidence whose relevance is often recognized late must not be FIFO-dropped the moment it stops being top-of-mind. The remaining bullets evict oldest-first (FIFO), and the newest `reserve` (2) items per bucket are **reserve-protected** so a single 3-add call cannot churn the context it just wrote. Evictions are echoed in the tool result (`evicted: [...]`) so the model sees what fell off.
+
+**Pin tier is bounded, not exempt (`post-audit correction`).** The original design made pinned facts *never* evictable, on the theory that late-recognized evidence must survive. Stress-testing the live implementation against the paper's sufficient-statistic assumption showed that produces exactly the pathology the paper warns about, in mirror image: with 500 cited facts, `facts` grew to 500 entries while the prompt rendered only the first 8. Those trailing 492 were **invisible to the model and therefore un-removable** — the agent cannot `remove` text it cannot see — so they grew `O(T)` in storage, in `structuredClone` cost, and in the `state_patches` table while contributing nothing to any decision. That is worse than forgetting: it is a silent, permanently-invisible leak.
+
+The corrected policy keeps the late-relevance intent while restoring the bound:
+
+- The newest `pinnedFacts` (8) pins are **protected** from FIFO eviction outright.
+- Older pins **degrade to evictable** rather than accumulating; each demotion is reported in `applied.evicted[].demoted === true` so the model learns its oldest evidence fell off instead of silently losing it.
+- `pinnedFacts === buckets === 8`, which establishes the invariant **stored ⊆ visible ⊆ removable**: everything the runtime holds is rendered in the own-state block and can therefore be explicitly `remove`d by the model. No hidden state survives anywhere in the runtime.
+- Verified under stress: 500 consecutive cited adds settle at exactly 8, all four buckets stay ≤ `cap + reserve` under mixed load, and pinned evidence still survives 20 unrelated non-fact patches (the property the pin tier exists to protect).
+
+`remove` continues to require exact normalized match; paraphrase renames are handled as add-new + remove-old in the same call (both reported), never fuzzy-matched — deterministic, no embedding threshold to tune.
+
+**Other post-audit invariants now enforced in code (`src/state-patch.js`):**
+- *No pinned-fact duplication.* When a cross-bucket move is blocked because the matching item in `facts` is pinned, the add is **skipped entirely** (recorded in `applied.skipped` with `reason: "pinned_in_facts"`). The earlier `continue` only escaped the sibling-scan loop, so the same text was still appended to the destination bucket, duplicating pinned evidence and breaking bucket disjointness.
+- *Quarantine respects the cap.* Ungrounded `facts_add` entries land in `open` through the same `enforceCap("open", 8)` FIFO path as any other write, instead of being pushed directly onto `next.open`. The earlier direct push could grow `open` to 11 against a cap of 8 and break the `O(1)` bound.
+- *Removal matching is normalized, not literal.* `remove[]` matches on trimmed + whitespace-collapsed + lowercased keys (the tool description says so explicitly), and one entry may match the same key in more than one bucket. Both are deterministic and documented rather than surprising.
+- *Stance clearing has a defined path.* The schema requires a non-empty `stance` string, so clearing is done by `remove`ing the current stance rather than by an empty-string overwrite. The merge comment claiming otherwise was corrected.
 
 ---
 
@@ -468,6 +485,20 @@ export function createStatePatchTool({ config, resolveMeeting, activeLooms }) {
 
 Tool list line: add `loom_state_patch` to the `tools.push(...)` roster and the `Available:` line. Cache key already includes `agentTools` digest (`agent.js:38`), so enabling the tool busts `systemPromptCache` correctly — no extra work.
 
+**Salience requirement (post-audit — the paper gets this structurally, we do not).** The paper makes the patch impossible to omit: Appendix A.4 requires every response to contain both `state_patch` and `action` inside one fenced JSON block, so there is no "forgot to patch" state. Our tool-channel split removes that structural guarantee — the patch became a *separate act the model must remember* — so instruction weight has to make up the difference. The first implementation mentioned the tool in exactly two low-salience places (one bullet in a ~15-item tool list, one buried guidance bullet) while the two strongest positions in the prompt were silent:
+
+- the **OUTPUT CONTRACT**, explicitly labelled "read this last, it governs your response", never mentioned it at all;
+- the **final line** of the user prompt ended on "Make your contribution or pass." with no patch directive.
+
+The result was measured in production: 1 applied patch across 9 primary turns. Four surfaces now carry the requirement, and the flag-gating keeps every one of them inert when `loom_state_patch` is off:
+
+1. **OUTPUT CONTRACT — new numbered item 7, `REQUIRED`**, gated on `agentTools.loom.loom_state_patch`. States the ordering (prose first, then the call), the consequence ("your stance + bullets are the ONLY thing carried into your next turn; unpatched reasoning is discarded"), and a minimum-viable shape (`{ stance: "..." }`) so the bar is low enough that a weak model does not treat it as a heavy obligation.
+2. **Final line of the user prompt**, gated on the state block actually being rendered (`showState`, not the config flag — the two can disagree): "Then call loom_state_patch once — project your stance and 1-3 bullets so they survive into your next turn. Nothing you write in prose carries forward on its own." Recency is the strongest position available.
+3. **Self-interest hook in the Weighted Guidance bullet**: "a turn that reasons well but patches nothing has wasted the work". The setup is what the paper makes automatic — a bounded Σ with no transcript replay means unpatched reasoning is genuinely gone — so the model can be told the truth rather than a politeness request.
+4. **Pass exemption stated in WHEN TO PASS**: passing is the one turn that does not require the call, which both preserves the `exempt_pass` semantics and prevents a wasted call when an agent has nothing new.
+
+The executor retry (§5.6 step 3) remains the backstop, and is deliberately *not* the primary mechanism — a strong instruction that only fires after failure inverts the emphasis and trains the model to ignore the first, softer signal.
+
 **User prompt** (`src/prompts/agent.js:236-336`, `buildAgentUserPrompt`): insert a new delimited block between State of Play and Live, and **remove auto-injected Recall**:
 
 ```
@@ -569,7 +600,7 @@ CREATE TABLE IF NOT EXISTS state_patches (
 
 Helpers in `src/database/*`: `setParticipantState(id, state)`, `getParticipantState(id)`, `addStatePatch(row)`, `listStatePatches(meetingId, participantId?)`. All wrapped in existing `degrade()` best-effort pattern where appropriate (state lost in crash rebuilds from weave via fallback below — never fatal).
 
-**Resume/extension:** states load with the meeting (`session-index.js` restore path). `/knit` extension keeps all `Σⁱ`, bumps `meetings.revision`, appends extension brief to `P.userContext`. Agents see new `O` next turn and patch immediately — the paper's zero-step recovery.
+**Resume/extension:** states load with the meeting (`session-index.js` restore path). `/knit` extension keeps all `Σⁱ`, bumps `meetings.revision`, appends extension brief to `P.userContext`. Agents see new `O` next turn and patch immediately — the paper's zero-step recovery. **Post-audit correction:** `next_contribution_id` is restored as `MAX(id)`, not `MAX(id)+1`, because `nextContributionId()` pre-increments (`++`). The earlier off-by-one made every post-resume contribution id run one ahead of SQLite's autoincrement, so `state_patches.contribution_id` pointed at rows that never existed.
 
 **Fallback reconciliation:** if `Σⁱ` missing/corrupt (old DB, manual delete), rebuild a seed from the legacy `updateStateOfPlay` keyword scan filtered to that participant's contributions, mark `version: 0, rebuilt: true`. Deterministic, runs once.
 
@@ -580,6 +611,8 @@ Helpers in `src/database/*`: `setParticipantState(id, state)`, `getParticipantSt
 - Dashboard participant card shows `stance@vN`; `reflectionHistory` remains visible in the audit trail but is not injected into prompts.
 
 **Versioning rule (paper Algorithm 1 steps 4–6).** `version++` happens **only** on successfully applied patches. Failed Zod validation, empty patches, and misses leave `version` unchanged, mutate nothing, and write no `state_patches` row (paper's rollback). Prose is never rolled back — only state is. A repeatedly-invalid patcher still contributes prose every turn and only logs `state_patch_missed`.
+
+**Persistence ordering (post-audit correction).** The durable `participants.state_json` write now happens **before** the in-memory state is published, and its result is checked: `setParticipantState` returns `true` (written), `null` (DB predates state columns — in-memory-only is legitimate there), or `false` (real write failure). On `false` the tool rolls back and returns a `persistenceFailed` error instead of reporting `applied: true`, so the executor's retry path re-asks rather than leaving state that exists only in RAM. The previous best-effort ordering let a failed write produce a state that was versioned in memory, absent from disk, and reported as a success.
 
 **Negative recovery (paper Tables 3/10: Canceled Order / PR Closed — all runtimes correctly fail).** When an external change invalidates state instead of updating it (file deleted out-of-band, question retracted, summoned guest removed, claim disproven by tool output), the expected behavior is explicit removal, not silent persistence: agent `remove`s the dead bullet(s) and adds one `open` bullet (`"<X> no longer exists — repropose?"`). Hallucinating defense of removed state is treated as a correctness bug, not a merge edge.
 
@@ -631,6 +664,19 @@ Per-turn cost drops from `O(T)` full-weave scan to `O(P × buckets)` (`P` = part
 
 Explicit non-goal: no paper-style evaluation (no Tables 1–11 reproduction, no seeds/statistics/token-cost comparisons). Logging exists so developers can see the feature working, nothing more. None of it gates control flow:
 
+**Per-turn outcome enum (implemented).** Because the patch retry is deliberately non-fatal, "no patch" has several distinct causes, and a single coverage counter collapses them into an undiagnosable number. Every primary turn now records exactly one outcome — `applied | exempt_pass | never_attempted | rejected | unverified | skipped_deadline | disabled` — onto the contribution's `prompt_context.state_patch_outcome` (plus `state_patch_detail` for rejections). Rationale for each value:
+- `applied` — a `loom_state_patch` result carried `metadata.applied === true`.
+- `exempt_pass` — the turn was a `loom_pass`; state is correctly unchanged, not a miss.
+- `never_attempted` — the tool was offered and the model never called it (behavioral miss; the salience lever).
+- `rejected` — called but failed Zod validation, unknown keys, or durable persistence.
+- `unverified` — called, no failure recorded, but no `applied` metadata (extraction anomaly).
+- `skipped_deadline` — `<15s` remained on the meeting deadline, so the retry was never attempted.
+- `disabled` — the feature flag is off for this meeting.
+
+Storing the enum on `prompt_context` (an already-persisted JSON blob) avoids a schema migration purely for observability. The outcome is surfaced in the Timeline contribution dialog's Details tab and aggregated in the dashboard Overview.
+
+**Coverage is computed from the enum, not from tool-call status.** The earlier implementation counted any `loom_state_patch` tool result with `status === "completed"`, which *inflated* coverage: a rejected patch returns a normal tool result carrying `metadata.error` and no throw, so failures scored as successes. Overview now reports applied-from-outcome, cross-checked against durable `state_patches` audit rows and the count of participants whose `state_version > 0`. A disagreement between those three numbers is itself the diagnostic signal.
+
 Per turn (DEBUG only): `patch_applied` (bool), `patch_version`, `added/removed/evicted/unmatched` counts, `ungrounded_quarantined` count. `prompt_chars`/`state_bytes` logged at DEBUG for prompt-construction debugging only.
 
 Per meeting (dashboard Overview tooltip, not report footer): `state_patch_coverage` (% primary turns with applied patch). No averages, no cumulative token totals, no SoP-size curves.
@@ -655,12 +701,14 @@ agentTools: {
   sameTurnSynthesis: true,    // unchanged; patch-retry runs after it
   patchRetry: true,           // new; one clerk retry when mandatory call missed
 },
-tuning: {
-  STATE_PATCH: {
-    buckets: 8, stanceMax: 400, bulletMax: 280, fileMax: 160,
-    addsPerCall: 3, removesPerCall: 5,
-  },
-}
+  tuning: {
+    STATE_PATCH: {
+      buckets: 8, stanceMax: 400, bulletMax: 280, fileMax: 160,
+      addsPerCall: 3, removesPerCall: 5,
+      pinnedFacts: 8,   // newest N evidence bullets exempt from FIFO; older pins degrade
+      reserve: 2,       // newest N entries per bucket never FIFO-evicted
+    },
+  }
 ```
 
 Schema entries in `CONFIG_SCHEMA`: `'agentTools.loom.loom_state_patch': { type: 'boolean' }`, `'agentTools.patchRetry': { type: 'boolean' }`. `LOOM_AGENT_TOOLS_LOOM_LOOM_STATE_PATCH` env override works via existing scalar-env mechanism. Invalid values fall back with startup warning (existing behavior).

@@ -214,6 +214,7 @@ export function startDashboard(directory, port, runtimeOpts = null) {
             turn_requests: api.getTurnRequests(),
             orchestrator_messages: api.getOrchestratorMessages(meetingId),
             round_summaries: api.getRoundSummaries(meetingId),
+            state_patch_summary: api.getStatePatchSummary(),
             agent_errors: api.getAgentErrors(),
             artifact: api.getArtifact(),
             embedding_model: embeddingModel?.embedding_model ?? null,

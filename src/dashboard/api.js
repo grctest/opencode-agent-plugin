@@ -342,6 +342,9 @@ export class DashboardApi {
   getForumTopics(...args) {
     return queriesHelpers.getForumTopics.apply(this, args);
   }
+  getStatePatchSummary(...args) {
+    return queriesHelpers.getStatePatchSummary.apply(this, args);
+  }
   getForumTopic(...args) {
     return queriesHelpers.getForumTopic.apply(this, args);
   }

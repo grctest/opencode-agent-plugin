@@ -663,6 +663,33 @@ const TimelineTabBase = ({
                   <TableRow><TableCell className="font-medium">Timestamp</TableCell><TableCell>{relativeTime((liveDialogContribution ?? dialogContribution).contribution.created_at)}</TableCell></TableRow>
                   <TableRow><TableCell className="font-medium">Word count</TableCell><TableCell>{((liveDialogContribution ?? dialogContribution).contribution.content ?? "").split(/\s+/).filter(Boolean).length}</TableCell></TableRow>
                   <TableRow><TableCell className="font-medium">Contribution ID</TableCell><TableCell className="font-mono">#{(liveDialogContribution ?? dialogContribution).contribution.id}</TableCell></TableRow>
+                  {(() => {
+                    const c = (liveDialogContribution ?? dialogContribution).contribution;
+                    const outcome = c?.prompt_context?.state_patch_outcome;
+                    if (!outcome) return null;
+                    const LABEL = {
+                      applied: "Applied — state advanced",
+                      exempt_pass: "Exempt — agent passed this turn",
+                      never_attempted: "Not attempted — model never called the tool",
+                      rejected: "Rejected — validation or persistence failure",
+                      unverified: "Called but not confirmed applied",
+                      skipped_deadline: "Skipped — no time left for the retry prompt",
+                      disabled: "Tool disabled for this meeting",
+                    };
+                    return (
+                      <TableRow>
+                        <TableCell className="font-medium">State patch</TableCell>
+                        <TableCell>
+                          <span className={outcome === "applied" ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}>
+                            {LABEL[outcome] ?? outcome}
+                          </span>
+                          {c.prompt_context?.state_patch_detail && (
+                            <div className="mt-0.5 font-mono text-[10px] opacity-75">{c.prompt_context.state_patch_detail}</div>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })()}
                 </TableBody>
               </Table>
             </TabsContent>

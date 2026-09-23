@@ -54,12 +54,16 @@ export function getParticipantState(db, meetingId, participantId) {
 }
 
 export function setParticipantState(db, meetingId, participantId, state) {
+  // Returns true on a successful write, null when the DB predates state columns
+  // (in-memory-only is legitimate there), false on a real write failure.
   try {
-    if (!hasStateColumns(db)) return;
+    if (!hasStateColumns(db)) return null;
     qq(db, `UPDATE participants SET state_json = ? WHERE id = ? AND meeting_id = ?`)
       .run(JSON.stringify(state), participantId, meetingId);
+    return true;
   } catch (err) {
     dbLogger.warn("set_participant_state_failed", `Failed to set state for ${participantId}`, extractErrorInfo(err));
+    return false;
   }
 }
 
@@ -124,4 +128,31 @@ export function getStatePatchCoverage(db, meetingId) {
   } catch {
     return 0;
   }
+}
+
+/**
+ * Ground-truth patch accounting for the dashboard (§5.10 observability).
+ * Distinct from the audit-row count: this reports how many agents actually
+ * advanced their state (version > 0), which is the one number that cannot be
+ * inflated by a failed call being logged as a tool result.
+ */
+export function getStatePatchSummary(db, meetingId) {
+  const auditRows = getStatePatchCoverage(db, meetingId);
+  let agentsWithState = 0;
+  let totalVersions = 0;
+  try {
+    if (!hasStateColumns(db)) return { auditRows, agentsWithState: 0, totalVersions: 0 };
+    const rows = qq(db,
+      `SELECT id, state_json FROM participants WHERE meeting_id = ?`
+    ).all(meetingId);
+    for (const r of rows) {
+      const st = parseState(r.state_json);
+      const v = Number(st?.version) || 0;
+      if (v > 0) agentsWithState++;
+      totalVersions += v;
+    }
+  } catch (err) {
+    dbLogger.warn("state_patch_summary_failed", "Failed to summarize participant states", extractErrorInfo(err));
+  }
+  return { auditRows, agentsWithState, totalVersions };
 }

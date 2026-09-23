@@ -129,6 +129,45 @@ export function getParticipants() {
     }
   }
 
+/**
+ * SKILL.state patch accounting (§5.10). Three independent numbers so a
+ * discrepancy is legible instead of guessed at:
+ *  - byOutcome: per-turn outcomes recorded by the executor
+ *  - auditRows: durable state_patches rows
+ *  - agentsWithState: participants whose state version actually advanced
+ * Older meetings predate the outcome field and simply omit byOutcome.
+ */
+export function getStatePatchSummary() {
+  const summary = { byOutcome: {}, auditRows: 0, agentsWithState: 0, totalVersions: 0 };
+  try {
+    const rows = this._db
+      .prepare(`SELECT prompt_context FROM contributions WHERE prompt_context IS NOT NULL`)
+      .all();
+    for (const r of rows) {
+      let ctx = null;
+      try { ctx = typeof r.prompt_context === "string" ? JSON.parse(r.prompt_context) : r.prompt_context; } catch { continue; }
+      const outcome = ctx?.state_patch_outcome;
+      if (typeof outcome === "string" && outcome) {
+        summary.byOutcome[outcome] = (summary.byOutcome[outcome] ?? 0) + 1;
+      }
+    }
+  } catch { /* pre-state DBs */ }
+  try {
+    summary.auditRows = this._db.prepare(`SELECT COUNT(*) AS c FROM state_patches`).get()?.c ?? 0;
+  } catch { summary.auditRows = 0; }
+  try {
+    const ps = this._db.prepare(`SELECT state_json FROM participants`).all();
+    for (const r of ps) {
+      let s = null;
+      try { s = typeof r.state_json === "string" ? JSON.parse(r.state_json) : r.state_json; } catch { s = null; }
+      const v = Number(s?.version) || 0;
+      if (v > 0) summary.agentsWithState++;
+      summary.totalVersions += v;
+    }
+  } catch { /* pre-state DBs lack the column */ }
+  return summary;
+}
+
 export function getAgentErrors() {
     return this._db
       .prepare(

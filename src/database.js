@@ -248,6 +248,7 @@ export class MeetingDatabase {
   addStatePatch(row) { const r = statePatchOps.addStatePatch(this.#db, this.#meetingId, row); this.#notify("state_patches"); return r; }
   listStatePatches(participantId = null) { return statePatchOps.listStatePatches(this.#db, this.#meetingId, participantId); }
   getStatePatchCoverage() { return statePatchOps.getStatePatchCoverage(this.#db, this.#meetingId); }
+  getStatePatchSummary() { return statePatchOps.getStatePatchSummary(this.#db, this.#meetingId); }
 
   close() {
     try {

@@ -234,6 +234,7 @@ export function useMeetingApi(meetingId, resetKey) {
   const [turnRequests, setTurnRequests] = useState([]);
   const [orchestratorMessages, setOrchestratorMessages] = useState([]);
   const [roundSummaries, setRoundSummaries] = useState({});
+  const [statePatchSummary, setStatePatchSummary] = useState(null);
   const [agentErrors, setAgentErrors] = useState([]);
   const [artifact, setArtifact] = useState(null);
   const [embeddingModel, setEmbeddingModel] = useState(null);
@@ -273,6 +274,7 @@ export function useMeetingApi(meetingId, resetKey) {
       setTurnRequests(data.turn_requests ?? []);
       setOrchestratorMessages(data.orchestrator_messages ?? []);
       setRoundSummaries(data.round_summaries ?? {});
+      setStatePatchSummary(data.state_patch_summary ?? null);
       setAgentErrors(data.agent_errors);
       setArtifact(data.artifact ?? null);
       setEmbeddingModel(data.embedding_model ?? null);
@@ -380,6 +382,7 @@ export function useMeetingApi(meetingId, resetKey) {
     turnRequests,
     orchestratorMessages,
     roundSummaries,
+    statePatchSummary,
     agentErrors,
     artifact,
     embeddingModel,

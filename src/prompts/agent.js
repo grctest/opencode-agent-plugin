@@ -70,6 +70,9 @@ export function buildAgentSystemPrompt(participant, { activeCount } = {}) {
   const priorityCap = TURN_REQUEST_PRIORITY_CAP[tier] ?? 5;
 
   const agentToolsConfig = getEffectiveAgentTools() ?? {};
+  // Gate the mandatory-patch language on the same flag that offers the tool, so
+  // a disabled feature never leaves the contract demanding an unavailable call.
+  const statePatchEnabled = !!(agentToolsConfig?.enabled && agentToolsConfig?.loom?.loom_state_patch);
   const toolSection = agentToolsConfig?.enabled
     ? (() => {
         const t = agentToolsConfig;
@@ -123,7 +126,7 @@ Loom Interaction Tools — real tool use (required, auditable):${isSolo ? "" : `
   - **loom_summon**: summon a guest expert persona. Returned inline.${isSolo ? "" : `
   - **loom_request_next**: request to speak next with priority/reason. For next round planning.`}
   - **loom_pass**: pass when you have nothing new. Include reason. Ends when all pass — not a failure to dissent.
-  - **loom_state_patch**: call ONCE per turn to project what survives — your stance + 1-3 bullets. Prose alone does not carry forward. Only patched state appears in your future State block.
+  - **loom_state_patch**: call ONCE per turn to project what survives — your stance + 1-3 bullets. Prose alone does not carry forward. Only patched state appears in your future State block. Buckets are bounded; your oldest evidence degrades first, so re-assert what still matters.
 Forum — async sub-discussions between participants:
   - **loom_forum_create_topic**: propose a sub-problem or question — pass \`title, body, tags?\`. Returns topic_id.
   - **loom_forum_list_topics**: browse existing topics — optional tag filter. Returns titles + comment counts.
@@ -206,6 +209,8 @@ ${doctrine}
         Reference others by participant_id from Recent Contributions, e.g. [#12].
   5. Stay in character — persona and agenda shape framing, not facts. Be concise but thorough and human-readable; dissent is welcome and not penalized.
   6. Collaboration (open-ended & programming): for debates, map spectrum and steelman counter-views before concluding; for code, read then propose diff (or write in BUILD), then handoff: **Handoff: @role — verify file=X covers case Y**.
+${statePatchEnabled ? `  7. **REQUIRED — loom_state_patch, once, every turn.** Order: write your prose first, then make the call. Your stance + bullets are the ONLY thing carried into your next turn; unpatched reasoning is discarded. Minimum viable call is just \`{ stance: "..." }\` — at least one field is required, more is better. Skipping this means forgetting everything you established.
+` : ""}
 
   ## WHEN TO PASS
 
@@ -221,6 +226,7 @@ ${doctrine}
   Dissent is not a reason to stay silent — it’s valuable. Only pass when the deliberation has nothing left from your lens.
 
   The deliberation ends naturally when all active participants pass (anti-timeout only — no token-pressure to pass early). Your thoughtful pass signals natural conclusion, not cost saving.
+${statePatchEnabled ? "  (Passing is the one turn that does NOT require loom_state_patch — a pass means \"nothing new\", so your state is correctly left as-is.)" : ""}
   ${toolSection}
  `;
 
@@ -269,7 +275,7 @@ ${stateOfPlayDelimited}
   // the prompt is strictly (P, Σ, O) when enabled.
   const showState = myState !== null && myState !== undefined;
   const myStateInner = showState ? renderMyStateMarkdown(myState) : "";
-  const myStateHeader = showState ? `## Your State — CARRIED FORWARD (you wrote this via loom_state_patch; update it this turn)
+  const myStateHeader = showState ? `## Your State — CARRIED FORWARD (everything below is the ONLY memory you have next turn; prose is discarded)
 
 <<<LOOM_MY_STATE>>>_BEGIN_
 ${escapeDelimiters(myStateInner)}
@@ -325,7 +331,7 @@ _Use these ids verbatim for loom_query. Example: {target: "dr_sarah_3", question
   })();
 
   const stateGuidance = showState
-    ? `- **Your State is yours to maintain** — call loom_state_patch once per turn. Stale bullets you don't remove stay. Pinned facts (with Source/[#id]) are never auto-evicted.
+    ? `- **Your State is yours to maintain** — call loom_state_patch once per turn, after your prose. This is the only memory you carry: anything you do not patch is discarded before your next turn, so a turn that reasons well but patches nothing has wasted the work. Stale bullets you don't remove stay. Evidence (with Source/[#id]) is protected from FIFO eviction longer than other bullets, but only your newest evidence is protected — re-assert anything still load-bearing each turn, and check the \`evicted\` echo to see what fell off.
 - **Live is current round only** — anything older you still need must already be in Your State; if it isn't, re-establish it from the digest (don't quote full old prose).
 `
     : "";
@@ -356,5 +362,7 @@ Rules:
 - Preserve code and numbers verbatim — do not round or invent
 - For code: read before proposing fix; in BUILD, apply with write/edit then invite verification
 
-Make your contribution or pass.`;
+Make your contribution or pass.${showState ? `
+
+Then call loom_state_patch once — project your stance and 1-3 bullets so they survive into your next turn. Nothing you write in prose carries forward on its own.` : ""}`;
 }
