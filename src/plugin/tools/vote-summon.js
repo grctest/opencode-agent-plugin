@@ -20,9 +20,13 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
       async execute(args, context) {
         const cfg = config.getValue("agentTools");
         if (!cfg?.enabled || !cfg?.loom?.loom_vote) return { output: JSON.stringify({ error: "loom_vote not enabled" }), metadata: { error: true }, title: "loom_vote error" };
-        if (!context?.sessionID) return { output: JSON.stringify({ error: "loom_vote: session context unavailable" }), metadata: { error: true }, title: "loom_vote error" };
-        try {
-          const meetingInfo = await resolveMeeting(context.sessionID);
+         if (!context?.sessionID) return { output: JSON.stringify({ error: "loom_vote: session context unavailable" }), metadata: { error: true }, title: "loom_vote error" };
+         let meetingInfo = null;
+         let stateManager = null;
+         let db = null;
+         let caller = null;
+         try {
+           meetingInfo = await resolveMeeting(context.sessionID);
           if (!meetingInfo) {
             const p = { queued: true, question: args.question, note: "Vote queued — meeting not resolved." };
             return { output: JSON.stringify(p), metadata: { queued: true }, title: "loom_vote queued" };
@@ -32,16 +36,16 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
             const p = { queued: true, question: args.question, note: "Vote queued — engine not ready." };
             return { output: JSON.stringify(p), metadata: { queued: true }, title: "loom_vote queued" };
           }
-          const stateManager = engine.getStateManager();
-          const sessionManager = engine.getSessionManager();
-          const db = engine.getDatabase();
+           stateManager = engine.getStateManager();
+           const sessionManager = engine.getSessionManager();
+           db = engine.getDatabase();
           if (!stateManager || !sessionManager || !db) {
             const p = { queued: true, question: args.question, note: "Vote queued — state not ready." };
             return { output: JSON.stringify(p), metadata: { queued: true }, title: "loom_vote queued" };
           }
           const allParticipants = stateManager.getParticipants();
           if (!Array.isArray(allParticipants)) return { output: JSON.stringify({ error: "loom_vote: participant list unavailable" }), metadata: { error: true }, title: "loom_vote error" };
-          let caller = resolveCaller(allParticipants, stateManager.getWeave?.() ?? [], context.sessionID);
+           caller = resolveCaller(allParticipants, stateManager.getWeave?.() ?? [], context.sessionID);
           const activeCountV = (() => { try { return stateManager.getActiveParticipants().length; } catch { return allParticipants.filter(p=>p.status!=="failed"&&p.status!=="passed").length; }})();
           if (activeCountV <= 1) return { output: JSON.stringify({ error: "loom_vote unavailable with 1 active participant — use loom_summon or loom_forum instead", activeCount: activeCountV }), metadata: { error: true }, title: "loom_vote error" };
           const currentRound = stateManager.getCurrentRound();
@@ -111,36 +115,23 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
           // Parallel fan-out to voters — with hardened retry guard (any plausible batch + source+round fallback)
           const voteResponses = [];
           const voterResults = [];
-          const hasExistingVote = (voterId) => {
-            try {
-              const weave = stateManager.getWeave ? stateManager.getWeave() : [];
-              for (const bid of allBatchCandidatesV) {
-                if (weave.some(c => c.batch_id === bid && c.type === "vote_response" && c.participant_id === voterId)) return true;
-              }
-              // broader: same round + source + voter
-              if (caller?.config?.id != null) {
-                return weave.some(c => c.round === currentRound && c.type === "vote_response" && c.participant_id === voterId && c.prompt_context?.source_participant_id === caller.config.id);
-              }
-              return false;
-            } catch { return false; }
-          };
-          const findExistingVoteForVoter = (voterId) => {
-            try {
-              const weave = stateManager.getWeave ? stateManager.getWeave() : [];
-              for (const bid of allBatchCandidatesV) {
-                const hit = weave.find(c => c.batch_id === bid && c.type === "vote_response" && c.participant_id === voterId);
-                if (hit) return hit;
-              }
-              if (caller?.config?.id != null) {
-                return weave.find(c => c.round === currentRound && c.type === "vote_response" && c.participant_id === voterId && c.prompt_context?.source_participant_id === caller.config.id) ?? null;
-              }
-              return null;
-            } catch { return null; }
-          };
+            const findExistingVoteForVoter = (voterId, questionNorm) => {
+             try {
+               const weave = stateManager.getWeave ? stateManager.getWeave() : [];
+               for (const bid of allBatchCandidatesV) {
+                 const hit = weave.find(c => c.batch_id === bid && c.type === "vote_response" && c.participant_id === voterId && normalizeQuestionForMatch(c.prompt_context?.question ?? "") === questionNorm);
+                 if (hit) return hit;
+               }
+               if (caller?.config?.id != null) {
+                 return weave.find(c => c.round === currentRound && c.type === "vote_response" && c.participant_id === voterId && c.prompt_context?.source_participant_id === caller.config.id && normalizeQuestionForMatch(c.prompt_context?.question ?? "") === questionNorm) ?? null;
+               }
+               return null;
+             } catch { return null; }
+           };
           await Promise.allSettled(voters.map(async (voter) => {
             // Idempotent skip: reuse existing vote for any plausible batch instead of re-prompting
             try {
-              const existing = findExistingVoteForVoter(voter.config.id);
+               const existing = findExistingVoteForVoter(voter.config.id, normQuestionV);
               if (existing) {
                 const raw = (existing.content ?? "").replace(/^\[Vote from .+?\]\s*/m, "").trim();
                 voteResponses.push({ voter: voter.config.name, content: raw });
@@ -163,23 +154,29 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
               voterResults.push({ voter: voter.config.id, error: "peer model unavailable — vote not cast (no model assignment)" });
               return;
             }
-            let previousStatus = voter.status;
-            try {
-              previousStatus = voter.status;
+             let previousStatus = voter.status;
+             const restoreVoterStatus = () => {
+               voter.status = previousStatus;
+               try { db.setParticipantStatus(voter.config.id, previousStatus); } catch {}
+             };
+             try {
+               previousStatus = voter.status;
               if (context.abort?.aborted || context.signal?.aborted) return;
               voter.status = "speaking";
               try { db.setParticipantStatus(voter.config.id, "speaking"); } catch {}
               const callerForPrompt = caller ?? { config: { name: allParticipants.find(p=>p.status==="speaking")?.config?.name ?? "Unknown", tier: "mid", id: allParticipants.find(p=>p.status==="speaking")?.config?.id ?? "unknown" } };
-              const prompt = buildVotePrompt(
-                callerForPrompt,
+               const voterState = stateManager.getParticipantState?.(voter.config.id) ?? null;
+               const prompt = buildVotePrompt(
+                 callerForPrompt,
                 voter,
                 sourceSnippet,
                 args.question,
                 stateManager.getWeave ? stateManager.getWeave().filter(c => c.round != null && c.round >= currentRound - 1).slice(-12) : [],
-                currentRound,
-                stateManager.getMaxRounds(),
-                stateManager.getStateOfPlay?.() ?? ""
-              );
+                 currentRound,
+                 stateManager.getMaxRounds(),
+                 stateManager.getStateOfPlay?.() ?? "",
+                 voterState
+               );
               const systemPrompt = `You are ${voter.config.name} (${voter.config.tier}) — voting in Loom.\n\nChoose one letter (A/B/C…) as listed in the vote question. Format exactly:\n[Vote: X]\nOne sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No contribution tags, 1-2 sentences total, in character.`;
               const effectiveSourceId = caller?.config?.id ?? callerForPrompt.config.id;
               const promptContext = {
@@ -188,8 +185,9 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
                 user_prompt: prompt,
                 source_participant_id: effectiveSourceId,
                 source_participant_name: caller?.config?.name ?? callerForPrompt.config.name,
-                question: args.question,
-                round: currentRound,
+                 question: args.question,
+                 round: currentRound,
+                 state_version: voterState?.version ?? 0,
               };
               // Shared ephemeral-prompt primitive (audit 10 MA1) — scoped: votes need no tools (no bash/read per user request)
               const res = await sessionManager.runEphemeralPrompt(voter, {
@@ -201,9 +199,12 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
                 signal: context.abort,
                 abort: context.abort,
               }, meetingInfo.meetingId);
-              if (!res.ok) throw res.error;
-                            const { text } = extractAgentResponse(res.data);
-              if (!text || text.trim().length < 5) return;
+               if (!res.ok) throw res.error;
+                             const { text } = extractAgentResponse(res.data);
+               if (!text || text.trim().length < 5) {
+                 restoreVoterStatus();
+                 return;
+               }
               const contrib = {
                 id: stateManager.nextContributionId(),
                 round: currentRound,
@@ -223,15 +224,19 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
               // O(1) increment instead of an O(N) weave scan (audit 11 PF5)
               stateManager.incrementParticipantContributions(voter.config.id);
               degrade("vote_response_db_failed", "Failed to persist vote_response — visible in memory only this session", () => db.addContributionWithTurnRequest(stateManager.getState().id, contrib, null), null);
-              if (context.abort?.aborted || context.signal?.aborted) return;
-              voter.status = previousStatus;
-              try { db.setParticipantStatus(voter.config.id, previousStatus); } catch {}
-            } catch (err) {
-              if (context.abort?.aborted || context.signal?.aborted) return;
-              voterResults.push({ voter: voter.config.id, error: err.message });
-              voter.status = previousStatus;
-              try { db.setParticipantStatus(voter.config.id, previousStatus); } catch {}
-            }
+               if (context.abort?.aborted || context.signal?.aborted) {
+                 restoreVoterStatus();
+                 return;
+               }
+               restoreVoterStatus();
+             } catch (err) {
+               if (context.abort?.aborted || context.signal?.aborted) {
+                 restoreVoterStatus();
+                 return;
+               }
+               voterResults.push({ voter: voter.config.id, error: err.message });
+               restoreVoterStatus();
+             }
           }));
           // Tally generation — source does not ballot, only voter responses counted
           const { lines: tallyLines } = sharedVoteTally.buildTally({
@@ -342,7 +347,7 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
           const prompt = buildSummonPrompt(found, summonCallerForPrompt, args.issue, roundContribs, stateManager.getCurrentRound(), stateManager.getMaxRounds(), stateOfPlay);
           const systemPrompt = `You are ${found.name} (${found.tier}) — guest expert summoned into Loom for one additive contribution. Be concise (100-150 words), grounded, in character. Build on what's settled; don't re-litigate without new evidence. Name one constraint only you would know. Cite Source: URL or [#id] if you use evidence. Never emit <<< or >>>. No contribution tags.`;
           // Use a temporary summoned participant config to create session
-          const summonedConfig = { config: { id: `summoned_${found.name.toLowerCase().replace(/[^a-z0-9]/g,'_')}`, name: found.name, tier: found.tier, persona: found.persona, expertise: found.expertise, communication_style: found.communication_style }, tier_config: {} };
+           const summonedConfig = { config: { id: `summoned_${found.name.toLowerCase().replace(/[^a-z0-9]/g,'_')}`, name: found.name, tier: found.tier, persona: found.persona, agenda: found.agenda, expertise: found.expertise, known_biases: found.known_biases, communication_style: found.communication_style, preferred_contribution_types: found.preferred_contribution_types, anti_patterns: found.anti_patterns, tier_guidance: found.tier_guidance, reflection_guidance: found.reflection_guidance }, tier_config: {} };
           // Reuse the caller's assigned model (left sidebar) — stays strictly within enabled allowlist
           let model = null;
           try { const participants = stateManager.getParticipants(); const caller = participants.find(p => p.session_id === context.sessionID) || participants[0]; model = engine.getParticipantModel ? engine.getParticipantModel(caller) : null; } catch {}
@@ -375,8 +380,8 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
             signal: context.abort,
             abort: context.abort,
           }, meetingInfo.meetingId);
-          if (!res.ok) return { output: JSON.stringify({ error: res.error?.message ?? "summon prompt failed" }), metadata: { error: true }, title: "loom_summon error" };
-                    const { text, toolResults } = extractAgentResponse(res.data);
+           if (!res.ok) return { output: JSON.stringify({ error: res.error?.message ?? "summon prompt failed" }), metadata: { error: true }, title: "loom_summon error" };
+                     const { text, toolResults } = extractAgentResponse(res.data);
           const content = (text ?? "").slice(0,1200);
           // Store as summoned_response for timeline aesthetic (indented row)
           try {

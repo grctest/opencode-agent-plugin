@@ -12,6 +12,7 @@
   },
   "files": [
     "dist",
+    "src",
     "personas",
     "commands",
     "scripts",
@@ -19,9 +20,12 @@
     "ORCHESTRATION_ARCHITECTURE.md"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=18",
+    "bun": ">=1.1.0"
   },
   "scripts": {
+    "prepack": "npm run check && npm run bundle",
+    "test": "node --test test",
     "bundle": "node scripts/build.mjs",
     "dev": "node scripts/build.mjs --watch",
     "check": "node scripts/check.mjs",
@@ -41,12 +45,13 @@
     "@tailwindcss/postcss": "^4.3.3",
     "esbuild": "^0.28.2",
     "marked": "^18.0.14",
-    "postcss": "^8.5.28"
+    "postcss": "^8.5.28",
+    "shadcn": "^4.19.0"
   },
   "allowScripts": {
     "esbuild@0.28.2": true,
     "msgpackr-extract@3.0.4": true,
-    "onnxruntime-node@1.27.0": true
+    "onnxruntime-node@1.30.0": true
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
@@ -73,7 +78,6 @@
     "react-resizable-panels": "^4.12.3",
     "react-window": "^2.3.2",
     "recharts": "^3.8.0",
-    "shadcn": "^4.19.0",
     "sqlite-vec": "^0.1.9",
     "tailwind-merge": "^3.6.0",
     "tailwindcss": "^4.3.3",

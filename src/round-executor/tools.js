@@ -45,6 +45,12 @@ export function buildToolsMapWithoutLoom(config, { activeCount } = {}) {
     const loom = resolveLoomTools(agentToolsConfig);
     const isSolo = Number.isFinite(activeCount) && activeCount <= 1;
     if (loom.loom_request_next && !isSolo) toolsMap.loom_request_next = true;
+    if (loom.loom_forum) {
+      toolsMap.loom_forum_create_topic = true;
+      toolsMap.loom_forum_list_topics = true;
+      toolsMap.loom_forum_read_topic = true;
+      toolsMap.loom_forum_add_comment = true;
+    }
   }
   return toolsMap;
 }

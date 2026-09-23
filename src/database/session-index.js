@@ -79,6 +79,7 @@ function releaseLock(lockPath) {
 
 export function loadSessionIndex(directory) {
   indexDir = directory;
+  sessionIndex.clear();
   const filePath = getIndexFilePath();
   if (!filePath) return;
   try {

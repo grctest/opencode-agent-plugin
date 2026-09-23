@@ -1,8 +1,8 @@
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { existsSync, readdirSync, statSync, readFileSync } from "node:fs";
 import { resolveLoomBaseDir } from "../../paths.js";
 import { Database } from "bun:sqlite";
+import { getModelBaseDir } from "../../services/model-manager.js";
 
 const listMeetingsCache = new Map(); // directory -> { at, data }
 const LIST_MEETINGS_TTL_MS = 2000;
@@ -10,7 +10,7 @@ const LIST_MEETINGS_TTL_MS = 2000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function listDownloadedModels() {
-  const modelDir = join(homedir(), ".config", "opencode", "loom", "models");
+  const modelDir = getModelBaseDir();
 
   if (!existsSync(modelDir)) return [];
 
@@ -56,7 +56,10 @@ export function listMeetings(directory) {
     const entries = readdirSync(meetingsDir, { withFileTypes: true });
     for (const entry of entries) {
       if (entry.isFile() && entry.name.endsWith(".db")) {
-        files.push(join(meetingsDir, entry.name));
+        const filePath = join(meetingsDir, entry.name);
+        let mtimeMs = 0;
+        try { mtimeMs = statSync(filePath).mtimeMs; } catch {}
+        files.push({ path: filePath, mtimeMs });
       }
     }
   } catch {
@@ -65,7 +68,7 @@ export function listMeetings(directory) {
 
   const meetings = [];
   const PAGINATION_LIMIT = 100;
-  const filesToScan = files.slice(0, PAGINATION_LIMIT);
+  const filesToScan = files.sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, PAGINATION_LIMIT).map((file) => file.path);
   for (const file of filesToScan) {
     let db = null;
     let retries = 2;

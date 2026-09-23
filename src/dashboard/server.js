@@ -22,6 +22,7 @@ import {
   getHtmlShell,
   PACKAGE_VERSION,
 } from "./server/helpers.js";
+import { isAllowedDashboardHost, hasDashboardCapability, isSameOriginRequest } from "./security.js";
 import { createPollSystem } from "./server/poll.js";
 import {
   setControlRuntime,
@@ -33,7 +34,6 @@ import {
   handleCancelMeeting,
   handleExtendMeeting,
   handleJobStatus,
-  cancelAllJobs,
 } from "./server/control.js";
 import { getMeetingDbPath, isValidMeetingId } from "./api/free.js";
 import { getDatabasesBySessionId } from "../database/session-index.js";
@@ -102,6 +102,8 @@ export function startDashboard(directory, port, runtimeOpts = null) {
     try { setControlRuntime(runtimeOpts); } catch {}
   }
 
+  const capabilityToken = `${crypto.randomUUID().replace(/-/g, "")}${crypto.randomUUID().replace(/-/g, "")}`;
+  const capabilityCookie = `loom_dashboard_${port}`;
   const pollSystem = createPollSystem(directory);
   const { sseClients, lastContributionId, lastOrchestratorMsgId, lastInterjectionId, lastErrorId, participantStatusCache, broadcast, subscribeToWrites, unsubscribeFromWrites, pingTimer, restartPollTimer } = pollSystem;
   let pollTimer = pollSystem.getPollTimer();
@@ -133,9 +135,17 @@ export function startDashboard(directory, port, runtimeOpts = null) {
     async fetch(req) {
       try {
         const url = new URL(req.url);
-        // Method guard via route table
+        if (!isAllowedDashboardHost(req.headers.get("host"), hostname)) {
+          return Response.json({ error: "invalid host" }, { status: 403, headers: SECURITY_HEADERS });
+        }
+        if (!isSameOriginRequest(req.headers, url)) {
+          return Response.json({ error: "cross-origin request blocked" }, { status: 403, headers: SECURITY_HEADERS });
+        }
         const guard = methodGuard(url.pathname, req.method);
         if (guard) return guard;
+        if (url.pathname.startsWith("/api/") && !hasDashboardCapability(req.headers, capabilityToken, capabilityCookie)) {
+          return Response.json({ error: "dashboard authentication required" }, { status: 401, headers: SECURITY_HEADERS });
+        }
 
         if (url.pathname === "/" || url.pathname === "/index.html") {
           const nonce = crypto.randomUUID().replace(/-/g, "");
@@ -145,6 +155,7 @@ export function startDashboard(directory, port, runtimeOpts = null) {
               "Content-Type": "text/html; charset=utf-8",
               "Cache-Control": "no-cache",
               "Content-Security-Policy": `default-src 'self'; script-src 'self' 'nonce-${nonce}'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'`,
+              "Set-Cookie": `${capabilityCookie}=${capabilityToken}; HttpOnly; SameSite=Strict; Path=/`,
               "X-Content-Type-Options": "nosniff",
               "X-Frame-Options": "DENY",
             },
@@ -276,6 +287,9 @@ export function startDashboard(directory, port, runtimeOpts = null) {
         }
 
         if (url.pathname === "/api/models/select") {
+          if (!(req.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) {
+            return Response.json({ error: "Content-Type must be application/json" }, { status: 415, headers: SECURITY_HEADERS });
+          }
           const body = await req.json().catch(() => null);
           const rawName = body?.model;
           if (!rawName || typeof rawName !== "string" || rawName.includes("..") || rawName.includes("\0") || rawName.length > 200) {
@@ -481,18 +495,21 @@ export function startDashboard(directory, port, runtimeOpts = null) {
         if (url.pathname === "/api/export/stream") {
           const { api, meetingId, error } = getMeetingApi(url, directory);
           if (error) return error;
-          const chunks = [...api.exportMarkdownStream(meetingId)];
-          let idx = 0;
-          const stream = new ReadableStream({
-            pull(controller) {
-              const encoder = new TextEncoder();
-              while (idx < chunks.length) {
-                if (controller.desiredSize !== null && controller.desiredSize <= 0) return;
-                try { controller.enqueue(encoder.encode(chunks[idx++])); } catch { idx++; }
-              }
-              if (idx >= chunks.length) try { controller.close(); } catch {}
-            },
-          });
+           const iterator = api.exportMarkdownStream(meetingId)[Symbol.iterator]();
+           let finished = false;
+           const stream = new ReadableStream({
+             pull(controller) {
+               if (finished) return;
+               if (controller.desiredSize !== null && controller.desiredSize <= 0) return;
+               const next = iterator.next();
+               if (next.done) {
+                 finished = true;
+                 try { controller.close(); } catch {}
+                 return;
+               }
+               try { controller.enqueue(new TextEncoder().encode(next.value)); } catch { finished = true; }
+             },
+           });
           const filename = `loom-${meetingId.slice(0, 8)}-${Date.now()}.md`;
           return new Response(stream, {
             headers: {
@@ -596,17 +613,19 @@ export function startDashboard(directory, port, runtimeOpts = null) {
 
         return new Response("Not found", { status: 404, headers: SECURITY_HEADERS });
       } catch (err) {
-        const message = err instanceof Error ? err.message : "internal error";
-        return Response.json({ error: message }, { status: 500 });
+        console.error("[Loom dashboard] request failed", err instanceof Error ? err.message : String(err));
+        return Response.json({ error: "internal server error" }, { status: 500, headers: SECURITY_HEADERS });
       }
     },
   });
 
+  let stopped = false;
   return {
     port: server.port,
     hostname,
     stop: () => {
-      try { cancelAllJobs(); } catch {}
+      if (stopped) return;
+      stopped = true;
       try { const cur = pollSystem.getPollTimer?.(); if (cur) clearInterval(cur); else if (pollTimer) clearInterval(pollTimer); } catch {}
       try { if (pingTimer) clearInterval(pingTimer); } catch {}
       try { pollSystem.stop?.(); } catch {}
@@ -623,10 +642,9 @@ export function startDashboard(directory, port, runtimeOpts = null) {
       lastOrchestratorMsgId.clear();
       lastInterjectionId.clear();
       lastErrorId.clear();
-      lastMtime.clear();
       participantStatusCache.clear();
       DashboardApi.closeAll();
-      server.stop();
+      try { server.stop(); } catch {}
     },
   };
 }

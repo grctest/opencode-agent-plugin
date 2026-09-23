@@ -14,12 +14,11 @@
 
 import { mkdir, writeFile, readFile, access, unlink } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { logInfo, logError, logWarn } from "./utils.mjs";
-import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_QUANT } from "../src/services/model-manager.js";
+import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_QUANT, getModelBaseDir } from "../src/services/model-manager.js";
 
-const MODEL_DIR = join(homedir(), ".config", "opencode", "loom", "models");
+const MODEL_DIR = getModelBaseDir();
 
 const DEFAULT_MODEL = DEFAULT_EMBEDDING_MODEL;
 const DEFAULT_QUANT = DEFAULT_EMBEDDING_QUANT;
@@ -27,6 +26,11 @@ const DEFAULT_QUANT = DEFAULT_EMBEDDING_QUANT;
 const HUGGINGFACE_BASE = "https://huggingface.co";
 
 // ─── Argument parsing ────────────────────────────────────────────────────────
+
+function isValidModelName(name) {
+  const parts = String(name ?? "").split("/");
+  return parts.length === 2 && parts.every((part) => /^[A-Za-z0-9._-]+$/.test(part) && part !== "." && part !== "..");
+}
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -240,6 +244,12 @@ async function isAlreadyDownloaded(modelDir, modelJsonPath, quant) {
 // ─── Main download command ───────────────────────────────────────────────────
 
 async function cmdDownload(modelName, quant) {
+  if (!isValidModelName(modelName)) {
+    throw new Error("Invalid model name");
+  }
+  if (!/^onnx\/[A-Za-z0-9._-]+\.onnx$/.test(quant)) {
+    throw new Error("Invalid model quantization path");
+  }
   const modelDir = join(MODEL_DIR, modelName);
   const modelJsonPath = join(modelDir, "model.json");
   const quantFile = quant.replace("onnx/", "");

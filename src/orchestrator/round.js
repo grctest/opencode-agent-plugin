@@ -1,6 +1,6 @@
 import { getConfig } from "../config.js";
 import { LoomError, extractErrorInfo } from "../logger.js";
-import { updateStateOfPlay } from "../state-of-play.js";
+import { updateStateOfPlay, mergeStateOfPlay } from "../state-of-play.js";
 import { truncate } from "../shared.js";
 import { SUMMARY_TRUNCATE_LEN } from "./constants.js";
 // TimeBudget is owned by MeetingOrchestrator; round helpers use this._timeBudget when available (Phase 3 centralization)
@@ -64,23 +64,39 @@ export async function _finalizeRound(updatedRound) {
       // flag off, or old DB). Output markdown shape is unchanged for downstream consumers.
       // Per-turn cost drops from O(T) scan to O(P × buckets).
       let newStateOfPlay = "";
+      let stateCoverageComplete = false;
       try {
         const { aggregateStateOfPlay } = await import("../state-patch.js");
         const states = typeof this._stateManager.getAllParticipantStates === "function"
           ? this._stateManager.getAllParticipantStates()
           : [];
+        stateCoverageComplete = states.length > 0 && states.every(({ state }) => state && (
+          String(state.stance ?? "").trim() ||
+          (state.established ?? []).length ||
+          (state.contested ?? []).length ||
+          (state.open ?? []).length ||
+          (state.facts ?? []).length ||
+          (state.files ?? []).length
+        ));
         newStateOfPlay = aggregateStateOfPlay(
           states,
           this._stateManager.getQuestion(),
           this._stateManager.getTags(),
         );
       } catch {}
-      if (!newStateOfPlay) {
-        newStateOfPlay = updateStateOfPlay(
-          this._stateManager.getWeave(),
+      const weave = this._stateManager.getWeave();
+      const hasUncapturedContribution = weave.some((contribution) => {
+        if (contribution.type === "pass") return false;
+        if (["query_response", "perspective_response", "critique_response", "evidence_response", "summoned_response", "vote_response"].includes(contribution.type)) return true;
+        return contribution.type === "contribution" && contribution.prompt_context?.state_patch_outcome !== "applied";
+      });
+      if (!stateCoverageComplete || hasUncapturedContribution || !newStateOfPlay) {
+        const weaveStateOfPlay = updateStateOfPlay(
+          weave,
           this._stateManager.getQuestion(),
           this._stateManager.getTags(),
         );
+        newStateOfPlay = mergeStateOfPlay(newStateOfPlay, weaveStateOfPlay);
       }
       this._stateManager.setStateOfPlay(newStateOfPlay);
       // Atomic: 3 writes in one SAVEPOINT — all-or-nothing
@@ -128,6 +144,17 @@ export async function _finalizeRound(updatedRound) {
       const allPassed = active === 0 && passed > 0 && failed === 0;
       const allFailed = active === 0 && failed > 0 && passed === 0;
       const mixedDone = active === 0 && passed > 0 && failed > 0;
+      const minRounds = Math.max(1, Number(getConfig().minRounds) || 1);
+      if (allPassed && this._stateManager.getCurrentRound() < minRounds) {
+        for (const participant of participants) {
+          if (participant.status !== "passed") continue;
+          participant.status = "listening";
+          this._database.setParticipantStatus(participant.config.id, "listening");
+        }
+        this._logger.info("minimum_rounds_reopen", `All participants passed before minRounds=${minRounds}; continuing deliberation`);
+        await this._persistState();
+        return true;
+      }
       const exhausted = this._stateManager.getCurrentRound() >= this._stateManager.getMaxRounds() && active > 0;
       if (allPassed) {
         this._stateManager.transitionTo("converged");

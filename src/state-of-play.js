@@ -146,6 +146,50 @@ function classifyByKeywords(content) {
 /**
  * Formats structured state-of-play sections into a markdown summary — thorough, not terse.
  */
+export function mergeStateOfPlay(primary, fallback) {
+  if (!primary) return fallback || "";
+  if (!fallback) return primary;
+  const readSection = (markdown, name) => {
+    const lines = String(markdown).split("\n");
+    const start = lines.findIndex((line) => line.trim() === `## ${name}`);
+    if (start < 0) return "";
+    const values = [];
+    for (const line of lines.slice(start + 1)) {
+      if (line.startsWith("## ")) break;
+      values.push(line);
+    }
+    return values.join("\n").trim();
+  };
+  const mergeList = (name, limit = 8) => {
+    const values = [];
+    const seen = new Set();
+    for (const source of [primary, fallback]) {
+      for (const line of readSection(source, name).split("\n")) {
+        const value = line.trim();
+        if (!value.startsWith("- ")) continue;
+        const key = value.slice(2).replace(/\s+/g, " ").toLowerCase();
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        values.push(value);
+      }
+    }
+    return values.slice(0, limit).map((value) => value.slice(2));
+  };
+  const question = readSection(primary, "Question") || readSection(fallback, "Question");
+  const tags = readSection(primary, "Tags") || readSection(fallback, "Tags");
+  const sectionKey = {
+    decisions: "Decisions & Proposals",
+    agreements: "Agreements",
+    disagreements: "Disagreements & Concerns",
+    openQuestions: "Open Questions",
+    keyFacts: "Key Facts",
+    filesInvolved: "Files Involved",
+  };
+  const sections = {};
+  for (const [key, name] of Object.entries(sectionKey)) sections[key] = mergeList(name);
+  return formatStateOfPlay(sections, question, tags ? tags.split(",").map((tag) => tag.trim()).filter(Boolean) : []);
+}
+
 export function formatStateOfPlay(sections, question, tags) {
   const lines = [];
   if (question) lines.push(`## Question\n${question}`);
@@ -258,7 +302,7 @@ export function formatFinalRoundTranscript(data, participants) {
   for (let i = 0; i < digestRounds.length; i++) {
     const r = digestRounds[i];
     const summary = (r.summary || (r.contributions[0]?.content ?? "")).slice(0, 400).replace(/\n/g, " ");
-    const contested = (r.contributions.find((c) => c.type === "critique_response" || c.type === "perspective_response" || c.type === "challenge" || c.type === "dissent")?.content ?? "").slice(0, 400).replace(/\n/g, " ");
+    const contested = (r.contributions.find((c) => c.type === "critique_response" || c.type === "perspective_response" || c.type === "challenge" || c.type === "dissent" || /\b(challenge|dissent|disagree|concern|oppose|dispute|contradict|risk|flaw|weakness)\b/i.test(String(c.content ?? "")))?.content ?? "").slice(0, 400).replace(/\n/g, " ");
     // Include top file mention for code rounds
     const fileMention = (r.contributions.find((c) => /file=|src\/.*\.\w+|```/.test(String(c.content)))?.content ?? "").slice(0, 300).replace(/\n/g, " ");
     lines.push(`### Round ${r.number} (digest)`);

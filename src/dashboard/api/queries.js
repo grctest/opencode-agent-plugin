@@ -95,7 +95,7 @@ export function getParticipants() {
     try {
       rows = this._db
         .prepare(
-          `SELECT id, name, persona, agenda, tier, provider_id, model_id, session_id, status, reflection, state_json
+          `SELECT id, name, persona, agenda, tier, provider_id, model_id, session_id, status, reflection, state_json, known_biases, communication_style, preferred_contribution_types, anti_patterns, tier_guidance, reflection_guidance, tags, expertise
          FROM participants ORDER BY tier ASC`,
         )
         .all();
@@ -111,6 +111,11 @@ export function getParticipants() {
     return rows.map((r) => ({
       ...r,
       reflection: parseReflections(r.reflection),
+      known_biases: safeParseJson(r.known_biases, []),
+      preferred_contribution_types: safeParseJson(r.preferred_contribution_types, []),
+      anti_patterns: safeParseJson(r.anti_patterns, []),
+      tags: safeParseJson(r.tags, []),
+      expertise: safeParseJson(r.expertise, []),
       ...parseParticipantState(r.state_json),
     }));
   }

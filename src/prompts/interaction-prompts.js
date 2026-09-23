@@ -1,12 +1,12 @@
 import { sanitizeForDisplay } from "../utils/sanitize.js";
 import { TIER_ORDER, LENGTH_LIMITS } from "./constants.js";
 import { QUERY_MODES } from "./query-modes.js";
-import { getRecentContributionsBlock, buildEvidenceGuidance, buildSeniorityContext, buildRoundContext, buildPositionLine } from "./blocks.js";
+import { getRecentContributionsBlock, buildEvidenceGuidance, buildSeniorityContext, buildRoundContext, buildPositionLine, buildAgentStateBlock } from "./blocks.js";
 import { delimitContext } from "./delimiters.js";
 
 /** Builds a prompt for a queried agent to respond to a direct question from another agent.
  * mode: one of QUERY_MODES keys (clarify | perspective | evidence | critique | risks | assumptions | alternatives). */
-export function buildQueryPrompt(sourceAgent, targetAgent, sourceContribution, question, roundContributions, currentRound, maxRounds, stateOfPlay = "", mode = "clarify") {
+export function buildQueryPrompt(sourceAgent, targetAgent, sourceContribution, question, roundContributions, currentRound, maxRounds, stateOfPlay = "", mode = "clarify", targetState = null) {
   const meta = QUERY_MODES[mode] ?? QUERY_MODES.clarify;
   const safeSourceName = sanitizeForDisplay(sourceAgent.config.name);
   const safeQuestion = sanitizeForDisplay(question);
@@ -22,7 +22,7 @@ export function buildQueryPrompt(sourceAgent, targetAgent, sourceContribution, q
   const toolSection = buildEvidenceGuidance(meta.guidanceKind);
 
   const recentMine = getRecentContributionsBlock(roundContributions, targetAgent.config.id);
-  const reflectionLine = buildPositionLine(targetAgent);
+  const stateContext = buildAgentStateBlock(targetState) || buildPositionLine(targetAgent);
   const sopSnippet = stateOfPlay ? `State of Play — Open Questions (what answer would unblock):\n${sanitizeForDisplay(stateOfPlay, 600)}\n\n` : "";
 
   const header = `## ${mode === "clarify" ? "Direct Query" : `${mode.charAt(0).toUpperCase() + mode.slice(1)} Request`} — to ${sanitizeForDisplay(targetAgent.config.name)} (${targetAgent.config.tier}) from ${safeSourceName} (${sourceAgent.config.tier})
@@ -31,7 +31,7 @@ ${delimitContext(safeContribution, "PEER_CONTRIBUTION")}
 
 ${delimitContext(safeQuestion, "PEER_QUESTION")}
 
-${sopSnippet}${recentMine ? recentMine + "\n\n" : ""}${reflectionLine ? reflectionLine + "\n\n" : ""}Seniority: ${seniorityContext}
+${sopSnippet}${recentMine ? recentMine + "\n\n" : ""}${stateContext ? stateContext + "\n\n" : ""}Seniority: ${seniorityContext}
 Round: ${roundContext}
 
 ## Task
@@ -43,7 +43,7 @@ ${toolSection}`;
 /**
  * Builds a prompt for an evidence request — the target MUST use tools to find evidence.
  */
-export function buildEvidencePrompt(sourceAgent, targetAgent, sourceContribution, question, roundContributions, currentRound, maxRounds) {
+export function buildEvidencePrompt(sourceAgent, targetAgent, sourceContribution, question, roundContributions, currentRound, maxRounds, targetState = null) {
   const safeSourceName = sanitizeForDisplay(sourceAgent.config.name);
   const safeQuestion = sanitizeForDisplay(question);
   const safeContribution = sanitizeForDisplay(sourceContribution);
@@ -58,7 +58,7 @@ export function buildEvidencePrompt(sourceAgent, targetAgent, sourceContribution
   const toolSection = buildEvidenceGuidance("evidence");
 
   const recentMine = getRecentContributionsBlock(roundContributions, targetAgent.config.id);
-  const reflectionLine = buildPositionLine(targetAgent);
+  const stateContext = buildAgentStateBlock(targetState) || buildPositionLine(targetAgent);
 
   return `## Evidence Request — to ${sanitizeForDisplay(targetAgent.config.name)} (${targetAgent.config.tier}) from ${safeSourceName} (${sourceAgent.config.tier})
 
@@ -66,7 +66,7 @@ ${delimitContext(safeContribution, "PEER_CONTRIBUTION")}
 
 ${delimitContext(safeQuestion, "EVIDENCE_QUESTION")}
 
-${recentMine ? recentMine + "\n\n" : ""}${reflectionLine ? reflectionLine + "\n\n" : ""}Seniority: ${seniorityContext}
+${recentMine ? recentMine + "\n\n" : ""}${stateContext ? stateContext + "\n\n" : ""}Seniority: ${seniorityContext}
 Round: ${roundContext}
 
 ## Task
@@ -82,7 +82,7 @@ ${toolSection}`;
 /**
  * Builds a prompt for a voting agent to cast their vote on a poll.
  */
-export function buildVotePrompt(sourceAgent, targetAgent, sourceContribution, question, roundContributions, currentRound, maxRounds, stateOfPlay = "") {
+export function buildVotePrompt(sourceAgent, targetAgent, sourceContribution, question, roundContributions, currentRound, maxRounds, stateOfPlay = "", targetState = null) {
   const safeSourceName = sanitizeForDisplay(sourceAgent.config.name);
   const safeQuestion = sanitizeForDisplay(question);
 
@@ -91,7 +91,7 @@ export function buildVotePrompt(sourceAgent, targetAgent, sourceContribution, qu
     500
   );
 
-  const reflectionLine = buildPositionLine(targetAgent);
+  const stateContext = buildAgentStateBlock(targetState) || buildPositionLine(targetAgent);
   const recentMine = getRecentContributionsBlock(roundContributions, targetAgent.config.id);
   const roundContext = buildRoundContext(currentRound, maxRounds);
   let sopOptions = "";
@@ -113,7 +113,7 @@ ${delimitContext(sourceSnippet.slice(0, 400), "SOURCE_PROPOSAL")}
 
 ${delimitContext(safeQuestion, "VOTE_QUESTION")}
 
-${sopSnippet}${recentMine ? recentMine + "\n" : ""}${reflectionLine ? reflectionLine + "\n" : ""}Round: ${roundContext}
+${sopSnippet}${recentMine ? recentMine + "\n" : ""}${stateContext ? stateContext + "\n" : ""}Round: ${roundContext}
 
 ## Task — Cast Your Vote
 

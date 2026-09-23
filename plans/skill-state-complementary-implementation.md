@@ -1,6 +1,6 @@
 # SKILL.state — Complementary Per-Agent Implementation for Loom
 
-> **Status:** IMPLEMENTED AND LIVE. All sections below shipped (schema v6, `participants.state_json` + `state_patches`, `loom_state_patch` tool, mandatory patch-retry, Σ/SoP/synthesis wiring, dashboard visibility). Section numbers are retained as the implementation's traceability anchors to this spec. Post-implementation audit fixes (resume contribution-id off-by-one, pinned-fact cross-bucket duplication, unverified-fact cap bypass, false-success on persistence failure, coverage-metric over-count) are folded into §5.2, §5.3, §5.6, §5.7 and §5.10 below.
+> **Status:** IMPLEMENTED AND LIVE. All sections below shipped (schema v7, `participants.state_json` + `state_patches`, `loom_state_patch` tool, atomic contribution/state commit, mandatory patch-retry, Σ/SoP/synthesis wiring, dashboard visibility). Section numbers are retained as the implementation's traceability anchors to this spec. Post-implementation audit fixes (resume contribution-id off-by-one, pinned-fact cross-bucket duplication, unverified-fact cap bypass, false-success on persistence failure, coverage-metric over-count) are folded into §5.2, §5.3, §5.6, §5.7 and §5.10 below.
 > **Reference:** Badhe, Tiwari, Chung — *SKILL.state: Scalable Long-Horizon Agent Skills* (arXiv:2608.26263v3, 2 Sep 2026). Referred to below as "the paper".
 > **Loom refs:** `ORCHESTRATION_ARCHITECTURE.md`, `src/prompts/agent.js`, `src/round-executor/agent/prompt-session.js`, `src/round-executor/agent/execute-turn.js`, `src/state-of-play.js`, `src/schemas.js`, `src/plugin/tools/pass.js`, `src/plugin/tools/query-evidence.js`.
 > **Decisions locked in prior conversation:** (1) per-agent stance slice, not quorum joint-write; (2) mandatory `loom_state_patch` tool call every primary turn; (3) tool-channel, never prose-JSON parsing; (4) complement provenance, never replace it; (5) operational logging only — no benchmark/evaluation harness.
@@ -174,7 +174,7 @@ Oⁱ_r = {
 }
 ```
 
-**Faithfulness note:** paper `O_t` is the single latest environment observation — no prior-round history at all. Prior-round context in Loom arrives exclusively via `Σⁱ_r` (own carried state) + `shared_sop_digest` (quorum-aggregated state), never via raw contribution replay. This tightens today's `round >= r-1, ≤20` window down to current-round-only. The one retained history slice is same-round live contribs, required so agents can engage `[#id]`s published minutes earlier in the same round; everything older must have been projected into `Σ` or it is gone from context (still in DB for audit/synthesis). Recall (vector-RAG prior context) is **removed** from the agent user prompt under this spec — it is subsumed by `Σ + digest`; keep the `loom_vector_search` tool for on-demand recall instead of auto-injection.
+**Faithfulness note:** paper `O_t` is the single latest environment observation — no prior-round history at all. Prior-round context in Loom arrives exclusively via `Σⁱ_r` (own carried state) + `shared_sop_digest` (quorum-aggregated state), never via raw contribution replay. This tightens today's `round >= r-1, ≤20` window down to current-round-only. The one retained history slice is same-round live contribs, required so agents can engage `[#id]`s published minutes earlier in the same round; everything older must have been projected into `Σ` or it is gone from context (still in DB for audit/synthesis). There is no prior-transcript RAG tool in the current agent context path.
 
 **Prompt invariant:** `Aⁱ_r = (P, Σⁱ_r, Oⁱ_r)`. No previous `O`, no previous `R`, no full `weave`, no prior-round replay ever enters the model context. Second-pass (same-turn synthesis / patch-retry) reuses the same ephemeral session with `Aⁱ_r + inline outputs`, still bounded.
 
@@ -436,9 +436,15 @@ export function createStatePatchTool({ config, resolveMeeting, activeLooms }) {
           const prev = sm.getParticipantState(caller.config.id); // §5.7 API
           const { next, applied, unmatched, evicted } = applyStatePatch(prev, parsed.data);
           next.updated_round = sm.getCurrentRound?.() ?? 0;
-          // updated_contribution_id filled by executor post-store (§5.6); set provisional here
-          sm.setParticipantState(caller.config.id, next);
-          try { db.setParticipantState(caller.config.id, next); } catch {}
+           // Primary-turn patches are queued in StateManager and committed with the contribution transaction.
+           const activeTurn = sm.getActiveTurn?.();
+           const pending = activeTurn?.participantId === caller.config.id
+             ? sm.queueTurnPatch(caller.config.id, { participantId: caller.config.id, next, input: args, output: { applied: true, version: next.version } })
+             : false;
+           if (!pending) {
+             try { db.setParticipantState(caller.config.id, next); } catch {}
+             sm.setParticipantState(caller.config.id, next);
+           }
           try {
             const { auditLoomTool } = await import("./audit.js");
             auditLoomTool({ db, stateManager: sm, caller, meetingId: meetingInfo.meetingId,
@@ -450,8 +456,8 @@ export function createStatePatchTool({ config, resolveMeeting, activeLooms }) {
           return {
             output: JSON.stringify({ applied: true, version: next.version, added: applied.added,
               removed: applied.removed, unmatched: unmatched.slice(0, 5), evicted,
-              note: "Patch applied to YOUR state only. Shared State of Play aggregates all agents." }),
-            metadata: { applied: true, version: next.version },
+             note: pending ? "Patch queued for atomic commit with this turn's contribution." : "Patch applied to YOUR state only. Shared State of Play aggregates all agents." }),
+             metadata: { applied: true, version: next.version, pending },
             title: `loom_state_patch:v${next.version}`,
           };
         } catch (e) {
@@ -521,7 +527,7 @@ Files:
 
 - Empty state renders as `(empty — patch it this turn)` so round-1 agents see the affordance.
 - Full `Σⁱ` JSON is never shown; only the rendered markdown. Worst-case block size: `400 + 5×8×280 + 8×160 ≈ 13k` chars; typical (2-4 bullets) < 1.5k. Still `O(1)`.
-- **Recall removal:** the `## Recall — Vector-Retrieved Prior Context` block is deleted from the auto-prompt (its content is subsumed by `Σ + digest`). The `loom_vector_search` tool remains for on-demand recall; nothing else changes. This is what makes the prompt strictly `(P, Σ, O_latest)` instead of Stateful-style state-plus-history.
+- **Recall removal:** prior transcript retrieval is not injected or exposed as a current Loom tool. The prompt is bounded by `Σ + digest + current-round live contributions`; durable history remains available for synthesis and audit.
 - Add to **Your Turn — Weighted Guidance**:
   ```
   - **Your State is yours to maintain** — call loom_state_patch once per turn. Stale bullets you don't remove stay. Pinned facts (with Source/[#id]) are never auto-evicted.
@@ -610,7 +616,7 @@ Helpers in `src/database/*`: `setParticipantState(id, state)`, `getParticipantSt
 - Skip-passed logic and synthesis read `stance` first, `reflection` only when `stance` is empty (meeting start / flag-off / old DB).
 - Dashboard participant card shows `stance@vN`; `reflectionHistory` remains visible in the audit trail but is not injected into prompts.
 
-**Versioning rule (paper Algorithm 1 steps 4–6).** `version++` happens **only** on successfully applied patches. Failed Zod validation, empty patches, and misses leave `version` unchanged, mutate nothing, and write no `state_patches` row (paper's rollback). Prose is never rolled back — only state is. A repeatedly-invalid patcher still contributes prose every turn and only logs `state_patch_missed`.
+**Versioning rule (paper Algorithm 1 steps 4–6).** `version++` happens **only** on successfully applied patches. Failed Zod validation, empty patches, and misses leave `version` unchanged, mutate nothing, and write no `state_patches` row (paper's rollback). For a primary turn, the contribution and state mutation share one database transaction, so a failed contribution write cannot leave a state-only update. Prose is never rolled back — only state is. A repeatedly-invalid patcher still contributes prose every turn and only logs `state_patch_missed`.
 
 **Persistence ordering (post-audit correction).** The durable `participants.state_json` write now happens **before** the in-memory state is published, and its result is checked: `setParticipantState` returns `true` (written), `null` (DB predates state columns — in-memory-only is legitimate there), or `false` (real write failure). On `false` the tool rolls back and returns a `persistenceFailed` error instead of reporting `applied: true`, so the executor's retry path re-asks rather than leaving state that exists only in RAM. The previous best-effort ordering let a failed write produce a state that was versioned in memory, absent from disk, and reported as a success.
 

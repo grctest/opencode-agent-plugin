@@ -77,7 +77,6 @@ const steps = [
         "onnxruntime-node",
         "@huggingface/tokenizers",
         "sqlite-vec",
-        "zod",
       ],
     },
   },

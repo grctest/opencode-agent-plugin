@@ -9,15 +9,23 @@ import { resolveCaller, resolveModel, buildBatchId, findExistingQueryResponse } 
 import { auditLoomTool } from "./audit.js";
 const logger = new Logger();
 
-function normalizeQueries(args) {
+function normalizeQueries(args, maxTargets = 3) {
   if (!Array.isArray(args.queries)) return [];
+  const seen = new Set();
   return args.queries
     .filter((q) => q && typeof q.target === "string" && q.target.trim().length > 0 && typeof q.question === "string" && q.question.trim().length > 0)
     .map((q) => ({
       targetId: q.target.trim(),
       question: q.question.trim(),
       mode: QUERY_MODES[q.mode] ? q.mode : "clarify",
-    }));
+    }))
+    .filter((q) => {
+      const key = `${q.targetId}\u0000${q.question}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, Math.max(1, maxTargets));
 }
 
 export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }) {
@@ -44,11 +52,20 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
       async execute(args, context) {
         const cfg = config.getValue("agentTools");
         if (!cfg?.enabled || !cfg?.loom?.loom_query) return { output: JSON.stringify({ error: "loom_query not enabled" }), metadata: { error: true }, title: "loom_query error" };
-        const queries = normalizeQueries(args);
-        if (queries.length === 0) return { output: JSON.stringify({ error: "queries required — at least one {target, question} item" }), metadata: { error: true }, title: "loom_query error" };
-        if (!context?.sessionID) return { output: JSON.stringify({ error: "loom_query: session context unavailable" }), metadata: { error: true }, title: "loom_query error" };
-        try {
-          const meetingInfo = await resolveMeeting(context.sessionID);
+         const maxTargets = Math.max(1, Number(cfg?.maxQueryTargetsPerTurn) || 3);
+         const requestedCount = Array.isArray(args.queries) ? args.queries.length : 0;
+         if (requestedCount > maxTargets) {
+           return { output: JSON.stringify({ error: `loom_query allows at most ${maxTargets} targets per call` }), metadata: { error: true }, title: "loom_query error" };
+         }
+         const queries = normalizeQueries(args, maxTargets);
+         if (queries.length === 0) return { output: JSON.stringify({ error: "queries required — at least one {target, question} item" }), metadata: { error: true }, title: "loom_query error" };
+         if (!context?.sessionID) return { output: JSON.stringify({ error: "loom_query: session context unavailable" }), metadata: { error: true }, title: "loom_query error" };
+         let meetingInfo = null;
+         let stateManager = null;
+         let db = null;
+         let caller = null;
+         try {
+           meetingInfo = await resolveMeeting(context.sessionID);
           if (!meetingInfo) {
             const p = { queued: true, note: "Query queued — meeting not yet resolved, will be handled post-store.", queries };
             return { output: JSON.stringify(p), metadata: { queued: true }, title: "loom_query queued" };
@@ -58,9 +75,9 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
             const p = { queued: true, queries, note: "Query queued — engine not ready." };
             return { output: JSON.stringify(p), metadata: { queued: true }, title: "loom_query queued" };
           }
-          const stateManager = engine.getStateManager();
-          const sessionManager = engine.getSessionManager();
-          const db = engine.getDatabase();
+           stateManager = engine.getStateManager();
+           const sessionManager = engine.getSessionManager();
+           db = engine.getDatabase();
           if (!stateManager || !sessionManager || !db) {
             const p = { queued: true, queries, note: "Query queued — state not ready." };
             return { output: JSON.stringify(p), metadata: { queued: true }, title: "loom_query queued" };
@@ -68,7 +85,7 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
           const allParticipants = stateManager.getParticipants();
           if (!Array.isArray(allParticipants)) return { output: JSON.stringify({ error: "loom_query: participant list unavailable" }), metadata: { error: true }, title: "loom_query error" };
 
-          let caller = resolveCaller(allParticipants, stateManager.getWeave?.() ?? [], context.sessionID);
+           caller = resolveCaller(allParticipants, stateManager.getWeave?.() ?? [], context.sessionID);
           const activeCountQ = (() => { try { return stateManager.getActiveParticipants().length; } catch { return allParticipants.filter(p=>p.status!=="failed"&&p.status!=="passed").length; }})();
           if (activeCountQ <= 1) return { output: JSON.stringify({ error: "loom_query unavailable with 1 active participant — use loom_summon or loom_forum instead", activeCount: activeCountQ }), metadata: { error: true }, title: "loom_query error" };
           // Resolve each query to an eligible target participant (exclude self)
@@ -129,8 +146,9 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
                 continue;
               }
 
-              const stateOfPlay = stateManager.getStateOfPlay?.() ?? "";
-              const roundContribs = stateManager.getWeave ? stateManager.getWeave().filter(c => c.round != null && c.round >= stateManager.getCurrentRound() - 1).slice(-12) : [];
+               const stateOfPlay = stateManager.getStateOfPlay?.() ?? "";
+               const targetState = stateManager.getParticipantState?.(target.config.id) ?? null;
+               const roundContribs = stateManager.getWeave ? stateManager.getWeave().filter(c => c.round != null && c.round >= stateManager.getCurrentRound() - 1).slice(-12) : [];
 
               const callerForPrompt = caller ?? { config: { name: sourceName, tier: "mid", id: "unknown" } };
               let prompt;
@@ -141,9 +159,10 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
                   question,
                   question,
                   roundContribs,
-                  stateManager.getCurrentRound(),
-                  stateManager.getMaxRounds()
-                );
+                   stateManager.getCurrentRound(),
+                   stateManager.getMaxRounds(),
+                   targetState
+                 );
               } else {
                 prompt = buildQueryPrompt(
                   callerForPrompt,
@@ -153,9 +172,10 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
                   roundContribs,
                   stateManager.getCurrentRound(),
                   stateManager.getMaxRounds(),
-                  stateOfPlay,
-                  mode
-                );
+                   stateOfPlay,
+                   mode,
+                   targetState
+                 );
               }
 
               const systemPrompt = meta.systemPrompt(target);
@@ -168,9 +188,8 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
                 signal: context.abort,
                 abort: context.abort,
               }, meetingInfo.meetingId);
-              if (!res || !res.ok) { results.push({ target: target.config.id, mode, error: res?.error?.message ?? "prompt failed" }); continue; }
-
-              const { text, toolResults } = extractAgentResponse(res.data);
+               if (!res || !res.ok) { results.push({ target: target.config.id, mode, error: res?.error?.message ?? "prompt failed" }); continue; }
+               const { text, toolResults } = extractAgentResponse(res.data);
               const content = (text ?? "").slice(0,2000);
 
               // Persist as a typed contribution grouped under the invoker's batch
@@ -203,6 +222,7 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
                     system_prompt: systemPrompt,
                     user_prompt: prompt,
                     state_of_play: stateOfPlay,
+                     state_version: targetState?.version ?? 0,
                     round_contributions_used: roundContribs.slice(-4).map(c => ({ id: c.id, participant_id: c.participant_id, type: c.type, content: (c.content ?? "").slice(0,300) })),
                   },
                   created_at: new Date().toISOString(),

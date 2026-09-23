@@ -4,7 +4,7 @@
  */
 
 import { join } from "path";
-import { homedir } from "os";
+import { resolveOpencodeConfigDir } from "../paths.js";
 import { createRequire } from "module";
 import { readFile, readdir, access } from "fs/promises";
 import { createReadStream } from "fs";
@@ -14,10 +14,12 @@ import { Logger, extractErrorInfo } from "../logger.js";
 const modelLogger = new Logger();
 
 function getConfigDir() {
-  return process.env.OPENCODE_CONFIG_DIR ?? join(homedir(), ".config", "opencode");
+  return resolveOpencodeConfigDir();
 }
 
-const MODEL_DIR = join(getConfigDir(), "loom", "models");
+export function getModelBaseDir() {
+  return join(getConfigDir(), "loom", "models");
+}
 
 function getDepsDirs() {
   const base = getConfigDir();
@@ -115,14 +117,22 @@ export class ModelManager {
   #modelDir;
 
   constructor(projectRoot) {
-    this.#modelDir = MODEL_DIR;
+    this.#modelDir = getModelBaseDir();
   }
 
   /**
    * Get model directory path.
    */
   getModelDir(name) {
-    return join(this.#modelDir, name);
+    const value = String(name ?? "");
+    const parts = value.split("/");
+    if (
+      parts.length !== 2 ||
+      parts.some((part) => !/^[A-Za-z0-9._-]+$/.test(part) || part === "." || part === "..")
+    ) {
+      throw new Error(`Invalid model name: ${name}`);
+    }
+    return join(this.#modelDir, value);
   }
 
   /**
@@ -130,7 +140,7 @@ export class ModelManager {
    */
   async readModelJson(name) {
     try {
-      const path = join(this.#modelDir, name, "model.json");
+      const path = join(this.getModelDir(name), "model.json");
       const data = await readFile(path, "utf-8");
       return JSON.parse(data);
     } catch (err) {
@@ -190,6 +200,9 @@ export class ModelManager {
    * @returns {Promise<{session: InferenceSession, tokenizer: Tokenizer, dims: number, maxTokens: number, meta: Object}>}
    */
   async loadModel(name, quant = "onnx/model_int8.onnx") {
+    if (!/^onnx\/[A-Za-z0-9._-]+\.onnx$/.test(String(quant ?? ""))) {
+      throw new Error(`Invalid model quantization path: ${quant}`);
+    }
     const modelDir = this.getModelDir(name);
     const modelJson = await this.readModelJson(name);
 
@@ -208,6 +221,13 @@ export class ModelManager {
     const modelPath = join(modelDir, quantFile);
     const tokenizerPath = join(modelDir, "tokenizer.json");
     const tokenizerConfigPath = join(modelDir, "tokenizer_config.json");
+
+    if (modelJson.tokenizerSha256) {
+      const tokenizerHash = await sha256File(tokenizerPath);
+      if (tokenizerHash !== modelJson.tokenizerSha256) {
+        throw new Error(`Tokenizer integrity check FAILED for ${name}`);
+      }
+    }
 
     // Integrity verification (audit 12 SEC4): fail loudly on checksum mismatch —
     // a hijacked model file must never reach onnxruntime.

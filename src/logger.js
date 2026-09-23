@@ -177,7 +177,7 @@ export class Logger {
       meetingId: this.#meetingId ? this.#meetingId.slice(0, 8) : null,
       fullMeetingId: this.#meetingId,
       context,
-      message,
+      message: this.#redact(message),
       ...(safeDetails !== null ? { details: safeDetails } : {}),
       timestamp: new Date().toISOString(),
     };

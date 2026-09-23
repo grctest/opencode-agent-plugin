@@ -208,7 +208,7 @@ const Sidebar = memo(function Sidebar({
                 </div>
                 {embeddingStatus?.state === "error" && (
                   <div className="text-xs text-muted-foreground flex items-center gap-1" title={embeddingStatus.message}>
-                    <TriangleAlertIcon className="size-3" /> Emb. model failed — using placeholder vectors
+                     <TriangleAlertIcon className="size-3" /> Embedding model unavailable — using keyword fallback
                   </div>
                 )}
               </Card>
@@ -339,13 +339,13 @@ const Sidebar = memo(function Sidebar({
       >
         <div className="flex flex-col gap-3">
           <p className="text-sm text-muted-foreground">
-            The text encoder model is used for RAG to embed and search deliberation context.
+             The text encoder model is used to compose relevant persona rooms. It does not send meeting content to a remote service.
           </p>
           {isMeetingActive ? (
             <Alert variant="destructive">
               <TriangleAlertIcon />
               <AlertTitle>Session active</AlertTitle>
-              <AlertDescription>The text encoder cannot be changed mid-session as it would break the RAG index.</AlertDescription>
+              <AlertDescription>               The text encoder cannot be changed while a deliberation is active.</AlertDescription>
             </Alert>
           ) : (
             <>
@@ -379,7 +379,7 @@ const Sidebar = memo(function Sidebar({
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground">
-                  Only one model is currently downloaded. Use <code className="bg-muted px-1 py-0.5 rounded text-xs">loom model:download</code> to add more.
+                  Only one model is currently downloaded. Use <code className="bg-muted px-1 py-0.5 rounded text-xs">npm run model:download</code> to add more.
                 </p>
               )}
             </>

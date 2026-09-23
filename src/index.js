@@ -13,7 +13,6 @@ import { degrade } from "./utils/degrade.js";
 import { createAgentTools } from "./plugin/agent-tools.js";
 import { createPluginReturn } from "./plugin/return.js";
 import { createResolveMeeting } from "./plugin/resolve-meeting.js";
-import { createLifecycleHandlers } from "./plugin/lifecycle.js";
 import { extractAgentResponse, mapToolResults } from "./shared.js";
 import { getPersonas } from "./composer.js";
 import { getHighestTierModel } from "./services/model-service.js";
@@ -89,13 +88,10 @@ export const Loom = async (input) => {
    */
   const _resolveMeetingFactory = createResolveMeeting(directory, meetingResolveCache);
   const resolveMeeting = (sessionID) => _resolveMeetingFactory(sessionID, client);
-  const agentTools = createAgentTools({ config, resolveMeeting, activeLooms, directory });
-
-  const { setupProcessHandlers } = createLifecycleHandlers(activeLooms);
-  setupProcessHandlers();
+  const agentToolRegistry = createAgentTools({ config, resolveMeeting, activeLooms, directory });
 
   const activeDashboardRef = { current: activeDashboard };
-  const pluginReturn = createPluginReturn({ activeLooms, activeDashboardRef, directory, config, agentTools, client });
+  const pluginReturn = createPluginReturn({ activeLooms, activeDashboardRef, directory, config, agentToolRegistry, client, resolveMeeting });
   return pluginReturn;
 };
 

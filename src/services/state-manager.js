@@ -3,6 +3,12 @@ import { Logger } from "../logger.js";
 import { getConfig } from "../config.js";
 import { emptyAgentState } from "../state-patch.js";
 
+function deepFreeze(value) {
+  if (value === null || typeof value !== "object" || Object.isFrozen(value)) return value;
+  for (const key of Object.keys(value)) deepFreeze(value[key]);
+  return Object.freeze(value);
+}
+
 /**
  * Manages in-memory meeting state with validated transitions.
  * Encapsulates all state mutations to ensure consistency.
@@ -12,6 +18,8 @@ export class StateManager {
   #state;
   /** @type {import("../logger.js").Logger} */
   #logger;
+  #activeTurn = null;
+  #lastTurnPatch = null;
 
   /**
    * @param {Object} initialState
@@ -42,6 +50,66 @@ export class StateManager {
     this.stateDirty = new Set();
   }
 
+  beginTurn(participantId) {
+    if (this.#lastTurnPatch?.participantId === participantId) this.#lastTurnPatch = null;
+    this.#activeTurn = { participantId, patchApplied: false, passRequested: false, toolCount: 0, pendingPatch: null };
+  }
+
+  endTurn() {
+    if (this.#activeTurn?.pendingPatch) {
+      this.#lastTurnPatch = structuredClone(this.#activeTurn.pendingPatch);
+    }
+    this.#activeTurn = null;
+  }
+
+  getActiveTurn() {
+    return this.#activeTurn ? { ...this.#activeTurn } : null;
+  }
+
+  markTurnPatchApplied() {
+    if (this.#activeTurn) this.#activeTurn.patchApplied = true;
+  }
+
+  markTurnPassRequested() {
+    if (this.#activeTurn) this.#activeTurn.passRequested = true;
+  }
+
+  getTurnToolCount() {
+    return this.#activeTurn?.toolCount ?? 0;
+  }
+
+  recordTurnTool() {
+    if (this.#activeTurn) this.#activeTurn.toolCount += 1;
+  }
+
+  queueTurnPatch(participantId, patch) {
+    if (this.#activeTurn?.participantId !== participantId || this.#activeTurn.patchApplied || this.#activeTurn.pendingPatch) return false;
+    this.#activeTurn.pendingPatch = structuredClone(patch);
+    return true;
+  }
+
+  getLastTurnPatch(participantId) {
+    if (this.#lastTurnPatch?.participantId !== participantId) return null;
+    return structuredClone(this.#lastTurnPatch);
+  }
+
+  takeLastTurnPatch(participantId) {
+    if (this.#lastTurnPatch?.participantId !== participantId) return null;
+    const patch = structuredClone(this.#lastTurnPatch);
+    this.#lastTurnPatch = null;
+    return patch;
+  }
+
+  discardLastTurnPatch(participantId) {
+    if (this.#lastTurnPatch?.participantId === participantId) this.#lastTurnPatch = null;
+  }
+
+  discardActiveTurnPatch() {
+    if (!this.#activeTurn) return;
+    this.#activeTurn.pendingPatch = null;
+    this.#activeTurn.patchApplied = false;
+  }
+
   /** Lazily initializes and returns a clone of agent id's Σⁱ (Σ_0 when absent). */
   getParticipantState(id) {
     const existing = this.participantStates.get(id);
@@ -51,7 +119,7 @@ export class StateManager {
       // legacy `reflection` field and marks the state dirty. Until the agent's
       // next loom_state_patch overwrites stance, surface that fresh position in
       // the own-state block so the one-turn lag is not a blind spot.
-      if (this.stateDirty.has(id) && !String(clone.stance ?? "").trim()) {
+      if (this.stateDirty.has(id)) {
         try {
           const p = this.getParticipant(id);
           const fresh = typeof p?.reflection === "string" ? p.reflection.trim() : "";
@@ -127,6 +195,17 @@ export class StateManager {
       });
     }
     return out;
+  }
+
+  getParticipantStateSnapshots() {
+    return deepFreeze(this.#state.participants.map((p) => ({
+      id: p.config.id,
+      name: p.config.name ?? p.config.id,
+      tier: p.config.tier ?? "",
+      status: p.status ?? "",
+      state: this.getParticipantState(p.config.id),
+      projected: this.stateDirty.has(p.config.id),
+    })));
   }
 
   /** Bulk-load states (resume/extension path). */

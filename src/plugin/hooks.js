@@ -14,7 +14,7 @@ const TOOL_REQUIRED_OVERRIDES = {
   // loom_query, loom_evidence, loom_vote, loom_summon, loom_request_next, loom_status, loom_cancel etc. already correct
 };
 
-export function createEventHandlers({ directory }) {
+export function createEventHandlers({ directory, activeLooms = null }) {
   return {
     "tool.definition": async (input, output) => {
       const override = TOOL_REQUIRED_OVERRIDES[input.toolID];
@@ -28,8 +28,15 @@ event: async ({ event }) => {
       if (event.type === "session.deleted") {
         const deletedId = event.properties?.info?.id;
         if (deletedId) {
-          const entries = getDatabasesBySessionId(deletedId);
-          for (const { dbPath } of entries) {
+           const entries = getDatabasesBySessionId(deletedId);
+            if (activeLooms) {
+              const matching = [...activeLooms.entries()].filter(([meetingId, engine]) => engine && entries.some((entry) => entry.meetingId === meetingId));
+              await Promise.all(matching.map(async ([, engine]) => {
+                try { engine.cancel(); } catch {}
+                try { await engine.close?.(); } catch {}
+              }));
+            }
+           for (const { dbPath } of entries) {
             deleteMeetingFiles(dbPath);
           }
           await deleteMeetingsBySessionId(directory, deletedId);

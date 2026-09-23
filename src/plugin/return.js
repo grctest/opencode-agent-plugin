@@ -5,15 +5,50 @@ import { getMeetingDbPath } from "../paths.js";
 import { DashboardApi } from "../dashboard/api.js";
 import { getDatabasesBySessionId, deleteMeetingFiles, deleteMeetingsBySessionId, findMeetingBySessionId } from "../database.js";
 import { resolveLoomBaseDir } from "../paths.js";
+import { isBashCommandAllowed, getBashCommand } from "../utils/sanitize.js";
 import { createConfig } from "../config.js";
 import { startDashboard } from "../dashboard/server.js";
 import { createEventHandlers, PROGRESS_PATTERN } from "./hooks.js";
 export { PROGRESS_PATTERN };
 
-export function createPluginReturn({ activeLooms, activeDashboardRef, directory, config, agentTools, client = null }) {
+export function createPluginReturn({ activeLooms, activeDashboardRef, directory, config, agentToolRegistry, client = null, resolveMeeting = null }) {
   return {
+    dispose: async () => {
+      const engines = [...activeLooms.values()];
+      await Promise.all(engines.map(async (engine) => {
+        try { engine.cancel(); } catch {}
+        try { await engine.close?.(); } catch {}
+      }));
+      try { activeDashboardRef.current?.stop(); } catch {}
+      activeDashboardRef.current = null;
+    },
+    "tool.execute.before": async (input, output) => {
+      if (!resolveMeeting || !input?.sessionID) return;
+      let meeting = null;
+      try { meeting = await resolveMeeting(input.sessionID); } catch { return; }
+      if (!meeting) return;
+      const engine = activeLooms.get(meeting.meetingId);
+      const stateManager = engine?.getStateManager?.();
+      const activeTurn = stateManager?.getActiveTurn?.();
+      const effectiveAgentTools = engine?.getRoundExecutor?.()?.getEffectiveAgentTools?.() ?? config.getValue("agentTools");
+      if (activeTurn) {
+        const maxCalls = Math.max(1, Number(effectiveAgentTools?.maxToolCallsPerTurn) || 12);
+        if (stateManager.getTurnToolCount() >= maxCalls) {
+          throw new Error(`Loom tool-call limit reached (${maxCalls})`);
+        }
+        stateManager.recordTurnTool();
+      }
+      if (input.tool !== "bash") return;
+      const cfg = effectiveAgentTools;
+      const bash = cfg?.builtIn?.bash;
+      if (!bash?.enabled) throw new Error("Bash is disabled for Loom deliberations");
+      const command = getBashCommand(output?.args);
+      if (!isBashCommandAllowed(command, bash.allowlist)) {
+        throw new Error(`Bash command blocked by Loom policy: ${String(command ?? "missing command").slice(0, 160)}`);
+      }
+    },
     tool: {
-      ...agentTools,
+      ...agentToolRegistry,
       loom_status: tool({
         description:
           "Check the status of a running Loom deliberation session. " +
@@ -108,7 +143,6 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
               client,
               directory,
               activeLooms,
-              agentTools,
               ownerSessionId: sessionId,
             });
             activeDashboardRef.current = dashboard;
@@ -138,10 +172,16 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
           if (!activeDashboardRef.current) {
             return "No dashboard is currently running.";
           }
-          const port = activeDashboardRef.current.port;
-          activeDashboardRef.current.stop();
-          activeDashboardRef.current = null;
-          return `Dashboard stopped (was running on port ${port}).`;
+          const dashboard = activeDashboardRef.current;
+          const port = dashboard.port;
+          try {
+            dashboard.stop();
+            return `Dashboard stopped (was running on port ${port}). Active deliberations were not cancelled.`;
+          } catch (err) {
+            return `Dashboard stop failed: ${err instanceof Error ? err.message : String(err)}`;
+          } finally {
+            activeDashboardRef.current = null;
+          }
         },
       }),
 
@@ -292,6 +332,6 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
       }),
 
     },
-    ...createEventHandlers({ directory }),
+    ...createEventHandlers({ directory, activeLooms }),
   };
 }

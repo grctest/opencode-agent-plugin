@@ -105,9 +105,10 @@ function getDefaultCount(complexity) {
   }
 }
 
-export async function composeRoomWithSimilarity(question, database) {
+export async function composeRoomWithSimilarity(question, database, context = "") {
   const used = new Set();
   const participants = [];
+  const compositionText = [question, context].map((value) => String(value ?? "").trim()).filter(Boolean).join("\n");
 
   const personas = getPersonas();
   const complexity = analyzeQuestionComplexity(question);
@@ -146,7 +147,7 @@ export async function composeRoomWithSimilarity(question, database) {
   // Dry-run or no DB — skip vector indexing entirely (keyword fallback)
   if (!database) {
     composerLogger.info("compose_no_db", "No database provided (dry-run) — using keyword-based composition");
-    return composeRoomByKeyword(question, personas, roles, complexity, count, used, participants);
+    return composeRoomByKeyword(compositionText, personas, roles, complexity, count, used, participants);
   }
 
   const { isEmbedderInitialized, ensureEmbedderInitialized, embedText } = await import("../services/embedding-service.js");
@@ -166,7 +167,7 @@ export async function composeRoomWithSimilarity(question, database) {
       "embedder_unavailable",
       "Embedding model not initialized — using keyword-based persona selection for room composition",
     );
-    return composeRoomByKeyword(question, personas, roles, complexity, count, used, participants);
+    return composeRoomByKeyword(compositionText, personas, roles, complexity, count, used, participants);
   }
 
   const personaIndex = new PersonaIndex(database);
@@ -174,7 +175,7 @@ export async function composeRoomWithSimilarity(question, database) {
 
   // Reuse question embedding across tier searches
   let questionEmbedding = null;
-  try { questionEmbedding = await embedText(question, { isQuery: true }); } catch (err) {
+  try { questionEmbedding = await embedText(compositionText, { isQuery: true }); } catch (err) {
     composerLogger.warnThrottled("compose.embed_failed", "Room composition", "Question embedding failed — composition falls back to keyword matching", extractErrorInfo(err));
   }
   // Relevance floor: maxCosineDistance (cosine distance) converted to L2 for vec0 which returns L2
@@ -186,23 +187,29 @@ export async function composeRoomWithSimilarity(question, database) {
   // vec0 returns L2 for normalized vectors: L2 = sqrt(2 * cosineDistance)
   const maxL2 = Math.sqrt(Math.max(0, 2 * maxCosineDistance));
   const selectedDistances = [];
+  let vectorDegraded = false;
   for (const tier of roles) {
     let results = [];
     if (questionEmbedding) {
       try {
         results = await personaIndex.searchWithEmbedding(questionEmbedding, tier, 5);
-      } catch (err) {
-        composerLogger.warnThrottled("compose.vector_search_failed", "Room composition", `Vector persona search failed for tier ${tier} — stepping down to keyword search`, extractErrorInfo(err));
-        database?.setSemanticDegraded?.(true);
-        results = await personaIndex.search(question, tier, 5);
-      }
+       } catch (err) {
+         composerLogger.warnThrottled("compose.vector_search_failed", "Room composition", `Vector persona search failed for tier ${tier} — stepping down to keyword search`, extractErrorInfo(err));
+         database?.setSemanticDegraded?.(true);
+         vectorDegraded = true;
+         results = await personaIndex.search(compositionText, tier, 5);
+       }
     } else {
       database?.setSemanticDegraded?.(true);
-      results = await personaIndex.search(question, tier, 5);
+       results = await personaIndex.search(compositionText, tier, 5);
     }
     // Threshold filter: vec0 L2 distance vs maxL2; keyword rows have no distance and pass through
-    const onTopic = results.filter((r) => r.distance == null || r.distance <= maxL2);
-    if (results.length > 0 && onTopic.length === 0) {
+     const onTopic = results.filter((r) => r.distance == null || r.distance <= maxL2);
+     if (questionEmbedding && results.length === 0) {
+       vectorDegraded = true;
+       break;
+     }
+     if (results.length > 0 && onTopic.length === 0) {
       composerLogger.info("compose_no_on_topic", `No ${tier} candidate within L2 ${maxL2.toFixed(3)} (cosine distance ${maxCosineDistance}) of the question — leaving seat to deliberate generalist fallback`);
     }
     const candidate = onTopic.find((r) => !used.has(r.persona_name));
@@ -223,6 +230,10 @@ export async function composeRoomWithSimilarity(question, database) {
         participants.push(buildParticipant(generalist, "civilian", String(participants.length)));
       }
     }
+  }
+  if (vectorDegraded) {
+    composerLogger.warn("compose_keyword_fallback", "Vector composition unavailable — rebuilding room with keyword matching");
+    return composeRoomByKeyword(compositionText, personas, roles, complexity, count, used, participants);
   }
   if (selectedDistances.length > 0) {
     composerLogger.info("compose_selection_distances", "Persona selection distances (L2)", { distances: selectedDistances, maxCosineDistance, maxL2 });

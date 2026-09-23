@@ -19,7 +19,7 @@ export const DEFAULT_SETUP_FORM = {
   version: FORM_VERSION,
   question: "",
   context: "",
-  maxRounds: 3,
+  maxRounds: 4,
   seats: [],
   preview: null,
   startedId: null,
@@ -42,8 +42,14 @@ function sanitizeSeat(raw) {
     tier: raw.tier,
     tags,
     expertise,
+    known_biases: Array.isArray(raw.known_biases) ? raw.known_biases.filter((v) => typeof v === "string") : [],
+    communication_style: asString(raw.communication_style),
+    preferred_contribution_types: Array.isArray(raw.preferred_contribution_types) ? raw.preferred_contribution_types.filter((v) => typeof v === "string") : [],
+    anti_patterns: Array.isArray(raw.anti_patterns) ? raw.anti_patterns.filter((v) => typeof v === "string") : [],
+    tier_guidance: asString(raw.tier_guidance),
+    reflection_guidance: asString(raw.reflection_guidance),
     model: typeof raw.model === "string" ? raw.model : null,
-    approved: true,
+    approved: raw.approved !== false,
   };
 }
 
@@ -63,7 +69,7 @@ function sanitizeForm(raw) {
   const seats = Array.isArray(raw.seats)
     ? raw.seats.map(sanitizeSeat).filter(Boolean).slice(0, MAX_SEATS)
     : [];
-  const maxRounds = Number.isFinite(+raw.maxRounds) ? +raw.maxRounds : 3;
+  const maxRounds = Number.isFinite(+raw.maxRounds) ? +raw.maxRounds : 4;
   return {
     version: FORM_VERSION,
     question: asString(raw.question),

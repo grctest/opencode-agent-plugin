@@ -12,18 +12,19 @@ export async function runMeeting() {
       `🎬 Loom started — ${this._stateManager.getParticipants().length} participants:\n${participantItems}`
     );
 
-    this._stallWatchdog.start(
-      () => this._stateManager.getStatus(),
-      () => this._cancelled,
-    );
-    try {
-      await this._runWeavingLoop();
-    } finally {
-      this._stallWatchdog.stop();
-    }
-
-    const output = await this._synthesize();
-    return output;
+     this._stallWatchdog.start(
+       () => {
+         const status = this._stateManager.getStatus();
+         return status === "initializing" || status === "weaving" ? status : "weaving";
+       },
+       () => this._cancelled,
+     );
+     try {
+       await this._runWeavingLoop();
+       return await this._synthesize();
+     } finally {
+       this._stallWatchdog.stop();
+     }
   }
 
  export async function extendMeeting(newPrompt) {
@@ -86,7 +87,13 @@ export async function _runWeavingLoop() {
         break;
       }
 
-      if (this._remainingMs() <= 0) {
+       if (this._tokenBudgetExceeded()) {
+         this._stateManager.transitionTo("timeout");
+         const spentBefore = (this._callStats.input_tokens ?? 0) + (this._callStats.output_tokens ?? 0);
+         try { await this._sessionManager.postProgress(`💰 Token budget reached (${spentBefore} ≥ ${this._maxTotalTokens}) — ending deliberation and generating output.`, "warn"); } catch {}
+         break;
+       }
+       if (this._remainingMs() <= 0) {
         this._stateManager.transitionTo("timeout");
         try { await this._sessionManager.postProgress("⏱️ Loom timed out — generating output from collected contributions.", "warn"); } catch {}
         this._logger.warn("timeout", "Meeting timed out", { elapsed: Date.now() - this._startTime, limit: this._meetingTimeoutMs });

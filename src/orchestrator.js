@@ -58,7 +58,7 @@ export class MeetingOrchestrator {
   _cancelled = false;
   _closed = false;
   _startTime = 0;
-  _meetingTimeoutMs;
+  _meetingTimeoutMs = 0;
   _sessionManager = null;
   _logger = null;
   _orchestratorMessages = [];
@@ -77,10 +77,7 @@ export class MeetingOrchestrator {
     this._client = options.client;
     this._directory = options.directory;
     this._parentSessionId = options.parentSessionId;
-    // Hard deadline disabled by default (P1 Option A) — meeting_timeout removed from knit.
-    // Stall watchdog (10m inactivity) and provider errors are the only extrinsic stops.
-    // Any explicit value is treated as no limit to avoid LLM hallucinating 120000.
-    this._meetingTimeoutMs = 0;
+    this._meetingTimeoutMs = options.meetingTimeoutMs ?? getConfig().defaultMeetingTimeoutMs ?? 0;
     this._maxTotalTokens = options.maxTotalTokens ?? getConfig().maxTotalTokens ?? 0;
     this._availableModels = options.availableModels ?? [];
 
@@ -149,6 +146,12 @@ export class MeetingOrchestrator {
    * Reuses the participant's assigned (left-sidebar) model; falls back within the
    * enabled-model allowlist only. Plugin tools call engine.getParticipantModel.
    */
+  recordTokens(tokens) {
+    if (!tokens) return;
+    this._callStats.input_tokens += Number(tokens.input) || 0;
+    this._callStats.output_tokens += Number(tokens.output) || 0;
+  }
+
   getParticipantModel(participant, fallbackOnError = false) {
     return this._getParticipantModel(participant, fallbackOnError);
   }

@@ -9,6 +9,7 @@
  * A re-export alias is provided at bottom for callers expecting barrel.
  */
 import { assignModelsByTier, sortModelsByQuality } from "../model-discovery.js";
+import { getConfig } from "../config.js";
 import { Logger, extractErrorInfo } from "../logger.js";
 
 /**
@@ -154,7 +155,7 @@ export function assignModelsToParticipants(participants, available, sessionModel
   }
 
   // For diversity: if we have more models than tiers, try to give each agent a unique model
-  const modelDiversity = getModelDiversity(available, participants, tierMap, overrideMap);
+  const modelDiversity = getModelDiversity(available, participants, tierMap, overrideMap, getConfig().modelDiversity !== false);
 
   return participants.map((p) => {
     const override = overrideMap.get(p.id);
@@ -180,8 +181,9 @@ export function assignModelsToParticipants(participants, available, sessionModel
  * meaning there are enough models to give each agent a different one.
  * @returns {Map<string, ModelRef>} Map of participant_id -> model
  */
-function getModelDiversity(available, participants, tierMap, overrideMap) {
+function getModelDiversity(available, participants, tierMap, overrideMap, enabled = true) {
   const diversityMap = new Map();
+  if (!enabled) return diversityMap;
 
   const tierOrder = ["principal", "senior", "mid", "civilian", "junior"];
   const uniqueTiers = [...new Set(participants.map((p) => p.tier))];
@@ -205,7 +207,7 @@ function getModelDiversity(available, participants, tierMap, overrideMap) {
   // higher-tier participants first for the best models
   const unassigned = participants
     .filter((p) => !overrideMap.has(p.id))
-    .sort((a, b) => tierOrder.indexOf(b.tier) - tierOrder.indexOf(a.tier));
+    .sort((a, b) => tierOrder.indexOf(a.tier) - tierOrder.indexOf(b.tier));
 
   for (const p of unassigned) {
     let assigned = false;

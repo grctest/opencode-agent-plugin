@@ -26,6 +26,7 @@ export class SessionManager {
   #sessionMeetingMap = new Map();
   #orchestratorSessionId = null;
   #database = null;
+  #tokenRecorder = null;
 
   constructor(client, directory, parentSessionId, logger = null) {
     this.#client = client;
@@ -45,6 +46,14 @@ export class SessionManager {
    */
   getContract() {
     return this.#contract;
+  }
+
+  setTokenRecorder(recorder) {
+    this.#tokenRecorder = typeof recorder === "function" ? recorder : null;
+  }
+
+  recordTokens(tokens) {
+    if (tokens) this.#tokenRecorder?.(tokens);
   }
 
   getParentSessionId() {
@@ -141,8 +150,9 @@ export class SessionManager {
       if (effectiveSignal?.aborted) throw new DOMException("Aborted", "AbortError");
       // SessionContract.prompt now handles signal/AbortError natively — no manual
       // addEventListener race needed. Pass signal straight through.
-      const res = await this.getContract().prompt({ sessionId, signal: effectiveSignal, ...restOpts });
-      if (res?.error?.name === "AbortError") throw res.error;
+       const res = await this.getContract().prompt({ sessionId, signal: effectiveSignal, ...restOpts });
+       this.recordTokens(res.tokens);
+       if (res?.error?.name === "AbortError") throw res.error;
       return res;
     } catch (err) {
       return { ok: false, data: null, error: err };
@@ -182,7 +192,8 @@ export class SessionManager {
       maxDelayMs: getConfig().retryMaxDelayMs,
       retryable: (err) => isRetryableError(err) || isEmptyResponseError(err),
     });
-    return { text: result.text, tokens: result.tokens };
+     this.recordTokens(result.tokens);
+     return { text: result.text, tokens: result.tokens };
   }
 
   async promptOrchestrator(system, model, message, timeoutMs) {

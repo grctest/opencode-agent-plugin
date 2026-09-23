@@ -7,7 +7,7 @@
  * directly; older files run only the migrations they are missing.
  */
 
-export const LATEST_SCHEMA_VERSION = 6;
+export const LATEST_SCHEMA_VERSION = 7;
 
 /**
  * Ordered migrations. MIGRATIONS[n] upgrades a DB at user_version n to n+1.
@@ -128,6 +128,14 @@ export const MIGRATIONS = [
       `);
     }
   },
+  (db) => {
+    const cols = new Set(
+      db.prepare("PRAGMA table_info(participants)").all().map((c) => c.name),
+    );
+    if (!cols.has("anti_patterns")) db.exec("ALTER TABLE participants ADD COLUMN anti_patterns TEXT");
+    if (!cols.has("tier_guidance")) db.exec("ALTER TABLE participants ADD COLUMN tier_guidance TEXT");
+    if (!cols.has("reflection_guidance")) db.exec("ALTER TABLE participants ADD COLUMN reflection_guidance TEXT");
+  },
 ];
 
 export function initSchema(db) {
@@ -183,6 +191,9 @@ export function initSchema(db) {
       known_biases TEXT,
       communication_style TEXT,
       preferred_contribution_types TEXT,
+      anti_patterns TEXT,
+      tier_guidance TEXT,
+      reflection_guidance TEXT,
       tags TEXT,
       expertise TEXT,
       UNIQUE(meeting_id, name)

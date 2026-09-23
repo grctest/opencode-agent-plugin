@@ -38,7 +38,7 @@ export function restoreStateFromDb({ db, stateManager, meetingId, options }) {
   const callStats = parseStats(meeting.stats);
 
   const dbParts = db.getAllParticipantsWithStatus();
-  const participants = dbParts.map((r) => ({
+  const participants = dbParts.filter((r) => r.status !== "summoned").map((r) => ({
     config: {
       id: r.id,
       name: r.name,
@@ -48,9 +48,12 @@ export function restoreStateFromDb({ db, stateManager, meetingId, options }) {
       model: r.provider_id && r.model_id ? { providerID: r.provider_id, modelID: r.model_id } : undefined,
       tags: Array.isArray(r.tags) && r.tags.length ? r.tags : ["general"],
       expertise: Array.isArray(r.expertise) ? r.expertise : [],
-      known_biases: r.known_biases,
-      communication_style: r.communication_style,
-      preferred_contribution_types: r.preferred_contribution_types,
+       known_biases: r.known_biases,
+       communication_style: r.communication_style,
+       preferred_contribution_types: r.preferred_contribution_types,
+       anti_patterns: r.anti_patterns,
+       tier_guidance: r.tier_guidance,
+       reflection_guidance: r.reflection_guidance,
     },
     tier_config: getTierConfig(r.tier),
     session_id: r.session_id,

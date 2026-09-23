@@ -2,10 +2,17 @@ import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { realpathSync, existsSync } from "node:fs";
 
+export function resolveOpencodeConfigDir() {
+  const configured = process.env.OPENCODE_CONFIG_DIR?.trim();
+  return configured || join(homedir(), ".config", "opencode");
+}
+
 export function resolveLoomBaseDir(directory) {
   if (directory && directory !== "/" && directory.trim() !== "") {
     return join(directory, ".opencode", "loom");
   }
+  const configured = process.env.OPENCODE_CONFIG_DIR?.trim();
+  if (configured) return join(configured, "loom");
   const home = process.env.LOOM_CONFIG_DIR || homedir();
   return join(home, ".config", "opencode", "loom");
 }

@@ -9,10 +9,8 @@ import { renderMyStateMarkdown } from "../state-patch.js";
 import { TUNING } from "../config/defaults.js";
 const systemPromptCache = new Map();
 function getSystemPromptCacheMax() { try { return getConfig()?.tuning?.SYSTEM_PROMPT_CACHE_MAX ?? TUNING.SYSTEM_PROMPT_CACHE_MAX; } catch { return TUNING.SYSTEM_PROMPT_CACHE_MAX; } }
-function getEffectiveAgentTools() {
-  try {
-    if (globalThis.__loomAgentToolsOverride) return globalThis.__loomAgentToolsOverride;
-  } catch {}
+function getEffectiveAgentTools(override) {
+  if (override) return override;
   try { return getConfig()?.agentTools; } catch { return null; }
 }
 
@@ -32,10 +30,10 @@ function truncateAtSentence(text, limit) {
   return sliced + " …";
 }
 
-function hashConfig(cfg, { activeCount } = {}) {
+function hashConfig(cfg, { activeCount, agentTools } = {}) {
   let toolsDigest = "";
   try {
-    const t = getEffectiveAgentTools();
+    const t = getEffectiveAgentTools(agentTools);
     toolsDigest = JSON.stringify({ enabled: t?.enabled, loom: t?.loom, builtIn: t?.builtIn, maxCalls: t?.maxToolCallsPerTurn, sameTurn: t?.sameTurnSynthesis, buildMode: t?.buildMode });
   } catch {}
   const soloFlag = Number.isFinite(activeCount) && activeCount <= 1 ? "|solo" : "";
@@ -46,10 +44,10 @@ function hashConfig(cfg, { activeCount } = {}) {
 }
 
 /** Builds the system prompt for an agent in the multi-session architecture (identity + rules). */
-export function buildAgentSystemPrompt(participant, { activeCount } = {}) {
+export function buildAgentSystemPrompt(participant, { activeCount, agentTools } = {}) {
   const cfg = participant.config;
   const isSolo = Number.isFinite(activeCount) && activeCount <= 1;
-  const cacheKey = `${cfg.id}|${hashConfig(cfg, { activeCount })}`;
+  const cacheKey = `${cfg.id}|${hashConfig(cfg, { activeCount, agentTools })}`;
   const cached = systemPromptCache.get(cacheKey);
   if (cached !== undefined) {
     systemPromptCache.delete(cacheKey);
@@ -69,7 +67,7 @@ export function buildAgentSystemPrompt(participant, { activeCount } = {}) {
 
   const priorityCap = TURN_REQUEST_PRIORITY_CAP[tier] ?? 5;
 
-  const agentToolsConfig = getEffectiveAgentTools() ?? {};
+  const agentToolsConfig = getEffectiveAgentTools(agentTools) ?? {};
   // Gate the mandatory-patch language on the same flag that offers the tool, so
   // a disabled feature never leaves the contract demanding an unavailable call.
   const statePatchEnabled = !!(agentToolsConfig?.enabled && agentToolsConfig?.loom?.loom_state_patch);
@@ -242,7 +240,7 @@ ${statePatchEnabled ? "  (Passing is the one turn that does NOT require loom_sta
 /**
  * Builds the user prompt for an agent's turn using the Weighted Golden Sandwich pattern
  */
-export function buildAgentUserPrompt(participant, stateOfPlay, recentContributions, round, question, tags = [], userContext = "", forumTopics = [], otherParticipants = [], myState = null) {
+export function buildAgentUserPrompt(participant, stateOfPlay, recentContributions, round, question, tags = [], userContext = "", forumTopics = [], otherParticipants = [], myState = null, forumEnabled = false) {
   const transcript =
     recentContributions.length === 0
       ? "*(No contributions yet — you are the first to speak)*"
@@ -289,7 +287,7 @@ ${delimitContext(sanitizeForDisplay(userContext), "USER_CONTEXT")}
 `
     : "";
 
-  const forumHeader = (() => {
+  const forumHeader = forumEnabled ? (() => {
     const topics = Array.isArray(forumTopics) ? forumTopics.slice(0, 10) : [];
     if (topics.length === 0) {
       return `## Forum — Open Threads
@@ -309,7 +307,7 @@ _No open threads yet. If you have a sub-problem that needs async discussion, cre
 ${delimitContext(lines.join("\n"), "FORUM_TOPICS")}
 
 _Read with loom_forum_read_topic {topic_id: id} and comment with loom_forum_add_comment. Before creating a new topic, scan titles above or call loom_forum_list_topics to avoid duplicates._`;
-  })();
+  })() : "";
 
   const participantsHeader = (() => {
     const list = Array.isArray(otherParticipants) ? otherParticipants : [];

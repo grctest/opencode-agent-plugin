@@ -258,9 +258,7 @@ function useMeetingsList() {
 export function App() {
   const [selectedMeeting, setSelectedMeeting] = useState("");
   const [theme, setTheme] = useState(() => localStorage.getItem("loom-theme") ?? "system");
-  // Key versioned (v2) when the Setup tab was introduced so pre-existing stored
-  // tabs (e.g. timeline) don't override the new Setup default on first load.
-  const [activeTab, setActiveTab] = usePersistedState("active-tab-v2", "setup");
+  const [activeTab, setActiveTab] = useState("setup");
   const [collapsedMap, setCollapsedMap] = usePersistedState("collapsed-rounds", {});
   const collapsedRounds = collapsedMap[selectedMeeting] ?? [];
   const setCollapsedRounds = useCallback((updater) => {
@@ -467,7 +465,7 @@ export function App() {
               </TabsContent>
               <TabsContent value="output" className="pt-4">
                 <ErrorBoundary fallbackMessage="Failed to render the output tab">
-                  <OutputTab artifact={artifact} participants={participants} />
+                     <OutputTab artifact={artifact} status={state?.status} participants={participants} />
                 </ErrorBoundary>
               </TabsContent>
             </Tabs>

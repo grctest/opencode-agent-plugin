@@ -24,17 +24,17 @@ export function createStatePatchTool({ config, resolveMeeting, activeLooms }) {
         remove: tool.schema.array(tool.schema.string().min(1).max(280)).max(5).optional()
           .describe("Text of YOUR outdated bullets to delete (up to 5). Matched case-insensitively after whitespace collapsing — copy the bullet text closely."),
       },
-      async execute(args, context) {
-        const cfg = config.getValue("agentTools");
-        if (!cfg?.enabled || !cfg?.loom?.loom_state_patch)
-          return { output: JSON.stringify({ error: "loom_state_patch not enabled" }), metadata: { error: true }, title: "loom_state_patch error" };
-        if (!context?.sessionID)
+       async execute(args, context) {
+         if (!context?.sessionID)
           return { output: JSON.stringify({ error: "session context unavailable" }), metadata: { error: true }, title: "loom_state_patch error" };
         try {
           const meetingInfo = await resolveMeeting(context.sessionID);
           if (!meetingInfo)
             return { output: JSON.stringify({ error: "meeting not resolved", queued: false }), metadata: { error: true }, title: "loom_state_patch error" };
           const engine = activeLooms.get(meetingInfo.meetingId);
+          const cfg = engine?.getRoundExecutor?.()?.getEffectiveAgentTools?.() ?? config.getValue("agentTools");
+          if (!cfg?.enabled || !cfg?.loom?.loom_state_patch)
+            return { output: JSON.stringify({ error: "loom_state_patch not enabled" }), metadata: { error: true }, title: "loom_state_patch error" };
           const sm = engine?.getStateManager?.();
           const db = engine?.getDatabase?.();
           if (!sm || !db || typeof sm.getParticipantState !== "function" || typeof sm.setParticipantState !== "function")
@@ -43,10 +43,20 @@ export function createStatePatchTool({ config, resolveMeeting, activeLooms }) {
           // Resolve caller (same helper as query-evidence.js: resolveCaller)
           const { resolveCaller } = await import("./shared.js");
           const caller = resolveCaller(sm.getParticipants(), sm.getWeave?.() ?? [], context.sessionID);
-          if (!caller?.config?.id)
-            return { output: JSON.stringify({ error: "caller identity unavailable" }), metadata: { error: true }, title: "loom_state_patch error" };
+           if (!caller?.config?.id)
+             return { output: JSON.stringify({ error: "caller identity unavailable" }), metadata: { error: true }, title: "loom_state_patch error" };
+           const activeTurn = sm.getActiveTurn?.();
+           if (activeTurn?.participantId === caller.config.id && activeTurn.passRequested) {
+             return { output: JSON.stringify({ error: "state patch cannot follow loom_pass in the same turn" }), metadata: { error: true, validationFailed: true }, title: "loom_state_patch error" };
+           }
+           if (activeTurn?.participantId === caller.config.id && activeTurn.patchApplied) {
+             return { output: JSON.stringify({ error: "only one loom_state_patch call is allowed per turn" }), metadata: { error: true, validationFailed: true }, title: "loom_state_patch error" };
+           }
+           if (!activeTurn || activeTurn.participantId !== caller.config.id) {
+             return { output: JSON.stringify({ error: "state patch requires the caller's active primary turn" }), metadata: { error: true, validationFailed: true }, title: "loom_state_patch error" };
+           }
 
-          // Validate via Zod (same StatePatchSchema as §5.2).
+           // Validate via Zod (same StatePatchSchema as §5.2).
           // Unknown keys are rejected explicitly here: the parse object below
           // is constructed with known keys only, so Zod .strict() would never
           // see them (§9: unknown keys must reject, not silently drop).
@@ -67,44 +77,35 @@ export function createStatePatchTool({ config, resolveMeeting, activeLooms }) {
           const { applyStatePatch } = await import("../../state-patch.js");
           const prev = sm.getParticipantState(caller.config.id);
           const { next, applied, unmatched, evicted, overCap, skipped } = applyStatePatch(prev, parsed.data);
-          next.updated_round = sm.getCurrentRound?.() ?? 0;
+           next.updated_round = sm.getCurrentRound?.() ?? 0;
 
-          // Persist BEFORE publishing in memory. If the durable write fails we
-          // roll back and report a persistence error so the executor retries,
-          // instead of reporting success with state that only exists in RAM.
-          // (null = DB predates state columns; in-memory-only is legitimate.)
-          let persisted = true;
-          if (typeof db.setParticipantState === "function") {
-            persisted = db.setParticipantState(caller.config.id, next);
-          }
-          if (persisted === false) {
-            return {
-              output: JSON.stringify({
-                error: "state persistence failed — patch NOT applied, retry it",
-                persistenceFailed: true,
-              }),
-              metadata: { error: true, persistenceFailed: true },
-              title: "loom_state_patch error",
-            };
-          }
-          // updated_contribution_id filled by executor post-store (§5.6); set provisional here
-          sm.setParticipantState(caller.config.id, next);
-          try {
-            const { auditLoomTool } = await import("./audit.js");
-            auditLoomTool({ db, stateManager: sm, caller, meetingId: meetingInfo.meetingId,
-              tool: "loom_state_patch", input: args,
-              output: JSON.stringify({ applied: true, version: next.version, added: applied.added,
-                removed: applied.removed, evicted, overCap, skipped }),
-              status: "completed", title: `loom_state_patch:v${next.version}` });
-          } catch {}
+           const pending = sm.queueTurnPatch?.(caller.config.id, {
+             participantId: caller.config.id,
+             state: next,
+             input: args,
+             output: { applied: true, version: next.version, added: applied.added, removed: applied.removed, evicted, overCap, skipped },
+           }) === true;
+           if (!pending) {
+             return { output: JSON.stringify({ error: "could not queue state patch for this turn" }), metadata: { error: true, validationFailed: true }, title: "loom_state_patch error" };
+           }
+           const persisted = true;
+           sm.markTurnPatchApplied?.();
+           try {
+             const { auditLoomTool } = await import("./audit.js");
+             auditLoomTool({ db, stateManager: sm, caller, meetingId: meetingInfo.meetingId,
+               tool: "loom_state_patch", input: args,
+               output: JSON.stringify({ applied: true, version: next.version, added: applied.added,
+                 removed: applied.removed, evicted, overCap, skipped, pending }),
+               status: "completed", title: `loom_state_patch:v${next.version}` });
+           } catch {}
 
-          return {
-            output: JSON.stringify({ applied: true, version: next.version, added: applied.added,
-              removed: applied.removed, unmatched: unmatched.slice(0, 5), evicted, overCap, skipped,
-              note: "Patch applied to YOUR state only. Shared State of Play aggregates all agents." }),
-            metadata: { applied: true, version: next.version, persisted: persisted !== false },
-            title: `loom_state_patch:v${next.version}`,
-          };
+           return {
+             output: JSON.stringify({ applied: true, version: next.version, added: applied.added,
+               removed: applied.removed, unmatched: unmatched.slice(0, 5), evicted, overCap, skipped,
+               note: pending ? "Patch queued for atomic commit with this turn's contribution." : "Patch applied to YOUR state only. Shared State of Play aggregates all agents." }),
+             metadata: { applied: true, version: next.version, pending, persisted: persisted !== false },
+             title: `loom_state_patch:v${next.version}`,
+           };
         } catch (e) {
           return { output: JSON.stringify({ error: `loom_state_patch failed: ${e.message}` }), metadata: { error: true }, title: "loom_state_patch error" };
         }

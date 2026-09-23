@@ -1,4 +1,4 @@
-import { extractText, withTimeout } from "./shared.js";
+import { extractText } from "./shared.js";
 import { extractErrorInfo } from "./logger.js";
 import { withRetry, isRetryableError } from "./utils/retry.js";
 import { getConfig } from "./config.js";
@@ -92,24 +92,45 @@ export class SessionContract {
         },
         query: { directory: this.#directory },
       });
-      const racePromises = [promptPromise];
+      const abortSession = async () => {
+        try {
+          if (typeof this.#client.session.abort === "function") {
+            await this.#client.session.abort({ path: { id: sessionId }, query: { directory: this.#directory } });
+          }
+        } catch {}
+      };
+      const effectiveTimeout = timeoutMs ?? config.agentTimeoutMs;
+      const shouldTimeout = Number.isFinite(effectiveTimeout) && effectiveTimeout > 0;
+      let timer = null;
       let abortHandler = null;
+      const guards = [];
       if (signal) {
-        racePromises.push(new Promise((_, reject) => {
-          abortHandler = () => reject(new DOMException("Aborted", "AbortError"));
+        guards.push(new Promise((_, reject) => {
+          abortHandler = () => {
+            void abortSession();
+            reject(new DOMException("Aborted", "AbortError"));
+          };
           signal.addEventListener("abort", abortHandler, { once: true });
         }));
       }
-      const effectiveTimeout = timeoutMs ?? config.agentTimeoutMs;
-      const shouldTimeout = Number.isFinite(effectiveTimeout) && effectiveTimeout > 0;
-      const raced = Promise.race(racePromises).finally(() => {
+      if (shouldTimeout) {
+        guards.push(new Promise((_, reject) => {
+          timer = setTimeout(() => {
+            void abortSession();
+            const error = new Error(`Session prompt timed out after ${effectiveTimeout}ms`);
+            error.name = "TimeoutError";
+            reject(error);
+          }, effectiveTimeout);
+          timer.unref?.();
+        }));
+      }
+      const raced = Promise.race([promptPromise, ...guards]).finally(() => {
+        if (timer) clearTimeout(timer);
         if (signal && abortHandler) {
           try { signal.removeEventListener("abort", abortHandler); } catch {}
         }
       });
-      const result = shouldTimeout
-        ? await withTimeout(raced, effectiveTimeout)
-        : await raced;
+      const result = await raced;
 
       if (result.error) {
         throw new Error(result.error.message || JSON.stringify(result.error));

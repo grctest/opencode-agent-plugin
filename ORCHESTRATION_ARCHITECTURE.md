@@ -1,6 +1,6 @@
 # The Loom Orchestration Architecture
 
-**Schema version:** `PRAGMA user_version = 6` (`LATEST_SCHEMA_VERSION` in `src/database/schema.js:10`) — `meetings.status ∈ {initializing,weaving,converged,timeout,cancelled,aborted,max_rounds_reached}` — fresh DBs enforce `CHECK(status IN …)` + `CHECK(tier IN …)` + `UNIQUE(meeting_id,chunk_index)` + FKs; no migration path (fresh-slate install, session wipe on delete). v5→v6 adds the SKILL.state layer: `participants.state_json` (JSON `AgentState`) + append-only `state_patches` audit table (see §12). Last verified against `package@0.1.0` + DB `user_version 6`.
+**Schema version:** `PRAGMA user_version = 7` (`LATEST_SCHEMA_VERSION` in `src/database/schema.js:10`) — `meetings.status ∈ {initializing,weaving,converged,timeout,cancelled,aborted,max_rounds_reached}` — fresh DBs enforce `CHECK(status IN …)` + `CHECK(tier IN …)` + foreign keys. v5→v6 adds the SKILL.state layer: `participants.state_json` (JSON `AgentState`) + append-only `state_patches` audit table (see §12). v6→v7 persists the complete persona behavior contract. Static schema and bundle checks cover version 7; live Bun/opencode integration remains environment-dependent.
 
 A complete technical reference for how the Loom multi-agent deliberation system works, from user input to final output. Every LLM prompt, every data structure, every decision point. Written for someone who cannot read the source code.
 
@@ -38,7 +38,7 @@ A complete technical reference for how the Loom multi-agent deliberation system 
 16. [Error Handling & Model Fallback](#16-error-handling--model-fallback)
 17. [Stall Detection](#17-stall-detection)
 18. [Extension and Resume](#18-extension-and-resume)
-19. [Vector Index, RAG, and PersonaIndex](#19-vector-index-rag-and-personaindex)
+19. [Embedding PersonaIndex](#19-embedding-personaindex)
 20. [Agent-Requested Tools](#20-agent-requested-tools)
 21. [Fast-Path Model Routing](#21-fast-path-model-routing)
 22. [Inline Peer Interactions: Query, Vote, Summon, Turn Requests](#22-inline-peer-interactions-query-vote-summon-turn-requests)
@@ -57,13 +57,13 @@ When a user approves and starts a deliberation from the dashboard Setup tab, thi
 1. **Room composition** — The question is analyzed for complexity, then a team of 2–7 agents is assembled without any LLM call: each per-tier role is filled by the persona (from `personas/<tier>/*.json`) whose embedded description is most semantically similar to the question (via `PersonaIndex`). Each agent gets a name, persona description, agenda, tier, and topic tags.
 2. **Model assignment** — Each agent is assigned an LLM model. Principal/senior tiers get the top available model (the session's model when present); remaining tiers get the next-best unused models. Explicit per-tier `models` selections from Setup win over automatic assignment. The discovery pool can be narrowed with the dashboard model filter (Setup tab, Section 26).
 3. **Rounds execute** — A round is a single sequential prompt phase:
-   - Each agent speaks in turn via a **round-scoped ephemeral session** (one session per participant per round), seeing the state of play, vector-RAG context, and recent contributions.
+   - Each agent speaks in turn via a **round-scoped ephemeral session** (one session per participant per round), seeing the state of play, its own bounded state, and current-round contributions.
    - Agents write **untyped prose** — there are no `[PROPOSE]`/`[CHALLENGE]` type tags anymore; following agents interpret content directly. Agents call `loom_pass` when they have nothing new to contribute.
    - During their turn agents can invoke **loom_\* interaction tools** (`loom_query`, `loom_vote`, `loom_summon`, `loom_request_next`, `loom_pass`) alongside research tools. These are plugin-registered tools that execute server-side during `session.prompt`: peer answers, ballots, and tallies are returned **inline in the same turn** and folded back into the speaker's final contribution via an optional same-turn synthesis pass (Section 22).
 4. **Round summarization** — After all agents speak, an LLM clerk summary is generated every round (Established / Contested / Evidence / Open bullets), degrading to a deterministic digest when the LLM returns empty (Section 13).
-5. **State of play update** — The state of play (decisions, agreements, disagreements, open questions, key facts, files involved) is regenerated from the full weave.
+5. **State of play update** — The state of play is primarily aggregated from each agent's bounded `Σⁱ` state. If patch coverage is incomplete, a deterministic full-weave digest is merged in as a safety fallback.
 6. **Turn order planning** — `planTurnOrder()` produces the next round's ordered participant list from `loom_request_next` requests (Section 9).
-7. **Termination** — Deterministic: (a) all participants have called `loom_pass` or failed, (b) the round limit reached, or (c) hard timeout/stall/token budget fires. The wall-clock hard timeout is disabled by default (`defaultMeetingTimeoutMs: 0` = no limit); stall watchdog (inactivity), token budget exhaustion, and user cancellation still terminate the meeting.
+7. **Termination** — Deterministic: (a) all participants have called `loom_pass` or failed after the configured minimum rounds, (b) the round limit reached, or (c) hard timeout/stall/token budget fires. Default limits are finite; users may explicitly set them to `0` where supported.
 8. **Synthesis** — One agent (typically the principal) synthesizes all contributions into a structured artifact with Decision, Reasoning, Action Items, Dissenting Views, Open Questions, and Confidence, then self-critiques it.
 9. **Output** — The run executes as a detached background job (HTTP returns immediately); progress streams via the dashboard Timeline tab and the final synthesis lands in the Output tab plus a full markdown report saved to `.opencode/loom/meetings/<meetingId>.md`. Nothing is returned to chat — the dashboard is the sole control plane, started with `/loom_viz`.
 
@@ -103,7 +103,7 @@ There is **no LLM domain detection** — the now-removed `domain` pipeline was r
 2. For each role tier in the role list, `PersonaIndex.search(question, tier, 5)` returns the 5 most similar personas for that tier (vector `vec_persona_embeddings_${dim} MATCH` filtered by tier, with fallback keyword scoring when vector unavailable); the first persona not already used is selected. Cache key is `model|quant|persona|tier|dim|fingerprint` (model-aware, `TUNING.EMBEDDING_CACHE_MAX` LRU).
 3. Selection is deterministic given the same question and persona index.
 4. Meeting-level `tags` are derived from the selected participants' most common tags (top 3).
-5. Estimated rounds: `base` high=4/medium=3/low=2 clamped to `±1` around `getConfig().defaultMaxRounds` (default 3) — `estimated = clamp(base, cfg-1, cfg+1)` (fresh DB: `participants.tags`/`expertise` persisted).
+5. Estimated rounds: `base` high=4/medium=3/low=2 clamped to `±1` around `getConfig().defaultMaxRounds` (default 4) — `estimated = clamp(base, cfg-1, cfg+1)` (fresh DB: `participants.tags`/`expertise` persisted).
 
 If the embedding service is unavailable, composition falls back to keyword-based `composeRoomByKeyword` (token overlap + `maxCosineDistance` relevance floor `minScore = max(1, floor(2*(1-maxDistance+0.15)))`), not an empty room; civilian generalist fills gaps.
 
@@ -273,23 +273,24 @@ Senior doctrine: name the irreversible commitment and its mitigation/rollback...
 ## Research Tools — Tool Ladder (use at most one research tool per turn unless an
    evidence request demands more)
 
-Available: websearch, webfetch, read, glob, grep, bash, loom_vector_search,
-           loom_query, loom_vote, loom_summon, loom_request_next, loom_pass    (only enabled ones listed)
+Available: websearch, webfetch, read, glob, grep, bash, loom_query, loom_vote,
+           loom_summon, loom_request_next, loom_pass, loom_state_patch
+           (only enabled ones are listed)
 
-Ladder: loom_vector_search (recall what was said → cheapest) → websearch (verify current
-        fact) → read/grep/glob (verify local file) → webfetch (deep dive ONLY after a search hit)
+Ladder: read/glob/grep (verify local files) → websearch (verify a current fact) →
+        webfetch (deep dive only after a search hit)
 
 For code analysis in this folder: prioritize read/glob/grep first — file=src/... citations require a read.
 
 Quality:
 - One focused query beats three vague ones. Synthesize, don't dump.
 - If a tool is rejected as invalid, retry with exact names above — don't silently fall back to memory.
-- Cite as Source: https://… or vec: round#id or file=src/... when it strengthens your point.
+- Cite as Source: https://… or file=src/... when it strengthens your point.
 ```
 
 Notes:
 
-- The tool list is assembled from `agentTools` config: built-ins plus the loom tools (`loom_vector_search`, `loom_query`, `loom_vote`, `loom_summon`, `loom_request_next`, `loom_pass`). When agent tools are disabled, the entire tool section is omitted. System prompt cache `systemPromptCache` is `TUNING.SYSTEM_PROMPT_CACHE_MAX` 50 LRU via `getSystemPromptCacheMax()` and keyed by `hashConfig` which now includes `agentTools` digest (`enabled|loom|builtIn|maxCalls|sameTurn`) — changing `agentTools` busts cache.
+- The tool list is assembled from `agentTools` config: built-ins plus the loom tools (`loom_query`, `loom_vote`, `loom_summon`, `loom_request_next`, `loom_pass`, `loom_state_patch`). There is no auto-injected prior-transcript RAG block; recall is supplied by the bounded state-of-play and live current-round contributions. When agent tools are disabled, the entire tool section is omitted. System prompt cache `systemPromptCache` is `TUNING.SYSTEM_PROMPT_CACHE_MAX` 50 LRU via `getSystemPromptCacheMax()` and keyed by `hashConfig` which includes `agentTools` digest (`enabled|loom|builtIn|maxCalls|sameTurn`) — changing `agentTools` busts cache.
 - `known_biases`: when a persona has more than two biases, they are deterministically rotated based on the participant name hash, so different agents surface different biases first.
 - There is no type-tag rule anywhere in the contract — agents write prose; calling `loom_pass` means pass.
 - Transcript `Live` block budgets `code 320 / prose 220` via `truncateAtSentence` (sentence-boundary, not mid-word `slice`).
@@ -420,10 +421,10 @@ For each agent (in turn order):
 1. Sets status to "speaking" (visible in dashboard); a fresh `batchId` is stamped for grouping inline interaction rows.
 2. Checks if the assigned model's circuit breaker is healthy. If open, a healthy fallback model is selected immediately and used from the first attempt (Section 16).
 3. Uses a **fixed timeout**: base `agentTimeoutMs` (240s), clamped down only near the meeting deadline — no reduction when agents fail.
-4. Builds vector-RAG context: the query text is the last 2 rounds' contributions (or the question if none yet); `retrieveRelevant(query, 10, currentRound)` returns up to 10 chunks, excluding the current round.
-5. Collects recent contributions: last 12 across current + previous rounds, `vote_response` rows excluded.
+4. Builds a bounded context from the agent's own `Σⁱ`, the shared state of play, and the current-round live contributions. It does not auto-retrieve prior transcript chunks.
+5. Collects current-round contributions: bounded live context with `vote_response` rows excluded.
 6. If this agent is first in the planned order, consumes any queued **steering hint** (contribution-mix nudge; Section 11/post-phase) and appends it to the user prompt.
-7. Sends system prompt + Weighted Golden Sandwich user prompt with a **boolean tool map** when agent tools are enabled (built-ins plus `loom_vector_search`, `loom_query`, `loom_vote`, `loom_summon`, `loom_request_next`).
+7. Sends system prompt + Weighted Golden Sandwich user prompt with a **boolean tool map** when agent tools are enabled (built-ins plus `loom_query`, `loom_vote`, `loom_summon`, `loom_request_next`, `loom_pass`, `loom_state_patch`).
 8. Extracts the response with `extractAgentResponse()` (last TextPart, all ToolParts, reasoning blocks). Inline loom tool calls have already executed server-side at this point — their contributions are already in the weave.
 9. Sanitizes content, parses the untyped response, stores the contribution plus any tool-derived turn request (Section 4).
 10. Runs the **same-turn synthesis pass** when loom interaction tools succeeded and text was produced (Section 4).
@@ -444,7 +445,7 @@ After the prompt phase:
 
 1. **Round summarization** (`summarizeRound`, Section 13) — LLM clerk summary every round; deterministic digest on empty responses.
 2. **State of play update** — `updateStateOfPlay(weave, question, tags)` regenerates the structured summary (Section 11).
-3. **Vector indexing** — `VectorIndex.indexRound()` embeds the round summary and contributions asynchronously, raced against a 5s guard timer (best-effort; timeout logs and continues).
+3. **No prior-transcript vector indexing** — embeddings are used for persona selection only; round text remains auditable in SQLite and is projected into bounded state.
 4. **Turn order planning** — `planTurnOrder()` produces the next round's ordered participant list (Section 9).
 5. **Termination checks** — all participants passed/failed, or `current_round >= max_rounds` (Section 10).
 6. **Contribution-mix steering** — if the round contained ≥3 challenges/dissents and no synthesis-type consolidation, a steering hint is queued for the next round's first speaker ("consolidate positions before opening a new challenge"). Cheap and prompt-level; no LLM call.
@@ -557,7 +558,7 @@ Each model used by agents tracks consecutive failures via the circuit breaker (S
 
 ## 8. Agent-Driven Termination
 
-Termination is agent-driven: agents call the `loom_pass` tool when they have nothing new to contribute. The meeting ends when all active participants have passed.
+Termination is agent-driven: agents call the `loom_pass` tool when they have nothing new to contribute. The meeting ends when all active participants have passed after the configured minimum rounds.
 
 ### The `loom_pass` Tool
 
@@ -594,7 +595,7 @@ loom_pass({ reason: "covered by #3" })
 | `current_round >= max_rounds` | guaranteed termination |
 | Hard timeout / stall / token budget / user cancellation | extrinsic stops |
 
-The absolute wall-clock timeout is disabled by default (`defaultMeetingTimeoutMs: 0` = no limit); stall watchdog, token budget, and user cancellation remain as extrinsic stops and proceed to synthesis.
+The absolute wall-clock timeout defaults to 30 minutes (`defaultMeetingTimeoutMs: 1,800,000`); set it to `0` only for an intentional unbounded run. Stall watchdog, token budget, and user cancellation remain as extrinsic stops and proceed to synthesis.
 
 Terminal statuses: `converged`, `cancelled`, `timeout`, `max_rounds_reached`, `aborted`.
 
@@ -680,19 +681,19 @@ The meeting terminates when any of these hold after a round:
 | All participants have called `loom_pass` or failed (`activeCount === 0`) | natural end — highest priority |
 | `current_round >= max_rounds` | guaranteed termination |
 
-The `meetings.convergence` column persists only as a display label (set to `"agent_driven"`). Termination is deterministic (see table above). The absolute wall-clock timeout is disabled by default (stall watchdog, token budget, and user cancellation remain as extrinsic stops) and proceeds to synthesis.
+The `meetings.convergence` column persists only as a display label (set to `"agent_driven"`). Termination is deterministic (see table above). The absolute wall-clock timeout defaults to 30 minutes and can be disabled explicitly; stall watchdog, token budget, and user cancellation remain as extrinsic stops and proceed to synthesis.
 
-Terminal statuses: `converged`, `cancelled`, `timeout`, `max_rounds_reached`, `aborted` (the last two surface via the state machine but are not produced by the current orchestration paths; `max_rounds_reached` is reserved).
+Terminal statuses: `converged`, `cancelled`, `timeout`, `max_rounds_reached`, and `aborted`. The current round finalizer produces `max_rounds_reached` when the active round cap is exhausted and `aborted` for mixed pass/fail exhaustion or unrecoverable finalization errors.
 
 ---
 
 ## 11. State of Play
 
-The state of play is the primary running context for agents. It replaces the old fabric-compaction system with a structured, always-accurate summary derived from the full weave.
+The state of play is the primary running context for agents. It replaces the old fabric-compaction system with a structured summary primarily aggregated from each agent's bounded `Σⁱ` state; a deterministic weave digest is merged when patch coverage is incomplete.
 
 ### What It Contains
 
-`updateStateOfPlay(weave, question, tags)` produces a markdown document with these sections:
+`aggregateStateOfPlay()` produces the markdown document with these sections; `updateStateOfPlay()` supplies the deterministic fallback when coverage is incomplete.
 
 ```markdown
 ## Question
@@ -770,7 +771,7 @@ The state of play is stored in `meetings.state_of_play` and updated after each r
 
 ### Why This Replaces Fabric Compaction
 
-The old system appended round summaries to a "fabric" string and compressed it past `maxFabricChars`. Problems: O(N²) token growth and information loss on compaction. The state of play is derived from the full weave (no loss) and bounded in size (no growth). Combined with ephemeral sessions, per-turn token growth is O(1). (The `fabric-*` naming remains in the DB only for the initial user context and the vector chunk tables.)
+The old system appended round summaries to a "fabric" string and compressed it past `maxFabricChars`. Problems: O(N²) token growth and information loss on compaction. The current state of play is derived from bounded per-agent state with a deterministic weave fallback when coverage is incomplete, and is bounded in size. Combined with ephemeral sessions, per-turn token growth is O(1). The legacy `fabric` column remains only for initial user context and compatibility.
 
 ---
 
@@ -935,7 +936,7 @@ After the draft, `validateSynthesisSections` requires: always — `Decision`, `R
 
 ### Self-Critique Pass
 
-The synthesizer then audits its own draft against the transcript (up to `MAX_CRITIQUE_RETRIES` = 2):
+The synthesizer then audits its own draft against the transcript (up to `MAX_CRITIQUE_RETRIES` = 3):
 
 ```
 Review the draft below against the deliberation transcript for:
@@ -1032,11 +1033,11 @@ stateManager.getAllParticipantStates()          // SoP aggregation + synthesis
 
 ### Persistence
 
-State is persisted via the `PersistenceService` after each round finalization and after terminal events (`#persistState`), atomically updating `meetings` with round, status, fabric, state_of_play, next_speaker_id, stats, `semantic_degraded`. Fresh DBs enforce `participants.tags`/`expertise` (FK `meetings(id)`), `UNIQUE(meeting_id,name)` + `UNIQUE(meeting_id,chunk_index)`. On resume, `restoreStateFromDb()` reconstructs from SQLite (participants with `tags/expertise` + `known_biases`/`communication_style`/`preferred_contribution_types`, weave, rounds, `turn_requests` with `FK` + `CHECK(priority 1..10, DEFAULT 1)`, `agent_errors` with `CHECK`, next speaker, call stats) and rehydrates `artifact`/`objections` if synthesized.
+State is persisted via the `PersistenceService` after each round finalization and after terminal events (`#persistState`), atomically updating `meetings` with round, status, fabric, state_of_play, next_speaker_id, stats, and degradation flags. Fresh DBs enforce participant tier/status checks, foreign keys, and `UNIQUE(meeting_id,name)`. On resume, `restoreStateFromDb()` reconstructs from SQLite (participants with behavioral persona fields, weave, rounds, `turn_requests` with `FK` + `CHECK(priority 1..10, DEFAULT 1)`, `agent_errors` with `CHECK`, next speaker, call stats) and rehydrates `artifact`/`objections` if synthesized.
 
 ### Per-Agent Execution State (SKILL.state)
 
-Each agent owns a bounded structured state `Σⁱ = { stance, established[], contested[], open[], facts[], files[], version, updated_round, updated_contribution_id }` (`src/state-patch.js`). In memory it lives in `StateManager.participantStates` (per-agent ownership — no two agents ever write the same slice); `buildSharedState` carries only a summary (counts + versions) to avoid inflating the per-round clone. Persisted in `participants.state_json` plus an append-only `state_patches` audit table (`UNIQUE(meeting_id, participant_id, version)`, `ON DELETE CASCADE`), schema `user_version 6`. `version++` happens only on successfully applied patches; failed validation, empty patches, and misses mutate nothing and write no row. Resume/extension carries all `Σⁱ` forward (`restoreParticipantStates`); missing/corrupt rows seed deterministically (reflection-seeded when available, else empty, `rebuilt: true`). Full spec: `plans/skill-state-complementary-implementation.md`.
+Each agent owns a bounded structured state `Σⁱ = { stance, established[], contested[], open[], facts[], files[], version, updated_round, updated_contribution_id }` (`src/state-patch.js`). In memory it lives in `StateManager.participantStates` (per-agent ownership — no two agents ever write the same slice); `buildSharedState` carries only a summary (counts + versions) to avoid inflating the per-round clone. Persisted in `participants.state_json` plus an append-only `state_patches` audit table (`UNIQUE(meeting_id, participant_id, version)`, `ON DELETE CASCADE`), schema `user_version 7`. During a primary turn the validated patch is held in `StateManager`; the contribution, participant state, and patch audit row commit in one SQLite transaction. `version++` happens only on successfully applied patches; failed validation, empty patches, and misses mutate nothing and write no row. Resume/extension carries all `Σⁱ` forward (`restoreParticipantStates`); missing/corrupt rows seed deterministically (reflection-seeded when available, else empty, `rebuilt: true`). Full spec: `plans/skill-state-complementary-implementation.md`.
 
 **Bounded by construction (`STATE_PATCH_CAPS`).** Each bucket holds ≤ `buckets` (8) items — ≤ `buckets + reserve` (10) transiently, reported in `overCap`; `stance` ≤400ch, bullets ≤280ch, files ≤160ch; ≤3 adds and ≤5 removes per call. `renderMyStateMarkdown` slices to `buckets`, and `aggregateStateOfPlay` caps every shared bucket at `buckets`, so prompt footprint is flat in `T`.
 
@@ -1044,7 +1045,7 @@ Each agent owns a bounded structured state `Σⁱ = { stance, established[], con
 
 **Merge invariants (`applyStatePatch`, pure + deterministic).** Cross-bucket adds move rather than duplicate (a blocked move by pinned evidence skips the add entirely, recorded in `skipped`); ungrounded `facts_add` entries quarantine into `open` *through the same cap/FIFO path* as any other write; `remove[]` matches on trimmed + whitespace-collapsed + lowercased keys and may match across buckets; stance clearing is done by `remove`ing the current stance (the schema requires non-empty).
 
-**Persistence ordering.** The durable `participants.state_json` write happens *before* the in-memory state is published, and `setParticipantState` returns `true` / `null` (DB predates state columns) / `false` (real failure). On `false` the tool rolls back and returns `persistenceFailed` so the executor re-asks, rather than reporting `applied` for state that exists only in RAM.
+**Persistence ordering.** A primary-turn patch is queued in memory and committed with the contribution, `participants.state_json`, and `state_patches` in one transaction. The in-memory state is published only after that commit succeeds. A failed transaction leaves both the weave and participant state unchanged, so the executor can record persistence degradation without reporting a state-only success.
 
 **Per-turn patch outcome enum (observability, never gating).** Because the retry is deliberately non-fatal, "no patch" has several causes that a single counter collapses. Every primary turn records exactly one of `applied | exempt_pass | never_attempted | rejected | unverified | skipped_deadline | disabled` on `contributions.prompt_context.state_patch_outcome` (plus `state_patch_detail` for rejections), stored on the already-persisted blob so no schema migration is needed for observability. `never_attempted` is the behavioral signal (the tool was offered and ignored); `rejected` is validation/persistence; `skipped_deadline` means `<15s` remained so the retry was never sent.
 
@@ -1071,7 +1072,7 @@ Agent turns are now **retried** — the old "run once and fail" behavior is gone
 3. **Fallback model** — when the primary model's retries are exhausted (and `modelFallback.enabled`, default true), `selectFallbackModel()` picks a healthy model from the discovered pool that is *not* the failing model (random among the healthy candidates) and the turn is attempted on it (up to `modelFallback.maxFallbackAttempts` retries after the first fallback attempt), with the same backoff. A progress message announces the switch ("⚠️ Model X failed — retrying with Y").
 4. **Failure** — only when the primary and fallback attempts are all exhausted does the agent's status become `failed`, an `agent_errors` row is written with type `model_fallback` (`Model: X, No fallback available` or `Original: X, Fallback: Y — <error>`), and the agent is skipped for the rest of the round.
 
-Every failed/finished turn path is precomputed once: **RAG context, system prompt, and user prompt are built model-independent and reused across retries/fallbacks** (no duplicate RAG calls). When the circuit breaker already marks the assigned model `open`, the turn starts directly on a fallback model without retrying the unhealthy one.
+Every failed/finished turn path is precomputed once: **bounded state context, system prompt, and user prompt are built model-independent and reused across retries/fallbacks** (no duplicate context-building calls). When the circuit breaker already marks the assigned model `open`, the turn starts directly on a fallback model without retrying the unhealthy one.
 
 **Inline-tool side effects across retries:** loom interaction tools execute server-side *during* `session.prompt`. If an attempt fails after those side effects landed, the retried response will not re-contain those ToolParts — the peer contributions already live in the weave (deduplicated by batch+target+question idempotency keys, Section 22), and the gap is surfaced via an explicit `attempt_failed_possible_tool_side_effects` log instead of silently disappearing.
 
@@ -1106,7 +1107,7 @@ Per-model failure tracking (`circuitBreaker.failureThreshold: 3`, `circuitBreake
 
 ### Database Errors
 
-Database operations are wrapped in try-catch; best-effort operations log and continue. Fresh DBs enforce `CHECK(status/tier/round/type/priority)` + `UNIQUE(meeting_id,chunk_index)` + `FK(meetings→participants→contributions)` at `initSchema()` (`user_version 2`); there is no migration machinery — `schema.js` ships `initSchema()` with the final schema (alpha: DBs are wiped whenever a session is deleted, `MIGRATIONS[1]` is no-op). `storeFabricChunk` is always `BEGIN IMMEDIATE` around `MAX+1`+`INSERT` (vector + non-vector), `SAVEPOINT loom_txn_*` for nested `MeetingDatabase.transaction()`. `isSafeBashCommand` post-hoc sandbox in `execute-turn.js:132` blocks `--upload-pack`/`-exec`/`-R`/`--exec` (permissive, allows `git ls-files --cached`).
+Database operations are wrapped in try-catch; best-effort operations log and continue. Schema changes run through the ordered migration list in `src/database/schema.js`; current schema is version 7. `MeetingDatabase.transaction()` uses savepoints, and meeting/report writes are file-permission restricted.
 
 Indexing and other best-effort operations log and continue.
 
@@ -1144,8 +1145,8 @@ When a user extends an existing meeting from the Setup tab (`POST /api/meetings/
 2. A `MeetingOrchestrator` is constructed with `resume: true`; `restoreStateFromDb()` rebuilds state from the SQLite DB.
 3. `extendMeeting(newPrompt)` (via `MeetingExtender`) appends the new input to the fabric: `**User Input:** <new prompt>`.
 4. Status is force-transitioned back to `"weaving"`.
-5. `max_rounds` increases by 4 (`EXTENSION_EXTRA_ROUNDS`).
-6. All participants are reset to `"listening"`.
+5. `max_rounds` increases by a bounded amount derived from configuration (2–6 rounds; fallback 4).
+6. All persisted participants, including behavioral persona fields and state, are restored and reset to `"listening"`.
 7. The weaving loop runs again from the current round, then synthesis runs again.
 
 Extension is rejected with HTTP 409 while another deliberation is running. Every start is a fresh meeting — there is no `fresh` flag anymore.
@@ -1156,83 +1157,49 @@ From the database: participants (with personas, tiers, models, status, reflectio
 
 ---
 
-## 19. Vector Index, RAG, and PersonaIndex
+## 19. Embedding PersonaIndex
 
-### The Vector Tables
+Loom uses local embeddings for **persona selection only**. It does not auto-retrieve prior transcript chunks into agent prompts and does not maintain a fabric-RAG index. Prior contributions remain durable in SQLite, while each agent carries a bounded `Σⁱ` state and receives the shared state of play plus current-round live contributions.
 
-`VectorIndex` provides semantic retrieval over prior deliberation context, backed by sqlite-vec virtual tables (dim-parameterized `vec_*_${dim}` via `vecTableName(prefix,dim)` / `sanitizeDim` helper, `CHECK` + `UNIQUE` on `fabric_chunks`):
+### Stored Tables
 
 | Table | Purpose |
 |-------|---------|
-| `fabric_chunks` | Regular table: chunked content (`CHECK(source IN ('round_summary','contribution','context'))`, `UNIQUE(meeting_id,chunk_index)`) |
-| `vec_fabric_chunks_${dim}` | sqlite-vec virtual table: `embedding float[${dim}]` — used for agent RAG (dim from `getEmbeddingDim()`, `TUNING.VEC_SEARCH_TOPK`/`FABRIC_CHUNK_MAX_TOKENS`/`CONTEXT_CHAR_PER_TOKEN`) |
-| `persona_embeddings` | Regular table: embedded persona text (`persona_name`, `tier CHECK`, `tags`, `embedding_text`) |
-| `vec_persona_embeddings_${dim}` | sqlite-vec virtual table: `embedding float[${dim}]` — used for room composition (meeting-scoped, tier-filtered) |
+| `persona_embeddings` | Meeting-scoped persona text (`persona_name`, tier, tags, embedding text) |
+| `vec_persona_embeddings_${dim}` | Optional sqlite-vec index used for tier-filtered persona similarity |
+
+The vector table is created lazily with a validated embedding dimension. If sqlite-vec or the model is unavailable, `semantic_degraded` is surfaced and composition falls back to keyword/tag matching.
 
 ### Embedding Service
 
-The embedding service (`embedding-service.js`) provides a pluggable embedding interface backed by a local ONNX model:
+The local ONNX embedder uses `onnxruntime-node` and `@huggingface/tokenizers`. The default is `Snowflake/snowflake-arctic-embed-xs` (384 dimensions, 512 maximum tokens, INT8). Model files live under `<opencode-config-dir>/loom/models/`; runtime dependencies are resolved from the installed plugin dependencies or the project `node_modules` during development. Model metadata and tokenizer checksums are validated before loading.
 
-- **ONNX Runtime model:** `onnxruntime-node` for inference, `@huggingface/tokenizers` for tokenization. Default model **Snowflake/snowflake-arctic-embed-xs** (~22 MB, 384 dims, BERT architecture, int8 quantized, `maxTokens` 512). Runs entirely locally.
-- **Model resolution:** onnxruntime-node and the tokenizers are marked as esbuild externals; at runtime they're resolved from a dedicated deps directory at `~/.config/opencode/loom/deps/node_modules/` via `createRequire`, with a fallback to the project's `node_modules` for local development.
-- **Model download:** the default model is installed by `npm run install:plugin` via `scripts/model.mjs` into `~/.config/opencode/loom/models/<name>/model.json` (specifies dims, maxTokens, modelType, quant path).
-- **Initialization:** `initEmbeddingModel()` runs eagerly when the dashboard starts, lazily on first use by composition/RAG/vector indexing, and on plugin startup via `ensureEmbedderInitialized()`. The dashboard shows embedder status (loading/ready/failed).
+### Composition Flow
 
-The `embed()` path tokenizes text, builds `input_ids`/`attention_mask`/`token_type_ids` tensors, runs the session, extracts `last_hidden_state`, mean-pools over non-padding tokens, and L2-normalizes to a `Float32Array` of length `dims`.
+1. The meeting row is created first so persona embeddings satisfy their meeting foreign key.
+2. `PersonaIndex.indexAll()` embeds each persona's description, agenda, tags, and expertise with bounded concurrency.
+3. For each requested tier, `PersonaIndex.search()` performs a tier-filtered similarity lookup and returns ranked candidates.
+4. The composer selects the first unused candidate; if embeddings are unavailable, the keyword/tag composer selects a bounded room instead.
+5. The dashboard requires explicit persona and model approval before any meeting starts.
 
-### Chunking Strategy
+### Degraded Mode
 
-`#chunkText` splits on paragraphs (`\n\n`), merging paragraphs up to `maxTokens × charsPerToken` characters (`charsPerToken` 2 for CJK/code-heavy else `TUNING.CONTEXT_CHAR_PER_TOKEN` 4, `maxTokens` from `getEmbeddingMaxTokens()` or `TUNING.FABRIC_CHUNK_MAX_TOKENS` fallback; dense detection `[\u3040-\u9FFF]`). Oversized paragraphs hard-split by sentence/word boundaries. Each chunk is stored with a source tag: `round_summary`, `contribution`, or `context`.
-
-### Indexing Flow
-
-- **At meeting start** (non-resume): the user context is indexed via `indexContext()` — fire-and-forget (shared `#indexChunks(pending,label)` helper deduplicates `indexRound`/`indexContext`).
-- **After each round**: `indexRound(roundNumber, summary, contributions)` chunks and embeds the summary (source `round_summary`) and each contribution (source `contribution`, prefixed `[participant_id] (type):`). Batch embed concurrency 4, `storeFabricChunk` `BEGIN IMMEDIATE` around `MAX+1`+`INSERT` for both vector/non-vector, `storeFabricEmbedding` via `vecTableName`. Best-effort (`.catch(logger.warn)`); `semantic_degraded` set only when all embeds fail, cleared only on tier-matched `vec` hit (tier-filtered `searchPersonaEmbeddings`).
-- **Personas**: `PersonaIndex.indexAll(personas)` embeds `persona + agenda + tags + expertise` text per persona at composition time (meeting-scoped, cache `model|quant|dim|fingerprint` `TUNING.EMBEDDING_CACHE_MAX` LRU, concurrency 4).
-
-### Retrieval Flow
-
-```javascript
-const recentContribs = weave.filter((c) => c.round >= currentRound - 1);
-const queryText = recentContribs.length > 0
-  ? recentContribs.map((c) => c.content).join("\n")
-  : stateManager.getQuestion();
-const ragChunks = await vectorIndex.retrieveRelevant(queryText, 10, currentRound);
-```
-
-`retrieveRelevant(queryText, topK, excludeRound)`:
-1. Embeds the query.
-2. Runs cosine similarity search (`vec_fabric_chunks MATCH`, fetching topK+5).
-3. Excludes chunks from the current round (avoids self-referencing).
-4. Returns topK results.
-
-**RAG query:** the query text is the last two rounds' contributions (filtered by round and not excluded), joined into a single string. If no contributions exist yet, the meeting question is used instead. Different agents can still retrieve different "relevant" context because each agent's own contributions may differ from the group's.
-
-### How RAG Context Appears in Agent Prompts
-
-```
-<<<LOOM_RELEVANT_PRIOR_CONTEXT>>>_BEGIN_
-[Round 1] The JWT migration makes sense, but token revocation is unsolved...
-[Round 2] Refresh tokens with server-side storage defeats statelessness...
-<<<LOOM_RELEVANT_PRIOR_CONTEXT>>>_END_
-```
-
-When no RAG context is available (early rounds, empty index), this section is omitted.
+Embedding initialization and indexing are best-effort. A missing native dependency, invalid model file, unavailable sqlite-vec extension, or provider failure must not prevent a meeting from starting. The meeting records the degradation and continues with deterministic keyword composition. Agent prompts never depend on a successful embedding call.
 
 ---
 
 ## 20. Agent Tooling — Built-ins + Plugin-Registered Loom Tools
 
-Agent tooling is split between **built-in OpenCode tools** (web_fetch, read, bash, etc.) and **plugin-registered loom tools** (loom_query, loom_vote, loom_summon, loom_request_next, loom_vector_search). Both sets flow into agent prompts through the same mechanism: `agentTools` config → `tools` body map → OpenCode server maps to provider tool definitions.
+Agent tooling is split between **built-in OpenCode tools** (webfetch, websearch, read, glob, grep, and optional bash) and **plugin-registered loom tools** (loom_query, loom_vote, loom_summon, loom_request_next, loom_pass, loom_state_patch). Both sets flow into agent prompts through the same mechanism: `agentTools` config → `tools` body map → OpenCode server maps to provider tool definitions.
 
 ### Tool Sets by Phase
 
 | Phase | Built-in | Loom Plugin | tool_choice |
 |-------|----------|-------------|-------------|
-| Primary agent turn | `web_fetch`, `web_search`, `read`, `glob`, `grep`, `bash` (allowlisted) | `loom_query`, `loom_vote`, `loom_summon`, `loom_request_next`, `loom_pass`, `loom_state_patch`, `loom_vector_search` | `auto` |
-| Query/Evidence response (peer) | `web_fetch`, `web_search`, `read`, `loom_vector_search` | *(none)* | `auto` / `required` (evidence) |
+| Primary agent turn | `webfetch`, `websearch`, `read`, `glob`, `grep` (bash only when explicitly enabled and allowlisted) | `loom_query`, `loom_vote`, `loom_summon`, `loom_request_next`, `loom_pass`, `loom_state_patch` | `auto` |
+| Query/Evidence response (peer) | `webfetch`, `websearch`, `read` | *(none)* | `auto` / `required` (evidence) |
 | Vote response (peer) | *(none)* | *(none)* | `none` — bare `[Vote: X]` ballot |
-| Summoned expert | `web_fetch`, `web_search`, `read`, `loom_vector_search` | *(none)* | `auto` |
+| Summoned expert | `webfetch`, `websearch`, `read` | *(none)* | `auto` |
 
 **Not granted to agents**: `write`, `edit`, `tui`, `todo`, `lsp`, `comment`, `snapshot`, `permissions`.
 
@@ -1241,12 +1208,11 @@ Agent tooling is split between **built-in OpenCode tools** (web_fetch, read, bas
 | Tool | Source File | Purpose |
 |------|-----------|---------|
 | `loom_query` | `plugin/tools/query-evidence.js` | Query peers with 7 modes (clarify/perspective/evidence/critique/risks/assumptions/alternatives) — returns inline for same-turn synthesis |
-| `loom_vote` | `plugin/tools/vote-summon.js` | Call a lettered poll — fan-out to all active participants, inline tally |
+| `loom_vote` | `plugin/tools/vote-summon.js` | Call a lettered poll — fan-out to all other active participants, inline tally |
 | `loom_summon` | `plugin/tools/vote-summon.js` | Summon a guest expert persona for one additive contribution |
 | `loom_request_next` | `plugin/tools/meta.js` | Request priority speaking slot in next round |
 | `loom_pass` | `plugin/tools/pass.js` | Pass on current turn; deliberation ends when all participants pass |
 | `loom_state_patch` | `plugin/tools/state-patch.js` | Project stance + bullets to next round (mandatory per primary turn, one retry) |
-| `loom_vector_search` | `plugin/tools/vector-search.js` | Semantic similarity search against prior deliberation chunks |
 
 All loom tools resolve the current meeting from `context.sessionID` via the session-index, then delegate to the in-memory `activeLooms` engine for state/session/database access. Shared helpers `src/plugin/tools/shared.js:1` centralize `resolveCaller` (session→speaking→weave→any), `resolveModel` (borrow any healthy participant model), `buildBatchId` (`inline-${meetingId}-${round}-${callerId}`), and `TERMINAL_STATUSES` (re-exported from `src/constants.js:3`).
 
@@ -1260,19 +1226,18 @@ src/index.js (Loom factory)
   → tool("loom_request_next", createMetaTools({ config }))
   → tool("loom_pass", createPassTool({ config }))
   → tool("loom_state_patch", createStatePatchTool({ config, resolveMeeting, activeLooms }))
-  → tool("loom_vector_search", createVectorSearchTool({ config, resolveMeeting }))
 
 When an agent turn starts:
   MeetingOrchestrator → RoundExecutor
     → client.session.prompt({ body: { tools: toolsMap } })
 ```
 
-The `tools` body field is a **boolean filter map** (e.g. `{ web_fetch: true, loom_query: true }`); the opencode server maps enabled tools to provider-format tool definitions automatically. Built-in tools are gated by `agentTools.builtIn.*`; loom tools by `agentTools.loom.*`.
+The `tools` body field is a **boolean filter map** (e.g. `{ webfetch: true, loom_query: true }`); the opencode server maps enabled tools to provider-format tool definitions automatically. Built-in tools are gated by `agentTools.builtIn.*`; loom tools by `agentTools.loom.*`.
 
 ### Agent Guidance
 
 When loom tools are enabled, the system prompt includes:
-- **Research-first guidance** for `loom_vector_search` ("search before you claim").
+- **Research-first guidance** for configured research tools ("search before you claim").
 - **Query-mode guidance** (`loom_query` modes table embedded in system prompt) — callers use modes to specify the kind of response they want.
 - **Evidence requests** additionally require "You MUST use at least one research tool to find concrete evidence. Do NOT speculate or reason from memory alone."
 
@@ -1283,8 +1248,8 @@ When loom tools are enabled, the system prompt includes:
   "agentTools": {
     "enabled": true,
     "builtIn": {
-      "web_fetch": true, "web_search": true, "read": true,
-      "bash": { "enabled": true, "allowlist": ["git", "ls", "wc", "head", "tail", "grep", "find"] },
+      "webfetch": true, "websearch": true, "read": true,
+      "bash": { "enabled": false, "allowlist": ["git", "ls", "wc", "head", "tail", "grep", "find"] },
       "glob": true, "grep": true, "lsp": false
     },
     "loom": {
@@ -1293,11 +1258,10 @@ When loom tools are enabled, the system prompt includes:
       "loom_summon": true,
       "loom_request_next": true,
       "loom_pass": true,
-      "loom_state_patch": true,
-      "loom_vector_search": true
+      "loom_state_patch": true
     },
-    "maxToolCallsPerTurn": 5,
-    "maxToolOutputTokens": 4000
+    "maxToolCallsPerTurn": 12,
+    "maxToolOutputTokens": 12000
   }
 }
 ```
@@ -1307,19 +1271,19 @@ When loom tools are enabled, the system prompt includes:
 | `enabled` | `true` | Master switch for all agent tools |
 | `builtIn.*` | (see above) | Enable built-in tools for agent turns |
 | `builtIn.bash.allowlist` | `["git","ls","wc","head","tail","grep","find"]` | Only these commands via bash |
-| `loom.*` | all `true` | Enable loom plugin tools (query/vote/summon/request_next/pass/state_patch/vector_search) |
-| `maxToolCallsPerTurn` | `5` | Soft limit — exceeding logs a warning (not truncated) |
-| `maxToolOutputTokens` | `4000` | Contract limit on tool output volume (drives server-side truncation) |
+| `loom.*` | all `true` | Enable loom plugin tools (query/vote/summon/request_next/pass/state_patch) |
+| `maxToolCallsPerTurn` | `12` | Hard per-turn Loom tool-call limit enforced before execution |
+| `maxToolOutputTokens` | `12000` | Warning threshold for stored tool-output volume; synthesis context remains bounded |
 
 ### Risk Mitigations
 
 | Risk | Mitigation |
 |------|-----------|
 | Prompt injection via tool outputs | Tool outputs feed the final text only; content is sanitized + `delimitContext` fenced `PEER_CONTRIBUTIONS`/`STATE_OF_PLAY` in `buildSummonPrompt` |
-| Bash command execution | Allowlisted commands only; post-hoc `isSafeBashCommand` (`--upload-pack`/`-exec`/`-R`/`--exec`, `find -execdir`) in `execute-turn.js:132` (permissive, allows `git ls-files --cached`) |
-| Filesystem exposure | `read` via opencode SDK sandbox; `paths.js:getMeetingDbPath` `realpathSync` jail + `isAssetPathSafe` fullwidth `%` NFC |
-| Embedding model unavailable | `embedText` throws; `retrieveRelevant` catches and returns `[]`, composition falls back to keyword `maxCosineDistance` floor |
-| Loom tool side effects on retry | Inline peer contributions persisted via idempotency keys (`batchId+target+question`, `vote` batch); retried prompts do not duplicate; abort re-checks in `query-evidence.js:102`/`vote-summon.js:142` |
+| Bash command execution | Disabled by default; when explicitly enabled, only allowlisted executables and conservative argument checks are accepted before execution. Shell composition, interpreters, `-exec`, and recursive flags are rejected. |
+| Filesystem exposure | `read` via opencode SDK sandbox; meeting IDs and dashboard asset paths are validated; model names reject traversal segments; files use restrictive permissions where supported |
+| Embedding model unavailable | Persona composition falls back to keyword/tag matching and records `semantic_degraded`; no prior-transcript retrieval is required |
+| Loom tool side effects on retry | Inline peer contributions persisted via normalized question/batch idempotency keys; retried prompts reuse existing responses; abort re-checks in `query-evidence.js:102`/`vote-summon.js:142` |
 
 ---
 
@@ -1392,7 +1356,7 @@ One call can query multiple peers (1 per item). Each item specifies a `target` (
 
 **Signature:** `loom_vote({ question })`
 
-Fan-out to **all active participants** (source + every non-failed/passed/muted participant). The source's ballot is parsed from its own contribution content; all others are prompted in parallel.
+Fan-out to **all other active participants** (the source does not ballot; failed/passed participants are excluded). Each voter is prompted in parallel and the source interprets the returned tally.
 
 - **Prompt** (`buildVotePrompt`): poll question, source's contribution, voter's last 2 contributions and stored reflection, round context.
 - **Ballot format:** `[Vote: <letter>]` + 1–2 sentences reasoning. `extractVoteLetter()` accepts the tag or a standalone capital letter.
@@ -1409,7 +1373,7 @@ Brings in a **guest expert** from the persona pool (matched by name across all t
 
 - **Rate limits:** `maxSummonsPerRound` (2), `maxSummonsPerAgent` (1) — tracked per round.
 - **Model:** the summoning agent's own model.
-- **Tools:** `web_fetch`, `web_search`, `read`, `loom_vector_search` (no bash/glob/grep — least privilege for guests).
+- **Tools:** `webfetch`, `websearch`, `read` (no bash/glob/grep — least privilege for guests).
 - **Prompt** (`buildSummonPrompt`): persona expertise, communication style, requester's issue, recent context (last 4 contributions), round context.
 - **Contribution:** type `summoned_response`, participant id `summoned_<slug>`, content prefixed `[Summoned: <Name> (<tier>)]`.
 
@@ -1601,37 +1565,39 @@ The appendix table lists every model-related configuration key (`fastPathModel`,
 
 ## Appendix: Key Configuration Values
 
-Loaded from `.loomrc.json` (project or `~/.config/opencode/.loomrc.json`), or the legacy `opencode.json` `"loom"` key. Validated and merged over defaults; unknown keys warn and are ignored. `DEFAULT_CONFIG.tuning` is `JSON.parse(JSON.stringify(TUNING))` deep-clone (not ref) — per-meeting `createMeetingConfig()` deep-freezes.
+Loaded from `.loomrc.json` (project or `<opencode-config-dir>/.loomrc.json`), or the legacy `opencode.json` `"loom"` key. Validated and merged over defaults; unknown keys warn and are ignored. `OPENCODE_CONFIG_DIR` selects the shared Loom data root when no workspace is supplied. `DEFAULT_CONFIG.tuning` is `JSON.parse(JSON.stringify(TUNING))` deep-clone (not ref) — per-meeting `createMeetingConfig()` deep-freezes.
 
-`TUNING` (23 keys, `src/config/defaults.js:1`): `MAX_ITERATIONS 100` (weaving loop guard `weaving.js:71`), `WATCHDOG_TICK_MS 30000` (`stall-watchdog.js:47`), `RING_BUFFER_SIZE 500` (`logger.js:9`), `SKIP_PASSED_*` (3,10,2), `EXTENSION_EXTRA_ROUNDS_FALLBACK 4`, `MAX_CRITIQUE_RETRIES 2` (`synthesis-coordinator.js:10`), `SYSTEM_PROMPT_CACHE_MAX 50` (`prompts/agent.js:10`), `EMBEDDING_CACHE_MAX 512` (`persona-index.js:15`), `LATENCY_SAMPLE_LIMIT 100` (`metrics.js:19`), `DASHBOARD_IDLE_TIMEOUT_MS 60000` (`poll.js:60`), `MAX_DB_CACHE_SIZE 10` (`dashboard/api.js:11`), `VOTE_TIMEOUT_MS 60000`/`SUMMON_TIMEOUT_MS 90000` (`vote-summon.js:175,317`), `FABRIC_CHUNK_MAX_TOKENS 512`/`VEC_SEARCH_TOPK 10`/`CONTEXT_CHAR_PER_TOKEN 4` (`vector-index.js:101`), `CONTENT_TRUNCATION`/`TRANSCRIPT_BUDGET`/`STATE_OF_PLAY` budgets, `TERMINAL_STATUSES` (`constants.js:3`) central.
+`TUNING` (current constants, `src/config/defaults.js:1`): `MAX_ITERATIONS 100` (weaving loop guard), `WATCHDOG_TICK_MS 30000`, `RING_BUFFER_SIZE 500`, `SKIP_PASSED_*` (3,10,2), `EXTENSION_EXTRA_ROUNDS_FALLBACK 4`, `MAX_CRITIQUE_RETRIES 3`, `SYSTEM_PROMPT_CACHE_MAX 50`, `EMBEDDING_CACHE_MAX 512`, `LATENCY_SAMPLE_LIMIT 100`, `DASHBOARD_IDLE_TIMEOUT_MS 60000`, `MAX_DB_CACHE_SIZE 10`, `VOTE_TIMEOUT_MS 60000`/`SUMMON_TIMEOUT_MS 90000`, and bounded state/transcript budgets. There is no fabric-RAG tuning or vector search tool in the current agent context path.
 
-DB fresh `meetings`/`participants`/`fabric_chunks` enforce `CHECK` + `UNIQUE` + `FK` at `initSchema()`; `storeFabricChunk` always `BEGIN IMMEDIATE`.
+DB fresh `meetings`/`participants`/`persona_embeddings` enforce `CHECK` + `UNIQUE` + `FK` at `initSchema()`; ordered migrations bring existing databases to schema version 7.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `agentTimeoutMs` | 240,000 | Per-agent LLM call timeout (fixed — no failure-based reduction) |
 | `synthesisTimeoutMs` | 180,000 | Synthesis draft/critique call timeout |
-| `maxTurnRequestWords` | 200 | (Reserved — not enforced by current planner) |
-| `defaultMaxRounds` | 3 | Default meeting rounds |
+| `defaultMaxRounds` | 4 | Default meeting rounds |
 | `minRounds` | 2 | Minimum rounds before the meeting can end (agents cannot pass before this) |
 | `fastPathModel` | `""` | Model for cheap orchestrator calls (empty = disabled) |
 | `maxRetryAttempts` | 2 | Retries for session creation / orchestrator prompts |
 | `retryBaseDelayMs` | 1,000 | Base retry delay |
 | `retryMaxDelayMs` | 8,000 | Max retry delay |
 | `synthesisMaxRetries` | 1 | Draft section-repair retries |
-| `defaultMeetingTimeoutMs` | 0 | Absolute meeting deadline disabled (no limit; stall/token/user cancel only) |
+| `defaultMeetingTimeoutMs` | 1,800,000 | Absolute meeting deadline; set `0` only for an intentional unbounded run |
 | `stallTimeoutMs` | 600,000 | Inactivity stall timeout (watchdog ticks every 30s) |
 | `modelDiversity` | `true` | Give each agent a distinct model when enough are available |
-| `turnRequestThresholds.autoGrant` | `9` | (Reserved — not exercised) |
-| `maxTurnRequestsPerRound` | `3` | (Reserved — not exercised) |
 | `maxSummonsPerRound` | `2` | Summoned experts per round |
+| `maxQueryTargetsPerTurn` | `3` | Maximum peer targets in one `loom_query` call |
+| `maxToolCallsPerTurn` | `12` | Maximum Loom interaction calls per turn; enforced before execution |
+| `agentTools.maxToolOutputTokens` | `12,000` | Warning threshold for stored tool-output volume; synthesis context remains bounded |
+| `maxTotalTokens` | `500,000` | Default total token budget; set `0` only for an intentional unbounded run |
 | `maxSummonsPerAgent` | `1` | Summons per agent per round |
 | `circuitBreaker.failureThreshold` | `3` | Consecutive failures before a model is marked unhealthy |
 | `circuitBreaker.resetTimeoutMs` | 300,000 | Half-open test window for an unhealthy model |
 | `modelFallback.enabled` | `true` | Master switch for agent-turn retries + fallback model selection (Section 16) |
 | `modelFallback.maxRetriesPerModel` | `2` | Retries on the same model before falling back |
 | `modelFallback.maxFallbackAttempts` | `1` | Retries on the selected fallback model |
-| `sameTurnSynthesis` | `true` | Peer responses returned inline for same-turn synthesis (Section 22) |
-| `agentTools.*` | (see Section 20) | Tool enablement — built-in tools + loom plugin tools (query/vote/summon/request_next/pass/state_patch/vector_search) |
-| `DEFAULT_EMBEDDING_MODEL` | `"Snowflake/snowflake-arctic-embed-xs"` | Default embedder for PersonaIndex and vector search (warmed up on dashboard start) |
+| `agentTools.sameTurnSynthesis` | `true` | Peer responses returned inline for same-turn synthesis (Section 22) |
+| `agentTools.*` | (see Section 20) | Tool enablement — built-in tools + loom plugin tools (query/vote/summon/request_next/pass/state_patch) |
+| `agentTools.builtIn.bash.enabled` | `false` | Bash is disabled unless explicitly enabled with a safe allowlist |
+| `DEFAULT_EMBEDDING_MODEL` | `"Snowflake/snowflake-arctic-embed-xs"` | Default embedder for persona selection (warmed up on dashboard start) |
 | `DEFAULT_EMBEDDING_QUANT` | `"onnx/model_int8.onnx"` | ONNX quantization variant used by the embedder |

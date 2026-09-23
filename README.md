@@ -10,7 +10,7 @@ You ask a question. The Loom uses embedding-based similarity search (no LLM doma
 
 Agents deliberate in structured rounds. During a turn an agent isn't limited to writing prose — it interacts with peers directly through real tool calls: `loom_query` queries specific peers (with seven answer modes: factual clarify, stance-taking perspective, forced-research evidence, adversarial critique, risk analysis, assumption surfacing, alternatives), `loom_vote` polls everyone on lettered options, `loom_summon` brings in a guest expert persona, and `loom_request_next` claims speaking priority for the next round. Peer answers, ballots, and tallies are returned **inline within the same turn**, so the speaker synthesizes them into their contribution immediately instead of waiting for future rounds.
 
-Termination is deterministic: everyone passes or fails, the round limit is reached, or a hard timeout or token budget fires. Agents pass by calling the `loom_pass` tool — the meeting ends when all active participants have passed. Once the meeting ends, a neutral **synthesizer** produces the final artifact: decisions, action items, unresolved dissent, and a confidence level, then self-critiques its draft against the transcript.
+Termination is deterministic: after the configured minimum rounds, everyone passes or fails, the round limit is reached, or a hard timeout or token budget fires. Agents pass by calling the `loom_pass` tool — the meeting ends when all active participants have passed. Once the meeting ends, a neutral **synthesizer** produces the final artifact: decisions, action items, unresolved dissent, and a confidence level, then self-critiques its draft against the transcript.
 
 A real-time web dashboard is the sole control plane: you preview the suggested room, approve personas (or pick manually) and per-tier models, then start the deliberation. Every agent contribution streams in as it happens, and the final synthesis lives in the dashboard's Output tab — nothing is returned to chat. The Setup tab can extend an existing deliberation with new input rather than starting fresh.
 
@@ -23,11 +23,13 @@ A real-time web dashboard is the sole control plane: you preview the suggested r
 - **Per-agent carried state** — every turn projects stance + key bullets via `loom_state_patch`, so prompts stay flat and stance flips land in one turn
 - **Deterministic termination** — pass/fail exhaustion, round limit, hard timeout, or token budget
 - **Minority-report synthesis** — neutral synthesizer emits decisions, reasoning, action items, dissent, and confidence, then self-critiques its draft
-- **Model discovery** — finds available models from your opencode providers, assigns them per tier, filterable + assignable in the dashboard Setup tab
-- **Real-time dashboard** — live timeline with a full prompt/tool audit trail; Markdown export
+- **Model discovery** — finds available models from your opencode providers, assigns them per tier, and lets you override the model per seat in the dashboard Setup tab
+- **Real-time dashboard** — live timeline with a full prompt/tool audit trail; Markdown and JSON export
 - **Meeting extension** — extend a deliberation with new input from the dashboard Setup tab
 
 ## Installation
+
+The opencode runtime must provide Bun (the plugin uses `bun:sqlite` and `Bun.serve`); Node.js is used for development checks and the installer.
 
 ```bash
 npm install             # 1. install dependencies
@@ -42,6 +44,15 @@ npm run update:plugin
 ```
 
 No manual configuration needed. The plugin is auto-discovered from your `plugins/` directory.
+
+## Development checks
+
+```bash
+npm test             # pure unit/invariant tests
+npm run check        # JS/JSX/TS syntax checks
+npm run bundle       # build the plugin and dashboard
+npm pack --dry-run   # verify the publishable artifact
+```
 
 The installer automatically downloads the default embedding model (`snowflake-arctic-embed-xs` INT8, ~23MB). If the download fails, you can manually download it later with `npm run model:download`.
 
@@ -80,7 +91,7 @@ Bear in mind that some encoding models may require changes to the plugin to work
 
 ### Model Storage
 
-Models are stored globally at:
+Models are stored under `OPENCODE_CONFIG_DIR` when set, otherwise globally at:
 ```
 ~/.config/opencode/loom/models/Snowflake/snowflake-arctic-embed-xs/
 ├── model_int8.onnx      # ONNX model weights
@@ -103,12 +114,12 @@ Meetings are stored per-project (or globally when no workspace):
 <project>/.opencode/loom/meetings/<uuid>.db      # SQLite + WAL/SHM
 <project>/.opencode/loom/meetings/<uuid>.md      # Full markdown report (chat output)
 
-# Without workspace:
-~/.config/opencode/loom/meetings/<uuid>.db
-~/.config/opencode/loom/meetings/<uuid>.md
+# Without workspace (or with OPENCODE_CONFIG_DIR):
+<opencode-config-dir>/loom/meetings/<uuid>.db
+<opencode-config-dir>/loom/meetings/<uuid>.md
 ```
 
-Retention is manual — deleting a session cleans up its meetings (`session.deleted` event), or delete `meetings/<uuid>.db*` yourself.
+Retention is manual — deleting a session removes its meeting database, WAL/SHM files, and Markdown report (`session.deleted` event), or you can delete the files yourself. Questions, prompts, tool inputs/outputs, and reports may contain sensitive project data; review provider, web-tool, and LAN settings before use.
 
 ## Quick Start
 
@@ -178,7 +189,7 @@ Run `/loom_viz` to start the real-time web dashboard. It auto-detects the most r
 - **Timeline** — per-round contributions, turn requests, and orchestrator decisions (moderation, turn ordering, summaries) interleaved; click any item to view full details in a dialog
 - **Output** — the final synthesis artifact: decisions, action items, open questions, dissent, confidence, and full text
 
-The dashboard supports light, dark, and system themes. Export the current meeting as Markdown from the header.
+The dashboard supports light, dark, and system themes. Export the current meeting as Markdown or JSON from the Output tab.
 
 ## Configuration
 
@@ -198,7 +209,7 @@ A project-level `opencode.json` **is** consulted — partial overrides of your h
 ```json
 {
   "loom": {
-    "defaultMaxRounds": 3
+    "defaultMaxRounds": 4
   }
 }
 ```
@@ -208,13 +219,20 @@ Project-level equivalent in `.loomrc.json` (same keys, no `"loom"` wrapper):
 ```json
 {
   "defaultMaxRounds": 4,
-  "agentTimeoutMs": 180000
+  "agentTimeoutMs": 240000
 }
 ```
 
-Environment overrides: `LOOM_<KEY>` applies on top of files for scalar schema keys (e.g. `LOOM_AGENT_TIMEOUT_MS=180000`, `LOOM_MODEL_DIVERSITY=false`). Log verbosity is controlled by `LOOM_LOG_LEVEL` (`DEBUG`|`INFO`|`WARN`|`ERROR`|`FATAL`, default `INFO`). The dashboard binds `127.0.0.1` by default for safety; set `dashboard.host` in config to expose it to your LAN deliberately.
+Environment overrides: `LOOM_<KEY>` applies on top of files for scalar schema keys (e.g. `LOOM_AGENT_TIMEOUT_MS=240000`, `LOOM_MODEL_DIVERSITY=false`). `OPENCODE_CONFIG_DIR` selects the shared opencode configuration and Loom data root; without a workspace, Loom data is stored below that directory. Log verbosity is controlled by `LOOM_LOG_LEVEL` (`DEBUG`|`INFO`|`WARN`|`ERROR`|`FATAL`, default `INFO`). The dashboard binds `127.0.0.1` by default and requires a per-dashboard capability cookie for API access. Bash is disabled by default; enable it only with an explicit Loom permission profile. To expose the dashboard beyond loopback, set `dashboard.host` deliberately and set `LOOM_ALLOW_LAN=1`; authenticated LAN access is still required.
 
 Other available options include agent and synthesis timeouts, retry policy, max tool calls, meeting timeout, stall detection (`stallTimeoutMs`, default 10 min (600000 ms)), composition relevance floor (`composition.maxCosineDistance`, default 0.85), token budget (`maxTotalTokens`, `0` = unlimited — a runaway meeting ends early and still synthesizes), same-turn synthesis for inline loom tool results (`agentTools.sameTurnSynthesis`), and embedding model selection (`embeddingModel`/`embeddingQuant`).
+
+## Operational caveats
+
+- The plugin runtime is Bun-based; the Node checks validate syntax and pure logic but do not replace a live Bun/opencode integration test.
+- The dashboard binds to loopback by default. LAN exposure requires both `dashboard.host` and `LOOM_ALLOW_LAN=1`, but the server does not provide TLS; use a trusted network or a TLS reverse proxy.
+- Bash is disabled by default. Read, glob, grep, web search, and web fetch tools can still expose project data or make network requests, so enable only the tools and providers the meeting needs.
+- Reports, prompts, tool inputs, and model metadata can contain sensitive data. Review retention and provider settings before sharing a meeting.
 
 ## License
 

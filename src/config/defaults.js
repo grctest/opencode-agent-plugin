@@ -27,8 +27,8 @@ export const TUNING = {
 };
 
 export const DEFAULT_CONFIG = {
-  agentTimeoutMs: 0,
-  synthesisTimeoutMs: 0,
+  agentTimeoutMs: 240000,
+  synthesisTimeoutMs: 180000,
   defaultMaxRounds: 4,
   minRounds: 2,
   fastPathModel: "",
@@ -40,9 +40,9 @@ export const DEFAULT_CONFIG = {
   retryBaseDelayMs: 1000,
   retryMaxDelayMs: 8000,
   synthesisMaxRetries: 1,
-  defaultMeetingTimeoutMs: 0,
+  defaultMeetingTimeoutMs: 1800000,
   stallTimeoutMs: 600000,
-  maxTotalTokens: 0,
+  maxTotalTokens: 500000,
   dashboard: { host: "127.0.0.1" },
   composition: { maxCosineDistance: 0.85 },
   modelDiversity: true,
@@ -58,7 +58,6 @@ export const DEFAULT_CONFIG = {
   },
   agentTools: {
     enabled: true,
-    // buildMode: when true, write/edit are allowed (detected from UI plan/build toggle)
     buildMode: false,
     builtIn: {
       webfetch: true,
@@ -67,8 +66,8 @@ export const DEFAULT_CONFIG = {
       write: false,
       edit: false,
       bash: {
-        enabled: true,
-        allowlist: ["git", "ls", "wc", "head", "tail", "grep", "find", "cat", "npm", "bun", "node"],
+        enabled: false,
+        allowlist: ["git", "ls", "wc", "head", "tail", "grep", "find", "cat"],
       },
       glob: true,
       grep: true,
@@ -90,8 +89,9 @@ export const DEFAULT_CONFIG = {
       glob: false,
       grep: false,
     },
-    maxToolCallsPerTurn: 200,
+    maxToolCallsPerTurn: 12,
     maxToolOutputTokens: 12000,
+    maxQueryTargetsPerTurn: 3,
   },
 };
 
@@ -142,8 +142,9 @@ export const NESTED_SCHEMA = {
   'agentTools.reflection.bash': { type: 'boolean' },
   'agentTools.reflection.glob': { type: 'boolean' },
   'agentTools.reflection.grep': { type: 'boolean' },
-  'agentTools.maxToolCallsPerTurn': { type: 'number', min: 1, max: 200 },
+  'agentTools.maxToolCallsPerTurn': { type: 'number', min: 1, max: 50 },
   'agentTools.maxToolOutputTokens': { type: 'number', min: 1000, max: 20000 },
+  'agentTools.maxQueryTargetsPerTurn': { type: 'number', min: 1, max: 7 },
   'modelFallback.enabled': { type: 'boolean' },
   'modelFallback.maxRetriesPerModel': { type: 'number', min: 0, max: 5 },
   'modelFallback.maxFallbackAttempts': { type: 'number', min: 0, max: 3 },

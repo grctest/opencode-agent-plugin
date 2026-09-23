@@ -9,7 +9,7 @@ import { incrementKeyedCounter, recordLatency } from "../../metrics.js";
 import { extractErrorInfo } from "../../logger.js";
 import { buildToolsMap, buildToolsMapWithoutLoom } from "../tools.js";
 import { truncateLoomOutputs } from "../../utils/text.js";
-import { isSafeBashCommand } from "../../utils/sanitize.js";
+import { getBashCommand, isBashCommandAllowed } from "../../utils/sanitize.js";
 
 export async function executeAgentTurn(participant, model, timeoutMs, promptContext) {
   const config = getConfig();
@@ -71,8 +71,10 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
     this._callStats.agent_prompts++;
     const llmStart = Date.now();
     const activeCountExec = (() => { try { return this._stateManager.getActiveParticipants().length; } catch { return undefined; }})();
-    const toolsMap = buildToolsMap(config, { activeCount: activeCountExec });
-    const agentToolsConfig = config.agentTools;
+    const effectiveAgentTools = this.getEffectiveAgentTools?.() ?? this._options?.agentTools ?? this._tools ?? config.agentTools;
+    const effectiveConfig = { ...config, agentTools: effectiveAgentTools };
+    const toolsMap = buildToolsMap(effectiveConfig, { activeCount: activeCountExec });
+    const agentToolsConfig = effectiveAgentTools;
 
     const offeredTools = Object.keys(toolsMap);
         const result1 = await this._sessionManager.getContract().prompt({
@@ -131,22 +133,17 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
 
     let effective1 = truncateToolResults(toolResults1, agentToolsConfig);
     // Arg sandbox: reject unsafe bash args even if command is allowlisted
-    for (const tr of effective1) {
-      if (tr.tool === "bash" && typeof tr.input === "string" && !isSafeBashCommand(tr.input)) {
-        this._logger.warn("bash_unsafe_args_blocked", `Blocked unsafe bash args for ${participant.config.name}: ${tr.input.slice(0,120)}`);
-        tr.status = "error";
-        tr.error = "Blocked: unsafe bash args (--upload-pack/-exec/-R)";
-        tr.output = null;
-      } else if (tr.tool === "bash" && tr.input && typeof tr.input === "object") {
-        const cmd = typeof tr.input.command === "string" ? tr.input.command : JSON.stringify(tr.input);
-        if (!isSafeBashCommand(cmd)) {
-          this._logger.warn("bash_unsafe_args_blocked", `Blocked unsafe bash args for ${participant.config.name}: ${cmd.slice(0,120)}`);
-          tr.status = "error";
-          tr.error = "Blocked: unsafe bash args (--upload-pack/-exec/-R)";
-          tr.output = null;
-        }
-      }
-    }
+     for (const tr of effective1) {
+       if (tr.tool !== "bash") continue;
+       const command = getBashCommand(tr.input);
+       const allowlist = agentToolsConfig?.builtIn?.bash?.allowlist;
+       if (!isBashCommandAllowed(command, allowlist)) {
+         this._logger.warn("bash_unsafe_args_blocked", `Blocked unsafe bash args for ${participant.config.name}: ${String(command ?? "missing command").slice(0,120)}`);
+         tr.status = "error";
+         tr.error = "Blocked by Loom bash policy";
+         tr.output = null;
+       }
+     }
 
     const loomSynthesisCalls = effective1.filter(t => isSynthesisLoom(t.tool) && t.status === "completed" && t.output);
     const loomPassCall = effective1.find(t => t.tool === "loom_pass" && t.status !== "error");
@@ -166,7 +163,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
           this._logger.warn("synthesis_deadline_skipped", `Skipping same-turn synthesis for ${participant.config.name} — deadline ${remaining}ms remaining (needs 15s)`);
         } else {
           remainingMs = Math.min(timeoutMs, Math.max(15000, remaining - 1000));
-          const synthesisToolsMap = buildToolsMapWithoutLoom(config, { activeCount: activeCountExec });
+          const synthesisToolsMap = buildToolsMapWithoutLoom(effectiveConfig, { activeCount: activeCountExec });
           const loomOutputs = cappedLoomCalls.map(tc => {
             const out = typeof tc.output === "string" ? tc.output : JSON.stringify(tc.output);
             return `Tool ${tc.tool} (${tc.callID}) returned:\n${out.slice(0, 3500)}`;
@@ -269,7 +266,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
       if (patchRemaining !== 0) {
         try {
           this._logger.info("state_patch_retry", `Requesting loom_state_patch retry for ${participant.config.name}`, { participant: participant.config.id, round: currentRound });
-          const patchToolsMap = buildToolsMap(config, { activeCount: activeCountExec });
+          const patchToolsMap = buildToolsMap(effectiveConfig, { activeCount: activeCountExec });
           const resultP = await this._sessionManager.getContract().prompt({
             sessionId: ephemeralSessionId,
             system: promptContext.system_prompt,

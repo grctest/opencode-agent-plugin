@@ -405,7 +405,7 @@ const TimelineTabBase = ({
   const [dialogContribution, setDialogContribution] = useState(null);
   const [dialogOrchestratorGroup, setDialogOrchestratorGroup] = useState(null);
   const [activeTab, setActiveTab] = useState("response");
-  const [orchestratorActiveTab, setOrchestratorActiveTab] = useState("prompt");
+  const [orchestratorActiveTab, setOrchestratorActiveTab] = useState("response");
   const [fetchedContext, setFetchedContext] = useState(null);
   const [contextLoading, setContextLoading] = useState(false);
   const [contextError, setContextError] = useState(null);
@@ -502,7 +502,7 @@ const TimelineTabBase = ({
 
   const handleOrchestratorDialogOpen = useCallback((data) => {
     setDialogOrchestratorGroup(data.orchestratorGroup);
-    setOrchestratorActiveTab("prompt");
+    setOrchestratorActiveTab("response");
   }, []);
 
   // Extracted pure function — see src/dashboard/utils/timeline.js
@@ -728,9 +728,21 @@ const TimelineTabBase = ({
         {dialogOrchestratorGroup && (
           <Tabs value={orchestratorActiveTab} onValueChange={setOrchestratorActiveTab} className="w-full">
             <TabsList variant="line" className="w-full justify-start">
-              <TabsTrigger value="prompt">Prompt</TabsTrigger>
               <TabsTrigger value="response">Response</TabsTrigger>
+              <TabsTrigger value="prompt">Prompt</TabsTrigger>
             </TabsList>
+            <TabsContent value="response" className="pt-4">
+              {dialogOrchestratorGroup.response ? (
+                <>
+                  <div className="typeset typeset-docs max-w-none w-full">
+                    <div dangerouslySetInnerHTML={{ __html: renderMarkdown(dialogOrchestratorGroup.response.content ?? "") }} />
+                  </div>
+                  <div className="flex justify-end pt-3 mt-3 border-t">
+                    <Button variant="outline" size="sm" onClick={() => navigator.clipboard.writeText(dialogOrchestratorGroup.response?.content ?? "")}><CopyIcon className="size-3.5 mr-1" /> Copy text</Button>
+                  </div>
+                </>
+              ) : <p className="text-sm text-muted-foreground">No response recorded for this exchange.</p>}
+            </TabsContent>
             <TabsContent value="prompt" className="pt-4">
               {dialogOrchestratorGroup.query ? (
                 <>
@@ -740,16 +752,6 @@ const TimelineTabBase = ({
                   </div>
                 </>
               ) : <p className="text-sm text-muted-foreground">No prompt recorded for this exchange.</p>}
-            </TabsContent>
-            <TabsContent value="response" className="pt-4">
-              {dialogOrchestratorGroup.response ? (
-                <>
-                  <pre className="text-xs font-mono whitespace-pre-wrap break-words bg-muted p-3 rounded max-h-[60vh] overflow-auto">{dialogOrchestratorGroup.response.content}</pre>
-                  <div className="flex justify-end pt-3 mt-3 border-t">
-                    <Button variant="outline" size="sm" onClick={() => navigator.clipboard.writeText(dialogOrchestratorGroup.response?.content ?? "")}><CopyIcon className="size-3.5 mr-1" /> Copy text</Button>
-                  </div>
-                </>
-              ) : <p className="text-sm text-muted-foreground">No response recorded for this exchange.</p>}
             </TabsContent>
           </Tabs>
         )}

@@ -10,7 +10,7 @@ export function createAgentTools({ config, resolveMeeting, activeLooms, director
   const voteSummon = createVoteSummonTools({ config, resolveMeeting, activeLooms });
   const forum = createForumTools({ config, resolveMeeting, activeLooms });
   const meta = createMetaTools({ config });
-  const passTool = createPassTool({ config });
+  const passTool = createPassTool({ config, resolveMeeting, activeLooms });
   const statePatch = createStatePatchTool({ config, resolveMeeting, activeLooms });
   return {
     ...queryEvidence,

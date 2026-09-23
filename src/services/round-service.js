@@ -12,13 +12,15 @@ export class RoundService {
   #roundExecutor;
   /** @type {import("../logger.js").Logger} */
   #logger;
+  #stateManager;
 
   /**
    * @param {Object} params
    * @param {import("../round-executor.js").RoundExecutor} params.roundExecutor
    */
-  constructor({ roundExecutor }) {
+  constructor({ roundExecutor, stateManager }) {
     this.#roundExecutor = roundExecutor;
+    this.#stateManager = stateManager;
     this.#logger = new Logger();
   }
 
@@ -40,8 +42,15 @@ export class RoundService {
 
     await this.#roundExecutor.runPromptPhase(round, activeParticipants);
 
+    let participantStates = [];
     try {
-      round.summary = await summarizeRound(round, params.state, promptOrchestrator, getHighestTierModel, getFallbackModel);
+      participantStates = this.#stateManager?.getParticipantStateSnapshots?.() ?? [];
+    } catch (err) {
+      this.#logger.warn("round_summary_state_snapshot_failed", `Round ${round.number} agent state snapshot unavailable`, { error: err?.message ?? String(err) });
+    }
+
+    try {
+      round.summary = await summarizeRound(round, params.state, promptOrchestrator, getHighestTierModel, getFallbackModel, participantStates);
     } catch (err) {
       this.#logger.warn("round_summary_failed", `Round ${round.number} summary failed — using digest fallback`, { error: err?.message ?? String(err) });
       round.summary = "";

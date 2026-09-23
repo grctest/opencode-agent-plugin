@@ -26,17 +26,21 @@ export function isWSL() {
 }
 
 export function getWSLWindowsHome() {
-  try {
-    const result = spawnSync("wslpath", ["$(wslvar USERPROFILE)"], {
-      shell: true,
-      encoding: "utf-8",
-    });
-    if (result.status === 0 && result.stdout) {
-      return result.stdout.trim();
-    }
-  } catch {
-    // Fall through
+  const fromEnvironment = process.env.USERPROFILE;
+  if (fromEnvironment) {
+    try {
+      const result = spawnSync("wslpath", ["-u", fromEnvironment], { encoding: "utf-8" });
+      if (result.status === 0 && result.stdout) return result.stdout.trim();
+    } catch {}
   }
+  try {
+    const windowsHome = spawnSync("cmd.exe", ["/c", "echo %USERPROFILE%"], { encoding: "utf-8" });
+    const rawHome = windowsHome.stdout?.trim();
+    if (rawHome) {
+      const result = spawnSync("wslpath", [rawHome], { encoding: "utf-8" });
+      if (result.status === 0 && result.stdout) return result.stdout.trim();
+    }
+  } catch {}
   return null;
 }
 
@@ -80,6 +84,46 @@ export function isLoomCommand(filename) {
   // Legacy single-file command — must be cleaned up on update/install
   if (filename === "knit_models.md") return true;
   return false;
+}
+
+export function parseJsonContent(content) {
+  try {
+    return JSON.parse(content);
+  } catch (error) {
+    let stripped = "";
+    let inString = false;
+    let escaped = false;
+    for (let i = 0; i < content.length; i++) {
+      const char = content[i];
+      const next = content[i + 1];
+      if (inString) {
+        stripped += char;
+        if (escaped) escaped = false;
+        else if (char === "\\") escaped = true;
+        else if (char === '"') inString = false;
+        continue;
+      }
+      if (char === '"') {
+        inString = true;
+        stripped += char;
+        continue;
+      }
+      if (char === "/" && next === "/") {
+        while (i < content.length && content[i] !== "\n") i++;
+        stripped += "\n";
+        continue;
+      }
+      if (char === "/" && next === "*") {
+        i += 2;
+        while (i < content.length && !(content[i] === "*" && content[i + 1] === "/")) i++;
+        i++;
+        continue;
+      }
+      stripped += char;
+    }
+    stripped = stripped.replace(/,\s*([}\]])/g, "$1");
+    try { return JSON.parse(stripped); } catch { throw error; }
+  }
 }
 
 export function findOpencodeJson(opencodeDir) {

@@ -43,15 +43,34 @@ function collectConfigCandidates(directory) {
   if (directory) {
     readCandidate(join(directory, 'opencode.json'));
     readCandidate(join(directory, 'opencode.jsonc'));
-    readCandidate(join(directory, '.loomrc.json'));
+     readCandidate(join(directory, '.loomrc.json'));
+     readCandidate(join(directory, '.loomrc.jsonc'));
   }
 
   const homeDir = homeOpenCodeDir();
   readCandidate(join(homeDir, 'opencode.json'));
   readCandidate(join(homeDir, 'opencode.jsonc'));
-  readCandidate(join(homeDir, '.loomrc.json'));
+   readCandidate(join(homeDir, '.loomrc.json'));
+   readCandidate(join(homeDir, '.loomrc.jsonc'));
 
   return candidates;
+}
+
+function pruneUnknownConfig(value, path = [], knownPaths = new Set(), validTopLevelKeys = new Set()) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const output = {};
+  for (const [key, child] of Object.entries(value)) {
+    const nextPath = [...path, key];
+    const leafPath = nextPath.join(".");
+    if (nextPath.length === 1 && (key === "$schema" || key === "agent" || key === "tuning")) {
+      output[key] = child;
+      continue;
+    }
+    const isPrefix = [...knownPaths].some((known) => known.startsWith(`${leafPath}.`));
+    if (!validTopLevelKeys.has(key) && !knownPaths.has(leafPath) && !isPrefix) continue;
+    output[key] = pruneUnknownConfig(child, nextPath, knownPaths, validTopLevelKeys);
+  }
+  return output;
 }
 
 export function buildConfig(directory) {
@@ -84,8 +103,9 @@ export function buildConfig(directory) {
 
   const knownPaths = new Set([
     ...Object.keys(CONFIG_SCHEMA),
-    ...Object.keys(NESTED_SCHEMA),
-  ]);
+     ...Object.keys(NESTED_SCHEMA),
+     'agentTools.builtIn.bash.allowlist',
+   ]);
 
   const validTopLevelKeys = new Set([
     ...nestedParentKeys,
@@ -118,6 +138,10 @@ export function buildConfig(directory) {
   validateAllowlistEntries(merged, userConfig, warnings);
 
   applyEnvOverrides(merged, warnings);
+  validateNestedConfig(merged, merged, warnings);
+  const pruned = pruneUnknownConfig(merged, [], knownPaths, validTopLevelKeys);
+  for (const key of Object.keys(merged)) delete merged[key];
+  Object.assign(merged, pruned);
   // Re-validate after env overrides — env can bypass file validation (e.g. LOOM_AGENT_TIMEOUT_MS=5)
   for (const key of Object.keys(CONFIG_SCHEMA)) {
     if (process.env['LOOM_' + key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase()] !== undefined) {

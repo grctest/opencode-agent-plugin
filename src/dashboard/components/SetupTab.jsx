@@ -111,8 +111,8 @@ export function SetupTab({ selectedMeeting, onStarted }) {
   const form = useStore($setupForm);
   const { question, context, maxRounds, preview, seats, startedId } = form;
   const patchForm = (patch) => $setupForm.set({ ...$setupForm.get(), ...patch });
-  const setQuestion = (v) => patchForm({ question: v });
-  const setContext = (v) => patchForm({ context: v });
+  const setQuestion = (v) => { patchForm({ question: v }); setPreview(null); setGuidance(null); };
+  const setContext = (v) => { patchForm({ context: v }); setPreview(null); setGuidance(null); };
   const setMaxRounds = (v) => patchForm({ maxRounds: v });
   const setPreview = (v) => patchForm({ preview: v });
   const setStartedId = (v) => patchForm({ startedId: v });
@@ -336,7 +336,7 @@ export function SetupTab({ selectedMeeting, onStarted }) {
   const requirements = useMemo(() => ([
     { key: "question", met: questionOk, label: "Enter a question" },
     { key: "models", met: modelsOk, label: !filterOk ? "Enable at least 1 model" : (!roomOk ? `Models ready (${enabledCount} enabled)` : seatsMapped ? `Models ready (${seats.length} seats mapped)` : "Pick a model for every seat") },
-    { key: "personas", met: personasOk, label: roomOk ? `Personas ready (${seats.length} seats)` : "Add at least 2 persona seats (auto-select or manual)" },
+    { key: "personas", met: personasOk, label: roomOk ? `Personas selected (${seats.length} seats)` : "Add at least 2 persona seats (auto-select or manual)" },
     { key: "idle", met: idleOk, label: "No deliberation running" },
   ]), [questionOk, personasOk, roomOk, seats.length, modelsOk, filterOk, seatsMapped, enabledCount, idleOk]);
 
@@ -348,6 +348,14 @@ export function SetupTab({ selectedMeeting, onStarted }) {
   ]), [questionOk, personasOk, modelsOk, idleOk, filterOk, roomOk, seats.length, enabledCount, totalCount]);
 
   const canStart = requirements.every((r) => r.met) && busy !== "start";
+  const budgetEstimate = useMemo(() => {
+    const rounds = Math.max(1, Math.min(10, Number(maxRounds) || 4));
+    const participants = Math.max(0, seats.length);
+    const primaryCalls = participants * rounds;
+    const interactionCalls = participants * rounds * 2;
+    const orchestrationCalls = rounds * 2 + 2;
+    return { calls: primaryCalls + interactionCalls + orchestrationCalls, rounds, participants };
+  }, [maxRounds, seats.length]);
 
   const doStart = async () => {
     if (!canStart) return;
@@ -358,17 +366,18 @@ export function SetupTab({ selectedMeeting, onStarted }) {
       const data = await postJSON("/api/meetings/start", {
         question: question.trim(),
         context: context.trim(),
-        max_rounds: Number(maxRounds) || 3,
-        participants: seats.map(({ approved, model, ...p }) => {
-          if (!model) return { ...p };
+         max_rounds: Number(maxRounds) || 4,
+         participants: seats.map(({ model, ...p }) => {
+           if (!model) return { ...p, approved: true };
           const [provider_id, ...rest] = model.split("/");
-          return { ...p, model: { provider_id, model_id: rest.join("/") } };
-        }),
+           return { ...p, approved: true, model: { provider_id, model_id: rest.join("/") } };
+         }),
         models: [],
         approved: true,
       });
-      setStartedId(data.meeting_id);
-      if (onStarted) onStarted(data.meeting_id);
+       resetSetupForm();
+       setStartedId(data.meeting_id);
+       if (onStarted) onStarted(data.meeting_id);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -426,12 +435,18 @@ export function SetupTab({ selectedMeeting, onStarted }) {
             <AlertDescription>Follow it in the Timeline tab (meeting {startedId.slice(0, 8)}…).</AlertDescription>
           </Alert>
         )}
-        {error && (
-          <Alert variant="destructive" className="mt-3" role="alert">
-            <AlertTitle>Something went wrong</AlertTitle>
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
+         {error && (
+           <Alert variant="destructive" className="mt-3" role="alert">
+             <AlertTitle>Something went wrong</AlertTitle>
+             <AlertDescription>{error}</AlertDescription>
+           </Alert>
+         )}
+         {job?.jobs && Object.values(job.jobs).some((entry) => entry?.phase === "error") && (
+           <Alert variant="destructive" className="mt-3" role="alert">
+             <AlertTitle>Background deliberation failed</AlertTitle>
+             <AlertDescription>Check the Timeline and diagnostics before starting another run.</AlertDescription>
+           </Alert>
+         )}
         {guidance && (
           <Alert className="mt-3 border-primary/40 bg-primary/5" role="status">
             <AlertTitle>Before you can start</AlertTitle>
@@ -479,7 +494,7 @@ export function SetupTab({ selectedMeeting, onStarted }) {
                 id="loom-rounds"
                 type="number"
                 min={1}
-                max={999}
+                 max={10}
                 value={maxRounds}
                 onChange={(e) => setMaxRounds(e.target.value)}
                 className="w-20"
@@ -648,10 +663,10 @@ export function SetupTab({ selectedMeeting, onStarted }) {
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="mt-0.5 flex flex-wrap items-center gap-2">
-                      <Button variant="outline" size="sm" onClick={() => setSwapIdx(i)} disabled={isFrozen} aria-label={`Swap ${s.name} for another persona`}>
-                        Swap
-                      </Button>
+                      <div className="mt-0.5 flex flex-wrap items-center gap-2">
+                        <Button variant="outline" size="sm" onClick={() => setSwapIdx(i)} disabled={isFrozen} aria-label={`Swap ${s.name} for another persona`}>
+                          Swap
+                        </Button>
                       <Button variant="ghost" size="sm" onClick={() => removeSeat(i)} disabled={isFrozen} aria-label={`Remove ${s.name} from the room`}>
                         Remove
                       </Button>
@@ -691,7 +706,10 @@ export function SetupTab({ selectedMeeting, onStarted }) {
 
       <div className="sticky bottom-3 z-10 rounded-xl border bg-card/95 p-3 shadow-lg backdrop-blur" role="region" aria-label="Start deliberation">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <ul id="loom-start-checklist" className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                     <div className="w-full text-xs text-muted-foreground">
+             Planning estimate: up to {budgetEstimate.calls} LLM calls across {budgetEstimate.rounds} rounds and {budgetEstimate.participants} seats. Provider cost and actual usage may vary.
+           </div>
+           <ul id="loom-start-checklist" className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 text-xs">
             {requirements.map((r) => (
               <li key={r.key} className="flex items-center gap-1.5">
                 <span

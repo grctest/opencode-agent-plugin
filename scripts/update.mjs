@@ -12,7 +12,7 @@ import { existsSync, rmSync, readFileSync, writeFileSync, readdirSync, mkdirSync
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { detectOpencodeDir, isLoomCommand, findOpencodeJson, logInfo, logError } from "./utils.mjs";
+import { detectOpencodeDir, isLoomCommand, findOpencodeJson, parseJsonContent, logInfo, logError } from "./utils.mjs";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, "..");
@@ -48,6 +48,8 @@ function verifyToolRegistration() {
     "loom_vote",
     "loom_summon",
     "loom_request_next",
+    "loom_pass",
+    "loom_state_patch",
   ];
   const missing = required.filter((name) => !content.includes(`"${name}"`));
   if (missing.length > 0) {
@@ -70,6 +72,7 @@ function backupFile(path) {
     BACKED_UP.push({ original: path, backup: bak });
   } catch (err) {
     logError(`Could not back up ${path}: ${err.message}`);
+    throw err;
   }
 }
 
@@ -81,6 +84,7 @@ function backupDir(path) {
     BACKED_UP.push({ original: path, backup: bak });
   } catch (err) {
     logError(`Could not back up ${path}: ${err.message}`);
+    throw err;
   }
 }
 
@@ -138,6 +142,14 @@ function cleanOldInstallation(opencodeDir) {
     cleaned = true;
   }
 
+  const dashboardDir = join(pluginsDir, "loom");
+  if (existsSync(dashboardDir)) {
+    backupDir(dashboardDir);
+    rmSync(dashboardDir, { recursive: true });
+    logInfo(`  Removed old dashboard → ${dashboardDir}`);
+    cleaned = true;
+  }
+
   // Remove old command files
   const commandDir = join(opencodeDir, "commands");
   if (existsSync(commandDir)) {
@@ -152,8 +164,9 @@ function cleanOldInstallation(opencodeDir) {
     }
     const legacyModelCmd = join(commandDir, "knit_models.md");
     if (existsSync(legacyModelCmd)) {
+      backupFile(legacyModelCmd);
       rmSync(legacyModelCmd);
-      logInfo(`  Removed legacy command → ${legacyModelCmd} (replaced by list/enable/disable/reset_knit_models)`);
+      logInfo(`  Removed legacy command → ${legacyModelCmd} (replaced by dashboard Setup controls)`);
       cleaned = true;
     }
   }
@@ -187,7 +200,7 @@ function cleanConfig(opencodeDir) {
 
   try {
     const content = readFileSync(configFile, "utf-8");
-    const config = JSON.parse(content);
+    const config = parseJsonContent(content);
     let modified = false;
 
     // Remove old plugin entries

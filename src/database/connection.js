@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { homedir } from "node:os";
 import { createRequire } from "node:module";
+import { resolveOpencodeConfigDir } from "../paths.js";
 
 const VEC_CANDIDATE_PKGS = [
   'sqlite-vec-linux-x64',
@@ -49,9 +49,9 @@ export function resolveVecPath() {
     join(baseDir, '../../node_modules'),
   ];
   try {
-    const home = homedir();
-    roots.push(join(home, '.config', 'opencode', 'plugins', 'deps', 'node_modules'));
-    roots.push(join(home, '.config', 'opencode', 'loom', 'deps', 'node_modules'));
+    const configDir = resolveOpencodeConfigDir();
+    roots.push(join(configDir, 'plugins', 'deps', 'node_modules'));
+    roots.push(join(configDir, 'loom', 'deps', 'node_modules'));
   } catch {}
   for (const root of roots) {
     for (const pkg of VEC_CANDIDATE_PKGS) {

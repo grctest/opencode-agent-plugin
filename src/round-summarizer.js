@@ -2,6 +2,9 @@ import { getConfig } from "./config.js";
 import { truncate } from "./shared.js";
 import { Logger, extractErrorInfo } from "./logger.js";
 import { SUBSTANTIVE_TYPES } from "./utils/contribution-types.js";
+import { renderMyStateMarkdown, STATE_PATCH_CAPS } from "./state-patch.js";
+import { sanitizeForPrompt } from "./utils/sanitize.js";
+import { delimitContext, escapeDelimiters } from "./prompts/delimiters.js";
 
 const summarizerLogger = new Logger();
 const SUMMARY_TYPES = SUBSTANTIVE_TYPES;
@@ -50,13 +53,49 @@ function formatContribution(c, reflectionMap) {
   return lines.join("\n");
 }
 
+function safeStateText(value, maxLength) {
+  return escapeDelimiters(sanitizeForPrompt(String(value ?? "").replace(/\s+/g, " "), maxLength));
+}
+
+function formatAgentStateSnapshot(entry) {
+  const id = safeStateText(entry?.id, 120) || "unknown";
+  const name = safeStateText(entry?.name ?? id, 200) || id;
+  const tier = safeStateText(entry?.tier, 40) || "unknown";
+  const status = safeStateText(entry?.status, 40) || "unknown";
+  const source = entry?.state ?? {};
+  const state = {
+    stance: safeStateText(source.stance, STATE_PATCH_CAPS.stanceMax),
+    established: Array.isArray(source.established) ? source.established.slice(0, STATE_PATCH_CAPS.buckets).map((item) => safeStateText(item, STATE_PATCH_CAPS.bulletMax)) : [],
+    contested: Array.isArray(source.contested) ? source.contested.slice(0, STATE_PATCH_CAPS.buckets).map((item) => safeStateText(item, STATE_PATCH_CAPS.bulletMax)) : [],
+    open: Array.isArray(source.open) ? source.open.slice(0, STATE_PATCH_CAPS.buckets).map((item) => safeStateText(item, STATE_PATCH_CAPS.bulletMax)) : [],
+    facts: Array.isArray(source.facts) ? source.facts.slice(0, STATE_PATCH_CAPS.buckets).map((item) => safeStateText(item, STATE_PATCH_CAPS.bulletMax)) : [],
+    files: Array.isArray(source.files) ? source.files.slice(0, STATE_PATCH_CAPS.buckets).map((item) => safeStateText(item, STATE_PATCH_CAPS.fileMax)) : [],
+  };
+  const version = Number.isFinite(source.version) ? source.version : 0;
+  const updatedRound = Number.isFinite(source.updated_round) ? source.updated_round : 0;
+  const projection = entry?.projected ? " (effective projection from a same-round perspective response; not yet committed)" : "";
+  const header = `- **${name}** — ${id}; ${tier}; ${status}; state v${version}; updated round ${updatedRound}${projection}`;
+  const hasState = state.stance || state.established.length || state.contested.length || state.open.length || state.facts.length || state.files.length;
+  if (!hasState) return `${header}\n  (no state content)`;
+  const body = renderMyStateMarkdown(state).split("\n").map((line) => `  ${line}`).join("\n");
+  return `${header}\n${body}`;
+}
+
+export function buildAgentStatesContext(participantStates) {
+  if (!Array.isArray(participantStates) || participantStates.length === 0) {
+    return "\n## Current Agent States\n_(No current state snapshots available.)_";
+  }
+  const body = participantStates.map(formatAgentStateSnapshot).join("\n\n");
+  return `\n## Current Agent States\n\n_These are bounded, per-agent projections, not a shared transcript. Attribute every state claim to its named holder._\n${delimitContext(body, "AGENT_STATES")}`;
+}
+
 /**
  * Generates a summary for a completed round using LLM-based summarization.
  * The orchestrator path retries empty responses; if the LLM still yields no
  * text, degrades to a deterministic contributions digest instead of throwing —
  * one flaky response must not kill the whole deliberation.
  */
-export async function summarizeRound(round, state, promptOrchestrator, getHighestTierModel, getFallbackModel) {
+export async function summarizeRound(round, state, promptOrchestrator, getHighestTierModel, getFallbackModel, participantStates = []) {
   const contribCount = round.contributions.length;
   if (contribCount === 0) return "No contributions this round.";
 
@@ -98,15 +137,7 @@ export async function summarizeRound(round, state, promptOrchestrator, getHighes
     ? `\n## Evidence / Tool Signals (do not invent — use only if cited)\n${evidenceContribs.slice(0, 6).map(c => `- [#${c.id}] ${c.participant_id}: ${c.content.slice(0, 350)}${c.tool_calls ? ` [tools: ${c.tool_calls.map(t=>t.tool).join(',')}]` : ""}`).join("\n")}`
     : "";
 
-  // SKILL.state versions line (§5.9): Σ versions when patches exist. No new LLM call.
-  const stateHint = (() => {
-    try {
-      const vs = (state.participants ?? [])
-        .filter((p) => Number.isFinite(p?.state_version) && p.state_version > 0)
-        .map((p) => `${p.config?.name ?? p.config?.id}@v${p.state_version}`);
-      return vs.length > 0 ? `\n## Agent States (carried)\nstate: ${vs.join(", ")}` : "";
-    } catch { return ""; }
-  })();
+  const stateHint = buildAgentStatesContext(participantStates);
 
   // Detect mode for summary shape
   const isCodeRound = formattedContributions.includes("file=") || formattedContributions.includes("```") || (state.tags || []).some(t => /engineering|code|programming/i.test(t));
@@ -129,7 +160,7 @@ ${evidenceHint}${stateHint}
 - **Open:** Unresolved questions and what would resolve them (missing evidence / decision needed)
 ${isCodeRound ? `- **Code/Files:** Files touched or proposed (file=src/...), diffs status, and test/verification notes` : ""}
 
-Rules: cite [#id] once per bullet when attributing (grouped, not per clause). Keep Contested holders explicit. Evidence must distinguish “None” from “weak/inconclusive”. Never emit vec: / vec round traces — use [#id] or State-of-Play. Preserve numbers verbatim — do not round, estimate, or invent figures not in contributions. Concise but thorough.`
+Rules: Agent States are remembered positions and standing context, not independent evidence. Attribute them to the named holder. Use uncited state only as context; place it under Evidence only when an explicit Source: or [#id] resolves to a listed contribution or tool signal. Distinguish newly established support from claims already carried in state, and do not add a separate Agent States bullet. Cite [#id] once per bullet when attributing (grouped, not per clause). Keep Contested holders explicit. Evidence must distinguish “None” from “weak/inconclusive”. Never emit vec: / vec round traces — use [#id] or State-of-Play. Preserve numbers verbatim — do not round, estimate, or invent figures not in contributions. Concise but thorough.`
     : `Summarize this deliberation round. The round contained ${contribCount} contribution(s) but no substantive positions were staked.
 
 ## Question
@@ -141,7 +172,7 @@ Turn requests: ${round.turn_requests.length}
 ${evidenceHint}${stateHint}
 
 ## Instructions
-Provide 180-350 word summary with 4-5 bullets (Established / Contested / Evidence / Open / Code if applicable) noting no substantive deliberation but mentioning contribution types and any turn requests. Sentence style, human-readable. Preserve numbers verbatim.`;
+Provide 180-350 word summary with 4-5 bullets (Established / Contested / Evidence / Open / Code if applicable) noting no substantive deliberation but mentioning contribution types and any turn requests. Agent States are remembered positions and standing context, not independent evidence; attribute them to their named holder and do not add a separate Agent States bullet. Use uncited state only as context, and place it under Evidence only when an explicit Source: or [#id] resolves to a listed contribution or tool signal. Sentence style, human-readable. Preserve numbers verbatim.`;
 
   const semanticSummary = await promptOrchestrator("You are a thorough deliberation clerk. 180-350 words. Sentence style, human-readable, concise but thorough. Preserve numbers verbatim — do not round or invent. Never emit vec: traces.", model, prompt, "summary");
 

@@ -6,7 +6,7 @@
  * (/knit, /list/enable/disable/reset_knit_models) are removed; only
  * /loom_viz (start) and /loom_stop remain.
  *
- * Runtime (opencode client, directory, activeLooms, agentTools) is injected
+ * Runtime (opencode client, directory, activeLooms) is injected
  * by the plugin host via setControlRuntime() because the dashboard server
  * module itself has no access to the opencode client otherwise.
  */
@@ -37,7 +37,6 @@ const runtime = {
   client: null,
   directory: null,
   activeLooms: null,
-  agentTools: null,
   ownerSessionId: null,
 };
 
@@ -45,7 +44,6 @@ export function setControlRuntime(rt) {
   if (rt.client !== undefined) runtime.client = rt.client;
   if (rt.directory !== undefined) runtime.directory = rt.directory;
   if (rt.activeLooms !== undefined) runtime.activeLooms = rt.activeLooms;
-  if (rt.agentTools !== undefined) runtime.agentTools = rt.agentTools;
   if (rt.ownerSessionId !== undefined) runtime.ownerSessionId = rt.ownerSessionId;
 }
 
@@ -56,15 +54,20 @@ export function isControlReady() {
 // meetingId -> { phase: "running"|"done"|"error", error?, startedAt, extended? }
 const jobs = new Map();
 let runningMeetingId = null;
+let startInFlight = false;
 
 function getDirectory() {
   return runtime.directory;
 }
 
 function readJsonBody(req, maxBytes = 512 * 1024) {
+  const contentType = req.headers.get("content-type") ?? "";
+  if (!contentType.toLowerCase().startsWith("application/json")) {
+    throw new Error("Content-Type must be application/json");
+  }
   return req.text().then((text) => {
     if (!text) return null;
-    if (text.length > maxBytes) throw new Error("request body too large");
+    if (new TextEncoder().encode(text).byteLength > maxBytes) throw new Error("request body too large");
     try {
       return JSON.parse(text);
     } catch {
@@ -177,17 +180,28 @@ async function discoverFiltered(force = false) {
 
 // --- Personas ---
 
+function personaDto(p, tier) {
+  return {
+    name: p.name,
+    persona: p.persona,
+    agenda: p.agenda,
+    tier,
+    tags: getPersonaTags(p),
+    expertise: Array.isArray(p.expertise) ? p.expertise : [],
+    known_biases: Array.isArray(p.known_biases) ? p.known_biases : [],
+    communication_style: p.communication_style ?? "",
+    preferred_contribution_types: Array.isArray(p.preferred_contribution_types) ? p.preferred_contribution_types : [],
+    anti_patterns: Array.isArray(p.anti_patterns) ? p.anti_patterns : [],
+    tier_guidance: p.tier_guidance ?? "",
+    reflection_guidance: p.reflection_guidance ?? "",
+  };
+}
+
 export function handleListPersonas() {
   const grouped = getPersonas();
   const tiers = {};
   for (const [tier, arr] of Object.entries(grouped)) {
-    tiers[tier] = (arr ?? []).map((p) => ({
-      name: p.name,
-      persona: p.persona,
-      agenda: p.agenda,
-      tags: getPersonaTags(p),
-      expertise: Array.isArray(p.expertise) ? p.expertise : [],
-    }));
+    tiers[tier] = (arr ?? []).map((p) => personaDto(p, tier));
   }
   return Response.json({ tiers });
 }
@@ -202,7 +216,7 @@ export function handleListPersonas() {
  * or session index. Falls back to keyword composition when anything fails
  * (including an unavailable embedder, handled inside composeRoomWithSimilarity).
  */
-async function composePreviewRoom(question) {
+async function composePreviewRoom(question, context = "") {
   const tempId = crypto.randomUUID();
   const tempPath = join(tmpdir(), `loom-preview-${tempId}.db`);
   let db = null;
@@ -219,7 +233,7 @@ async function composePreviewRoom(question) {
       embedding_dim: null,
       participants: [],
     }, { skipIndex: true });
-    return await composeRoomWithSimilarity(question, db);
+    return await composeRoomWithSimilarity(question, db, context);
   } finally {
     try { db?.close(); } catch {}
     for (const suffix of ["", "-wal", "-shm", "-journal"]) {
@@ -244,11 +258,11 @@ export async function handleRoomPreview(req) {
   }
   let room;
   try {
-    room = await composePreviewRoom(question);
+    room = await composePreviewRoom(question, String(body?.context ?? ""));
   } catch (err) {
     logger.warn("dashboard_preview_fallback", "Throwaway-DB preview failed — falling back to keyword composition", extractErrorInfo(err));
     try {
-      room = await composeRoomWithSimilarity(question, null);
+      room = await composeRoomWithSimilarity(question, null, String(body?.context ?? ""));
     } catch (err2) {
       const info = extractErrorInfo(err2);
       return Response.json({
@@ -273,14 +287,7 @@ export async function handleRoomPreview(req) {
     }
   } catch {}
   return Response.json({
-    participants: (room.participants ?? []).map((p) => ({
-      name: p.name,
-      persona: p.persona,
-      agenda: p.agenda,
-      tier: p.tier,
-      tags: p.tags ?? [],
-      expertise: p.expertise ?? [],
-    })),
+    participants: (room.participants ?? []).map((p) => personaDto(p, p.tier)),
     tags: room.tags ?? [],
     estimated_rounds: room.estimated_rounds ?? 3,
     reasoning: room.reasoning ?? "",
@@ -411,6 +418,9 @@ function validateParticipants(list) {
     if (!p.name || !p.persona || !p.agenda || !p.tier) {
       return `participant #${i + 1} is missing required fields (name, persona, agenda, tier)`;
     }
+    if (p.approved !== true) {
+      return `participant #${i + 1} must be explicitly approved`;
+    }
     if (!ALLOWED_TIERS.has(p.tier)) {
       return `participant #${i + 1} has invalid tier "${p.tier}" — must be one of ${[...ALLOWED_TIERS].join(", ")}`;
     }
@@ -432,6 +442,18 @@ function dashboardCallbacks() {
 }
 
 export async function handleStartMeeting(req) {
+  if (runningMeetingId || startInFlight) {
+    return Response.json({ error: "a deliberation is already running", meeting_id: runningMeetingId }, { status: 409 });
+  }
+  startInFlight = true;
+  try {
+    return await handleStartMeetingInternal(req);
+  } finally {
+    startInFlight = false;
+  }
+}
+
+async function handleStartMeetingInternal(req) {
   if (!isControlReady()) {
     return Response.json({ error: "dashboard control plane not ready (plugin client unavailable)" }, { status: 503 });
   }
@@ -457,7 +479,7 @@ export async function handleStartMeeting(req) {
   }
   let maxRounds = body?.max_rounds ?? getConfig().defaultMaxRounds;
   if (!Number.isFinite(maxRounds) || maxRounds < 1) maxRounds = getConfig().defaultMaxRounds;
-  if (maxRounds > 999) maxRounds = 999;
+  maxRounds = Math.min(10, Math.max(1, Math.floor(maxRounds)));
   const context = body?.context ? sanitizeForPrompt(String(body.context), 8000) : "No additional context provided.";
 
   let available;
@@ -525,13 +547,19 @@ export async function handleStartMeeting(req) {
     }
     return {
       id,
-      name: p.name,
-      persona: sanitizeForPrompt(String(p.persona), 4000),
-      agenda: sanitizeForPrompt(String(p.agenda), 2000),
-      tier: p.tier,
-      model: seatModel ?? modelMap.get(p.tier),
-      tags,
-      expertise: Array.isArray(p.expertise) ? p.expertise : [],
+       name: p.name,
+       persona: sanitizeForPrompt(String(p.persona), 4000),
+       agenda: sanitizeForPrompt(String(p.agenda), 2000),
+       tier: p.tier,
+       model: seatModel ?? modelMap.get(p.tier),
+       tags,
+       expertise: Array.isArray(p.expertise) ? p.expertise : [],
+       known_biases: Array.isArray(p.known_biases) ? p.known_biases : [],
+       communication_style: sanitizeForPrompt(String(p.communication_style ?? ""), 800),
+       preferred_contribution_types: Array.isArray(p.preferred_contribution_types) ? p.preferred_contribution_types : [],
+       anti_patterns: Array.isArray(p.anti_patterns) ? p.anti_patterns : [],
+       tier_guidance: sanitizeForPrompt(String(p.tier_guidance ?? ""), 1600),
+       reflection_guidance: sanitizeForPrompt(String(p.reflection_guidance ?? ""), 1600),
     };
   });
   try {
@@ -596,9 +624,9 @@ export async function handleStartMeeting(req) {
     opencodeSessionId: sessionID,
     participants,
     maxRounds,
-    meetingTimeoutMs: 0,
+    meetingTimeoutMs: getConfig().defaultMeetingTimeoutMs,
     tags: [],
-    agentTools: runtime.agentTools,
+    agentTools: getConfig().agentTools,
     availableModels: available,
     ...dashboardCallbacks(),
   });
@@ -657,6 +685,18 @@ export async function handleCancelMeeting(req) {
 }
 
 export async function handleExtendMeeting(req) {
+  if (runningMeetingId || startInFlight) {
+    return Response.json({ error: "a deliberation is already running", meeting_id: runningMeetingId }, { status: 409 });
+  }
+  startInFlight = true;
+  try {
+    return await handleExtendMeetingInternal(req);
+  } finally {
+    startInFlight = false;
+  }
+}
+
+async function handleExtendMeetingInternal(req) {
   if (!isControlReady()) {
     return Response.json({ error: "dashboard control plane not ready" }, { status: 503 });
   }
@@ -711,13 +751,25 @@ export async function handleExtendMeeting(req) {
     participants: existingParts.map((p) => {
       const modelKey = p.provider_id && p.model_id ? `${p.provider_id}/${p.model_id}` : null;
       return {
-        id: p.id, name: p.name, persona: p.persona, agenda: p.agenda, tier: p.tier,
+        id: p.id,
+        name: p.name,
+        persona: p.persona,
+        agenda: p.agenda,
+        tier: p.tier,
         model: modelKey && allowedKeys.has(modelKey) ? { providerID: p.provider_id, modelID: p.model_id } : undefined,
+        tags: Array.isArray(p.tags) ? p.tags : [],
+        expertise: Array.isArray(p.expertise) ? p.expertise : [],
+        known_biases: Array.isArray(p.known_biases) ? p.known_biases : [],
+        communication_style: p.communication_style ?? "",
+        preferred_contribution_types: Array.isArray(p.preferred_contribution_types) ? p.preferred_contribution_types : [],
+        anti_patterns: Array.isArray(p.anti_patterns) ? p.anti_patterns : [],
+        tier_guidance: p.tier_guidance ?? "",
+        reflection_guidance: p.reflection_guidance ?? "",
       };
     }),
-    maxRounds: 999,
-    meetingTimeoutMs: 0,
-    agentTools: runtime.agentTools,
+    maxRounds: Math.min(10, Math.max(1, Math.floor(Number(getConfig().defaultMaxRounds) || 4))),
+    meetingTimeoutMs: getConfig().defaultMeetingTimeoutMs,
+    agentTools: getConfig().agentTools,
     availableModels: available,
     ...dashboardCallbacks(),
   });
@@ -756,10 +808,3 @@ export function handleJobStatus(url) {
   return Response.json({ running: runningMeetingId, jobs: Object.fromEntries(jobs) });
 }
 
-export function cancelAllJobs() {
-  for (const [id, engine] of runtime.activeLooms ? runtime.activeLooms : []) {
-    if (jobs.has(id)) {
-      try { engine.cancel(); } catch {}
-    }
-  }
-}

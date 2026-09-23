@@ -84,6 +84,10 @@ export class RoundExecutor {
     return { ...this._callStats };
   }
 
+  getEffectiveAgentTools() {
+    return this._options?.agentTools ?? this._tools ?? getConfig().agentTools;
+  }
+
   resetRoundStats() {
     this._failedInCurrentRound = 0;
   }
@@ -176,7 +180,10 @@ export class RoundExecutor {
         }
       }));
       for (const entry of creates) {
-        if (entry) this._roundSessionIds.set(entry[0], entry[1]);
+        if (entry) {
+          this._roundSessionIds.set(entry[0], entry[1]);
+          this._stateManager.setParticipantSessionId?.(entry[0], entry[1]);
+        }
       }
         if (this._roundSessionIds.size === 0) {
          // Clean up any partially created sessions before discarding map
@@ -239,6 +246,7 @@ export class RoundExecutor {
   }
 
   async _handlePromptResult(p, result, round, error) {
+    const pendingStatePatch = this._stateManager.takeLastTurnPatch?.(p.config.id) ?? null;
     if (!result || error) {
       p.status = "failed";
       this._failedInCurrentRound++;
@@ -302,7 +310,7 @@ export class RoundExecutor {
       return;
     }
 
-    this._storeContribution(p, result, round);
+    this._storeContribution(p, result, round, pendingStatePatch);
 
     const truncated = truncate(result.content, 120);
     this._options.onProgress?.(`${p.config.name} (${p.config.tier}) — ${result.type}: "${truncated}"`);
@@ -310,7 +318,7 @@ export class RoundExecutor {
 
 
 
-  _storeContribution(participant, result, round) {
+  _storeContribution(participant, result, round, pendingStatePatch = null) {
     const id = this._stateManager.nextContributionId();
     const safeContent = sanitizeAgentOutput(result.content);
     const batchId = participant.currentBatchId ?? randomUUID();
@@ -326,6 +334,20 @@ export class RoundExecutor {
       prompt_context: result.prompt_context ?? null,
       created_at: new Date().toISOString(),
     };
+    let atomicStatePatch = null;
+    if (pendingStatePatch?.state) {
+      const nextState = structuredClone(pendingStatePatch.state);
+      nextState.updated_round = this._stateManager.getCurrentRound();
+      nextState.updated_contribution_id = id;
+      atomicStatePatch = {
+        participantId: participant.config.id,
+        round: this._stateManager.getCurrentRound(),
+        version: nextState.version,
+        state: nextState,
+        patchJson: pendingStatePatch.input ?? {},
+        appliedJson: pendingStatePatch.output ?? {},
+      };
+    }
 
     this._stateManager.addContribution(contribution);
     round.contributions.push(contribution);
@@ -348,13 +370,17 @@ export class RoundExecutor {
       round.turn_requests.push(turnRequest);
     }
 
-    // Main-turn DB insert: a failure must NOT abort the entire meeting — the
-    // contribution already exists in memory. Record an agent error instead.
+    let contributionPersisted = false;
     try {
       this._db.addContributionWithTurnRequest(this._stateManager.getMeetingId(), {
         ...contribution,
         round: this._stateManager.getCurrentRound(),
-      }, turnRequest);
+      }, turnRequest, atomicStatePatch);
+      contributionPersisted = true;
+      if (atomicStatePatch) {
+        this._stateManager.setParticipantState(participant.config.id, atomicStatePatch.state);
+        this._stateManager.linkStateToContribution?.(participant.config.id, id);
+      }
     } catch (err) {
       const info = extractErrorInfo(err);
       this._logger.error("contribution_db_failed", `Failed to persist ${result.type} for ${participant.config.name} — rolling back in-memory weave; meeting continues degraded`, info);
@@ -384,11 +410,9 @@ export class RoundExecutor {
       try { this._db.setParticipantStatus(participant.config.id, "failed"); } catch {}
     }
 
-    // SKILL.state post-store link (plan §5.6 step 4): link Σⁱ to the contribution
-    // that produced it + write the state_patches audit row. Best-effort; never blocks.
     try {
       const patchCall = (result.tool_calls ?? []).find((t) => t.tool === "loom_state_patch" && t.metadata?.applied === true);
-      if (patchCall) {
+      if (patchCall && contributionPersisted && !atomicStatePatch) {
         try { this._stateManager.linkStateToContribution?.(participant.config.id, id); } catch {}
         try {
           const v = patchCall.metadata?.version;
@@ -403,8 +427,6 @@ export class RoundExecutor {
             });
           }
         } catch {}
-        // Re-sync participants.state_json so the linked updated_contribution_id persists
-        // (the tool wrote a provisional copy before the contribution id existed).
         try {
           const st = this._stateManager.getParticipantState?.(participant.config.id);
           if (st && typeof this._db.setParticipantState === "function") this._db.setParticipantState(participant.config.id, st);

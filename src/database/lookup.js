@@ -88,6 +88,7 @@ export function deleteMeetingFiles(dbPath) {
   for (const suffix of ["", "-wal", "-shm"]) {
     try { unlinkSync(`${dbPath}${suffix}`); } catch { /* ignore */ }
   }
+  try { unlinkSync(dbPath.replace(/\.db$/, ".md")); } catch { /* ignore */ }
 }
 
 export function listMeetingFiles(directory) {

@@ -8,6 +8,7 @@
 import { readdir, readFile, access } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { spawnSync } from "node:child_process";
+import { transform } from "esbuild";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const TARGET_DIRS = ["src", "scripts"];
@@ -27,7 +28,7 @@ async function collectFiles(dir, out = []) {
     const rel = join(dir, entry.name);
     if (entry.isDirectory()) {
       await collectFiles(rel, out);
-    } else if (/\.(js|mjs|cjs)$/.test(entry.name)) {
+    } else if (/\.(js|mjs|cjs|jsx|ts|tsx)$/.test(entry.name)) {
       out.push(rel);
     }
   }
@@ -44,13 +45,26 @@ files.sort();
 
 let failed = 0;
 for (const rel of files) {
-  const result = spawnSync(process.execPath, ["--check", join(ROOT, rel)], {
-    stdio: "pipe",
-  });
-  if (result.status !== 0) {
+  const absolute = join(ROOT, rel);
+  if (/\.(js|mjs|cjs)$/.test(rel)) {
+    const result = spawnSync(process.execPath, ["--check", absolute], {
+      stdio: "pipe",
+    });
+    if (result.status !== 0) {
+      failed++;
+      console.error(`✗ ${rel}`);
+      console.error(result.stderr.toString());
+    }
+    continue;
+  }
+  try {
+    const source = await readFile(absolute, "utf8");
+    const loader = rel.endsWith(".tsx") ? "tsx" : rel.endsWith(".ts") ? "ts" : "jsx";
+    await transform(source, { loader, jsx: "automatic", sourcefile: absolute });
+  } catch (err) {
     failed++;
     console.error(`✗ ${rel}`);
-    console.error(result.stderr.toString());
+    console.error(err.message ?? String(err));
   }
 }
 

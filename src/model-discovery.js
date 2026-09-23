@@ -6,6 +6,7 @@
  * the model trio is therefore kept distinct. parseFastPathModel dedup is
  * already complete (single source src/config/utils.js).
  */
+import { getConfig } from "./config.js";
 
 /**
  * @typedef {Object} AvailableModel
@@ -141,7 +142,7 @@ export function createModelPlan(available, roles, sessionModel) {
   // Mirror runtime diversity: when enough unique models, each agent gets distinct model (best to highest tier)
   try {
     const uniqueTiers = new Set((roles ?? defaultRoles).map((r) => r));
-    if (available.length > uniqueTiers.size) {
+    if (getConfig().modelDiversity !== false && available.length > uniqueTiers.size) {
       const sorted = sortModelsByQuality(available);
       const tierOrder = { principal: 0, senior: 1, mid: 2, civilian: 2, junior: 3 };
       participants = [...participants].sort((a, b) => (tierOrder[a.tier] ?? 9) - (tierOrder[b.tier] ?? 9));

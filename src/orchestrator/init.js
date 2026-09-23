@@ -26,7 +26,8 @@ export async function initialize() {
       this._persistenceService = new PersistenceService(db, this._meetingId);
 
       this._sessionManager = new SessionManager(this._client, this._directory, this._parentSessionId, this._logger);
-      this._sessionManager.setDatabase(db);
+       this._sessionManager.setDatabase(db);
+       this._sessionManager.setTokenRecorder((tokens) => this.recordTokens(tokens));
       this._synthesisCoordinator = new SynthesisCoordinator(this._sessionManager);
 
       // Ensure the meeting row exists BEFORE indexing personas.
@@ -136,7 +137,7 @@ export async function initialize() {
         directory: this._directory,
       });
 
-      this._roundService = new RoundService({ roundExecutor: this._roundExecutor });
+      this._roundService = new RoundService({ roundExecutor: this._roundExecutor, stateManager: this._stateManager });
 
       this._logger.info("initialized", `Meeting ${this._resume ? "resumed" : "initialized"}`, { participants: this._stateManager.getParticipants().length, resumed: this._resume });
     } catch (err) {

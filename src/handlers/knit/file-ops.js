@@ -1,4 +1,4 @@
-import { unlinkSync, writeFileSync, mkdirSync, openSync, fsyncSync, closeSync, renameSync } from "node:fs";
+import { unlinkSync, writeFileSync, mkdirSync, openSync, fsyncSync, closeSync, renameSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { resolveLoomBaseDir } from "../../paths.js";
 import { extractErrorInfo } from "../../logger.js";
@@ -10,8 +10,9 @@ export function writeReportFile(directory, meetingId, report, logger) {
   try {
     const baseDir = resolveLoomBaseDir(directory);
     const dir = join(baseDir, "meetings");
-    mkdirSync(dir, { recursive: true });
-    const filePath = join(dir, `${meetingId}.md`);
+     mkdirSync(dir, { recursive: true, mode: 0o700 });
+     try { chmodSync(dir, 0o700); } catch {}
+     const filePath = join(dir, `${meetingId}.md`);
     tmpPath = `${filePath}.tmp.${tmpSuffix}`;
     writeFileSync(tmpPath, report, { encoding: "utf-8", mode: 0o600 });
     try {

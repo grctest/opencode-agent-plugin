@@ -1,6 +1,7 @@
 import { sanitizeForDisplay } from "../utils/sanitize.js";
 import { getConfig } from "../config.js";
-import { escapeDelimiters } from "./delimiters.js";
+import { escapeDelimiters, delimitContext } from "./delimiters.js";
+import { renderMyStateMarkdown } from "../state-patch.js";
 import { TOOL_LADDER_LINE, TOOL_FAILURE_LINE, CITATION_LINE } from "./constants.js";
 
 export function getRecentContributionsBlock(contributions, participantId) {  if (!contributions || contributions.length === 0) return "";
@@ -33,6 +34,12 @@ export function buildPositionLine(target) {
     line += `\nYour top bullets: ${sanitizeForDisplay(bullets.join(" | ").slice(0, 600))}`;
   }
   return line;
+}
+
+export function buildAgentStateBlock(state) {
+  if (state === null || state === undefined) return "";
+  const body = escapeDelimiters(sanitizeForDisplay(renderMyStateMarkdown(state)));
+  return `## Your State — CARRIED FORWARD\n\n${delimitContext(body, "MY_STATE")}`;
 }
 
 export function buildEvidenceGuidance(kind, { activeCount } = {}) {

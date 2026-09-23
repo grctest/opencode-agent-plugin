@@ -1,9 +1,9 @@
-import { mkdirSync, existsSync } from "node:fs";
+import { mkdirSync, existsSync, chmodSync } from "node:fs";
 import { dirname } from "node:path";
 import { Logger, extractErrorInfo } from "./logger.js";
 import { initSchema, runMigrations } from "./database/schema.js";
 import { resolveLoomBaseDir, getMeetingDbPath } from "./paths.js";
-import { ensureDb, getDatabaseClass, isoNow, resolveVecPath } from "./database/connection.js";
+import { ensureDb, getDatabaseClass, isoNow, resolveVecPath, safeParseJsonArray } from "./database/connection.js";
 import { maintenanceDue, markMaintained, checkIntegrity, cleanupOldErrors, cleanupOldVectors, checkpointWal, vacuumIfNeeded } from "./database/maintenance.js";
 import * as meetingOps from "./database/meeting-operations.js";
 import * as contribOps from "./database/contribution-operations.js";
@@ -68,8 +68,16 @@ export class MeetingDatabase {
     const db = new DatabaseClass(dbPath, { readonly: true });
     try {
       return db.prepare(
-        `SELECT id, name, persona, agenda, tier, provider_id, model_id FROM participants ORDER BY tier ASC`
-      ).all();
+        `SELECT id, name, persona, agenda, tier, provider_id, model_id, session_id, session_version, status, reflection, known_biases, communication_style, preferred_contribution_types, anti_patterns, tier_guidance, reflection_guidance, tags, expertise
+         FROM participants WHERE status != 'summoned' ORDER BY tier ASC`
+      ).all().map((row) => ({
+        ...row,
+        known_biases: safeParseJsonArray(row.known_biases) ?? [],
+        preferred_contribution_types: safeParseJsonArray(row.preferred_contribution_types) ?? [],
+        anti_patterns: safeParseJsonArray(row.anti_patterns) ?? [],
+        tags: safeParseJsonArray(row.tags) ?? [],
+        expertise: safeParseJsonArray(row.expertise) ?? [],
+      }));
     } catch (err) { throw err; } finally {
       try { db.close(); } catch {}
     }
@@ -93,7 +101,8 @@ export class MeetingDatabase {
   constructor(dbPath, meetingId) {
     this.#meetingId = meetingId;
     const existedBefore = existsSync(dbPath);
-    mkdirSync(dirname(dbPath), { recursive: true });
+    mkdirSync(dirname(dbPath), { recursive: true, mode: 0o700 });
+    try { chmodSync(dirname(dbPath), 0o700); } catch {}
     const DatabaseClass = getDatabaseClass();
     let db;
     try {
@@ -105,6 +114,10 @@ export class MeetingDatabase {
       if (jm?.journal_mode !== "wal") dbLogger.warn("pragma_journal_mode_fallback", `journal_mode WAL not achieved (got ${jm?.journal_mode ?? "unknown"}) — concurrency reduced`, { journal_mode: jm?.journal_mode });
       this.#db.exec("PRAGMA synchronous = NORMAL");
       this.#db.exec("PRAGMA wal_autocheckpoint = 1000");
+      try { chmodSync(dbPath, 0o600); } catch {}
+      for (const suffix of ["-wal", "-shm"]) {
+        try { if (existsSync(`${dbPath}${suffix}`)) chmodSync(`${dbPath}${suffix}`, 0o600); } catch {}
+      }
       const vecPath = resolveVecPath();
       if (vecPath && existsSync(vecPath)) {
         try {
@@ -192,7 +205,7 @@ export class MeetingDatabase {
   getContributionContext(contributionId) { return contribOps.getContributionContext(this.#db, contributionId); }
   addTurnRequest(meetingId, turnRequest) { const r = contribOps.addTurnRequest(this.#db, meetingId, turnRequest); this.#notify("turn_requests"); return r; }
   ensureParticipantRow(participantId, name = participantId, tier = "mid") { const r = contribOps.ensureParticipantRow(this.#db, this.#meetingId, participantId, name, tier); this.#notify("participants"); return r; }
-  addContributionWithTurnRequest(meetingId, contribution, turnRequest) { const r = contribOps.addContributionWithTurnRequest(this.#db, meetingId, contribution, turnRequest, () => this.getRound()); this.#notify("contributions"); return r; }
+  addContributionWithTurnRequest(meetingId, contribution, turnRequest, statePatch = null) { const r = contribOps.addContributionWithTurnRequest(this.#db, meetingId, contribution, turnRequest, () => this.getRound(), statePatch); this.#notify("contributions"); if (statePatch) this.#notify("state_patches"); return r; }
   getTurnRequests(meetingId) { return contribOps.getTurnRequests(this.#db, meetingId); }
   getMaxContributionId() { return contribOps.getMaxContributionId(this.#db, this.#meetingId); }
   setParticipantSessionId(participantId, sessionId) { const r = contribOps.setParticipantSessionId(this.#db, this.#meetingId, participantId, sessionId); this.#notify("participants"); return r; }

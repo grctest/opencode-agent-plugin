@@ -1,6 +1,5 @@
 import { statSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { resolveOpencodeConfigDir } from "../paths.js";
 
 function applyBooleanToBuiltIn(targetObj, value) {
   const clone = { ...targetObj };
@@ -11,8 +10,18 @@ function applyBooleanToBuiltIn(targetObj, value) {
   return clone;
 }
 
+function cloneConfigValue(value) {
+  if (Array.isArray(value)) return value.map(cloneConfigValue);
+  if (value && typeof value === "object") {
+    const clone = {};
+    for (const [key, child] of Object.entries(value)) clone[key] = cloneConfigValue(child);
+    return clone;
+  }
+  return value;
+}
+
 export function deepMerge(target, source) {
-  const result = { ...target };
+  const result = cloneConfigValue(target);
   for (const key of Object.keys(source)) {
     if (
       source[key] !== null &&
@@ -183,7 +192,7 @@ export function parseFastPathModel(modelStr) {
 }
 
 export function homeOpenCodeDir() {
-  return join(homedir(), '.config', 'opencode');
+  return resolveOpencodeConfigDir();
 }
 
 export function getFileMtimeMs(filePath) {

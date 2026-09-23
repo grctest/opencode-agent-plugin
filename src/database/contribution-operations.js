@@ -123,7 +123,7 @@ export function ensureParticipantRow(db, meetingId, participantId, name = partic
   }
 }
 
-export function addContributionWithTurnRequest(db, meetingId, contribution, turnRequest, getRoundFn) {
+export function addContributionWithTurnRequest(db, meetingId, contribution, turnRequest, getRoundFn, statePatch = null) {
   db.exec('BEGIN IMMEDIATE');
 
   try {
@@ -138,7 +138,7 @@ export function addContributionWithTurnRequest(db, meetingId, contribution, turn
       }
     }
 
-    qq(db,
+    const insertResult = qq(db,
         `INSERT INTO contributions (meeting_id, participant_id, round, type, content, target_which, batch_id, tool_calls, prompt_context, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
@@ -154,6 +154,33 @@ export function addContributionWithTurnRequest(db, meetingId, contribution, turn
         contribution.prompt_context ? JSON.stringify(contribution.prompt_context) : null,
         contribution.created_at ?? isoNow(),
       );
+
+    if (statePatch?.state) {
+      const contributionId = Number(insertResult?.lastInsertRowid ?? contribution.id ?? 0);
+      if (!Number.isInteger(contributionId) || contributionId < 1) {
+        throw new Error("state patch commit could not resolve contribution id");
+      }
+      const state = { ...statePatch.state, updated_contribution_id: contributionId };
+      const updateResult = qq(db, `UPDATE participants SET state_json = ? WHERE id = ? AND meeting_id = ?`)
+        .run(JSON.stringify(state), statePatch.participantId ?? contribution.participant_id, meetingId);
+      if (Number(updateResult?.changes ?? updateResult?.rowsAffected ?? 0) < 1) {
+        throw new Error("state patch commit could not update participant state");
+      }
+      qq(db,
+        `INSERT INTO state_patches (meeting_id, participant_id, round, contribution_id, version, patch_json, applied_json, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(meeting_id, participant_id, version) DO NOTHING`,
+      ).run(
+        meetingId,
+        statePatch.participantId ?? contribution.participant_id,
+        statePatch.round ?? contribution.round ?? getRoundFn(),
+        contributionId,
+        statePatch.version ?? state.version,
+        typeof statePatch.patchJson === "string" ? statePatch.patchJson : JSON.stringify(statePatch.patchJson ?? {}),
+        typeof statePatch.appliedJson === "string" ? statePatch.appliedJson : JSON.stringify(statePatch.appliedJson ?? {}),
+        isoNow(),
+      );
+    }
 
     if (turnRequest) {
       db
@@ -233,7 +260,7 @@ export function getParticipantStatus(db, meetingId, participantId) {
 export function getAllParticipantsWithStatus(db, meetingId) {
   return db
     .prepare(
-      `SELECT id, name, persona, agenda, tier, provider_id, model_id, session_id, session_version, status, reflection, known_biases, communication_style, preferred_contribution_types, tags, expertise
+      `SELECT id, name, persona, agenda, tier, provider_id, model_id, session_id, session_version, status, reflection, known_biases, communication_style, preferred_contribution_types, anti_patterns, tier_guidance, reflection_guidance, tags, expertise
          FROM participants WHERE meeting_id = ?`,
     )
     .all(meetingId)
@@ -249,10 +276,13 @@ export function getAllParticipantsWithStatus(db, meetingId) {
       session_version: r.session_version ?? 0,
       status: r.status,
       reflection: r.reflection,
-      known_biases: safeParseJsonArray(r.known_biases),
-      communication_style: r.communication_style ?? null,
-      preferred_contribution_types: safeParseJsonArray(r.preferred_contribution_types),
-      tags: safeParseJsonArray(r.tags),
+       known_biases: safeParseJsonArray(r.known_biases),
+       communication_style: r.communication_style ?? null,
+       preferred_contribution_types: safeParseJsonArray(r.preferred_contribution_types),
+       anti_patterns: safeParseJsonArray(r.anti_patterns),
+       tier_guidance: r.tier_guidance ?? "",
+       reflection_guidance: r.reflection_guidance ?? "",
+       tags: safeParseJsonArray(r.tags),
       expertise: safeParseJsonArray(r.expertise),
     }));
 }

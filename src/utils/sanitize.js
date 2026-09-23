@@ -131,16 +131,34 @@ export function sanitizeForDisplay(text, maxLen = 5000) {
  * @param {string} cmd
  * @returns {boolean} true if safe
  */
-export function isSafeBashCommand(cmd) {
-  if (!cmd || typeof cmd !== "string") return false;
-  const lower = cmd.toLowerCase();
-  if (lower.includes("--upload-pack")) return false;
-  if (/\bfind\b.*\s-exec(\s|;|$)/.test(lower)) return false;
-  if (/\bgrep\b.*\s-R(\s|$)/.test(cmd)) return false;
+const DEFAULT_BASH_ALLOWLIST = ["git", "ls", "wc", "head", "tail", "grep", "find", "cat"];
+const UNSAFE_BASH_EXECUTABLES = new Set(["bash", "sh", "zsh", "dash", "cmd", "powershell", "node", "bun", "npm", "npx", "python", "python3", "ruby", "perl"]);
+
+export function isBashCommandAllowed(command, allowlist = DEFAULT_BASH_ALLOWLIST) {
+  if (typeof command !== "string") return false;
+  const normalized = command.trim();
+  if (!normalized || /[\r\n;&|<>`$()]/.test(normalized)) return false;
+  const tokens = normalized.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? [];
+  if (tokens.length === 0) return false;
+  const executable = tokens[0].replace(/^['"]|['"]$/g, "").split(/[\\/]/).pop().toLowerCase();
+  if (UNSAFE_BASH_EXECUTABLES.has(executable)) return false;
+  if (!allowlist.map((entry) => String(entry).toLowerCase()).includes(executable)) return false;
+  const lower = normalized.toLowerCase();
+  if (lower.includes("--upload-pack") || /\bfind\b.*\s-exec(\s|;|$)/.test(lower)) return false;
+  if (/\bgrep\b.*\s-R(\s|$)/.test(normalized)) return false;
   if (/\b--exec(\s|=)/.test(lower)) return false;
-  if (/[;&|`$]/.test(cmd) && /(?:\|\||&&)/.test(cmd)) {
-    // Allow simple pipes but reject command chaining that escapes allowlist
-    if (/;\s*(rm|mv|cp|chmod|chown|wget|curl)\b/.test(lower)) return false;
-  }
   return true;
+}
+
+export function getBashCommand(args) {
+  if (typeof args === "string") return args;
+  if (!args || typeof args !== "object") return null;
+  for (const key of ["command", "cmd", "script"]) {
+    if (typeof args[key] === "string") return args[key];
+  }
+  return null;
+}
+
+export function isSafeBashCommand(cmd) {
+  return isBashCommandAllowed(cmd);
 }

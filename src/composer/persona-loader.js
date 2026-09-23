@@ -1,11 +1,11 @@
 import { readFileSync, existsSync, readdirSync, watch, statSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { Logger, extractErrorInfo } from "../logger.js";
 import { PersonaIndex } from "../services/persona-index.js";
 import { getConfig } from "../config.js";
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_QUANT } from "../services/model-manager.js";
+import { resolveOpencodeConfigDir } from "../paths.js";
 
 const __dirname = dirname(fileURLToPath(new URL(".", import.meta.url)));
 const composerLogger = new Logger();
@@ -28,7 +28,7 @@ function personasBasePath() {
 }
 
 function userPersonasPath() {
-  const configDir = process.env.LOOM_CONFIG_DIR || join(homedir(), ".config", "opencode", "loom");
+  const configDir = process.env.LOOM_CONFIG_DIR || join(resolveOpencodeConfigDir(), "loom");
   const personasDir = join(configDir, "personas");
   const tiers = ["junior", "mid", "senior", "principal", "civilian"];
   for (const tier of tiers) {

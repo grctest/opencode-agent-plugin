@@ -83,8 +83,9 @@ export class SynthesisCoordinator {
           parts: [{ type: "text", text: userPrompt }],
           timeoutMs: getConfig().synthesisTimeoutMs,
         });
-        if (!r.ok) throw r.error;
-        return r;
+         if (!r.ok) throw r.error;
+         this.#sessionManager.recordTokens?.(r.tokens);
+         return r;
       }, { maxAttempts: 3, baseDelayMs: 200, maxDelayMs: 2000, retryable: isRetryableError });
       const llmMs = Date.now() - llmStart;
       incrementKeyedCounter("llm_calls_by_type", "synthesis");
@@ -152,7 +153,7 @@ export class SynthesisCoordinator {
         const fileMentions = [];
         for (const r of earlier) {
           for (const c of (r.contributions || [])) {
-            if (c.type === "challenge" || c.type === "dissent" || c.type === "critique_response" || c.type === "perspective_response") contested.push(c);
+             if (c.type === "challenge" || c.type === "dissent" || c.type === "critique_response" || c.type === "perspective_response" || /\b(challenge|dissent|disagree|concern|oppose|dispute|contradict|risk|flaw|weakness)\b/i.test(String(c.content ?? ""))) contested.push(c);
             if (/(?:file\s*=\s*[^\s]+\.\w+|src\/[^\s]+\.\w+|\b\w+\.(?:tsx|ts|js|jsx)\b|```)/i.test(String(c.content))) fileMentions.push(c);
           }
         }
@@ -221,8 +222,9 @@ ${draftForPrompt}`;
             parts: [{ type: "text", text: critiquePrompt }],
             timeoutMs: getConfig().synthesisTimeoutMs,
           });
-          if (!r.ok) throw r.error;
-          return r;
+           if (!r.ok) throw r.error;
+           this.#sessionManager.recordTokens?.(r.tokens);
+           return r;
         }, { maxAttempts: 3, baseDelayMs: 200, maxDelayMs: 2000, retryable: isRetryableError });
         const text2 = result.text;
         if (!text2 || !text2.trim()) return text;

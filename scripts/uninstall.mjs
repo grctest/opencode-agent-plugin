@@ -7,19 +7,20 @@
  * Scope: opencode plugin only (plugins/, commands/, personas/, opencode.json).
  * Project data (.opencode/loom/meetings etc.) is NOT touched.
  *
- * Run with: node scripts/uninstall.mjs [--purge-deps] [--dir /path/to/opencode]
+ * Run with: node scripts/uninstall.mjs [--purge] [--purge-deps] [--dir /path/to/opencode]
  */
 
 import { existsSync, rmSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { detectOpencodeDir, isLoomCommand, findOpencodeJson, logInfo, logWarn, logError } from "./utils.mjs";
+import { detectOpencodeDir, isLoomCommand, findOpencodeJson, parseJsonContent, logInfo, logWarn, logError } from "./utils.mjs";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, "..");
 
 const args = process.argv.slice(2);
 const PURGE_DEPS = args.includes("--purge-deps");
+const PURGE_CONFIG = args.includes("--purge");
 let overrideDir = null;
 const dirFlag = args.find((a) => a === "--dir");
 if (dirFlag) {
@@ -51,14 +52,14 @@ function cleanConfig(opencodeDir) {
   }
   try {
     const content = readFileSync(configFile, "utf-8");
-    const config = JSON.parse(content);
+    const config = parseJsonContent(content);
     let modified = false;
 
     if (Array.isArray(config.plugin)) {
       const before = config.plugin.length;
       config.plugin = config.plugin.filter((p) => {
         const n = p.replace(/\\/g, "/");
-        return !n.includes("plugin/loom") && !n.includes("plugin\\loom") && !n.toLowerCase().includes("loom");
+        return !n.includes("plugin/loom") && !n.includes("plugin\\loom");
       });
       if (config.plugin.length !== before) {
         logInfo(`  Removed ${before - config.plugin.length} loom entry(ies) from plugin[] in ${configFile}`);
@@ -77,10 +78,11 @@ function cleanConfig(opencodeDir) {
       modified = true;
     }
     // Also handle top-level loom key if present
-    if (config.loom && typeof config.loom === "object") {
-      // The loom key in opencode.json is the loom config itself — keep it? User wants fresh install,
-      // but removing it would wipe user's loom settings. Only remove if explicitly requested via --purge.
-      // For now, preserve it and just notify.
+    if (PURGE_CONFIG && config.loom && typeof config.loom === "object") {
+      delete config.loom;
+      modified = true;
+      logInfo("  Removed top-level loom config");
+    } else if (config.loom && typeof config.loom === "object") {
       logInfo("  Preserved top-level loom config (use --purge to wipe loom settings)");
     }
 

@@ -7,10 +7,10 @@
  */
 
 import { existsSync, mkdirSync, cpSync, rmSync, readFileSync, writeFileSync, readdirSync, openSync, fsyncSync, closeSync, renameSync } from "node:fs";
-import { spawnSync, execSync } from "node:child_process";
+import { spawnSync, execFileSync } from "node:child_process";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { detectOpencodeDir, isLoomCommand, findOpencodeJson, logInfo, logWarn, logError } from "./utils.mjs";
+import { detectOpencodeDir, isLoomCommand, findOpencodeJson, parseJsonContent, logInfo, logWarn, logError } from "./utils.mjs";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, "..");
@@ -72,11 +72,8 @@ function installFiles(opencodeDir) {
     mkdirSync(pluginsDir, { recursive: true });
   }
 
-  const loomTarget = join(pluginsDir, "loom.js");
-  if (existsSync(loomTarget)) {
-    rmSync(loomTarget);
-  }
-  const tmpPlugin = `${loomTarget}.tmp.${process.pid}`;
+   const loomTarget = join(pluginsDir, "loom.js");
+   const tmpPlugin = `${loomTarget}.tmp.${process.pid}`;
   cpSync(bundledPlugin, tmpPlugin);
   try {
     const fd = openSync(tmpPlugin, "r+");
@@ -115,8 +112,8 @@ function installFiles(opencodeDir) {
         logInfo(`  Backed up existing personas → ${bak}`);
       } catch (err) {
         logWarn(`  Could not back up personas: ${err.message} — skipping persona install to preserve existing`);
-        // Don't delete original if backup failed
-        return;
+         // Don't delete original if backup failed
+         throw new Error(`Persona backup failed: ${err.message}`);
       }
       rmSync(personasTargetDir, { recursive: true });
     }
@@ -152,7 +149,7 @@ function configureOpencodeJson(opencodeDir) {
 
   try {
     const content = readFileSync(configFile, "utf-8");
-    const config = JSON.parse(content);
+    const config = parseJsonContent(content);
     let modified = false;
 
     // Remove any stale plugin config entries pointing to the old plugin/loom path
@@ -241,10 +238,10 @@ try {
   console.log("");
   logInfo("Downloading default embedding model...");
   try {
-    execSync("npm run model:download", { 
-      cwd: PROJECT_ROOT, 
+    execFileSync(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "model:download"], {
+      cwd: PROJECT_ROOT,
       stdio: "inherit",
-      timeout: 120000 // 2 minute timeout
+      timeout: 120000
     });
     logInfo("Default embedding model downloaded successfully.");
   } catch (err) {
@@ -264,10 +261,10 @@ try {
   const npmCheck = spawnSync(npmBin, ["--version"], { stdio: "pipe", shell: process.platform === "win32" });
   if (npmCheck.error || npmCheck.status !== 0) {
     logWarn("npm not found on PATH — skipping runtime dependency installation.");
-    logInfo(`Install them manually: npm install --prefix "${runtimeDepsDir}" onnxruntime-node@^1.27.0 @huggingface/tokenizers@^0.1.3 sqlite-vec@^0.1.9`);
+    logInfo(`Install them manually: npm install --prefix "${runtimeDepsDir}" onnxruntime-node@1.30.0 @huggingface/tokenizers@0.2.0 sqlite-vec@0.1.9`);
   } else {
     try {
-      execSync(`npm install --prefix "${runtimeDepsDir}" onnxruntime-node@^1.27.0 @huggingface/tokenizers@^0.1.3 sqlite-vec@^0.1.9`, {
+      execFileSync(npmBin, ["install", "--prefix", runtimeDepsDir, "onnxruntime-node@1.30.0", "@huggingface/tokenizers@0.2.0", "sqlite-vec@0.1.9"], {
         cwd: PROJECT_ROOT,
         stdio: "inherit",
         timeout: 300000
@@ -275,7 +272,7 @@ try {
       logInfo("Runtime deps installed successfully.");
     } catch (err) {
       logWarn(`Could not install runtime deps: ${err.message}`);
-      logInfo(`Run: npm install --prefix "${runtimeDepsDir}" onnxruntime-node@^1.27.0 @huggingface/tokenizers@^0.1.3 sqlite-vec@^0.1.9`);
+      logInfo(`Run: npm install --prefix "${runtimeDepsDir}" onnxruntime-node@1.30.0 @huggingface/tokenizers@0.2.0 sqlite-vec@0.1.9`);
     }
   }
 } catch (err) {

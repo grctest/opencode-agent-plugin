@@ -17,12 +17,9 @@ export async function promptChildSession(participant) {
   try {
 
   const model = this._getParticipantModel(participant);
-  // Ensure per-meeting agentTools override (plan/build) is visible to prompts that call getConfig()
-  try {
-    const eff = this._options?.agentTools ?? this._tools;
-    if (eff) globalThis.__loomAgentToolsOverride = eff;
-  } catch {}
-  const config = getConfig();
+  const baseConfig = getConfig();
+  const effectiveAgentTools = this.getEffectiveAgentTools?.() ?? this._options?.agentTools ?? this._tools ?? baseConfig.agentTools;
+  const config = { ...baseConfig, agentTools: effectiveAgentTools };
   const fallbackConfig = config.modelFallback;
 
   const baseTimeoutMsRaw = config.agentTimeoutMs;
@@ -54,18 +51,21 @@ export async function promptChildSession(participant) {
   }
 
   const currentRound = this._stateManager.getCurrentRound();
+  const forumEnabled = !!(effectiveAgentTools?.enabled && effectiveAgentTools?.loom?.loom_forum);
 
   // Forum topics for prompt — most recent activity first
   let forumTopicsForPrompt = [];
-  try {
-    const dbForForum = this._db ?? this._stateManager?.getDatabase?.() ?? null;
-    if (dbForForum && typeof dbForForum.listForumTopics === "function") {
-      forumTopicsForPrompt = dbForForum.listForumTopics({}) ?? [];
-    } else if (this._stateManager?.getWeave) {
-      // Fallback: derive from contributions if DB not available (should not happen)
-      forumTopicsForPrompt = [];
-    }
-  } catch {}
+  if (forumEnabled) {
+    try {
+      const dbForForum = this._db ?? this._stateManager?.getDatabase?.() ?? null;
+      if (dbForForum && typeof dbForForum.listForumTopics === "function") {
+        forumTopicsForPrompt = dbForForum.listForumTopics({}) ?? [];
+      } else if (this._stateManager?.getWeave) {
+        // Fallback: derive from contributions if DB not available (should not happen)
+        forumTopicsForPrompt = [];
+      }
+    } catch {}
+  }
 
   // SKILL.state O_t: latest-only observation — current-round live contributions only
   // (plan §5.1/§5.6; tightened from round >= cur-1, ≤20). Prior rounds arrive via
@@ -80,10 +80,7 @@ export async function promptChildSession(participant) {
   // tools resolution as buildAgentSystemPrompt (per-meeting override wins).
   let myState = null;
   try {
-    let eff = null;
-    try { eff = globalThis.__loomAgentToolsOverride ?? null; } catch {}
-    if (!eff) { try { eff = getConfig()?.agentTools ?? null; } catch {} }
-    if (eff?.enabled && eff?.loom?.loom_state_patch && typeof this._stateManager.getParticipantState === "function") {
+    if (effectiveAgentTools?.enabled && effectiveAgentTools?.loom?.loom_state_patch && typeof this._stateManager.getParticipantState === "function") {
       myState = this._stateManager.getParticipantState(participant.config.id);
     }
   } catch { myState = null; }
@@ -106,7 +103,7 @@ export async function promptChildSession(participant) {
   } catch {}
 
   const activeCountPS = (() => { try { return this._stateManager.getActiveParticipants().length; } catch { return undefined; }})();
-  const systemPrompt = buildAgentSystemPrompt(participant, { activeCount: activeCountPS });
+  const systemPrompt = buildAgentSystemPrompt(participant, { activeCount: activeCountPS, agentTools: effectiveAgentTools });
   let steeringHint = "";
   let consumedHint = "";
   // Atomic consume — hintLocked flag prevents double-consume if two promptChildSessions race
@@ -132,6 +129,7 @@ export async function promptChildSession(participant) {
     forumTopicsForPrompt,
     otherParticipantsForPrompt,
     myState,
+    forumEnabled,
   );
   const userPrompt = steeringHint ? `${userPromptBase}\n\n${delimitContext(steeringHint, "STEERING_HINT")}` : userPromptBase;
 
@@ -328,15 +326,17 @@ export async function promptChildSession(participant) {
   }
   };
 
-  let succeeded = false;
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+   let succeeded = false;
+   this._stateManager.beginTurn?.(participant.config.id);
+   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       const response = await this._executeAgentTurn(participant, activeModel, timeoutMs, promptContext);
       succeeded = true;
       localSucceeded = true;
       if (consumedHint) consumedHint = "";
       return { result: response, error: null };
-    } catch (err) {
+     } catch (err) {
+      this._stateManager.discardActiveTurnPatch?.();
       lastError.value = err;
       const info = extractErrorInfo(err);
       if (isRetryableError(err)) this._recordModelFailure(activeModel);
@@ -439,6 +439,7 @@ export async function promptChildSession(participant) {
       if (consumedHint) consumedHint = "";
       return response;
     } catch (err) {
+      this._stateManager.discardActiveTurnPatch?.();
       lastError.value = err;
       const info = extractErrorInfo(err);
       const isSessionNotFoundFb = err?.message && /session not found/i.test(err.message);
@@ -505,10 +506,11 @@ export async function promptChildSession(participant) {
 
   this._recordFallbackFailure(participant, activeModel, fallbackModel, lastError.value);
   return { result: null, error: lastError.value ?? new Error("all models failed") };
-  } finally {
-    if (!localSucceeded && participant.status === "speaking") participant.status = prevStatus;
-    this._hintLocked = false;
-  }
+   } finally {
+     if (!localSucceeded && participant.status === "speaking") participant.status = prevStatus;
+     this._stateManager.endTurn?.();
+     this._hintLocked = false;
+   }
 }
 
 export function recordFallbackFailure(participant, originalModel, fallbackModel, error) {

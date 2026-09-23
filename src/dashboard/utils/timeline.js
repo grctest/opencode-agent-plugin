@@ -51,7 +51,13 @@ export function buildFlatItems(groupedContributions, opts) {
     } catch {}
     return 4;
   })();
-  for (const [round, contribs] of groupedContributions) {
+  const groups = [...groupedContributions];
+  if (isWeaving && activeRound > 0 && !groups.some(([round]) => round === activeRound)) {
+    groups.push([activeRound, []]);
+    groups.sort((a, b) => a[0] - b[0]);
+  }
+
+  for (const [round, contribs] of groups) {
     const isCollapsed = collapsedRounds.includes(round);
     const roundErrors = agentErrors.filter((e) => e.round === round);
     const showExtensionMarker = extensions.length > 0 && round === (maxRounds ? maxRounds - (extensions.length * extraPerExtension) : 0) + 1;
