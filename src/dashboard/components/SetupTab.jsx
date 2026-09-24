@@ -11,6 +11,7 @@ import { Input } from "./ui/input.tsx";
 import { Textarea } from "./ui/textarea.tsx";
 import { Label } from "./ui/label.tsx";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select.tsx";
+import { Switch } from "./ui/switch.tsx";
 import { Skeleton } from "./ui/skeleton.tsx";
 import { Alert, AlertTitle, AlertDescription } from "./ui/alert.tsx";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "./ui/collapsible.tsx";
@@ -104,18 +105,41 @@ function StepHeader({ steps }) {
   );
 }
 
+function FeatureModeControl({ value, onChange, disabled }) {
+  return (
+    <div className="flex shrink-0 items-center gap-1" role="group" aria-label="Capability mode">
+      {["disabled", "optional", "mandatory"].map((mode) => (
+        <Button
+          key={mode}
+          type="button"
+          size="sm"
+          variant={value === mode ? "default" : "outline"}
+          disabled={disabled}
+          onClick={() => onChange(mode)}
+          aria-pressed={value === mode}
+          className="px-2 text-[11px] capitalize"
+        >
+          {mode}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
 export function SetupTab({ selectedMeeting, onStarted }) {
   // Draft form state lives in a persistent per-session nanostore, so tab
   // switches (which unmount this component) and page refreshes never lose it.
   // Transient UI (catalog, llm, busy, errors, dialogs, jobs) stays in useState.
   const form = useStore($setupForm);
-  const { question, context, maxRounds, preview, seats, startedId } = form;
+  const { question, context, maxRounds, preview, seats, startedId, orchestratorModel, features } = form;
   const patchForm = (patch) => $setupForm.set({ ...$setupForm.get(), ...patch });
   const setQuestion = (v) => { patchForm({ question: v }); setPreview(null); setGuidance(null); };
   const setContext = (v) => { patchForm({ context: v }); setPreview(null); setGuidance(null); };
   const setMaxRounds = (v) => patchForm({ maxRounds: v });
   const setPreview = (v) => patchForm({ preview: v });
   const setStartedId = (v) => patchForm({ startedId: v });
+  const setOrchestratorModel = (v) => patchForm({ orchestratorModel: v });
+  const setFeature = (key, value) => patchForm({ features: { ...features, [key]: value } });
   const setSeats = (updater) => {
     const cur = $setupForm.get();
     const next = typeof updater === "function" ? updater(cur.seats) : updater;
@@ -169,12 +193,25 @@ export function SetupTab({ selectedMeeting, onStarted }) {
     return changed ? next : seatList;
   };
 
+  const fillOrchestratorModel = useCallback((llmData) => {
+    const enabled = (llmData?.models ?? []).filter((m) => m.enabled && !m.unhealthy).map((m) => m.key);
+    if (enabled.length === 0) {
+      if (orchestratorModel) setOrchestratorModel(null);
+      return;
+    }
+    const current = $setupForm.get().orchestratorModel;
+    if (current && enabled.includes(current)) return;
+    const recommended = llmData?.suggested_orchestrator?.key;
+    setOrchestratorModel(recommended && enabled.includes(recommended) ? recommended : enabled[0]);
+  }, [orchestratorModel]);
+
   const refreshLlm = useCallback(async (force = false) => {
     try {
       const res = await fetch(force ? "/api/llm-models?refresh=1" : "/api/llm-models");
       if (res.ok) {
         const data = await res.json();
         setLlm(data);
+        fillOrchestratorModel(data);
         setSuggestedByTier((prev) => {
           const next = { ...prev };
           for (const s of data.suggested ?? []) {
@@ -187,7 +224,7 @@ export function SetupTab({ selectedMeeting, onStarted }) {
         setSeats((prev) => fillSeatModels(prev, data));
       }
     } catch {}
-  }, []);
+  }, [fillOrchestratorModel]);
 
   useEffect(() => { refreshLlm(); }, [refreshLlm]);
 
@@ -328,6 +365,7 @@ export function SetupTab({ selectedMeeting, onStarted }) {
   const filterOk = enabledKeys.size >= 1;
   const seatsMapped = !roomOk || seats.every((s) => s.model && enabledKeys.has(s.model));
   const modelsOk = filterOk && seatsMapped;
+  const orchestratorOk = !!orchestratorModel && enabledKeys.has(orchestratorModel);
   const idleOk = !job?.running;
   // While a deliberation is weaving, the entire setup form freezes in its
   // current state — question, rounds, models, seats, and actions all lock.
@@ -336,16 +374,18 @@ export function SetupTab({ selectedMeeting, onStarted }) {
   const requirements = useMemo(() => ([
     { key: "question", met: questionOk, label: "Enter a question" },
     { key: "models", met: modelsOk, label: !filterOk ? "Enable at least 1 model" : (!roomOk ? `Models ready (${enabledCount} enabled)` : seatsMapped ? `Models ready (${seats.length} seats mapped)` : "Pick a model for every seat") },
-    { key: "personas", met: personasOk, label: roomOk ? `Personas selected (${seats.length} seats)` : "Add at least 2 persona seats (auto-select or manual)" },
-    { key: "idle", met: idleOk, label: "No deliberation running" },
-  ]), [questionOk, personasOk, roomOk, seats.length, modelsOk, filterOk, seatsMapped, enabledCount, idleOk]);
+     { key: "personas", met: personasOk, label: roomOk ? `Personas selected (${seats.length} seats)` : "Add at least 2 persona seats (auto-select or manual)" },
+     { key: "orchestrator", met: orchestratorOk, label: orchestratorOk ? "Orchestrator model ready" : "Choose an orchestrator model" },
+     { key: "idle", met: idleOk, label: "No deliberation running" },
+   ]), [questionOk, personasOk, roomOk, seats.length, modelsOk, orchestratorOk, filterOk, seatsMapped, enabledCount, idleOk]);
 
   const steps = useMemo(() => ([
       { key: "question", label: "Question", status: questionOk ? "done" : "current", detail: null },
       { key: "models", label: "Models", status: modelsOk ? "done" : questionOk ? "current" : "todo", detail: totalCount ? `${enabledCount}/${totalCount}` : null },
-      { key: "personas", label: "Personas", status: personasOk ? "done" : filterOk ? "current" : "todo", detail: roomOk ? `${seats.length} seats` : null },
-      { key: "start", label: "Start", status: personasOk && modelsOk && idleOk ? "current" : "todo", detail: null },
-  ]), [questionOk, personasOk, modelsOk, idleOk, filterOk, roomOk, seats.length, enabledCount, totalCount]);
+       { key: "personas", label: "Personas", status: personasOk ? "done" : filterOk ? "current" : "todo", detail: roomOk ? `${seats.length} seats` : null },
+       { key: "orchestrator", label: "Orchestrator", status: orchestratorOk ? "done" : personasOk ? "current" : "todo", detail: null },
+       { key: "start", label: "Start", status: personasOk && modelsOk && orchestratorOk && idleOk ? "current" : "todo", detail: null },
+   ]), [questionOk, personasOk, modelsOk, orchestratorOk, idleOk, filterOk, roomOk, seats.length, enabledCount, totalCount]);
 
   const canStart = requirements.every((r) => r.met) && busy !== "start";
   const budgetEstimate = useMemo(() => {
@@ -372,8 +412,13 @@ export function SetupTab({ selectedMeeting, onStarted }) {
           const [provider_id, ...rest] = model.split("/");
            return { ...p, approved: true, model: { provider_id, model_id: rest.join("/") } };
          }),
-        models: [],
-        approved: true,
+         orchestrator_model: (() => {
+           const [provider_id, ...rest] = (orchestratorModel ?? "").split("/");
+           return { provider_id, model_id: rest.join("/") };
+         })(),
+         features,
+         models: [],
+         approved: true,
       });
        resetSetupForm();
        setStartedId(data.meeting_id);
@@ -679,6 +724,51 @@ export function SetupTab({ selectedMeeting, onStarted }) {
               <p className="text-xs text-muted-foreground">Room is full ({MAX_SEATS} seats max) — remove a seat to add a different one.</p>
             )}
           </CardContent>
+      </Card>
+
+      <Card ref={(el) => { sectionRefs.current.orchestrator = el; }}>
+        <CardHeader>
+          <CardTitle>4. Orchestrator & capabilities</CardTitle>
+          <CardDescription>Choose the model that coordinates the deliberation, then narrow what agents may use.</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-5">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="loom-orchestrator-model">Orchestrator model</Label>
+            <Select value={orchestratorModel ?? ""} onValueChange={setOrchestratorModel} disabled={isFrozen || !enabledModels.length}>
+              <SelectTrigger id="loom-orchestrator-model" className="max-w-xl font-mono text-xs" aria-label="Orchestrator model">
+                <SelectValue placeholder="Select a model…" />
+              </SelectTrigger>
+              <SelectContent>
+                {enabledModels.map((m) => <SelectItem key={m.key} value={m.key}>{m.key}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex flex-col gap-2 rounded-lg border p-3">
+            <div className="mb-1 text-sm font-medium">Agent capabilities</div>
+             {[
+               ["forums", "Forums", "Allow participants to create, read, and discuss forum topics. Mandatory requires one forum tool call per active turn."],
+               ["skillState", "SKILL.state / stance", "Let each agent carry a stance and bounded evidence into future turns. Mandatory requires one patch per non-pass turn."],
+                ["agentQueries", "Agent-to-agent queries", "Allow peer interaction tools: query, vote, summon, and request-next. Mandatory requires one eligible peer interaction when peers are available."],
+                ["localSearch", "Local search", "Allow read, glob, and grep for project files. Mandatory requires one local search call per active turn."],
+                ["onlineResearch", "Online research", "Allow websearch and webfetch. Mandatory requires one online research call per active turn."],
+             ].map(([key, label, description]) => (
+               <div key={key} className="flex items-center justify-between gap-4 rounded-md px-2 py-1.5 hover:bg-muted/50">
+                 <div className="min-w-0">
+                   <Label className="cursor-default">{label}</Label>
+                   <p className="text-xs text-muted-foreground">{description}</p>
+                 </div>
+                 <FeatureModeControl value={features[key] ?? "optional"} onChange={(value) => setFeature(key, value)} disabled={isFrozen} />
+               </div>
+             ))}
+             <div className="flex items-center justify-between gap-4 rounded-md px-2 py-1.5 hover:bg-muted/50">
+               <div className="min-w-0">
+                 <Label htmlFor="loom-feature-agentCommands" className="cursor-pointer">Bash commands</Label>
+                 <p className="text-xs text-muted-foreground">Allow allowlisted shell commands. Bash is always optional.</p>
+               </div>
+               <Switch id="loom-feature-agentCommands" checked={features.agentCommands !== false} onCheckedChange={(value) => setFeature("agentCommands", value === true)} disabled={isFrozen} aria-label="Bash commands" />
+             </div>
+          </div>
+        </CardContent>
       </Card>
 
       {selectedMeeting && (

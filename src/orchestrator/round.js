@@ -48,8 +48,8 @@ export async function runRound() {
       round,
       activeParticipants,
       promptOrchestrator: async (system, model, message, type) => this._promptOrchestrator(system, model, message, type, round.number),
-      getHighestTierModel: () => this._getHighestTierModel(),
-      getFallbackModel: () => this._getAllowedFallbackModel(),
+       getHighestTierModel: () => this._getOrchestratorModel(),
+       getFallbackModel: () => this._getAllowedFallbackModel(),
       state: this._stateManager.getState(),
       deadline,
     });
@@ -127,7 +127,8 @@ export async function _finalizeRound(updatedRound) {
           turnRequests,
           participants: this._stateManager.getParticipants(),
           promptFn: async (system, model, message) => this._promptOrchestrator(system, model, message, "turn_order", updatedRound.number),
-          getHighestTierModel: () => this._getHighestTierModel(),
+             ...(this._options.orchestratorModel ? { getOrchestratorModel: () => this._getOrchestratorModel() } : {}),
+             getHighestTierModel: () => this._getOrchestratorModel(),
         });
         
         // Store planned order for next round

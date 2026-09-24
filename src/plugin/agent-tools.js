@@ -9,7 +9,7 @@ export function createAgentTools({ config, resolveMeeting, activeLooms, director
   const queryEvidence = createQueryEvidenceTools({ config, resolveMeeting, activeLooms });
   const voteSummon = createVoteSummonTools({ config, resolveMeeting, activeLooms });
   const forum = createForumTools({ config, resolveMeeting, activeLooms });
-  const meta = createMetaTools({ config });
+  const meta = createMetaTools({ config, resolveMeeting, activeLooms });
   const passTool = createPassTool({ config, resolveMeeting, activeLooms });
   const statePatch = createStatePatchTool({ config, resolveMeeting, activeLooms });
   return {

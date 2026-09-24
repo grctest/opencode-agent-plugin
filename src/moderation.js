@@ -54,7 +54,7 @@ export function extractBalancedJsonArray(text) {
  * @param {Function} params.getHighestTierModel - Function to get the highest tier model
  * @returns {Promise<string[]>} Ordered array of participant IDs
  */
-export async function planTurnOrder({ stateOfPlay, roundSummary, turnRequests, participants, promptFn, getHighestTierModel }) {
+export async function planTurnOrder({ stateOfPlay, roundSummary, turnRequests, participants, promptFn, getHighestTierModel, getOrchestratorModel }) {
   const config = getConfig();
   
   // If no requests, return default order (active participants)
@@ -91,7 +91,7 @@ export async function planTurnOrder({ stateOfPlay, roundSummary, turnRequests, p
   }
 
   const fastPathModelObj = config.fastPathModelObj ?? (config.fastPathModel ? (() => { const idx = config.fastPathModel.indexOf("/"); if (idx === -1) return null; return { providerID: config.fastPathModel.slice(0, idx), modelID: config.fastPathModel.slice(idx + 1) }; })() : null);
-  const model = fastPathModelObj ?? getHighestTierModel();
+  const model = getOrchestratorModel?.() ?? fastPathModelObj ?? getHighestTierModel();
   if (!model) {
     // Fallback: sort by priority descending, then by tier
     return fallbackTurnOrder(validRequests, participants);

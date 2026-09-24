@@ -50,8 +50,9 @@ export async function promptChildSession(participant) {
     }
   }
 
-  const currentRound = this._stateManager.getCurrentRound();
-  const forumEnabled = !!(effectiveAgentTools?.enabled && effectiveAgentTools?.loom?.loom_forum);
+   const currentRound = this._stateManager.getCurrentRound();
+   const forumEnabled = !!(effectiveAgentTools?.enabled && effectiveAgentTools?.loom?.loom_forum);
+   const mandatoryCapabilities = effectiveAgentTools?.mandatory ?? {};
 
   // Forum topics for prompt — most recent activity first
   let forumTopicsForPrompt = [];
@@ -128,9 +129,11 @@ export async function promptChildSession(participant) {
     this._stateManager.getContext?.() ?? "",
     forumTopicsForPrompt,
     otherParticipantsForPrompt,
-    myState,
-    forumEnabled,
-  );
+     myState,
+     forumEnabled,
+     !!(effectiveAgentTools?.enabled && effectiveAgentTools?.loom?.loom_query),
+     mandatoryCapabilities,
+   );
   const userPrompt = steeringHint ? `${userPromptBase}\n\n${delimitContext(steeringHint, "STEERING_HINT")}` : userPromptBase;
 
   const promptContext = {

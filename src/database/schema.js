@@ -7,7 +7,7 @@
  * directly; older files run only the migrations they are missing.
  */
 
-export const LATEST_SCHEMA_VERSION = 7;
+export const LATEST_SCHEMA_VERSION = 8;
 
 /**
  * Ordered migrations. MIGRATIONS[n] upgrades a DB at user_version n to n+1.
@@ -136,6 +136,14 @@ export const MIGRATIONS = [
     if (!cols.has("tier_guidance")) db.exec("ALTER TABLE participants ADD COLUMN tier_guidance TEXT");
     if (!cols.has("reflection_guidance")) db.exec("ALTER TABLE participants ADD COLUMN reflection_guidance TEXT");
   },
+  (db) => {
+    const cols = new Set(
+      db.prepare("PRAGMA table_info(meetings)").all().map((c) => c.name),
+    );
+    if (!cols.has("orchestrator_provider_id")) db.exec("ALTER TABLE meetings ADD COLUMN orchestrator_provider_id TEXT");
+    if (!cols.has("orchestrator_model_id")) db.exec("ALTER TABLE meetings ADD COLUMN orchestrator_model_id TEXT");
+    if (!cols.has("feature_toggles_json")) db.exec("ALTER TABLE meetings ADD COLUMN feature_toggles_json TEXT");
+  },
 ];
 
 export function initSchema(db) {
@@ -168,9 +176,12 @@ export function initSchema(db) {
       querying_participants TEXT,
       evidence_participants TEXT,
       summoning_participants TEXT,
-      semantic_degraded INTEGER NOT NULL DEFAULT 0,
-      persistence_degraded INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL,
+       semantic_degraded INTEGER NOT NULL DEFAULT 0,
+       persistence_degraded INTEGER NOT NULL DEFAULT 0,
+       orchestrator_provider_id TEXT,
+       orchestrator_model_id TEXT,
+       feature_toggles_json TEXT,
+       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
 

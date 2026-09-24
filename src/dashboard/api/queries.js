@@ -3,11 +3,24 @@ import { parseReflections, safeParseJson, normalizeToolCalls } from "../../utils
 export function getState() {
     const row = this._db
       .prepare(
-        `SELECT id as meeting_id, question, context, status, round, max_rounds, convergence, fabric, stats, reflecting_participants, querying_participants, evidence_participants, summoning_participants, state_of_play, semantic_degraded, persistence_degraded, created_at
+        `SELECT id as meeting_id, question, context, status, round, max_rounds, convergence, fabric, stats, reflecting_participants, querying_participants, evidence_participants, summoning_participants, state_of_play, semantic_degraded, persistence_degraded, feature_toggles_json, created_at
          FROM meetings LIMIT 1`,
       )
       .get();
     if (!row) return null;
+    if (row.feature_toggles_json) {
+      try {
+        const rawFeatures = JSON.parse(row.feature_toggles_json);
+        row.features = {
+          ...rawFeatures,
+          forums: rawFeatures?.forums === false ? "disabled" : rawFeatures?.forums === true ? "optional" : (rawFeatures?.forums ?? "optional"),
+        };
+      } catch {
+        row.features = { forums: "optional" };
+      }
+    } else {
+      row.features = { forums: "optional" };
+    }
     if (row.stats) {
       try {
         row.stats = JSON.parse(row.stats);

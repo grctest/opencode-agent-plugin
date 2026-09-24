@@ -234,7 +234,8 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
     // a pass. Order is primary → synthesis → patch, so cited [#id]s from inline answers
     // can enter facts_add. Never fails the turn — prose is preserved, state stays prior.
     const patchEnabled = !!agentToolsConfig?.enabled && !!agentToolsConfig?.loom?.loom_state_patch;
-    const patchRetryEnabled = agentToolsConfig?.patchRetry !== false;
+    const mandatoryCapabilities = agentToolsConfig?.mandatory ?? {};
+    const patchRetryEnabled = !!mandatoryCapabilities.skillState || (!agentToolsConfig?.mandatory && agentToolsConfig?.patchRetry !== false);
     const hasAppliedPatch = (trs) => (trs ?? []).some((t) => t.tool === "loom_state_patch" && t.metadata?.applied === true);
     let statePatchVersion = (() => {
       const hit = (finalToolResults ?? []).find((t) => t.tool === "loom_state_patch" && t.metadata?.applied === true);
@@ -303,6 +304,59 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
         }
       }
     }
+    const hasSuccessfulTool = (toolName) => (finalToolResults ?? []).some((t) => t.tool === toolName && t.status !== "error" && t.output != null);
+    const hasSuccessfulOneOf = (toolNames) => toolNames.some((toolName) => hasSuccessfulTool(toolName));
+    const missingMandatory = [];
+    if (mandatoryCapabilities.forums && !hasSuccessfulOneOf(["loom_forum_create_topic", "loom_forum_list_topics", "loom_forum_read_topic", "loom_forum_add_comment"])) missingMandatory.push("Forums: call loom_forum_list_topics, loom_forum_read_topic, loom_forum_create_topic, or loom_forum_add_comment");
+    if (mandatoryCapabilities.skillState && !hasSuccessfulTool("loom_state_patch")) missingMandatory.push("SKILL.state: call loom_state_patch");
+    if (mandatoryCapabilities.agentQueries && Number.isFinite(activeCountExec) && activeCountExec > 1 && !hasSuccessfulOneOf(["loom_query", "loom_vote", "loom_summon", "loom_request_next"])) missingMandatory.push("Agent-to-agent: call loom_query, loom_vote, loom_summon, or loom_request_next with an eligible peer");
+    if (mandatoryCapabilities.localSearch && !hasSuccessfulOneOf(["read", "glob", "grep"])) missingMandatory.push("Local search: call read, glob, or grep");
+    if (mandatoryCapabilities.onlineResearch && !hasSuccessfulOneOf(["websearch", "webfetch"])) missingMandatory.push("Online research: call websearch or webfetch");
+    if (!loomPassCall && missingMandatory.length > 0) {
+      let mandatoryRemaining = timeoutMs;
+      if (timeoutMs !== 0 && this._deadline && Number.isFinite(this._deadline) && this._deadline !== Infinity) {
+        const remaining = this._deadline - Date.now();
+        if (remaining < 15000) {
+          mandatoryRemaining = 0;
+        } else {
+          mandatoryRemaining = Math.min(timeoutMs, Math.max(15000, remaining - 1000));
+        }
+      }
+      if (mandatoryRemaining !== 0) {
+        try {
+          const mandatoryInstruction = `This turn has unmet mandatory capabilities: ${missingMandatory.join("; ")}. Complete every applicable requirement now, using the exact tool names and valid targets. Do not repeat the prose; make the required tool call(s), then finish your contribution.`;
+          this._logger.info("mandatory_capability_retry", `Requesting mandatory capability retry for ${participant.config.name}`, { participant: participant.config.id, round: currentRound, missing: missingMandatory });
+          const resultM = await this._sessionManager.getContract().prompt({
+            sessionId: ephemeralSessionId,
+            system: promptContext.system_prompt,
+            model,
+            parts: [
+              { type: "text", text: promptContext.user_prompt },
+              ...(result1?.data?.parts ?? []).filter((p) => p.type === "text" && p.text).slice(-1).map((p) => ({ type: "text", text: p.text })),
+              { type: "text", text: mandatoryInstruction },
+            ],
+            tools: toolsMap,
+            toolChoice: Object.keys(toolsMap).length > 0 ? "auto" : undefined,
+            timeoutMs: mandatoryRemaining,
+            signal: abortController.signal,
+          });
+          if (resultM.ok) {
+            this._recordTokens(resultM);
+            const retryResponse = extractAgentResponse(resultM.data);
+            const effectiveM = truncateToolResults(retryResponse.toolResults ?? [], agentToolsConfig);
+            if (effectiveM.length > 0) finalToolResults = truncateToolResults([...finalToolResults, ...effectiveM], agentToolsConfig);
+            if (retryResponse.text && retryResponse.text.trim().length > 0) finalText = retryResponse.text;
+            const retryPatch = effectiveM.find((t) => t.tool === "loom_state_patch" && t.metadata?.applied === true);
+            if (retryPatch) statePatchVersion = retryPatch.metadata?.version ?? null;
+          } else {
+            this._logger.warn("mandatory_capability_retry_failed", `Mandatory capability retry failed for ${participant.config.name}: ${resultM.error?.message ?? "unknown"}`, { participant: participant.config.id, round: currentRound, missing: missingMandatory });
+          }
+        } catch (e) {
+          this._logger.warn("mandatory_capability_retry_error", `Mandatory capability retry error for ${participant.config.name}: ${e?.message ?? e}`, { participant: participant.config.id, round: currentRound, missing: missingMandatory });
+        }
+      }
+    }
+
     // Per-turn patch outcome (§5.10 observability, made legible). The retry above
     // is deliberately non-fatal, so "no patch" has several distinct causes that
     // a single counter collapses. Recording the cause lets the dashboard explain

@@ -91,6 +91,22 @@ test("forum tools are consistently advertised in primary and synthesis tool maps
   assert.doesNotMatch(withoutForum, /## Forum — Open Threads/);
 });
 
+test("mandatory capability modes are reflected in turn prompts", () => {
+  const participant = makeParticipant();
+  const agentTools = structuredClone(DEFAULT_CONFIG.agentTools);
+  agentTools.mandatory = { forums: true, skillState: true, agentQueries: true, localSearch: true, onlineResearch: true };
+  const system = buildAgentSystemPrompt(participant, { activeCount: 3, agentTools });
+  const user = buildAgentUserPrompt(participant, "", [], 1, "Question", [], "", [], [{ id: "peer", name: "Peer", tier: "senior", status: "listening" }], null, true, true, agentTools.mandatory);
+  assert.match(system, /must make at least one forum tool call/i);
+  assert.match(system, /must make at least one local search tool call/i);
+  assert.match(system, /must make at least one online research tool call/i);
+  assert.match(system, /required once per non-pass turn/i);
+  assert.match(user, /requires one forum tool call/i);
+  assert.match(user, /eligible peer interaction tool/i);
+  const optionalSystem = buildAgentSystemPrompt(participant, { activeCount: 3, agentTools: DEFAULT_CONFIG.agentTools });
+  assert.doesNotMatch(optionalSystem, /required once per non-pass turn/i);
+});
+
 test("all forum commands use the active meeting override and persist through the round session", async () => {
   const participant = makeParticipant();
   const stateManager = new StateManager({

@@ -34,7 +34,7 @@ function hashConfig(cfg, { activeCount, agentTools } = {}) {
   let toolsDigest = "";
   try {
     const t = getEffectiveAgentTools(agentTools);
-    toolsDigest = JSON.stringify({ enabled: t?.enabled, loom: t?.loom, builtIn: t?.builtIn, maxCalls: t?.maxToolCallsPerTurn, sameTurn: t?.sameTurnSynthesis, buildMode: t?.buildMode });
+    toolsDigest = JSON.stringify({ enabled: t?.enabled, loom: t?.loom, builtIn: t?.builtIn, mandatory: t?.mandatory, maxCalls: t?.maxToolCallsPerTurn, sameTurn: t?.sameTurnSynthesis, buildMode: t?.buildMode });
   } catch {}
   const soloFlag = Number.isFinite(activeCount) && activeCount <= 1 ? "|solo" : "";
   const key = `${cfg.id ?? ""}|${cfg.tier ?? ""}|${cfg.tier_guidance ?? ""}|${(cfg.known_biases ?? []).join("|")}|${toolsDigest}${soloFlag}`;
@@ -67,10 +67,14 @@ export function buildAgentSystemPrompt(participant, { activeCount, agentTools } 
 
   const priorityCap = TURN_REQUEST_PRIORITY_CAP[tier] ?? 5;
 
-  const agentToolsConfig = getEffectiveAgentTools(agentTools) ?? {};
-  // Gate the mandatory-patch language on the same flag that offers the tool, so
-  // a disabled feature never leaves the contract demanding an unavailable call.
-  const statePatchEnabled = !!(agentToolsConfig?.enabled && agentToolsConfig?.loom?.loom_state_patch);
+   const agentToolsConfig = getEffectiveAgentTools(agentTools) ?? {};
+   const mandatoryCapabilities = agentToolsConfig?.mandatory ?? {};
+   const statePatchEnabled = !!(agentToolsConfig?.enabled && agentToolsConfig?.loom?.loom_state_patch);
+   const statePatchMandatory = !!statePatchEnabled && !!mandatoryCapabilities.skillState;
+   const forumMandatory = !!(agentToolsConfig?.enabled && agentToolsConfig?.loom?.loom_forum && mandatoryCapabilities.forums);
+    const queryMandatory = !!(agentToolsConfig?.enabled && agentToolsConfig?.loom?.loom_query && mandatoryCapabilities.agentQueries);
+    const localSearchMandatory = !!mandatoryCapabilities.localSearch;
+    const onlineResearchMandatory = !!mandatoryCapabilities.onlineResearch;
   const toolSection = agentToolsConfig?.enabled
     ? (() => {
         const t = agentToolsConfig;
@@ -97,15 +101,22 @@ export function buildAgentSystemPrompt(participant, { activeCount, agentTools } 
         if (loom.loom_forum) {
           tools.push('loom_forum_create_topic', 'loom_forum_list_topics', 'loom_forum_read_topic', 'loom_forum_add_comment');
         }
-        const toolList = tools.length ? tools.join(', ') : 'none enabled';
-        const soloNote = isSolo ? `**Solo mode (1 active participant):** peer query/vote/request_next unavailable — use loom_summon for expertise, forum, or built-in tools (bash/read/websearch).` : "";
+         const toolList = tools.length ? tools.join(', ') : 'none enabled';
+         const mandatoryToolNote = [
+            forumMandatory ? "You must make at least one forum tool call this turn." : "",
+            queryMandatory && !isSolo ? "You must make at least one peer interaction tool call this turn: loom_query, loom_vote, loom_summon, or loom_request_next." : "",
+            localSearchMandatory && tools.some((tool) => ["read", "glob", "grep"].includes(tool)) ? "You must make at least one local search tool call this turn: read, glob, or grep." : "",
+            onlineResearchMandatory && tools.some((tool) => ["websearch", "webfetch"].includes(tool)) ? "You must make at least one online research tool call this turn: websearch or webfetch." : "",
+         ].filter(Boolean).join(" ");
+         const soloNote = isSolo ? `**Solo mode (1 active participant):** peer query/vote/request_next unavailable — use loom_summon for expertise, forum, or built-in tools (bash/read/websearch).` : "";
         const modeNote = isBuildMode
           ? `**Mode: BUILD** — you may apply live file edits via write/edit tools. Read first, then edit surgically; preserve style. After editing, note file=src/... and invite peer verification.`
           : `**Mode: PLAN** — read-only: use read/grep/glob to inspect files and propose diffs (\`\`\` file=src/... \`\`\`) but do not write. Diffs will be applied after approval.`;
         return `
 ## Research Tools — Tool Ladder (thoroughness welcome — use the context window)
 
-Available: ${toolList}
+ Available: ${toolList}
+${mandatoryToolNote ? `**Mandatory this turn:** ${mandatoryToolNote}` : ""}
 ${modeNote}
 ${soloNote}
 
@@ -124,7 +135,7 @@ Loom Interaction Tools — real tool use (required, auditable):${isSolo ? "" : `
   - **loom_summon**: summon a guest expert persona. Returned inline.${isSolo ? "" : `
   - **loom_request_next**: request to speak next with priority/reason. For next round planning.`}
   - **loom_pass**: pass when you have nothing new. Include reason. Ends when all pass — not a failure to dissent.
-  - **loom_state_patch**: call ONCE per turn to project what survives — your stance + 1-3 bullets. Prose alone does not carry forward. Only patched state appears in your future State block. Buckets are bounded; your oldest evidence degrades first, so re-assert what still matters.
+  - **loom_state_patch**: ${statePatchMandatory ? "required once per non-pass turn" : "optional"} to project what survives — your stance + 1-3 bullets. Prose alone does not carry forward. Only patched state appears in your future State block. Buckets are bounded; your oldest evidence degrades first, so re-assert what still matters.
 Forum — async sub-discussions between participants:
   - **loom_forum_create_topic**: propose a sub-problem or question — pass \`title, body, tags?\`. Returns topic_id.
   - **loom_forum_list_topics**: browse existing topics — optional tag filter. Returns titles + comment counts.
@@ -207,7 +218,7 @@ ${doctrine}
         Reference others by participant_id from Recent Contributions, e.g. [#12].
   5. Stay in character — persona and agenda shape framing, not facts. Be concise but thorough and human-readable; dissent is welcome and not penalized.
   6. Collaboration (open-ended & programming): for debates, map spectrum and steelman counter-views before concluding; for code, read then propose diff (or write in BUILD), then handoff: **Handoff: @role — verify file=X covers case Y**.
-${statePatchEnabled ? `  7. **REQUIRED — loom_state_patch, once, every turn.** Order: write your prose first, then make the call. Your stance + bullets are the ONLY thing carried into your next turn; unpatched reasoning is discarded. Minimum viable call is just \`{ stance: "..." }\` — at least one field is required, more is better. Skipping this means forgetting everything you established.
+${statePatchMandatory ? `  7. **REQUIRED — loom_state_patch, once, every non-pass turn.** Order: write your prose first, then make the call. Your stance + bullets are the ONLY thing carried into your next turn; unpatched reasoning is discarded. Minimum viable call is just \`{ stance: "..." }\` — at least one field is required, more is better. Skipping this means forgetting everything you established.
 ` : ""}
 
   ## WHEN TO PASS
@@ -224,7 +235,7 @@ ${statePatchEnabled ? `  7. **REQUIRED — loom_state_patch, once, every turn.**
   Dissent is not a reason to stay silent — it’s valuable. Only pass when the deliberation has nothing left from your lens.
 
   The deliberation ends naturally when all active participants pass (anti-timeout only — no token-pressure to pass early). Your thoughtful pass signals natural conclusion, not cost saving.
-${statePatchEnabled ? "  (Passing is the one turn that does NOT require loom_state_patch — a pass means \"nothing new\", so your state is correctly left as-is.)" : ""}
+${statePatchMandatory ? "  (Passing is the one turn that does NOT require loom_state_patch — a pass means \"nothing new\", so your state is correctly left as-is.)" : ""}
   ${toolSection}
  `;
 
@@ -240,7 +251,7 @@ ${statePatchEnabled ? "  (Passing is the one turn that does NOT require loom_sta
 /**
  * Builds the user prompt for an agent's turn using the Weighted Golden Sandwich pattern
  */
-export function buildAgentUserPrompt(participant, stateOfPlay, recentContributions, round, question, tags = [], userContext = "", forumTopics = [], otherParticipants = [], myState = null, forumEnabled = false) {
+export function buildAgentUserPrompt(participant, stateOfPlay, recentContributions, round, question, tags = [], userContext = "", forumTopics = [], otherParticipants = [], myState = null, forumEnabled = false, queryEnabled = true, mandatoryCapabilities = {}) {
   const transcript =
     recentContributions.length === 0
       ? "*(No contributions yet — you are the first to speak)*"
@@ -289,10 +300,10 @@ ${delimitContext(sanitizeForDisplay(userContext), "USER_CONTEXT")}
 
   const forumHeader = forumEnabled ? (() => {
     const topics = Array.isArray(forumTopics) ? forumTopics.slice(0, 10) : [];
-    if (topics.length === 0) {
-      return `## Forum — Open Threads
+     if (topics.length === 0) {
+       return `## Forum — Open Threads
 
-_No open threads yet. If you have a sub-problem that needs async discussion, create one with loom_forum_create_topic (check titles first to avoid duplicates)._`;
+ _No open threads yet. ${mandatoryCapabilities.forums ? "This turn requires one forum tool call: use loom_forum_list_topics to verify there is no relevant topic, then create one if needed." : "If you have a sub-problem that needs async discussion, create one with loom_forum_create_topic (check titles first to avoid duplicates)."} _`;
     }
     const lines = topics.map((t) => {
       const safeTitle = sanitizeForDisplay(String(t.title ?? ""), 100).replace(/\n/g, " ").trim() || "(untitled)";
@@ -306,10 +317,10 @@ _No open threads yet. If you have a sub-problem that needs async discussion, cre
 
 ${delimitContext(lines.join("\n"), "FORUM_TOPICS")}
 
-_Read with loom_forum_read_topic {topic_id: id} and comment with loom_forum_add_comment. Before creating a new topic, scan titles above or call loom_forum_list_topics to avoid duplicates._`;
+_Read with loom_forum_read_topic {topic_id: id} and comment with loom_forum_add_comment. Before creating a new topic, scan titles above or call loom_forum_list_topics to avoid duplicates.${mandatoryCapabilities.forums ? " This turn requires at least one forum tool call; use a relevant topic when possible." : ""}_`;
   })() : "";
 
-  const participantsHeader = (() => {
+  const participantsHeader = queryEnabled ? (() => {
     const list = Array.isArray(otherParticipants) ? otherParticipants : [];
     if (list.length === 0) return "";
     const lines = list.map(p => {
@@ -325,11 +336,15 @@ _Read with loom_forum_read_topic {topic_id: id} and comment with loom_forum_add_
 
 ${delimitContext(lines.join("\n"), "OTHER_PARTICIPANTS")}
 
-_Use these ids verbatim for loom_query. Example: {target: "dr_sarah_3", question: "...", mode: "perspective"}. Do not invent Strategist/Scout — use ids above that are listening/speaking. Passed/failed are not queryable._`;
-  })();
+_Use these ids verbatim for loom_query. Example: {target: "dr_sarah_3", question: "...", mode: "perspective"}. Do not invent Strategist/Scout — use ids above that are listening/speaking. Passed/failed are not queryable.${mandatoryCapabilities.agentQueries ? " This turn requires at least one eligible peer interaction tool when an eligible peer is available." : ""}_`;
+  })() : "";
 
   const stateGuidance = showState
-    ? `- **Your State is yours to maintain** — call loom_state_patch once per turn, after your prose. This is the only memory you carry: anything you do not patch is discarded before your next turn, so a turn that reasons well but patches nothing has wasted the work. Stale bullets you don't remove stay. Evidence (with Source/[#id]) is protected from FIFO eviction longer than other bullets, but only your newest evidence is protected — re-assert anything still load-bearing each turn, and check the \`evicted\` echo to see what fell off.
+    ? mandatoryCapabilities.skillState
+      ? `- **Your State is yours to maintain** — call loom_state_patch once per turn, after your prose. This is the only memory you carry: anything you do not patch is discarded before your next turn, so a turn that reasons well but patches nothing has wasted the work. Stale bullets you don't remove stay. Evidence (with Source/[#id]) is protected from FIFO eviction longer than other bullets, but only your newest evidence is protected — re-assert anything still load-bearing each turn, and check the \`evicted\` echo to see what fell off.
+- **Live is current round only** — anything older you still need must already be in Your State; if it isn't, re-establish it from the digest (don't quote full old prose).
+`
+      : `- **Your State is optional here** — use loom_state_patch when you want to carry a bounded stance or evidence into a later turn. Prose alone is not carried forward when the tool is enabled.
 - **Live is current round only** — anything older you still need must already be in Your State; if it isn't, re-establish it from the digest (don't quote full old prose).
 `
     : "";
@@ -360,7 +375,7 @@ Rules:
 - Preserve code and numbers verbatim — do not round or invent
 - For code: read before proposing fix; in BUILD, apply with write/edit then invite verification
 
-Make your contribution or pass.${showState ? `
+Make your contribution or pass.${showState && mandatoryCapabilities.skillState ? `
 
 Then call loom_state_patch once — project your stance and 1-3 bullets so they survive into your next turn. Nothing you write in prose carries forward on its own.` : ""}`;
 }

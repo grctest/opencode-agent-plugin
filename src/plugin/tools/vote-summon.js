@@ -17,9 +17,8 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
       args: {
         question: tool.schema.string().min(1).max(500).describe("Vote question with lettered options, e.g. 'A) yes B) no'"),
       },
-      async execute(args, context) {
-        const cfg = config.getValue("agentTools");
-        if (!cfg?.enabled || !cfg?.loom?.loom_vote) return { output: JSON.stringify({ error: "loom_vote not enabled" }), metadata: { error: true }, title: "loom_vote error" };
+       async execute(args, context) {
+         const globalCfg = config.getValue("agentTools");
          if (!context?.sessionID) return { output: JSON.stringify({ error: "loom_vote: session context unavailable" }), metadata: { error: true }, title: "loom_vote error" };
          let meetingInfo = null;
          let stateManager = null;
@@ -33,9 +32,11 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
           }
           const engine = activeLooms.get(meetingInfo.meetingId);
           if (!engine || !engine.getStateManager) {
-            const p = { queued: true, question: args.question, note: "Vote queued — engine not ready." };
-            return { output: JSON.stringify(p), metadata: { queued: true }, title: "loom_vote queued" };
-          }
+             const p = { queued: true, question: args.question, note: "Vote queued — engine not ready." };
+             return { output: JSON.stringify(p), metadata: { queued: true }, title: "loom_vote queued" };
+           }
+           const cfg = engine.getRoundExecutor?.()?.getEffectiveAgentTools?.() ?? globalCfg;
+           if (!cfg?.enabled || !cfg?.loom?.loom_vote) return { output: JSON.stringify({ error: "loom_vote not enabled" }), metadata: { error: true }, title: "loom_vote error" };
            stateManager = engine.getStateManager();
            const sessionManager = engine.getSessionManager();
            db = engine.getDatabase();
@@ -265,10 +266,9 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
         persona_name: tool.schema.string().min(1).max(100).describe("Persona name to summon (e.g. 'Risk Officer')"),
         issue: tool.schema.string().min(1).max(500).describe("Issue to address (1-500 chars)"),
       },
-      async execute(args, context) {
-        const cfg = config.getValue("agentTools");
-        if (!cfg?.enabled || !cfg?.loom?.loom_summon) return { output: JSON.stringify({ error: "loom_summon not enabled" }), metadata: { error: true }, title: "loom_summon error" };
-        if (!context?.sessionID) return { output: JSON.stringify({ error: "loom_summon: session context unavailable" }), metadata: { error: true }, title: "loom_summon error" };
+       async execute(args, context) {
+         const globalCfg = config.getValue("agentTools");
+         if (!context?.sessionID) return { output: JSON.stringify({ error: "loom_summon: session context unavailable" }), metadata: { error: true }, title: "loom_summon error" };
         try {
           const meetingInfo = await resolveMeeting(context.sessionID);
           if (!meetingInfo) {
@@ -277,10 +277,12 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
           }
           const engine = activeLooms.get(meetingInfo.meetingId);
           if (!engine) {
-            const p = { queued: true, persona_name: args.persona_name, issue: args.issue, note: "Summon queued — engine not ready." };
-            return { output: JSON.stringify(p), metadata: { queued: true }, title: "loom_summon queued" };
-          }
-                    const allPersonas = getPersonas();
+             const p = { queued: true, persona_name: args.persona_name, issue: args.issue, note: "Summon queued — engine not ready." };
+             return { output: JSON.stringify(p), metadata: { queued: true }, title: "loom_summon queued" };
+           }
+           const cfg = engine.getRoundExecutor?.()?.getEffectiveAgentTools?.() ?? globalCfg;
+           if (!cfg?.enabled || !cfg?.loom?.loom_summon) return { output: JSON.stringify({ error: "loom_summon not enabled" }), metadata: { error: true }, title: "loom_summon error" };
+                     const allPersonas = getPersonas();
           let found = null;
           for (const tier of Object.keys(allPersonas)) {
             const m = allPersonas[tier].find(p => p.name.toLowerCase() === args.persona_name.toLowerCase());
@@ -368,8 +370,8 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
             model,
             parts: [{ type: "text", text: prompt }],
             tools: (() => {
-              const t = config.getValue("agentTools");
-              const m = {};
+               const t = cfg;
+               const m = {};
               if (t?.builtIn?.webfetch || t?.builtIn?.web_fetch) m.webfetch = true;
               if (t?.builtIn?.websearch || t?.builtIn?.web_search) m.websearch = true;
               if (t?.builtIn?.read) m.read = true;

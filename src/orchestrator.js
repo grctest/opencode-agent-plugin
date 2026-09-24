@@ -206,8 +206,9 @@ export class MeetingOrchestrator {
 
   // Thin forwarders — bound to orchestrator instance so helpers can access this.* services.
   _modelList() { return modelsHelpers._modelList.call(this); }
-  _getHighestTierModel() { return modelsHelpers._getHighestTierModel.call(this); }
-  _getAllowedFallbackModel() { return modelsHelpers._getAllowedFallbackModel.call(this); }
+   _getHighestTierModel() { return modelsHelpers._getHighestTierModel.call(this); }
+   _getOrchestratorModel() { return modelsHelpers._getOrchestratorModel.call(this); }
+   _getAllowedFallbackModel() { return modelsHelpers._getAllowedFallbackModel.call(this); }
   _getParticipantModel(participant, fallbackOnError = false) { return modelsHelpers._getParticipantModel.call(this, participant, fallbackOnError); }
   async _promptOrchestrator(system, model, message, type, round) { return modelsHelpers._promptOrchestrator.call(this, system, model, message, type, round); }
   async initialize() { return initHelpers.initialize.call(this); }

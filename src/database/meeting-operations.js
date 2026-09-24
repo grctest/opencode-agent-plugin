@@ -15,8 +15,8 @@ export function initializeMeeting(db, meetingId, input, opts = {}) {
   } catch {}
   const now = isoNow();
   const insertMeeting = db.prepare(
-    `INSERT INTO meetings (id, question, context, status, round, fabric, max_rounds, convergence, tags, parent_session_id, opencode_session_id, embedding_model, embedding_dim, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO meetings (id, question, context, status, round, fabric, max_rounds, convergence, tags, parent_session_id, opencode_session_id, embedding_model, embedding_dim, orchestrator_provider_id, orchestrator_model_id, feature_toggles_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          question=excluded.question,
          context=excluded.context,
@@ -28,9 +28,12 @@ export function initializeMeeting(db, meetingId, input, opts = {}) {
          tags=excluded.tags,
          parent_session_id=excluded.parent_session_id,
          opencode_session_id=excluded.opencode_session_id,
-         embedding_model=excluded.embedding_model,
-         embedding_dim=excluded.embedding_dim,
-         updated_at=excluded.updated_at`,
+          embedding_model=excluded.embedding_model,
+          embedding_dim=excluded.embedding_dim,
+          orchestrator_provider_id=excluded.orchestrator_provider_id,
+          orchestrator_model_id=excluded.orchestrator_model_id,
+          feature_toggles_json=excluded.feature_toggles_json,
+          updated_at=excluded.updated_at`,
   );
   const insertParticipant = db.prepare(
     `INSERT INTO participants (id, meeting_id, name, persona, agenda, tier, provider_id, model_id, session_id, known_biases, communication_style, preferred_contribution_types, anti_patterns, tier_guidance, reflection_guidance, tags, expertise)
@@ -50,9 +53,12 @@ export function initializeMeeting(db, meetingId, input, opts = {}) {
       JSON.stringify(input.tags ?? []),
       input.parentSessionId,
       input.opencodeSessionId,
-      input.embedding_model ?? null,
-      input.embedding_dim ?? null,
-      now,
+       input.embedding_model ?? null,
+       input.embedding_dim ?? null,
+       input.orchestrator?.providerID ?? input.orchestrator_provider_id ?? null,
+       input.orchestrator?.modelID ?? input.orchestrator_model_id ?? null,
+       input.features ? JSON.stringify(input.features) : null,
+       now,
       now,
     );
 
@@ -101,13 +107,20 @@ export function upsertMeeting(db, meetingId, input) {
   if (existing) {
     db.prepare(`
         UPDATE meetings SET question = ?, context = ?, max_rounds = ?, convergence = ?,
-          tags = ?, parent_session_id = ?, opencode_session_id = ?, embedding_model = ?, embedding_dim = ?, updated_at = ?
+          tags = ?, parent_session_id = ?, opencode_session_id = ?, embedding_model = ?, embedding_dim = ?,
+          orchestrator_provider_id = COALESCE(?, orchestrator_provider_id),
+          orchestrator_model_id = COALESCE(?, orchestrator_model_id),
+          feature_toggles_json = COALESCE(?, feature_toggles_json), updated_at = ?
         WHERE id = ?
       `).run(
         input.question, input.context ?? "", input.maxRounds, input.convergence ?? "agent_driven",
       JSON.stringify(input.tags ?? []),
       input.parentSessionId, input.opencodeSessionId,
-      input.embedding_model ?? null, input.embedding_dim ?? null, now, meetingId,
+      input.embedding_model ?? null, input.embedding_dim ?? null,
+      input.orchestrator?.providerID ?? input.orchestrator_provider_id ?? null,
+      input.orchestrator?.modelID ?? input.orchestrator_model_id ?? null,
+      input.features ? JSON.stringify(input.features) : null,
+      now, meetingId,
     );
   } else {
     initializeMeeting(db, meetingId, input);
@@ -357,7 +370,7 @@ export function setSummoningParticipants(db, meetingId, participantIds) {
 export function getMeeting(db, meetingId) {
   const row = db
     .prepare(
-      `SELECT id, question, context, status, round, fabric, max_rounds, convergence, tags, parent_session_id, opencode_session_id, next_speaker_id, state_of_play, stats, embedding_model, embedding_dim, created_at
+      `SELECT id, question, context, status, round, fabric, max_rounds, convergence, tags, parent_session_id, opencode_session_id, next_speaker_id, state_of_play, stats, embedding_model, embedding_dim, orchestrator_provider_id, orchestrator_model_id, feature_toggles_json, created_at
          FROM meetings WHERE id = ?`,
     )
     .get(meetingId);

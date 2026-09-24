@@ -13,6 +13,16 @@ export function _getHighestTierModel() {
     return getHighestTierModel(this._modelList());
   }
 
+export function _getOrchestratorModel() {
+    const configured = this._options?.orchestratorModel;
+    if (configured?.providerID && configured?.modelID) {
+      const model = { providerID: configured.providerID, modelID: configured.modelID };
+      if (this._roundExecutor?.isModelHealthy?.(model)) return model;
+      return this._getAllowedFallbackModel() ?? this._getHighestTierModel();
+    }
+    return this._getHighestTierModel() ?? this._getAllowedFallbackModel();
+  }
+
 export function _getAllowedFallbackModel() {
     if (!this._availableModels || this._availableModels.length === 0) return null;
     let pool = this._availableModels;
@@ -49,7 +59,7 @@ export function _getParticipantModel(participant, fallbackOnError = false) {
 export async function _promptOrchestrator(system, model, message, type = "orchestrator", round = null) {
     const cfg = getConfig();
     const fastPathModel = cfg.fastPathModelObj ?? parseFastPathModel(cfg.fastPathModel);
-    const useModel = (fastPathModel && (type === "moderation" || type === "summary"))
+    const useModel = (!this._options?.orchestratorModel && fastPathModel && (type === "moderation" || type === "summary"))
       ? fastPathModel
       : model;
 

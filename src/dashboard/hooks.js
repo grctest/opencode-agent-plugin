@@ -332,14 +332,18 @@ export function useMeetingApi(meetingId, resetKey) {
       }
       lastPollIdRef.current = Math.max(...all.map((c) => c.id ?? 0), 0);
       window.dispatchEvent(new CustomEvent("loom-initial-contributions", { detail: all }));
-      // Fetch forum topics
-      try {
-        const forumRes = await fetch(`/api/forum/topics?meeting=${id}`, { signal });
-        if (forumRes.ok) {
-          const forumData = await forumRes.json();
-          setForumTopics(forumData.topics ?? []);
-        }
-      } catch {}
+       // Fetch forum topics
+       if (data.state?.features?.forums !== "disabled") {
+         try {
+           const forumRes = await fetch(`/api/forum/topics?meeting=${id}`, { signal });
+           if (forumRes.ok) {
+             const forumData = await forumRes.json();
+             setForumTopics(forumData.topics ?? []);
+           }
+         } catch {}
+       } else {
+         setForumTopics([]);
+       }
     } catch (e) {
       if (e.name !== "AbortError") setError(e.message);
     } finally {
@@ -364,14 +368,14 @@ export function useMeetingApi(meetingId, resetKey) {
 
   // Refresh forum topics when update trigger fires
   useEffect(() => {
-    if (!meetingId || forumUpdateTrigger === 0) return;
+    if (!meetingId || forumUpdateTrigger === 0 || state?.features?.forums === "disabled") return;
     const controller = new AbortController();
     fetch(`/api/forum/topics?meeting=${meetingId}`, { signal: controller.signal })
       .then((res) => res.ok ? res.json() : null)
       .then((data) => { if (data?.topics) setForumTopics(data.topics); })
       .catch(() => {});
     return () => controller.abort();
-  }, [meetingId, forumUpdateTrigger]);
+  }, [meetingId, forumUpdateTrigger, state?.features?.forums]);
 
   useSSEHandlers({ setContributions, setTurnRequests, setState, setParticipants, setAgentErrors, setArtifact, setOrchestratorMessages, setRoundSummaries, setForumUpdateTrigger });
 

@@ -274,16 +274,25 @@ export async function handleRoomPreview(req) {
   }
   // Attach suggested per-tier models so the UI can pre-fill pickers.
   let suggestedModels = [];
+  let suggestedOrchestrator = null;
   try {
     const { available, sessionModel } = await discoverFiltered();
     const pool = available.length > 0 ? available : [];
     if (pool.length > 0) {
       const plan = createModelPlan(pool, undefined, sessionModel);
-      suggestedModels = (plan.participants ?? []).map((p) => ({
-        tier: p.tier,
-        provider_id: p.providerID ?? p.provider_id,
-        model_id: p.modelID ?? p.model_id,
-      }));
+       suggestedModels = (plan.participants ?? []).map((p) => ({
+         tier: p.tier,
+         provider_id: p.providerID ?? p.provider_id,
+         model_id: p.modelID ?? p.model_id,
+       }));
+       const orchestrator = plan.orchestrator;
+       if (orchestrator?.providerID && orchestrator?.modelID) {
+         suggestedOrchestrator = {
+           provider_id: orchestrator.providerID,
+           model_id: orchestrator.modelID,
+           key: `${orchestrator.providerID}/${orchestrator.modelID}`,
+         };
+       }
     }
   } catch {}
   return Response.json({
@@ -291,9 +300,10 @@ export async function handleRoomPreview(req) {
     tags: room.tags ?? [],
     estimated_rounds: room.estimated_rounds ?? 3,
     reasoning: room.reasoning ?? "",
-    complexity: room.complexity ?? null,
-    suggested_models: suggestedModels,
-  });
+     complexity: room.complexity ?? null,
+     suggested_models: suggestedModels,
+     suggested_orchestrator: suggestedOrchestrator,
+   });
 }
 
 // --- LLM models (filter + per-tier assignment parity with old chat commands) ---
@@ -327,20 +337,29 @@ export async function handleListLlmModels(url = null) {
       return (!disabledSet || !disabledSet.has(key)) && !globalUnhealthy.has(key);
     });
     let suggested = [];
+    let suggestedOrchestrator = null;
     try {
       const plan = createModelPlan(enabledPool.length > 0 ? enabledPool : allAvailable, undefined, sessionModel);
-      suggested = (plan.participants ?? []).map((p) => ({
-        tier: p.tier,
-        provider_id: p.providerID ?? p.provider_id,
-        model_id: p.modelID ?? p.model_id,
-      }));
+       suggested = (plan.participants ?? []).map((p) => ({
+         tier: p.tier,
+         provider_id: p.providerID ?? p.provider_id,
+         model_id: p.modelID ?? p.model_id,
+       }));
+       if (plan.orchestrator?.providerID && plan.orchestrator?.modelID) {
+         suggestedOrchestrator = {
+           provider_id: plan.orchestrator.providerID,
+           model_id: plan.orchestrator.modelID,
+           key: `${plan.orchestrator.providerID}/${plan.orchestrator.modelID}`,
+         };
+       }
     } catch {}
     return Response.json({
       models,
       disabled: disabledSet instanceof Set ? [...disabledSet] : [],
-      session_model: sessionModel ? `${sessionModel.providerID}/${sessionModel.modelID}` : null,
-      suggested,
-    });
+       session_model: sessionModel ? `${sessionModel.providerID}/${sessionModel.modelID}` : null,
+       suggested,
+       suggested_orchestrator: suggestedOrchestrator,
+     });
   } catch (err) {
     return Response.json({ error: `model discovery failed: ${extractErrorInfo(err).message}` }, { status: 500 });
   }
@@ -428,6 +447,73 @@ function validateParticipants(list) {
   return null;
 }
 
+const FEATURE_MODES = new Set(["disabled", "optional", "mandatory"]);
+
+function normalizeFeatureMode(value, fallback = "optional") {
+  if (value === true) return "optional";
+  if (value === false) return "disabled";
+  return typeof value === "string" && FEATURE_MODES.has(value) ? value : fallback;
+}
+
+function normalizeFeatures(raw = {}) {
+  raw = raw && typeof raw === "object" ? raw : {};
+  const legacyAgentTools = raw.agentTools;
+  const localFallback = normalizeFeatureMode(legacyAgentTools);
+  const onlineFallback = normalizeFeatureMode(legacyAgentTools);
+  return {
+    forums: normalizeFeatureMode(raw.forums),
+    skillState: normalizeFeatureMode(raw.skillState, "mandatory"),
+    agentQueries: normalizeFeatureMode(raw.agentQueries),
+    localSearch: normalizeFeatureMode(raw.localSearch, localFallback),
+    onlineResearch: normalizeFeatureMode(raw.onlineResearch, onlineFallback),
+    agentCommands: raw.agentCommands !== false,
+  };
+}
+
+function buildMeetingAgentTools(features, base = getConfig().agentTools) {
+  const tools = JSON.parse(JSON.stringify(base ?? {}));
+  const localSearchEnabled = features.localSearch !== "disabled";
+  const onlineResearchEnabled = features.onlineResearch !== "disabled";
+  const agentQueriesEnabled = features.agentQueries !== "disabled";
+  tools.enabled = true;
+  tools.buildMode = false;
+  tools.builtIn = {
+    ...(tools.builtIn ?? {}),
+    read: localSearchEnabled,
+    glob: localSearchEnabled,
+    grep: localSearchEnabled,
+    webfetch: onlineResearchEnabled,
+    web_search: onlineResearchEnabled,
+    websearch: onlineResearchEnabled,
+    web_fetch: onlineResearchEnabled,
+    write: false,
+    edit: false,
+    lsp: false,
+    bash: tools.builtIn?.bash && typeof tools.builtIn.bash === "object"
+      ? { ...tools.builtIn.bash, enabled: features.agentCommands }
+      : { enabled: features.agentCommands, allowlist: [] },
+  };
+  tools.loom = {
+    ...(tools.loom ?? {}),
+    loom_forum: features.forums !== "disabled",
+    loom_state_patch: features.skillState !== "disabled",
+    loom_query: agentQueriesEnabled,
+    loom_vote: agentQueriesEnabled,
+    loom_summon: agentQueriesEnabled,
+    loom_request_next: agentQueriesEnabled,
+    loom_pass: true,
+  };
+  tools.mandatory = {
+    forums: features.forums === "mandatory",
+    skillState: features.skillState === "mandatory",
+    agentQueries: features.agentQueries === "mandatory",
+    localSearch: features.localSearch === "mandatory",
+    onlineResearch: features.onlineResearch === "mandatory",
+  };
+  tools.patchRetry = features.skillState === "mandatory";
+  return tools;
+}
+
 function dashboardCallbacks() {
   // Dashboard-first: no chat posts. Orchestrator progress is visible via SSE/DB.
   return {
@@ -477,6 +563,8 @@ async function handleStartMeetingInternal(req) {
   if (participantError) {
     return Response.json({ error: participantError }, { status: 400 });
   }
+  const requestedFeatures = body?.features && typeof body.features === "object" ? body.features : {};
+  const features = normalizeFeatures(requestedFeatures);
   let maxRounds = body?.max_rounds ?? getConfig().defaultMaxRounds;
   if (!Number.isFinite(maxRounds) || maxRounds < 1) maxRounds = getConfig().defaultMaxRounds;
   maxRounds = Math.min(10, Math.max(1, Math.floor(maxRounds)));
@@ -501,6 +589,13 @@ async function handleStartMeetingInternal(req) {
   const modelMap = new Map();
   const explicitModels = Array.isArray(body?.models) ? body.models : [];
   const allowedKeys = new Set(available.map((m) => `${m.providerID}/${m.modelID}`));
+  const rawOrchestrator = body?.orchestrator_model;
+  const orchestratorProvider = rawOrchestrator?.provider_id ?? rawOrchestrator?.providerID;
+  const orchestratorModel = rawOrchestrator?.model_id ?? rawOrchestrator?.modelID;
+  const orchestratorKey = orchestratorProvider && orchestratorModel ? `${orchestratorProvider}/${orchestratorModel}` : null;
+  if (!orchestratorKey || !allowedKeys.has(orchestratorKey) || (disabledSet instanceof Set && disabledSet.has(orchestratorKey)) || globalUnhealthy.has(orchestratorKey)) {
+    return Response.json({ error: "orchestrator_model must be an enabled, healthy model" }, { status: 400 });
+  }
   for (const m of explicitModels) {
     if (!m || typeof m !== "object" || !m.tier) continue;
     const providerId = m.provider_id ?? m.providerID;
@@ -598,6 +693,8 @@ async function handleStartMeetingInternal(req) {
         opencodeSessionId: sessionID,
         embedding_model: null,
         embedding_dim: null,
+        orchestrator: { providerID: orchestratorProvider, modelID: orchestratorModel },
+        features,
         participants: [],
       });
       db.insertParticipants(participants);
@@ -624,10 +721,11 @@ async function handleStartMeetingInternal(req) {
     opencodeSessionId: sessionID,
     participants,
     maxRounds,
-    meetingTimeoutMs: getConfig().defaultMeetingTimeoutMs,
-    tags: [],
-    agentTools: getConfig().agentTools,
-    availableModels: available,
+     meetingTimeoutMs: getConfig().defaultMeetingTimeoutMs,
+     tags: [],
+     orchestratorModel: { providerID: orchestratorProvider, modelID: orchestratorModel },
+     agentTools: buildMeetingAgentTools(features),
+     availableModels: available,
     ...dashboardCallbacks(),
   });
 
@@ -722,8 +820,10 @@ async function handleExtendMeetingInternal(req) {
     return Response.json({ error: "meeting database not found" }, { status: 404 });
   }
   let existingParts;
+  let existingMeeting;
   try {
     existingParts = await MeetingDatabase.readParticipants(extDbPath);
+    existingMeeting = await MeetingDatabase.readMeeting(extDbPath);
   } catch (err) {
     return Response.json({ error: `could not read meeting: ${extractErrorInfo(err).message}` }, { status: 500 });
   }
@@ -735,6 +835,13 @@ async function handleExtendMeetingInternal(req) {
     available = (await discoverFiltered()).available;
   } catch {}
   const allowedKeys = new Set(available.map((m) => `${m.providerID}/${m.modelID}`));
+  let storedFeatures = {};
+  try { storedFeatures = existingMeeting?.feature_toggles_json ? JSON.parse(existingMeeting.feature_toggles_json) : {}; } catch {}
+  const extensionFeatures = normalizeFeatures(storedFeatures);
+  const extensionOrchestrator = existingMeeting?.orchestrator_provider_id && existingMeeting?.orchestrator_model_id
+    && allowedKeys.has(`${existingMeeting.orchestrator_provider_id}/${existingMeeting.orchestrator_model_id}`)
+    ? { providerID: existingMeeting.orchestrator_provider_id, modelID: existingMeeting.orchestrator_model_id }
+    : null;
   const sessionID = runtime.ownerSessionId || `dashboard-${meetingId.slice(0, 8)}`;
   const context = body?.context ? sanitizeForPrompt(String(body.context), 8000) : "No additional context provided.";
 
@@ -767,10 +874,11 @@ async function handleExtendMeetingInternal(req) {
         reflection_guidance: p.reflection_guidance ?? "",
       };
     }),
-    maxRounds: Math.min(10, Math.max(1, Math.floor(Number(getConfig().defaultMaxRounds) || 4))),
-    meetingTimeoutMs: getConfig().defaultMeetingTimeoutMs,
-    agentTools: getConfig().agentTools,
-    availableModels: available,
+     maxRounds: Math.min(10, Math.max(1, Math.floor(Number(getConfig().defaultMaxRounds) || 4))),
+     meetingTimeoutMs: getConfig().defaultMeetingTimeoutMs,
+     orchestratorModel: extensionOrchestrator,
+     agentTools: buildMeetingAgentTools(extensionFeatures),
+     availableModels: available,
     ...dashboardCallbacks(),
   });
 

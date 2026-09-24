@@ -89,7 +89,7 @@ export class MeetingDatabase {
     const db = new DatabaseClass(dbPath, { readonly: true });
     try {
       const row = db.prepare(
-        `SELECT id, question, context, status, round, max_rounds, convergence, fabric
+        `SELECT id, question, context, status, round, max_rounds, convergence, fabric, orchestrator_provider_id, orchestrator_model_id, feature_toggles_json
          FROM meetings LIMIT 1`
       ).get();
       return row ?? null;

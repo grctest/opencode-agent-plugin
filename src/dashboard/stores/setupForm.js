@@ -11,9 +11,18 @@ import { persistentAtom } from "@nanostores/persistent";
  * dialogs, catalog/LLM snapshots) stays in useState and is refetched.
  */
 
-const FORM_VERSION = 1;
+const FORM_VERSION = 4;
 const MAX_SEATS = 7;
 const KNOWN_TIERS = new Set(["junior", "mid", "senior", "principal", "civilian"]);
+const FEATURE_MODES = new Set(["disabled", "optional", "mandatory"]);
+const DEFAULT_FEATURES = {
+  forums: "optional",
+  skillState: "mandatory",
+  agentQueries: "optional",
+  localSearch: "optional",
+  onlineResearch: "optional",
+  agentCommands: true,
+};
 
 export const DEFAULT_SETUP_FORM = {
   version: FORM_VERSION,
@@ -23,6 +32,8 @@ export const DEFAULT_SETUP_FORM = {
   seats: [],
   preview: null,
   startedId: null,
+  orchestratorModel: null,
+  features: { ...DEFAULT_FEATURES },
 };
 
 function asString(v) {
@@ -70,6 +81,21 @@ function sanitizeForm(raw) {
     ? raw.seats.map(sanitizeSeat).filter(Boolean).slice(0, MAX_SEATS)
     : [];
   const maxRounds = Number.isFinite(+raw.maxRounds) ? +raw.maxRounds : 4;
+  const rawFeatures = raw.features && typeof raw.features === "object" ? raw.features : {};
+  const normalizeMode = (value, fallback) => {
+    if (value === true) return "optional";
+    if (value === false) return "disabled";
+    return typeof value === "string" && FEATURE_MODES.has(value) ? value : fallback;
+  };
+  const legacyAgentTools = rawFeatures.agentTools;
+  const features = {
+    forums: normalizeMode(rawFeatures.forums, DEFAULT_FEATURES.forums),
+    skillState: normalizeMode(rawFeatures.skillState, DEFAULT_FEATURES.skillState),
+    agentQueries: normalizeMode(rawFeatures.agentQueries, DEFAULT_FEATURES.agentQueries),
+    localSearch: normalizeMode(rawFeatures.localSearch, normalizeMode(legacyAgentTools, DEFAULT_FEATURES.localSearch)),
+    onlineResearch: normalizeMode(rawFeatures.onlineResearch, normalizeMode(legacyAgentTools, DEFAULT_FEATURES.onlineResearch)),
+    agentCommands: typeof rawFeatures.agentCommands === "boolean" ? rawFeatures.agentCommands : DEFAULT_FEATURES.agentCommands,
+  };
   return {
     version: FORM_VERSION,
     question: asString(raw.question),
@@ -78,6 +104,8 @@ function sanitizeForm(raw) {
     seats,
     preview: sanitizePreview(raw.preview),
     startedId: typeof raw.startedId === "string" && raw.startedId ? raw.startedId : null,
+    orchestratorModel: typeof raw.orchestratorModel === "string" && raw.orchestratorModel ? raw.orchestratorModel : null,
+    features,
   };
 }
 
