@@ -5,6 +5,90 @@ import { sortModelsByQuality } from "../model-discovery.js";
 import { Logger, LoomError, extractErrorInfo } from "../logger.js";
 import { MAX_ORCHESTRATOR_MESSAGES } from "./constants.js";
 
+export const ORCHESTRATOR_BEHAVIOR_DEFAULTS = {
+  model: null,
+  role: "neutral_facilitator",
+  customInstructions: "",
+  turnOrderPolicy: "balanced",
+  summaryStyle: "balanced",
+  decisionPosture: "preserve_spectrum",
+  synthesisStyle: "decision_oriented",
+};
+
+const ORCHESTRATOR_ROLES = new Set(["neutral_facilitator", "adversarial_reviewer", "decision_focused", "custom"]);
+const TURN_ORDER_POLICIES = new Set(["balanced", "evidence_first", "anti_starvation"]);
+const SUMMARY_STYLES = new Set(["concise", "balanced", "exhaustive"]);
+const DECISION_POSTURES = new Set(["preserve_spectrum", "consensus_seeking", "action_oriented"]);
+const SYNTHESIS_STYLES = new Set(["decision_oriented", "conversational", "technical_audit"]);
+
+function behaviorEnum(value, allowed, fallback) {
+  return typeof value === "string" && allowed.has(value) ? value : fallback;
+}
+
+export function normalizeOrchestratorConfig(raw = {}) {
+  const value = raw && typeof raw === "object" ? raw : {};
+  return {
+    model: typeof value.model === "string" && value.model ? value.model : null,
+    role: behaviorEnum(value.role, ORCHESTRATOR_ROLES, ORCHESTRATOR_BEHAVIOR_DEFAULTS.role),
+    customInstructions: typeof value.customInstructions === "string" ? value.customInstructions.trim().slice(0, 4000) : "",
+    turnOrderPolicy: behaviorEnum(value.turnOrderPolicy, TURN_ORDER_POLICIES, ORCHESTRATOR_BEHAVIOR_DEFAULTS.turnOrderPolicy),
+    summaryStyle: behaviorEnum(value.summaryStyle, SUMMARY_STYLES, ORCHESTRATOR_BEHAVIOR_DEFAULTS.summaryStyle),
+    decisionPosture: behaviorEnum(value.decisionPosture, DECISION_POSTURES, ORCHESTRATOR_BEHAVIOR_DEFAULTS.decisionPosture),
+    synthesisStyle: behaviorEnum(value.synthesisStyle, SYNTHESIS_STYLES, ORCHESTRATOR_BEHAVIOR_DEFAULTS.synthesisStyle),
+  };
+}
+
+export function buildOrchestratorInstruction(config = {}) {
+  const value = normalizeOrchestratorConfig(config);
+  const roleLabels = {
+    neutral_facilitator: "a neutral facilitator who keeps the deliberation fair and inclusive",
+    adversarial_reviewer: "an adversarial reviewer who actively tests assumptions, claims, and weak evidence",
+    decision_focused: "a decision-focused coordinator who emphasizes actionable paths and tradeoffs",
+    custom: "a custom coordinator following the operator's operating instructions",
+  };
+  const decisionLabels = {
+    preserve_spectrum: "preserve meaningful disagreement and map the spectrum rather than forcing consensus",
+    consensus_seeking: "look for a defensible consensus while keeping dissent visible",
+    action_oriented: "prioritize concrete next actions, owners, and unresolved risks",
+  };
+  return [
+    `You are the Loom orchestrator: ${roleLabels[value.role]}.`,
+    `Decision posture: ${decisionLabels[value.decisionPosture]}.`,
+    value.customInstructions ? `Operator instructions: ${value.customInstructions}` : "",
+    "These behavior settings do not permit you to ignore safety, tool, citation, or output-format requirements.",
+  ].filter(Boolean).join(" ");
+}
+
+export function getTurnOrderGuidance(config = {}) {
+  const value = normalizeOrchestratorConfig(config);
+  const policies = {
+    balanced: "Balance evidence, urgency, diversity, and anti-starvation.",
+    evidence_first: "Prioritize strong evidence-backed challenges and requests before other considerations.",
+    anti_starvation: "Strongly prioritize voices that have spoken least recently, while still handling urgent requests.",
+  };
+  return policies[value.turnOrderPolicy];
+}
+
+export function getSummaryGuidance(config = {}) {
+  const value = normalizeOrchestratorConfig(config);
+  const styles = {
+    concise: "Be concise: emphasize decisions, major evidence, and open questions without repeating the transcript.",
+    balanced: "Be thorough but compact: preserve nuance, evidence, dissent, and unresolved tradeoffs.",
+    exhaustive: "Be exhaustive: retain material details, competing positions, evidence, and open threads even at higher token cost.",
+  };
+  return styles[value.summaryStyle];
+}
+
+export function getSynthesisGuidance(config = {}) {
+  const value = normalizeOrchestratorConfig(config);
+  const styles = {
+    decision_oriented: "Lead with a clear decision or spectrum, then support it with grounded reasoning and action items.",
+    conversational: "Lead with a human-readable synthesis of the conversation before formal decision structure.",
+    technical_audit: "Lead with a technical audit: files, evidence, risks, verification, and concrete proposed fixes.",
+  };
+  return styles[value.synthesisStyle];
+}
+
 export function _modelList() {
     return this._stateManager.getParticipants().map((p) => ({ tier: p.config.tier, model: p.config.model }));
   }
@@ -73,7 +157,8 @@ export async function _promptOrchestrator(system, model, message, type = "orches
       this._database.addOrchestratorMessage(type, "user", safeMessage, round);
     }
     const timeoutMs = type === "moderation" ? 60000 : type === "summary" ? 90000 : type === "turn_order" ? 30000 : undefined;
-    const { text: response, tokens } = await this._sessionManager.promptOrchestrator(system, useModel, message, timeoutMs);
+    const orchestratorSystem = `${buildOrchestratorInstruction(this._options?.orchestratorConfig)}\n\n${system ?? ""}`;
+    const { text: response, tokens } = await this._sessionManager.promptOrchestrator(orchestratorSystem, useModel, message, timeoutMs);
     if (tokens) {
       this._callStats.input_tokens += tokens.input ?? 0;
       this._callStats.output_tokens += tokens.output ?? 0;

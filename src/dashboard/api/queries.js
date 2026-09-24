@@ -3,7 +3,7 @@ import { parseReflections, safeParseJson, normalizeToolCalls } from "../../utils
 export function getState() {
     const row = this._db
       .prepare(
-        `SELECT id as meeting_id, question, context, status, round, max_rounds, convergence, fabric, stats, reflecting_participants, querying_participants, evidence_participants, summoning_participants, state_of_play, semantic_degraded, persistence_degraded, feature_toggles_json, created_at
+        `SELECT id as meeting_id, question, context, status, round, max_rounds, convergence, fabric, stats, reflecting_participants, querying_participants, evidence_participants, summoning_participants, state_of_play, semantic_degraded, persistence_degraded, feature_toggles_json, orchestrator_config_json, created_at
          FROM meetings LIMIT 1`,
       )
       .get();
@@ -20,6 +20,15 @@ export function getState() {
       }
     } else {
       row.features = { forums: "optional" };
+    }
+    if (row.orchestrator_config_json) {
+      try {
+        row.orchestrator = JSON.parse(row.orchestrator_config_json);
+      } catch {
+        row.orchestrator = {};
+      }
+    } else {
+      row.orchestrator = {};
     }
     if (row.stats) {
       try {

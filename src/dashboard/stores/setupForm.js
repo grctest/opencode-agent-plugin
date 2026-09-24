@@ -11,10 +11,26 @@ import { persistentAtom } from "@nanostores/persistent";
  * dialogs, catalog/LLM snapshots) stays in useState and is refetched.
  */
 
-const FORM_VERSION = 4;
+const FORM_VERSION = 5;
 const MAX_SEATS = 7;
 const KNOWN_TIERS = new Set(["junior", "mid", "senior", "principal", "civilian"]);
 const FEATURE_MODES = new Set(["disabled", "optional", "mandatory"]);
+const ORCHESTRATOR_MODES = {
+  roles: new Set(["neutral_facilitator", "adversarial_reviewer", "decision_focused", "custom"]),
+  turnOrderPolicies: new Set(["balanced", "evidence_first", "anti_starvation"]),
+  summaryStyles: new Set(["concise", "balanced", "exhaustive"]),
+  decisionPostures: new Set(["preserve_spectrum", "consensus_seeking", "action_oriented"]),
+  synthesisStyles: new Set(["decision_oriented", "conversational", "technical_audit"]),
+};
+const DEFAULT_ORCHESTRATOR = {
+  model: null,
+  role: "neutral_facilitator",
+  customInstructions: "",
+  turnOrderPolicy: "balanced",
+  summaryStyle: "balanced",
+  decisionPosture: "preserve_spectrum",
+  synthesisStyle: "decision_oriented",
+};
 const DEFAULT_FEATURES = {
   forums: "optional",
   skillState: "mandatory",
@@ -32,12 +48,29 @@ export const DEFAULT_SETUP_FORM = {
   seats: [],
   preview: null,
   startedId: null,
-  orchestratorModel: null,
+  orchestrator: { ...DEFAULT_ORCHESTRATOR },
   features: { ...DEFAULT_FEATURES },
 };
 
 function asString(v) {
   return typeof v === "string" ? v : "";
+}
+
+function enumValue(value, allowed, fallback) {
+  return typeof value === "string" && allowed.has(value) ? value : fallback;
+}
+
+function sanitizeOrchestrator(raw, legacyModel) {
+  const value = raw && typeof raw === "object" ? raw : {};
+  return {
+    model: asString(value.model || legacyModel) || null,
+    role: enumValue(value.role, ORCHESTRATOR_MODES.roles, DEFAULT_ORCHESTRATOR.role),
+    customInstructions: asString(value.customInstructions).slice(0, 4000),
+    turnOrderPolicy: enumValue(value.turnOrderPolicy, ORCHESTRATOR_MODES.turnOrderPolicies, DEFAULT_ORCHESTRATOR.turnOrderPolicy),
+    summaryStyle: enumValue(value.summaryStyle, ORCHESTRATOR_MODES.summaryStyles, DEFAULT_ORCHESTRATOR.summaryStyle),
+    decisionPosture: enumValue(value.decisionPosture, ORCHESTRATOR_MODES.decisionPostures, DEFAULT_ORCHESTRATOR.decisionPosture),
+    synthesisStyle: enumValue(value.synthesisStyle, ORCHESTRATOR_MODES.synthesisStyles, DEFAULT_ORCHESTRATOR.synthesisStyle),
+  };
 }
 
 function sanitizeSeat(raw) {
@@ -102,10 +135,10 @@ function sanitizeForm(raw) {
     context: asString(raw.context),
     maxRounds,
     seats,
-    preview: sanitizePreview(raw.preview),
-    startedId: typeof raw.startedId === "string" && raw.startedId ? raw.startedId : null,
-    orchestratorModel: typeof raw.orchestratorModel === "string" && raw.orchestratorModel ? raw.orchestratorModel : null,
-    features,
+     preview: sanitizePreview(raw.preview),
+     startedId: typeof raw.startedId === "string" && raw.startedId ? raw.startedId : null,
+     orchestrator: sanitizeOrchestrator(raw.orchestrator, raw.orchestratorModel),
+     features,
   };
 }
 

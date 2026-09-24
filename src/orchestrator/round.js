@@ -49,8 +49,9 @@ export async function runRound() {
       activeParticipants,
       promptOrchestrator: async (system, model, message, type) => this._promptOrchestrator(system, model, message, type, round.number),
        getHighestTierModel: () => this._getOrchestratorModel(),
-       getFallbackModel: () => this._getAllowedFallbackModel(),
-      state: this._stateManager.getState(),
+        getFallbackModel: () => this._getAllowedFallbackModel(),
+       orchestratorConfig: this._options.orchestratorConfig,
+       state: this._stateManager.getState(),
       deadline,
     });
 
@@ -128,6 +129,7 @@ export async function _finalizeRound(updatedRound) {
           participants: this._stateManager.getParticipants(),
           promptFn: async (system, model, message) => this._promptOrchestrator(system, model, message, "turn_order", updatedRound.number),
              ...(this._options.orchestratorModel ? { getOrchestratorModel: () => this._getOrchestratorModel() } : {}),
+             orchestratorConfig: this._options.orchestratorConfig,
              getHighestTierModel: () => this._getOrchestratorModel(),
         });
         

@@ -14,6 +14,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync, openSyn
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { MeetingOrchestrator } from "../../orchestrator.js";
+import { normalizeOrchestratorConfig } from "../../orchestrator/models.js";
 import { composeRoomWithSimilarity } from "../../composer.js";
 import { getPersonas, getPersonaTags } from "../../composer/persona-loader.js";
 import { discoverModels, assignModelsToParticipants } from "../../services/model-service.js";
@@ -565,6 +566,8 @@ async function handleStartMeetingInternal(req) {
   }
   const requestedFeatures = body?.features && typeof body.features === "object" ? body.features : {};
   const features = normalizeFeatures(requestedFeatures);
+  const requestedOrchestrator = body?.orchestrator && typeof body.orchestrator === "object" ? body.orchestrator : {};
+  const orchestratorConfig = normalizeOrchestratorConfig(requestedOrchestrator);
   let maxRounds = body?.max_rounds ?? getConfig().defaultMaxRounds;
   if (!Number.isFinite(maxRounds) || maxRounds < 1) maxRounds = getConfig().defaultMaxRounds;
   maxRounds = Math.min(10, Math.max(1, Math.floor(maxRounds)));
@@ -589,13 +592,17 @@ async function handleStartMeetingInternal(req) {
   const modelMap = new Map();
   const explicitModels = Array.isArray(body?.models) ? body.models : [];
   const allowedKeys = new Set(available.map((m) => `${m.providerID}/${m.modelID}`));
-  const rawOrchestrator = body?.orchestrator_model;
+  const rawOrchestrator = body?.orchestrator_model ?? (orchestratorConfig.model ? {
+    provider_id: orchestratorConfig.model.split("/")[0],
+    model_id: orchestratorConfig.model.split("/").slice(1).join("/"),
+  } : null);
   const orchestratorProvider = rawOrchestrator?.provider_id ?? rawOrchestrator?.providerID;
   const orchestratorModel = rawOrchestrator?.model_id ?? rawOrchestrator?.modelID;
   const orchestratorKey = orchestratorProvider && orchestratorModel ? `${orchestratorProvider}/${orchestratorModel}` : null;
   if (!orchestratorKey || !allowedKeys.has(orchestratorKey) || (disabledSet instanceof Set && disabledSet.has(orchestratorKey)) || globalUnhealthy.has(orchestratorKey)) {
     return Response.json({ error: "orchestrator_model must be an enabled, healthy model" }, { status: 400 });
   }
+  const resolvedOrchestratorConfig = { ...orchestratorConfig, model: orchestratorKey };
   for (const m of explicitModels) {
     if (!m || typeof m !== "object" || !m.tier) continue;
     const providerId = m.provider_id ?? m.providerID;
@@ -694,6 +701,7 @@ async function handleStartMeetingInternal(req) {
         embedding_model: null,
         embedding_dim: null,
         orchestrator: { providerID: orchestratorProvider, modelID: orchestratorModel },
+        orchestratorConfig: resolvedOrchestratorConfig,
         features,
         participants: [],
       });
@@ -724,6 +732,7 @@ async function handleStartMeetingInternal(req) {
      meetingTimeoutMs: getConfig().defaultMeetingTimeoutMs,
      tags: [],
      orchestratorModel: { providerID: orchestratorProvider, modelID: orchestratorModel },
+     orchestratorConfig: resolvedOrchestratorConfig,
      agentTools: buildMeetingAgentTools(features),
      availableModels: available,
     ...dashboardCallbacks(),
@@ -838,10 +847,17 @@ async function handleExtendMeetingInternal(req) {
   let storedFeatures = {};
   try { storedFeatures = existingMeeting?.feature_toggles_json ? JSON.parse(existingMeeting.feature_toggles_json) : {}; } catch {}
   const extensionFeatures = normalizeFeatures(storedFeatures);
+  let storedOrchestrator = {};
+  try { storedOrchestrator = existingMeeting?.orchestrator_config_json ? JSON.parse(existingMeeting.orchestrator_config_json) : {}; } catch {}
+  const extensionOrchestratorConfig = normalizeOrchestratorConfig(storedOrchestrator);
   const extensionOrchestrator = existingMeeting?.orchestrator_provider_id && existingMeeting?.orchestrator_model_id
     && allowedKeys.has(`${existingMeeting.orchestrator_provider_id}/${existingMeeting.orchestrator_model_id}`)
     ? { providerID: existingMeeting.orchestrator_provider_id, modelID: existingMeeting.orchestrator_model_id }
     : null;
+  const resolvedExtensionOrchestratorConfig = {
+    ...extensionOrchestratorConfig,
+    model: extensionOrchestrator ? `${extensionOrchestrator.providerID}/${extensionOrchestrator.modelID}` : extensionOrchestratorConfig.model,
+  };
   const sessionID = runtime.ownerSessionId || `dashboard-${meetingId.slice(0, 8)}`;
   const context = body?.context ? sanitizeForPrompt(String(body.context), 8000) : "No additional context provided.";
 
@@ -876,8 +892,9 @@ async function handleExtendMeetingInternal(req) {
     }),
      maxRounds: Math.min(10, Math.max(1, Math.floor(Number(getConfig().defaultMaxRounds) || 4))),
      meetingTimeoutMs: getConfig().defaultMeetingTimeoutMs,
-     orchestratorModel: extensionOrchestrator,
-     agentTools: buildMeetingAgentTools(extensionFeatures),
+      orchestratorModel: extensionOrchestrator,
+      orchestratorConfig: resolvedExtensionOrchestratorConfig,
+      agentTools: buildMeetingAgentTools(extensionFeatures),
      availableModels: available,
     ...dashboardCallbacks(),
   });

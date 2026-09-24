@@ -5,6 +5,7 @@ import { SUBSTANTIVE_TYPES } from "./utils/contribution-types.js";
 import { renderMyStateMarkdown, STATE_PATCH_CAPS } from "./state-patch.js";
 import { sanitizeForPrompt } from "./utils/sanitize.js";
 import { delimitContext, escapeDelimiters } from "./prompts/delimiters.js";
+import { getSummaryGuidance } from "./orchestrator/models.js";
 
 const summarizerLogger = new Logger();
 const SUMMARY_TYPES = SUBSTANTIVE_TYPES;
@@ -95,7 +96,7 @@ export function buildAgentStatesContext(participantStates) {
  * text, degrades to a deterministic contributions digest instead of throwing —
  * one flaky response must not kill the whole deliberation.
  */
-export async function summarizeRound(round, state, promptOrchestrator, getHighestTierModel, getFallbackModel, participantStates = []) {
+export async function summarizeRound(round, state, promptOrchestrator, getHighestTierModel, getFallbackModel, participantStates = [], orchestratorConfig = {}) {
   const contribCount = round.contributions.length;
   if (contribCount === 0) return "No contributions this round.";
 
@@ -174,7 +175,9 @@ ${evidenceHint}${stateHint}
 ## Instructions
 Provide 180-350 word summary with 4-5 bullets (Established / Contested / Evidence / Open / Code if applicable) noting no substantive deliberation but mentioning contribution types and any turn requests. Agent States are remembered positions and standing context, not independent evidence; attribute them to their named holder and do not add a separate Agent States bullet. Use uncited state only as context, and place it under Evidence only when an explicit Source: or [#id] resolves to a listed contribution or tool signal. Sentence style, human-readable. Preserve numbers verbatim.`;
 
-  const semanticSummary = await promptOrchestrator("You are a thorough deliberation clerk. 180-350 words. Sentence style, human-readable, concise but thorough. Preserve numbers verbatim — do not round or invent. Never emit vec: traces.", model, prompt, "summary");
+  const semanticSummary = await promptOrchestrator(`You are a thorough deliberation clerk. 180-350 words. Sentence style, human-readable, concise but thorough. Preserve numbers verbatim — do not round or invent. Never emit vec: traces.
+
+${getSummaryGuidance(orchestratorConfig)}`, model, prompt, "summary");
 
   if (semanticSummary && semanticSummary.trim().length > 0) {
     return semanticSummary.trim();

@@ -126,19 +126,62 @@ function FeatureModeControl({ value, onChange, disabled }) {
   );
 }
 
+const ORCHESTRATOR_BEHAVIOR_HELP = {
+  role: {
+    neutral_facilitator: "Keeps the deliberation fair, inclusive, and focused on giving every participant a useful voice.",
+    adversarial_reviewer: "Challenges assumptions, weak evidence, and premature conclusions before the circle converges.",
+    decision_focused: "Emphasizes actionable options, tradeoffs, owners, and next steps without hiding disagreement.",
+    custom: "Uses the custom operating instructions below as the orchestrator's operating style.",
+  },
+  turnOrderPolicy: {
+    balanced: "Balances evidence, urgency, participant diversity, and anti-starvation when choosing who speaks next.",
+    evidence_first: "Prioritizes participants with strong evidence-backed challenges or requests when choosing who speaks next.",
+    anti_starvation: "Strongly favors participants who have spoken least recently, while still handling urgent requests.",
+  },
+  summaryStyle: {
+    concise: "Produces compact summaries that emphasize decisions, major evidence, and unresolved questions.",
+    balanced: "Produces thorough but compact summaries that preserve nuance, dissent, and unresolved tradeoffs.",
+    exhaustive: "Retains more detail, competing positions, evidence, and open threads, even when summaries use more tokens.",
+  },
+  decisionPosture: {
+    preserve_spectrum: "Keeps meaningful disagreement visible and maps the spectrum instead of forcing consensus.",
+    consensus_seeking: "Looks for a defensible shared direction while keeping dissent visible.",
+    action_oriented: "Prioritizes concrete next actions, owners, risks, and unresolved questions.",
+  },
+  synthesisStyle: {
+    decision_oriented: "Leads the final output with a clear decision or spectrum, followed by grounded reasoning and action items.",
+    conversational: "Leads with a human-readable synthesis of the conversation before formal decision structure.",
+    technical_audit: "Leads with a technical audit covering files, evidence, risks, verification, and proposed fixes.",
+  },
+};
+
+const ORCHESTRATOR_DEFAULT_VALUES = {
+  role: "neutral_facilitator",
+  turnOrderPolicy: "balanced",
+  summaryStyle: "balanced",
+  decisionPosture: "preserve_spectrum",
+  synthesisStyle: "decision_oriented",
+};
+
+function getOrchestratorBehaviorDescription(key, value) {
+  const descriptions = ORCHESTRATOR_BEHAVIOR_HELP[key] ?? {};
+  const selected = value || ORCHESTRATOR_DEFAULT_VALUES[key];
+  return descriptions[selected] || Object.values(descriptions)[0];
+}
+
 export function SetupTab({ selectedMeeting, onStarted }) {
   // Draft form state lives in a persistent per-session nanostore, so tab
   // switches (which unmount this component) and page refreshes never lose it.
   // Transient UI (catalog, llm, busy, errors, dialogs, jobs) stays in useState.
   const form = useStore($setupForm);
-  const { question, context, maxRounds, preview, seats, startedId, orchestratorModel, features } = form;
+  const { question, context, maxRounds, preview, seats, startedId, orchestrator, features } = form;
   const patchForm = (patch) => $setupForm.set({ ...$setupForm.get(), ...patch });
   const setQuestion = (v) => { patchForm({ question: v }); setPreview(null); setGuidance(null); };
   const setContext = (v) => { patchForm({ context: v }); setPreview(null); setGuidance(null); };
   const setMaxRounds = (v) => patchForm({ maxRounds: v });
   const setPreview = (v) => patchForm({ preview: v });
   const setStartedId = (v) => patchForm({ startedId: v });
-  const setOrchestratorModel = (v) => patchForm({ orchestratorModel: v });
+  const setOrchestratorField = (key, value) => patchForm({ orchestrator: { ...orchestrator, [key]: value } });
   const setFeature = (key, value) => patchForm({ features: { ...features, [key]: value } });
   const setSeats = (updater) => {
     const cur = $setupForm.get();
@@ -196,14 +239,14 @@ export function SetupTab({ selectedMeeting, onStarted }) {
   const fillOrchestratorModel = useCallback((llmData) => {
     const enabled = (llmData?.models ?? []).filter((m) => m.enabled && !m.unhealthy).map((m) => m.key);
     if (enabled.length === 0) {
-      if (orchestratorModel) setOrchestratorModel(null);
+      if (orchestrator.model) setOrchestratorField("model", null);
       return;
     }
-    const current = $setupForm.get().orchestratorModel;
+    const current = $setupForm.get().orchestrator?.model;
     if (current && enabled.includes(current)) return;
     const recommended = llmData?.suggested_orchestrator?.key;
-    setOrchestratorModel(recommended && enabled.includes(recommended) ? recommended : enabled[0]);
-  }, [orchestratorModel]);
+    setOrchestratorField("model", recommended && enabled.includes(recommended) ? recommended : enabled[0]);
+  }, [orchestrator.model]);
 
   const refreshLlm = useCallback(async (force = false) => {
     try {
@@ -365,7 +408,7 @@ export function SetupTab({ selectedMeeting, onStarted }) {
   const filterOk = enabledKeys.size >= 1;
   const seatsMapped = !roomOk || seats.every((s) => s.model && enabledKeys.has(s.model));
   const modelsOk = filterOk && seatsMapped;
-  const orchestratorOk = !!orchestratorModel && enabledKeys.has(orchestratorModel);
+  const orchestratorOk = !!orchestrator.model && enabledKeys.has(orchestrator.model);
   const idleOk = !job?.running;
   // While a deliberation is weaving, the entire setup form freezes in its
   // current state — question, rounds, models, seats, and actions all lock.
@@ -374,8 +417,9 @@ export function SetupTab({ selectedMeeting, onStarted }) {
   const requirements = useMemo(() => ([
     { key: "question", met: questionOk, label: "Enter a question" },
     { key: "models", met: modelsOk, label: !filterOk ? "Enable at least 1 model" : (!roomOk ? `Models ready (${enabledCount} enabled)` : seatsMapped ? `Models ready (${seats.length} seats mapped)` : "Pick a model for every seat") },
-     { key: "personas", met: personasOk, label: roomOk ? `Personas selected (${seats.length} seats)` : "Add at least 2 persona seats (auto-select or manual)" },
-     { key: "orchestrator", met: orchestratorOk, label: orchestratorOk ? "Orchestrator model ready" : "Choose an orchestrator model" },
+      { key: "personas", met: personasOk, label: roomOk ? `Personas selected (${seats.length} seats)` : "Add at least 2 persona seats (auto-select or manual)" },
+      { key: "capabilities", met: true, label: "Persona capabilities configured" },
+      { key: "orchestrator", met: orchestratorOk, label: orchestratorOk ? "Orchestrator ready" : "Choose an orchestrator model" },
      { key: "idle", met: idleOk, label: "No deliberation running" },
    ]), [questionOk, personasOk, roomOk, seats.length, modelsOk, orchestratorOk, filterOk, seatsMapped, enabledCount, idleOk]);
 
@@ -383,6 +427,7 @@ export function SetupTab({ selectedMeeting, onStarted }) {
       { key: "question", label: "Question", status: questionOk ? "done" : "current", detail: null },
       { key: "models", label: "Models", status: modelsOk ? "done" : questionOk ? "current" : "todo", detail: totalCount ? `${enabledCount}/${totalCount}` : null },
        { key: "personas", label: "Personas", status: personasOk ? "done" : filterOk ? "current" : "todo", detail: roomOk ? `${seats.length} seats` : null },
+       { key: "capabilities", label: "Persona capabilities", status: personasOk ? "done" : "todo", detail: null },
        { key: "orchestrator", label: "Orchestrator", status: orchestratorOk ? "done" : personasOk ? "current" : "todo", detail: null },
        { key: "start", label: "Start", status: personasOk && modelsOk && orchestratorOk && idleOk ? "current" : "todo", detail: null },
    ]), [questionOk, personasOk, modelsOk, orchestratorOk, idleOk, filterOk, roomOk, seats.length, enabledCount, totalCount]);
@@ -412,11 +457,12 @@ export function SetupTab({ selectedMeeting, onStarted }) {
           const [provider_id, ...rest] = model.split("/");
            return { ...p, approved: true, model: { provider_id, model_id: rest.join("/") } };
          }),
-         orchestrator_model: (() => {
-           const [provider_id, ...rest] = (orchestratorModel ?? "").split("/");
-           return { provider_id, model_id: rest.join("/") };
-         })(),
-         features,
+          orchestrator: { ...orchestrator, model: orchestrator.model },
+          orchestrator_model: (() => {
+            const [provider_id, ...rest] = (orchestrator.model ?? "").split("/");
+            return { provider_id, model_id: rest.join("/") };
+          })(),
+          features,
          models: [],
          approved: true,
       });
@@ -706,8 +752,8 @@ export function SetupTab({ selectedMeeting, onStarted }) {
                             <SelectItem key={m.key} value={m.key}>{m.key}</SelectItem>
                           ))}
                         </SelectContent>
-                      </Select>
-                    </div>
+                 </Select>
+               </div>
                       <div className="mt-0.5 flex flex-wrap items-center gap-2">
                         <Button variant="outline" size="sm" onClick={() => setSwapIdx(i)} disabled={isFrozen} aria-label={`Swap ${s.name} for another persona`}>
                           Swap
@@ -726,23 +772,12 @@ export function SetupTab({ selectedMeeting, onStarted }) {
           </CardContent>
       </Card>
 
-      <Card ref={(el) => { sectionRefs.current.orchestrator = el; }}>
+      <Card ref={(el) => { sectionRefs.current.capabilities = el; }}>
         <CardHeader>
-          <CardTitle>4. Orchestrator & capabilities</CardTitle>
-          <CardDescription>Choose the model that coordinates the deliberation, then narrow what agents may use.</CardDescription>
+          <CardTitle>4. Persona agent capabilities</CardTitle>
+          <CardDescription>Define which tools and interaction protocols the participating agents may use.</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-5">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="loom-orchestrator-model">Orchestrator model</Label>
-            <Select value={orchestratorModel ?? ""} onValueChange={setOrchestratorModel} disabled={isFrozen || !enabledModels.length}>
-              <SelectTrigger id="loom-orchestrator-model" className="max-w-xl font-mono text-xs" aria-label="Orchestrator model">
-                <SelectValue placeholder="Select a model…" />
-              </SelectTrigger>
-              <SelectContent>
-                {enabledModels.map((m) => <SelectItem key={m.key} value={m.key}>{m.key}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
           <div className="flex flex-col gap-2 rounded-lg border p-3">
             <div className="mb-1 text-sm font-medium">Agent capabilities</div>
              {[
@@ -767,6 +802,67 @@ export function SetupTab({ selectedMeeting, onStarted }) {
                </div>
                <Switch id="loom-feature-agentCommands" checked={features.agentCommands !== false} onCheckedChange={(value) => setFeature("agentCommands", value === true)} disabled={isFrozen} aria-label="Bash commands" />
              </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card ref={(el) => { sectionRefs.current.orchestrator = el; }}>
+        <CardHeader>
+          <CardTitle>5. Orchestrator agent</CardTitle>
+          <CardDescription>Choose the coordinating model and define how it manages, summarizes, and synthesizes the deliberation.</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-5">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="loom-orchestrator-model">Orchestrator model</Label>
+            <Select value={orchestrator.model ?? ""} onValueChange={(value) => setOrchestratorField("model", value)} disabled={isFrozen || !enabledModels.length}>
+              <SelectTrigger id="loom-orchestrator-model" className="max-w-xl font-mono text-xs" aria-label="Orchestrator model">
+                <SelectValue placeholder="Select a model…" />
+              </SelectTrigger>
+              <SelectContent>
+                {enabledModels.map((m) => <SelectItem key={m.key} value={m.key}>{m.key}</SelectItem>)}
+              </SelectContent>
+             </Select>
+             <p className="text-xs text-muted-foreground">The model used for orchestrator calls; participant models remain independent.</p>
+           </div>
+           <div className="flex flex-col gap-2">
+             {[
+               ["role", "Role / Persona", "neutral_facilitator", "Neutral facilitator", "adversarial_reviewer", "Adversarial reviewer", "decision_focused", "Decision-focused", "custom", "Custom"],
+              ["turnOrderPolicy", "Turn-order policy", "balanced", "Balanced", "evidence_first", "Evidence first", "anti_starvation", "Anti-starvation"],
+              ["summaryStyle", "Summary style", "balanced", "Balanced", "concise", "Concise", "exhaustive", "Exhaustive"],
+              ["decisionPosture", "Decision posture", "preserve_spectrum", "Preserve spectrum", "consensus_seeking", "Consensus-seeking", "action_oriented", "Action-oriented"],
+              ["synthesisStyle", "Synthesis style", "decision_oriented", "Decision-oriented", "conversational", "Conversational", "technical_audit", "Technical audit"],
+             ].map(([key, label, ...options]) => (
+               <div key={key} className="flex items-center justify-between gap-4 rounded-lg border p-3">
+                 <div className="min-w-0">
+                   <Label htmlFor={`loom-orchestrator-${key}`} className="cursor-default">{label}</Label>
+                    <p className="mt-0.5 text-xs text-muted-foreground" aria-live="polite">{getOrchestratorBehaviorDescription(key, orchestrator[key])}</p>
+                 </div>
+                 <Select value={orchestrator[key]} onValueChange={(value) => setOrchestratorField(key, value)} disabled={isFrozen}>
+                   <SelectTrigger id={`loom-orchestrator-${key}`} size="sm" className="w-44 shrink-0 font-normal">
+                     <SelectValue placeholder="Select…" />
+                   </SelectTrigger>
+                   <SelectContent>
+                     {Array.from({ length: options.length / 2 }).map((_, index) => {
+                       const value = options[index * 2];
+                       const text = options[index * 2 + 1];
+                       return <SelectItem key={value} value={value}>{text}</SelectItem>;
+                     })}
+                   </SelectContent>
+                 </Select>
+               </div>
+             ))}
+           </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="loom-orchestrator-custom">Custom operating instructions <span className="font-normal text-muted-foreground">(optional)</span></Label>
+            <Textarea
+              id="loom-orchestrator-custom"
+              rows={3}
+              maxLength={4000}
+              placeholder="e.g. Favor explicit tradeoffs, keep dissent visible, and call out assumptions before recommending action."
+              value={orchestrator.customInstructions}
+              onChange={(event) => setOrchestratorField("customInstructions", event.target.value)}
+              disabled={isFrozen}
+            />
           </div>
         </CardContent>
       </Card>

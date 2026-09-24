@@ -35,7 +35,7 @@ export class RoundService {
    * @returns {Promise<Object>} Updated round with summary
    */
    async runRound(params) {
-    const { round, activeParticipants, promptOrchestrator, getHighestTierModel, getFallbackModel, deadline } = params;
+     const { round, activeParticipants, promptOrchestrator, getHighestTierModel, getFallbackModel, deadline, orchestratorConfig } = params;
 
     this.#roundExecutor.resetRoundStats();
     if (Number.isFinite(deadline)) this.#roundExecutor.setDeadline(deadline);
@@ -50,7 +50,7 @@ export class RoundService {
     }
 
     try {
-      round.summary = await summarizeRound(round, params.state, promptOrchestrator, getHighestTierModel, getFallbackModel, participantStates);
+      round.summary = await summarizeRound(round, params.state, promptOrchestrator, getHighestTierModel, getFallbackModel, participantStates, orchestratorConfig);
     } catch (err) {
       this.#logger.warn("round_summary_failed", `Round ${round.number} summary failed — using digest fallback`, { error: err?.message ?? String(err) });
       round.summary = "";

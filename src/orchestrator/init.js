@@ -28,7 +28,7 @@ export async function initialize() {
       this._sessionManager = new SessionManager(this._client, this._directory, this._parentSessionId, this._logger);
        this._sessionManager.setDatabase(db);
        this._sessionManager.setTokenRecorder((tokens) => this.recordTokens(tokens));
-      this._synthesisCoordinator = new SynthesisCoordinator(this._sessionManager);
+       this._synthesisCoordinator = new SynthesisCoordinator(this._sessionManager, this._options.orchestratorConfig);
 
       // Ensure the meeting row exists BEFORE indexing personas.
       // The persona_embeddings table has a FK to meetings(id), so the meeting

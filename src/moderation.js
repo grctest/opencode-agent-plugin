@@ -54,7 +54,7 @@ export function extractBalancedJsonArray(text) {
  * @param {Function} params.getHighestTierModel - Function to get the highest tier model
  * @returns {Promise<string[]>} Ordered array of participant IDs
  */
-export async function planTurnOrder({ stateOfPlay, roundSummary, turnRequests, participants, promptFn, getHighestTierModel, getOrchestratorModel }) {
+export async function planTurnOrder({ stateOfPlay, roundSummary, turnRequests, participants, promptFn, getHighestTierModel, getOrchestratorModel, orchestratorConfig }) {
   const config = getConfig();
   
   // If no requests, return default order (active participants)
@@ -97,7 +97,7 @@ export async function planTurnOrder({ stateOfPlay, roundSummary, turnRequests, p
     return fallbackTurnOrder(validRequests, participants);
   }
 
-  const prompt = buildTurnOrderPrompt(stateOfPlay, roundSummary, validRequests, participants);
+  const prompt = buildTurnOrderPrompt(stateOfPlay, roundSummary, validRequests, participants, orchestratorConfig);
 
   try {
     const result = await promptFn(

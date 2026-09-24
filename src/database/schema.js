@@ -7,7 +7,7 @@
  * directly; older files run only the migrations they are missing.
  */
 
-export const LATEST_SCHEMA_VERSION = 8;
+export const LATEST_SCHEMA_VERSION = 9;
 
 /**
  * Ordered migrations. MIGRATIONS[n] upgrades a DB at user_version n to n+1.
@@ -144,6 +144,12 @@ export const MIGRATIONS = [
     if (!cols.has("orchestrator_model_id")) db.exec("ALTER TABLE meetings ADD COLUMN orchestrator_model_id TEXT");
     if (!cols.has("feature_toggles_json")) db.exec("ALTER TABLE meetings ADD COLUMN feature_toggles_json TEXT");
   },
+  (db) => {
+    const cols = new Set(
+      db.prepare("PRAGMA table_info(meetings)").all().map((c) => c.name),
+    );
+    if (!cols.has("orchestrator_config_json")) db.exec("ALTER TABLE meetings ADD COLUMN orchestrator_config_json TEXT");
+  },
 ];
 
 export function initSchema(db) {
@@ -181,6 +187,7 @@ export function initSchema(db) {
        orchestrator_provider_id TEXT,
        orchestrator_model_id TEXT,
        feature_toggles_json TEXT,
+       orchestrator_config_json TEXT,
        created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );

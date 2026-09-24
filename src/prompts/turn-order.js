@@ -1,8 +1,9 @@
 import { sanitizeForDisplay } from "../utils/sanitize.js";
 import { escapeDelimiters } from "./delimiters.js";
+import { getTurnOrderGuidance } from "../orchestrator/models.js";
 
 /** Builds a prompt for the turn order planner to order participants for the next round. */
-export function buildTurnOrderPrompt(stateOfPlay, roundSummary, turnRequests, participants) {
+export function buildTurnOrderPrompt(stateOfPlay, roundSummary, turnRequests, participants, orchestratorConfig = {}) {
   const safeStateOfPlay = escapeDelimiters(sanitizeForDisplay(stateOfPlay, 2000));
   const safeRoundSummary = escapeDelimiters(sanitizeForDisplay(roundSummary, 1000));
 
@@ -48,6 +49,8 @@ Ranking doctrine (in order):
 3. Proposals introducing a new distinct option before refinements/supports of an existing one
 4. Anti-starvation: anyone who spoke last without new reflection/evidence is demoted one rank
 5. Tie-break: (a) who spoke least recently, then (b) seniority principal > senior > mid > junior > civilian
+
+Operator behavior: ${getTurnOrderGuidance(orchestratorConfig)}
 
 Constraints:
 - Include every active participant exactly once

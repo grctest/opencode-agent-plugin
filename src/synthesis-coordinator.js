@@ -6,6 +6,7 @@ import { TUNING } from "./config/defaults.js";
 import { extractErrorInfo } from "./logger.js";
 import { incrementKeyedCounter, recordLatency } from "./metrics.js";
 import { withRetry, isRetryableError } from "./utils/retry.js";
+import { getSynthesisGuidance } from "./orchestrator/models.js";
 
 function getMaxCritiqueRetries() { try { return getConfig()?.tuning?.MAX_CRITIQUE_RETRIES ?? TUNING.MAX_CRITIQUE_RETRIES; } catch { return TUNING.MAX_CRITIQUE_RETRIES; } }
 // Core required: Executive Summary + Reasoning + Confidence; Decision optional when open-ended (see validateSynthesisSections)
@@ -15,9 +16,11 @@ const REQUIRED_ACTION_GROUP = ["Action Items", "Proposed Fix"];
 
 export class SynthesisCoordinator {
   #sessionManager;
+  #orchestratorConfig;
 
-  constructor(sessionManager) {
+  constructor(sessionManager, orchestratorConfig = {}) {
     this.#sessionManager = sessionManager;
+    this.#orchestratorConfig = orchestratorConfig;
   }
 
   selectSynthesizer(participants) {
@@ -186,6 +189,8 @@ export class SynthesisCoordinator {
 
     let critiquePrompt = `You are a synthesis auditor reviewing your own synthesis for grounding. You prefer longer, thorough deliberation — do not suppress dissent to fake consensus. Support both conversational and code-analysis (plan/build) tasks. Dissent is valuable. Concise but thorough.
 
+${getSynthesisGuidance(this.#orchestratorConfig)}
+
 Audit checklist (be strict but human-first):
 1. Grounding: any Decision/Action Item/Proposed Fix block lacking a grouped [#id]/State-of-Play/Source cite nor marked “Proposed — synthesized from [#id]” — those must be marked or cited. Grouped per block is fine; don’t demand per-sentence. Never allow vec: / vec round traces.
 2. Attribution: is every Dissenting View credited to correct holder + [#id] + one-line evidence? Merge duplicates from same holder on same evidence (combine [#ids]). Any omitted significant dissent — retrieve and add.
@@ -217,7 +222,7 @@ ${draftForPrompt}`;
         const result = await withRetry(async () => {
           const r = await this.#sessionManager.getContract().prompt({
             sessionId,
-            system: NEUTRAL_SYNTHESIZER_SYSTEM,
+          system: `${NEUTRAL_SYNTHESIZER_SYSTEM}\n\n${getSynthesisGuidance(this.#orchestratorConfig)}`,
             model,
             parts: [{ type: "text", text: critiquePrompt }],
             timeoutMs: getConfig().synthesisTimeoutMs,
