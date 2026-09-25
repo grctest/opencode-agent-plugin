@@ -822,7 +822,7 @@ export function SetupTab({ selectedMeeting, onStarted }) {
                 {enabledModels.map((m) => <SelectItem key={m.key} value={m.key}>{m.key}</SelectItem>)}
               </SelectContent>
              </Select>
-             <p className="text-xs text-muted-foreground">The model used for orchestrator calls; participant models remain independent.</p>
+              <p className="text-xs text-muted-foreground">The model used for orchestrator calls, including turn planning, round summaries, and final synthesis; participant models remain independent.</p>
            </div>
            <div className="flex flex-col gap-2">
              {[

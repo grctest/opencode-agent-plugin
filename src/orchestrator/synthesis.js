@@ -1,8 +1,7 @@
 import { getConfig } from "../config.js";
-import { extractErrorInfo } from "../logger.js";
+import { LoomError, extractErrorInfo } from "../logger.js";
 import { getMetricsSnapshot } from "../metrics.js";
 import { collectObjections } from "../objection-collector.js";
-import { getHighestTierModel } from "../services/model-service.js";
 
 export async function _synthesize() {
     const participants = this._stateManager.getParticipants();
@@ -18,7 +17,8 @@ export async function _synthesize() {
       const txt = String(c.content ?? "").trim();
       return txt !== "";
     });
-    if (substantiveForSynthesis.length === 0) {
+    const stateOfPlay = this._stateManager.getStateOfPlay();
+    if (substantiveForSynthesis.length === 0 && !String(stateOfPlay ?? "").trim()) {
       const reason = failed > 0
         ? `All ${participants.length} participants encountered errors during the deliberation.`
         : `All ${participants.length} participants chose to pass. This may indicate the question was unclear or participants had nothing to add.`;
@@ -30,7 +30,15 @@ export async function _synthesize() {
       return output;
     }
 
-    const synthesizer = this._synthesisCoordinator.selectSynthesizer(this._stateManager.getParticipants());
+    const orchestratorModel = this._getOrchestratorModel();
+    if (!orchestratorModel) {
+      throw new LoomError("No orchestrator model available for final synthesis", { phase: "synthesis", recoverable: false });
+    }
+    this._logger.info("orchestrator_synthesis_model", `Final synthesis assigned to orchestrator model ${orchestratorModel.providerID}/${orchestratorModel.modelID}`, {
+      meetingId: this._meetingId,
+      requested: this._options?.orchestratorModel ? `${this._options.orchestratorModel.providerID}/${this._options.orchestratorModel.modelID}` : null,
+      actual: `${orchestratorModel.providerID}/${orchestratorModel.modelID}`,
+    });
     const transcriptData = this._database.getTranscriptData(this._meetingId);
 
     const objections = collectObjections({
@@ -41,23 +49,21 @@ export async function _synthesize() {
 
     let result;
     try {
-      result = await this._synthesisCoordinator.run(
+      result = await this._synthesisCoordinator.run({
         transcriptData,
-        this._stateManager.getParticipants(),
+        participants: this._stateManager.getParticipants(),
         objections,
-        synthesizer,
-        (p) => this._getParticipantModel(p, true),
-        () => {
+        model: orchestratorModel,
+        onStart: () => {
           if (this._options.onSynthesisStart) this._options.onSynthesisStart();
         },
-        (output) => {
+        onComplete: (output) => {
           if (this._options.onSynthesisComplete) this._options.onSynthesisComplete(output);
           this._notifyUpdate();
         },
-        this._stateManager.getStateOfPlay(),
-        // User context reaches synthesis directly (audit 01 P8)
-        this._stateManager.getContext?.() ?? "",
-      );
+        stateOfPlay,
+        userContext: this._stateManager.getContext?.() ?? "",
+      });
     } catch (err) {      const message = err instanceof Error ? err.message : String(err);
       this._logger.error("synthesis_failed", `Synthesis failed — persisting degraded artifact: ${message}`);
       await this._sessionManager.postProgress(`⚠️ Synthesis failed (${message}) — degraded artifact persisted.`, "error");

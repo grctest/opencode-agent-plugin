@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { StateManager } from "../src/services/state-manager.js";
 import { buildAgentStatesContext, summarizeRound } from "../src/round-summarizer.js";
 import { RoundService } from "../src/services/round-service.js";
+import { SynthesisCoordinator } from "../src/synthesis-coordinator.js";
 import { emptyAgentState } from "../src/state-patch.js";
 
 function makeManager() {
@@ -169,4 +170,51 @@ test("round service snapshots state after prompt execution, not from the pre-rou
   assert.match(prompt, /Freshly committed stance/);
   assert.match(prompt, /state v2/);
   assert.doesNotMatch(prompt, /Pre-round stance/);
+});
+
+test("final synthesis uses the orchestrator model and behavior profile", async () => {
+  const prompts = [];
+  const sessionManager = {
+    async postProgress() {},
+    async createOrchestratorSynthesisSession() {
+      return "orchestrator-synthesis";
+    },
+    getContract() {
+      return {
+        async prompt({ system, model }) {
+          prompts.push({ system, model });
+          return {
+            ok: true,
+            text: "## Executive Summary\nSummary\n\n## Reasoning\nReasoning\n\n## Confidence\nLow\n\n## Dissenting Views\nNone\n\n## Open Questions\nNone\n\n## Action Items\nNone",
+            tokens: { input: 1, output: 1 },
+          };
+        },
+      };
+    },
+    recordTokens() {},
+  };
+  const coordinator = new SynthesisCoordinator(sessionManager, {
+    role: "adversarial_reviewer",
+    customInstructions: "Challenge weak evidence.",
+    decisionPosture: "action_oriented",
+    synthesisStyle: "technical_audit",
+  });
+  const result = await coordinator.run({
+    transcriptData: { question: "Question", tags: [], rounds: [] },
+    participants: [],
+    objections: [],
+    model: { providerID: "orchestrator", modelID: "summarizer" },
+    onStart: () => {},
+    onComplete: () => {},
+  });
+
+  assert.equal(prompts.length, 2);
+  for (const prompt of prompts) {
+    assert.deepEqual(prompt.model, { providerID: "orchestrator", modelID: "summarizer" });
+    assert.match(prompt.system, /adversarial reviewer/);
+    assert.match(prompt.system, /Operator instructions: Challenge weak evidence\./);
+    assert.match(prompt.system, /prioritize concrete next actions/);
+    assert.match(prompt.system, /technical audit/);
+  }
+  assert.match(result.output, /## Executive Summary/);
 });

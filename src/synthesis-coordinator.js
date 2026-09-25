@@ -3,10 +3,10 @@ import { formatFinalRoundTranscript } from "./state-of-play.js";
 import { finalizeSynthesis, validateSynthesisSections, NEUTRAL_SYNTHESIZER_SYSTEM } from "./synthesizer.js";
 import { getConfig } from "./config.js";
 import { TUNING } from "./config/defaults.js";
-import { extractErrorInfo } from "./logger.js";
+import { LoomError, extractErrorInfo } from "./logger.js";
 import { incrementKeyedCounter, recordLatency } from "./metrics.js";
 import { withRetry, isRetryableError } from "./utils/retry.js";
-import { getSynthesisGuidance } from "./orchestrator/models.js";
+import { buildOrchestratorInstruction, getSynthesisGuidance } from "./orchestrator/models.js";
 
 function getMaxCritiqueRetries() { try { return getConfig()?.tuning?.MAX_CRITIQUE_RETRIES ?? TUNING.MAX_CRITIQUE_RETRIES; } catch { return TUNING.MAX_CRITIQUE_RETRIES; } }
 // Core required: Executive Summary + Reasoning + Confidence; Decision optional when open-ended (see validateSynthesisSections)
@@ -23,19 +23,13 @@ export class SynthesisCoordinator {
     this.#orchestratorConfig = orchestratorConfig;
   }
 
-  selectSynthesizer(participants) {
-    const nonFailed = participants.filter((p) => p.status !== "failed");
-    if (nonFailed.length === 0) return null;
-    return (
-      nonFailed.find((p) => p.config.tier === "principal") ??
-      nonFailed.find((p) => p.config.tier === "senior") ??
-      nonFailed[0]
-    );
+  #orchestratorSynthesisSystem() {
+    return `${buildOrchestratorInstruction(this.#orchestratorConfig)}\n\n${NEUTRAL_SYNTHESIZER_SYSTEM}\n\n${getSynthesisGuidance(this.#orchestratorConfig)}`;
   }
 
-  async run(transcriptData, participants, objections, synthesizer, getParticipantModel, onStart, onComplete, stateOfPlay = "", userContext = "") {
-    if (!synthesizer) {
-      return { output: "No participants available for synthesis.", artifact: null };
+  async run({ transcriptData, participants, objections, model, onStart, onComplete, stateOfPlay = "", userContext = "" }) {
+    if (!model?.providerID || !model?.modelID) {
+      throw new LoomError("No orchestrator model available for final synthesis", { phase: "synthesis", recoverable: false });
     }
 
     if (onStart) onStart();
@@ -44,11 +38,10 @@ export class SynthesisCoordinator {
     let artifactText;
     let synthSessionId = null;
     try {
-      synthSessionId = await this.#sessionManager.createSynthesizerSession(synthesizer);
-      const model = getParticipantModel(synthesizer);
+      synthSessionId = await this.#sessionManager.createOrchestratorSynthesisSession();
       const transcript = formatFinalRoundTranscript(transcriptData, participants);
-      artifactText = await this.#promptWithRetry(synthSessionId, synthesizer, transcriptData, transcript, model, participants, stateOfPlay, objections, userContext);
-      artifactText = await this.#critique(synthSessionId, artifactText, transcript, transcriptData, model, synthesizer, participants);
+      artifactText = await this.#promptWithRetry(synthSessionId, transcriptData, transcript, model, participants, stateOfPlay, objections, userContext);
+      artifactText = await this.#critique(synthSessionId, artifactText, transcript, transcriptData, model, participants);
     } catch (err) {
       const info = extractErrorInfo(err);
       await this.#sessionManager.postProgress(`Synthesis session failed: ${info.message}`, "error");
@@ -67,7 +60,7 @@ export class SynthesisCoordinator {
     return result;
   }
 
-  async #promptWithRetry(sessionId, synthesizer, transcriptData, transcript, model, allParticipants, stateOfPlay = "", objections = [], userContext = "") {
+  async #promptWithRetry(sessionId, transcriptData, transcript, model, allParticipants, stateOfPlay = "", objections = [], userContext = "") {
     let additionalFeedback = "";
     const rawMaxRetries = getConfig().synthesisMaxRetries;
     const maxRetries = Number.isFinite(rawMaxRetries) ? rawMaxRetries : 1;
@@ -81,7 +74,7 @@ export class SynthesisCoordinator {
       const result = await withRetry(async () => {
         const r = await this.#sessionManager.getContract().prompt({
           sessionId,
-          system: NEUTRAL_SYNTHESIZER_SYSTEM,
+          system: this.#orchestratorSynthesisSystem(),
           model,
           parts: [{ type: "text", text: userPrompt }],
           timeoutMs: getConfig().synthesisTimeoutMs,
@@ -96,7 +89,7 @@ export class SynthesisCoordinator {
 
       const text = result.text;
       if (!text) {
-        throw new Error("Synthesizer returned empty response");
+        throw new Error("Orchestrator synthesis returned empty response");
       }
 
       const missing = validateSynthesisSections(text);
@@ -113,15 +106,7 @@ export class SynthesisCoordinator {
   }
 
   /** Second-pass audit: the synthesizer reviews its draft for grounding, then fixes. */
-  async #critique(sessionId, text, transcript, transcriptData, model, synthesizer, allParticipants) {
-    // Backward compat: if caller passes model as 3rd arg, shift
-    if (typeof transcriptData === "object" && transcriptData !== null && "providerID" in transcriptData) {
-      // transcriptData is actually model, shift args
-      allParticipants = synthesizer;
-      synthesizer = model;
-      model = transcriptData;
-      transcriptData = null;
-    }
+  async #critique(sessionId, text, transcript, transcriptData, model, allParticipants) {
     const chunkText = (t, lim) => {
       if (t.length <= lim) return [t];
       // Prefer splitting at section boundaries; if still >lim, hard chunk
@@ -222,7 +207,7 @@ ${draftForPrompt}`;
         const result = await withRetry(async () => {
           const r = await this.#sessionManager.getContract().prompt({
             sessionId,
-          system: `${NEUTRAL_SYNTHESIZER_SYSTEM}\n\n${getSynthesisGuidance(this.#orchestratorConfig)}`,
+            system: this.#orchestratorSynthesisSystem(),
             model,
             parts: [{ type: "text", text: critiquePrompt }],
             timeoutMs: getConfig().synthesisTimeoutMs,

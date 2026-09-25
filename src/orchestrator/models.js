@@ -3,6 +3,8 @@ import { parseFastPathModel } from "../config/utils.js";
 import { getHighestTierModel } from "../services/model-service.js";
 import { sortModelsByQuality } from "../model-discovery.js";
 import { Logger, LoomError, extractErrorInfo } from "../logger.js";
+import { sanitizeForDisplay } from "../utils/sanitize.js";
+import { escapeDelimiters } from "../prompts/delimiters.js";
 import { MAX_ORCHESTRATOR_MESSAGES } from "./constants.js";
 
 export const ORCHESTRATOR_BEHAVIOR_DEFAULTS = {
@@ -30,7 +32,7 @@ export function normalizeOrchestratorConfig(raw = {}) {
   return {
     model: typeof value.model === "string" && value.model ? value.model : null,
     role: behaviorEnum(value.role, ORCHESTRATOR_ROLES, ORCHESTRATOR_BEHAVIOR_DEFAULTS.role),
-    customInstructions: typeof value.customInstructions === "string" ? value.customInstructions.trim().slice(0, 4000) : "",
+    customInstructions: typeof value.customInstructions === "string" ? escapeDelimiters(sanitizeForDisplay(value.customInstructions.trim(), 4000)) : "",
     turnOrderPolicy: behaviorEnum(value.turnOrderPolicy, TURN_ORDER_POLICIES, ORCHESTRATOR_BEHAVIOR_DEFAULTS.turnOrderPolicy),
     summaryStyle: behaviorEnum(value.summaryStyle, SUMMARY_STYLES, ORCHESTRATOR_BEHAVIOR_DEFAULTS.summaryStyle),
     decisionPosture: behaviorEnum(value.decisionPosture, DECISION_POSTURES, ORCHESTRATOR_BEHAVIOR_DEFAULTS.decisionPosture),

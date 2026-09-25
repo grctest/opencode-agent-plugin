@@ -103,8 +103,8 @@ export class SessionManager {
     );
   }
 
-  async createSynthesizerSession(synthesizer) {
-    return this.#createSessionWithRetry(`Loom · Synthesizer (${synthesizer.config.tier})`);
+  async createOrchestratorSynthesisSession() {
+    return this.#createSessionWithRetry("Loom · Orchestrator Synthesis");
   }
 
   /**
