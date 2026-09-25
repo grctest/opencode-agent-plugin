@@ -68,7 +68,9 @@ export function updateStateOfPlay(weave, question, tags) {
       filesInvolved.push(fileSnippet);
     }
 
-    const bucket = classifyContribution(c.type, content, c.prompt_context?.mode ?? "");
+    const toolCalls = c.tool_calls;
+    const hasToolBacking = Array.isArray(toolCalls) ? toolCalls.length > 0 : toolCalls != null && toolCalls !== "";
+    const bucket = classifyContribution(c.type, content, c.prompt_context?.mode ?? "", hasToolBacking);
     if (bucket === null) continue;
     switch (bucket) {
       case "decisions": decisions.push(content); break;
@@ -96,17 +98,26 @@ export function updateStateOfPlay(weave, question, tags) {
  * Classifies a contribution into a state-of-play bucket.
  * Primary: use the parsed type tag. Fallback: keyword matching on content.
  */
-function classifyContribution(type, content, mode = "") {
+function classifyContribution(type, content, mode = "", hasToolBacking = true) {
   switch (type) {
     case "contribution":
       return classifyByKeywords(content);
     case "critique_response":
+      return "disagreements";
     case "perspective_response":
-      return type === "perspective_response" ? "keyFacts" : "disagreements";
+      // A perspective answer is the target's position, not a finding — filing it
+      // as a fact inflates Evidence with unattributed opinions (audit C5).
+      return "openQuestions";
     case "query_response":
-      if (mode === "risks" || mode === "assumptions") return "openQuestions";
+      if (mode === "risks" || mode === "assumptions" || mode === "alternatives") return "openQuestions";
+      if (mode === "critique") return "disagreements";
       return "keyFacts";
     case "evidence_response":
+      // tool_choice is server-ignored (prompt-enforced only), so an evidence
+      // answer may arrive with no tool behind it. Un-backed "evidence" is a
+      // claim needing verification, not a fact (audit B9).
+      if (!hasToolBacking) return "openQuestions";
+      return "keyFacts";
     case "summoned_response":
       return "keyFacts";
     case "vote_response":
@@ -134,8 +145,14 @@ function classifyContribution(type, content, mode = "") {
  * Uses word-boundary-aware matching to avoid substring false positives.
  */
 function classifyByKeywords(content) {
+  // Code signal is checked BEFORE stripping spans/URLs: a decision whose substance
+  // lives inside a fenced diff or file= reference is otherwise invisible to the
+  // classifier and falls through to keyFacts (audit C5).
+  const hasCodeRef = /file\s*=|```|src\//i.test(content);
   const withoutUrls = content.replace(/https?:\/\/\S+/g, "").replace(/`[^`]*`/g, "");
   const lower = withoutUrls.toLowerCase();
+  const isProposal = /\bwe should\b/.test(lower) || /\bdecision\b/.test(lower) || /\bpropose\b/.test(lower) || /\badopt\b/.test(lower);
+  if (isProposal && hasCodeRef) return "decisions";
   if (/\bwe should\b/.test(lower) || /\bdecision\b/.test(lower)) return "decisions";
   if (/\bagree\b/.test(lower) || /\bconsensus\b/.test(lower)) return "agreements";
   if (/\bdisagree\b/.test(lower) || /\bconcern\b/.test(lower)) return "disagreements";
@@ -167,13 +184,17 @@ export function mergeStateOfPlay(primary, fallback) {
       for (const line of readSection(source, name).split("\n")) {
         const value = line.trim();
         if (!value.startsWith("- ")) continue;
-        const key = value.slice(2).replace(/\s+/g, " ").toLowerCase();
+        // Strip the aggregation's " (N holders)" attribution suffix before keying,
+        // or `foo` and `foo (2 holders)` never dedupe and both leak through (audit A6).
+        const key = value.slice(2).replace(/\s*\(\d+ holders\)\s*$/i, "").replace(/\s+/g, " ").toLowerCase();
         if (!key || seen.has(key)) continue;
         seen.add(key);
         values.push(value);
       }
     }
-    return values.slice(0, limit).map((value) => value.slice(2));
+    // Newest wins: primary is already rank-ordered and the fallback buckets are
+    // chronological, so the tail — not the head — is the most recent (audit A6).
+    return values.slice(-limit).map((value) => value.slice(2));
   };
   const question = readSection(primary, "Question") || readSection(fallback, "Question");
   const tags = readSection(primary, "Tags") || readSection(fallback, "Tags");
@@ -224,10 +245,15 @@ function formatRoundLines(round, participants) {
   lines.push(`### Round ${isFinal ? "(Final)" : round.number}`);
 
   for (const c of round.contributions) {
+    // Pass rows carry no citable content; emitting them would mint valid-looking
+    // [#id] targets that resolve to "passed" (audit A1).
+    if (c.type === "pass") continue;
     const participant = participants.find((p) => p.config.id === c.participant_id);
     const name = participant?.config.name ?? c.participant_id;
     const tier = participant?.config.tier ?? "mid";
-    lines.push(`**[${name}]** (${tier}, ${c.type}): ${c.content}`);
+    // The [#id] is the citation key the synthesis doctrine requires (audit A1):
+    // every contribution line must carry the id finalizeSynthesis validates against.
+    lines.push(`- **[#${c.id ?? "?"}] ${name}** (${tier}, ${c.type}): ${c.content}`);
   }
 
   if (round.turn_requests && round.turn_requests.length > 0) {
@@ -270,15 +296,26 @@ export function formatFinalRoundTranscript(data, participants) {
   const appendAgentStates = (lines) => {
     const states = (participants || []).filter((p) => p.state_stance || (Array.isArray(p.state_bullets) && p.state_bullets.length > 0));
     if (states.length === 0) return;
-    const block = ["### Agent States (final)", "_Positions only — cite weave [#id] for every contested claim; bullets without a [#id] trail are unattributed positions, not findings._"];
-    for (const p of states) {
+    // Budget whole participants, never a mid-participant slice: a silent cut
+    // looks complete to the synthesizer, an explicit marker does not (audit D9/5.3).
+    const blocks = states.map((p) => {
       const name = p.config?.name ?? p.config?.id ?? "unknown";
       const tier = p.config?.tier ?? "";
       const stance = String(p.state_stance ?? "").slice(0, 400).replace(/\n/g, " ");
       const bullets = (p.state_bullets ?? []).slice(0, 4).map((b) => String(b).slice(0, 280).replace(/\n/g, " "));
-      block.push(`**${name} (${tier})${p.state_version ? ` v${p.state_version}` : ""}**: ${stance || "(no stance)"}${bullets.length > 0 ? ` — ${bullets.join(" | ")}` : ""}`);
+      return `**${name} (${tier})${p.state_version ? ` v${p.state_version}` : ""}**: ${stance || "(no stance)"}${bullets.length > 0 ? ` — ${bullets.join(" | ")}` : ""}`;
+    });
+    const out = ["### Agent States (final)", "_Positions only — cite weave [#id] for every contested claim; bullets without a [#id] trail are unattributed positions, not findings._"];
+    let used = out.join("\n").length;
+    for (let i = 0; i < blocks.length; i++) {
+      if (used + blocks[i].length + 1 > 4000) {
+        out.push(`- …${blocks.length - i} more participant(s) omitted (state budget)`);
+        break;
+      }
+      out.push(blocks[i]);
+      used += blocks[i].length + 1;
     }
-    lines.push(block.join("\n").slice(0, 4000));
+    lines.push(out.join("\n"));
   };
   if (!data.rounds || data.rounds.length === 0) {
     const lines = [];
@@ -295,29 +332,44 @@ export function formatFinalRoundTranscript(data, participants) {
     const joined = lines.join("\n");
     return truncForTranscript(joined, 24000);
   }
-  const lines = [];
   // For 2-4 rounds, include fuller digests; for longer, keep last 2 full + earlier digests 400 chars
   const fullRounds = data.rounds.length <= 4 ? data.rounds : data.rounds.slice(-2);
   const digestRounds = data.rounds.length <= 4 ? [] : data.rounds.slice(0, -2);
+  // Budget order: the final round + agent states + reflections are the most
+  // decision-relevant content, so they are built first and digests fill whatever
+  // remains of the 24k budget. Cutting from the front (digests first) instead of
+  // slicing the joined string keeps the conclusion when the budget binds (audit D11).
+  const tailLines = [];
+  for (const r of fullRounds) {
+    const ls = formatRoundLines(r, participants);
+    // mark last as final, others as full
+    ls[0] = `### Round ${r.number} ${r === fullRounds[fullRounds.length-1] ? "(Final)" : "(full)"}`;
+    tailLines.push(...ls);
+  }
+  appendAgentStates(tailLines);
+  appendReflections(tailLines);
+  const tailStr = tailLines.join("\n");
+  if (tailStr.length >= 24000) return truncForTranscript(tailStr, 24000);
+  let remaining = 24000 - tailStr.length - 1;
+  const headLines = [];
   for (let i = 0; i < digestRounds.length; i++) {
     const r = digestRounds[i];
     const summary = (r.summary || (r.contributions[0]?.content ?? "")).slice(0, 400).replace(/\n/g, " ");
     const contested = (r.contributions.find((c) => c.type === "critique_response" || c.type === "perspective_response" || c.type === "challenge" || c.type === "dissent" || /\b(challenge|dissent|disagree|concern|oppose|dispute|contradict|risk|flaw|weakness)\b/i.test(String(c.content ?? "")))?.content ?? "").slice(0, 400).replace(/\n/g, " ");
     // Include top file mention for code rounds
     const fileMention = (r.contributions.find((c) => /file=|src\/.*\.\w+|```/.test(String(c.content)))?.content ?? "").slice(0, 300).replace(/\n/g, " ");
-    lines.push(`### Round ${r.number} (digest)`);
-    if (summary) lines.push(`Summary: ${summary}`);
-    if (contested) lines.push(`Contested: ${contested}`);
-    if (fileMention) lines.push(`Code: ${fileMention}`);
+    const block = [`### Round ${r.number} (digest)`];
+    if (summary) block.push(`Summary: ${summary}`);
+    if (contested) block.push(`Contested: ${contested}`);
+    if (fileMention) block.push(`Code: ${fileMention}`);
+    const blockStr = block.join("\n");
+    if (blockStr.length > remaining) {
+      headLines.push(`### Round ${r.number} (digest)`);
+      headLines.push(`…[earlier-round digests truncated — full weave in DB]`);
+      break;
+    }
+    headLines.push(...block);
+    remaining -= blockStr.length + 1;
   }
-  for (const r of fullRounds) {
-    const ls = formatRoundLines(r, participants);
-    // mark last as final, others as full
-    ls[0] = `### Round ${r.number} ${r === fullRounds[fullRounds.length-1] ? "(Final)" : "(full)"}`;
-    lines.push(...ls);
-  }
-  appendAgentStates(lines);
-  appendReflections(lines);
-  const joined2 = lines.join("\n");
-  return truncForTranscript(joined2, 24000);
+  return [...headLines, ...tailLines].join("\n");
 }

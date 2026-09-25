@@ -1,3 +1,5 @@
+import { LENGTH_LIMITS } from "./prompts/constants.js";
+
 function supplementMissingSections(text, missingSections) {
   const note = `> **Note:** The synthesizer did not generate the following sections: ${missingSections.join(", ")}. Consider reviewing the raw deliberation transcript for additional context.`;
   return `${text}\n\n${note}`;
@@ -47,24 +49,37 @@ export function parseConfidence(text) {
   return anyMatch ? anyMatch[1].toLowerCase() : null;
 }
 
+/**
+ * Single source of truth for the synthesis section contract (audit D10): the
+ * draft prompt, the repair feedback, and the validator below must enumerate
+ * the same sections. Import this table instead of hardcoding lists.
+ */
+export const SYNTHESIS_SECTION_CONTRACT = Object.freeze({
+  core: ["Executive Summary", "Reasoning", "Confidence"],
+  // Required only when no Executive Summary is present (open-ended spectrum).
+  decisionFallback: "Decision",
+  always: ["Dissenting Views", "Open Questions"],
+  // At least one of the group must be present.
+  actionGroup: ["Action Items", "Proposed Fix"],
+});
+
 /** Validates that all required sections exist — flexible for open-ended (Decision optional if Executive Summary present).
  * Core: Executive Summary + Reasoning + Confidence always required. Decision OR synthesis table satisfies decision requirement.
  * Action Items / Proposed Fix: at least one must be present. Dissenting Views and Open Questions remain required.
  */
 export function validateSynthesisSections(text) {
+  const C = SYNTHESIS_SECTION_CONTRACT;
   const hasExecutive = (() => {
     const esc = "Executive Summary".replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     return new RegExp(`^#{2,}\\s*${esc}\\b`, "im").test(text);
   })();
-  const coreRequired = hasExecutive ? ["Reasoning", "Confidence"] : ["Decision", "Reasoning", "Confidence"];
+  const coreRequired = hasExecutive ? ["Reasoning", "Confidence"] : [C.decisionFallback, "Reasoning", "Confidence"];
   // Still require Decision if no Executive Summary; if Executive present, Decision is optional (open-ended spectrum)
   if (hasExecutive && !new RegExp(`^#{2,}\\s*Decision\\b`, "im").test(text)) {
     // No warning — open-ended map is allowed when Executive Summary exists
   } else if (!hasExecutive) {
     // coreRequired already includes Decision
   }
-  const atLeastOneOf = [["Action Items", "Proposed Fix"]];
-  const alwaysRequired = ["Dissenting Views", "Open Questions"];
   const warnings = [];
   function hasSection(section) {
     const esc = section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -77,19 +92,16 @@ export function validateSynthesisSections(text) {
     }
   }
   // If Executive Summary missing, still require Decision via coreRequired; no extra check needed
-  for (const section of alwaysRequired) {
+  for (const section of C.always) {
     if (!hasSection(section)) {
       warnings.push(section);
     }
   }
-  for (const group of atLeastOneOf) {
-    const hasOne = group.some(s => hasSection(s));
-    if (!hasOne) {
-      warnings.push(group[0]);
-    }
+  if (!C.actionGroup.some(s => hasSection(s))) {
+    warnings.push(C.actionGroup[0]);
   }
   // If Executive Summary present but no Decision, don't warn — open-ended valid
-  return warnings.filter(w => !(hasExecutive && w === "Decision"));
+  return warnings.filter(w => !(hasExecutive && w === C.decisionFallback));
 }
 
 /** Extracts list items from a named section of a markdown document — accepts ## or ###. */
@@ -145,8 +157,8 @@ export function extractSection(text, sectionName) {
 const NEUTRAL_SYNTHESIZER_SYSTEM = `You are a synthesis auditor, not a participant. You are neutral to all agendas — including the synthesizer persona you may have borrowed. Human-readable first, then auditable detail. Concise but thorough.
 
 Rules:
-1. Lead with Executive Summary — plain narrative, no citations, human-first (120-180w). Then group citations per block for Decision/Action/Proposed Fix — cite once per block as [#id] or State-of-Play or Source: https://…, never vec: / vec round. If you synthesize a novel fix/code not present verbatim, mark it “Proposed — synthesized from [#id]”. Do not invent file contents not read via tool; if no file read, qualify “Proposed (unverified — no tool read)”. For open-ended, mapping the spectrum is correct — don’t force a single Decision. Decision table cells concise: Evidence 30-35w + one grouped cite, Tradeoff 30-35w.
-2. Every Dissenting View must name holder (name + tier) + [#id] + one-line evidence (≤30w). Unresolved Objections are mandatory dissent. Merge duplicates from same holder on same evidence. Dissent is valuable — High confidence may still have bounded dissent.
+1. Lead with Executive Summary — plain narrative, no citations, human-first (${LENGTH_LIMITS.synthesisExecutive}w). Then group citations per block for Decision/Action/Proposed Fix — cite once per block as [#id] or State-of-Play or Source: https://…, never vec: / vec round. If you synthesize a novel fix/code not present verbatim, mark it “Proposed — synthesized from [#id]”. Do not invent file contents not read via tool; if no file read, qualify “Proposed (unverified — no tool read)”. For open-ended, mapping the spectrum is correct — don’t force a single Decision. Decision table cells concise: Evidence 30-35w + one grouped cite, Tradeoff 30-35w.
+2. Every Dissenting View must name the holder by name + [#id] + one-line evidence (≤30w). Unresolved Objections are mandatory dissent. Merge duplicates from same holder on same evidence. Dissent is valuable — High confidence may still have bounded dissent.
 3. Do not invent numbers, dates, costs, tool results, or participant positions not in transcript/State-of-Play. If evidence conflicts, state both and set Confidence accordingly. For code, do not invent file contents not read via tool. Deduplicate: Decision maps positions, Reasoning explains why — don’t repeat same numbers thrice.
 4. Resolved Concerns must NOT reappear as Dissenting Views; summarize resolved items in ≤30w each, don’t dump full critique verbatim.
 5. Never emit <<< or >>> delimiters. Be concise but thorough — 1500-3500w welcome; use the 200k window. Preserve code and numbers verbatim. Never emit vec: / vec round traces.`;
@@ -173,9 +185,11 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, ob
   // Normalize vec traces in the draft before any validation — auto-fix per user Q4
   artifactText = normalizeVecTraces(artifactText);
   const unresolvedObjections = (objections ?? []).filter((o) => o.unresolved);
-  const resolvedObjections = (objections ?? []).filter((o) => !o.unresolved);
+  const staleObjections = (objections ?? []).filter((o) => !o.unresolved && o.stale);
+  const resolvedObjections = (objections ?? []).filter((o) => !o.unresolved && !o.stale);
   const objectionsText = unresolvedObjections.map((o) => summarizeObjection(o, 200)).join("\n");
   const resolvedText = resolvedObjections.map((o) => summarizeObjection({ ...o, content: `${o.content} (resolved)` }, 200)).join("\n");
+  const staleText = staleObjections.map((o) => summarizeObjection({ ...o, content: `${o.content} (stale — not re-raised)` }, 200)).join("\n");
   
   // Collect refusals from the transcript
   const weave = transcriptData.rounds.flatMap((r) => r.contributions);
@@ -187,15 +201,19 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, ob
   
   let finalOutput = artifactText;
   
-  // Only append unresolved/resolved summaries if not already in the draft (avoid duplication)
+  // Only append unresolved/resolved/stale summaries if not already in the draft (avoid duplication)
   const hasUnresolvedSection = /^##\s*Unresolved Objections\b/im.test(finalOutput);
   const hasResolvedSection = /^##\s*Resolved Concerns\b/im.test(finalOutput);
+  const hasStaleSection = /^##\s*Stale Concerns\b/im.test(finalOutput);
   if (objectionsText && !hasUnresolvedSection) {
     finalOutput = `${finalOutput}\n\n## Unresolved Objections\n${objectionsText}`;
   }
   if (resolvedText && !hasResolvedSection) {
     // Keep resolved concise — one line each, not full critique dump
     finalOutput = `${finalOutput}\n\n## Resolved Concerns\n${resolvedText}`;
+  }
+  if (staleText && !hasStaleSection) {
+    finalOutput = `${finalOutput}\n## Stale Concerns (background — raised earlier, not re-raised)\n${staleText}`;
   }
   
   if (refusalsText) {
@@ -210,41 +228,60 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, ob
   // Grounded synthesis check: Decision section should cite at least one [#id] per block (not per line spam).
   // Grouped citations are valid — only flag if the entire Decision section lacks any valid weave citation.
   const weaveIds = new Set(weave.map((c) => String(c.id)));
+  const sectionHasValidCite = (lines) => {
+    let inFence = false;
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (/^```/.test(trimmed)) { inFence = !inFence; continue; }
+      if (inFence) continue;
+      const cites = [...line.matchAll(/\[#(\d+)\]/g)].map((m) => m[1]);
+      if (cites.some((id) => weaveIds.has(id))) return true;
+    }
+    return false;
+  };
+  const ungroundedLines = (lines) => lines.filter((line) => {
+    const trimmed = line.trim();
+    if (/^```/.test(trimmed)) return false;
+    const cites = [...trimmed.matchAll(/\[#(\d+)\]/g)].map((m) => m[1]);
+    return cites.length === 0 || cites.every((id) => !weaveIds.has(id));
+  });
   const decisions = extractSection(finalOutput, "Decision");
   const hasExecutive = new RegExp(`^#{2,}\\s*Executive Summary\\b`, "im").test(finalOutput);
-  let inFence = false;
-  let decisionHasValidCite = false;
-  for (const line of decisions) {
-    const trimmed = line.trim();
-    if (/^```/.test(trimmed)) { inFence = !inFence; continue; }
-    if (inFence) continue;
-    const cites = [...line.matchAll(/\[#(\d+)\]/g)].map((m) => m[1]);
-    if (cites.some((id) => weaveIds.has(id))) { decisionHasValidCite = true; break; }
-  }
+  const decisionHasValidCite = sectionHasValidCite(decisions);
   // Also consider citations in Reasoning as grounding if Decision is a spectrum table (open-ended)
   const reasoning = extractSection(finalOutput, "Reasoning");
-  let reasoningHasValidCite = false;
-  for (const line of reasoning) {
-    const cites = [...line.matchAll(/\[#(\d+)\]/g)].map((m) => m[1]);
-    if (cites.some((id) => weaveIds.has(id))) { reasoningHasValidCite = true; break; }
-  }
+  const reasoningHasValidCite = sectionHasValidCite(reasoning);
   const overallGrounded = decisionHasValidCite || (hasExecutive && reasoningHasValidCite);
   if (!overallGrounded && decisions.length > 0) {
-    const ungrounded = decisions.filter((line) => {
-      const trimmed = line.trim();
-      if (/^```/.test(trimmed)) return false;
-      const cites = [...line.matchAll(/\[#(\d+)\]/g)].map((m) => m[1]);
-      return cites.length === 0 || cites.every((id) => !weaveIds.has(id));
-    });
+    const ungrounded = ungroundedLines(decisions);
     if (ungrounded.length === decisions.length) {
       finalOutput += `\n\n## Needs Verification\nThe Decision section lacks a valid [#id] citation to the transcript and should be verified before acting. Consider checking State of Play or transcript.\n${ungrounded.slice(0, 5).map((l) => `- ${l.slice(0, 200)}`).join("\n")}`;
+    }
+  }
+  // Action Items are executable — an ungrounded action item is the highest-cost
+  // failure mode, so it gets its own check even when the Decision is grounded
+  // (audit D8/5.6).
+  const actionItems = extractSection(finalOutput, "Action Items");
+  if (overallGrounded && actionItems.length > 0 && !sectionHasValidCite(actionItems)) {
+    const ungroundedActions = ungroundedLines(actionItems);
+    if (ungroundedActions.length === actionItems.length) {
+      finalOutput += `\n\n## Needs Verification\nThe Action Items below cite no valid [#id] from the transcript — they assign work, so verify ownership and basis before acting.\n${ungroundedActions.slice(0, 5).map((l) => `- ${l.slice(0, 200)}`).join("\n")}`;
     }
   }
 
   const parsedConfidence = parseConfidence(finalOutput);
   const activeParticipants = participants.filter((p) => p.status !== "failed").length;
   const heuristicConfidence = deriveConfidence(weave, unresolvedObjections.length, participants.length, activeParticipants);
-  const confidence = parsedConfidence ?? heuristicConfidence;
+  // The model's word is prose; the derived check — which inspects actual
+  // grounding — is authoritative. Downgrade on >1 level disagreement, and
+  // record both so the dashboard can show the gap (audit D7/5.2).
+  const rankConfidence = (c) => ({ high: 2, medium: 1, low: 0 })[String(c ?? "").toLowerCase()] ?? -1;
+  let confidence = heuristicConfidence;
+  if (parsedConfidence && rankConfidence(parsedConfidence) >= 0 && rankConfidence(heuristicConfidence) >= 0) {
+    confidence = rankConfidence(parsedConfidence) - rankConfidence(heuristicConfidence) > 1
+      ? heuristicConfidence
+      : parsedConfidence;
+  }
 
   const artifact = {
     content: finalOutput,
@@ -260,6 +297,8 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, ob
     })),
     open_questions: extractSection(finalOutput, "Open Questions"),
     confidence,
+    confidence_reported: parsedConfidence,
+    confidence_derived: heuristicConfidence,
   };
 
   return { artifact, output: finalOutput };

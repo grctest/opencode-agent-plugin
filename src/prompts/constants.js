@@ -36,3 +36,14 @@ export const TOOL_FAILURE_LINE =
   'If tool returns error or 0 hits, write “evidence unavailable — searched X, 0 hits” and proceed with an experience-qualified claim. Do not retry the identical query; reformulate or acknowledge the gap.';
 export const CITATION_LINE =
   "Cite once per evidence block — Source: [#id] or Source: https://… or file=src/... . Group citations; do not spam [#id] per sentence. Synthesize, don’t dump.";
+
+/**
+ * Human label for a model's context window (audit 3.4): "200k" etc. Returns
+ * null when unknown so callers keep their existing default text unchanged.
+ */
+export function windowLabel(context) {
+  if (!Number.isFinite(context) || context <= 0) return null;
+  if (context >= 1000000) return `${Math.round(context / 1000000)}M`;
+  if (context >= 1000) return `${Math.round(context / 1000)}k`;
+  return String(Math.round(context));
+}

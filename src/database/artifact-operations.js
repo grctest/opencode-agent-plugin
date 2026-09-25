@@ -6,8 +6,8 @@ const dbLogger = new Logger();
 export function saveArtifact(db, meetingId, artifact) {
   db
     .prepare(
-      `INSERT INTO artifacts (meeting_id, content, decisions, action_items, dissent, open_questions, confidence, refusals, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO artifacts (meeting_id, content, decisions, action_items, dissent, open_questions, confidence, refusals, orchestrator_config, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(meeting_id) DO UPDATE SET
            content = excluded.content,
            decisions = excluded.decisions,
@@ -16,6 +16,7 @@ export function saveArtifact(db, meetingId, artifact) {
            open_questions = excluded.open_questions,
            confidence = excluded.confidence,
            refusals = excluded.refusals,
+           orchestrator_config = excluded.orchestrator_config,
            created_at = excluded.created_at`,
     )
     .run(
@@ -27,6 +28,7 @@ export function saveArtifact(db, meetingId, artifact) {
       artifact.open_questions ? JSON.stringify(artifact.open_questions) : null,
       artifact.confidence ?? null,
       artifact.refusals ? JSON.stringify(artifact.refusals) : null,
+      artifact.orchestrator_config ? JSON.stringify(artifact.orchestrator_config) : null,
       isoNow(),
     );
 }
@@ -34,7 +36,7 @@ export function saveArtifact(db, meetingId, artifact) {
 export function getArtifact(db, meetingId) {
   const row = db
     .prepare(
-      `SELECT content, decisions, action_items, dissent, open_questions, confidence, refusals, created_at
+      `SELECT content, decisions, action_items, dissent, open_questions, confidence, refusals, orchestrator_config, created_at
          FROM artifacts WHERE meeting_id = ?`,
     )
     .get(meetingId);
@@ -48,6 +50,15 @@ export function getArtifact(db, meetingId) {
       return [];
     }
   };
+  const parseObj = (json) => {
+    if (!json) return null;
+    try {
+      const parsed = JSON.parse(json);
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch {
+      return null;
+    }
+  };
   return {
     content: row.content,
     decisions: parse(row.decisions),
@@ -56,6 +67,7 @@ export function getArtifact(db, meetingId) {
     open_questions: parse(row.open_questions),
     refusals: parse(row.refusals),
     confidence: row.confidence,
+    orchestrator_config: parseObj(row.orchestrator_config),
     created_at: row.created_at,
   };
 }

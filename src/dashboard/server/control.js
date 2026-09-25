@@ -14,11 +14,12 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync, openSyn
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { MeetingOrchestrator } from "../../orchestrator.js";
-import { normalizeOrchestratorConfig } from "../../orchestrator/models.js";
+import { normalizeOrchestratorConfig, validateOrchestratorConfig } from "../../orchestrator/models.js";
 import { composeRoomWithSimilarity } from "../../composer.js";
 import { getPersonas, getPersonaTags } from "../../composer/persona-loader.js";
 import { discoverModels, assignModelsToParticipants } from "../../services/model-service.js";
 import { createModelPlan } from "../../model-discovery.js";
+import { buildOrchestratorPromptPreview } from "./orchestrator-preview.js";
 import { MeetingDatabase, findMeetingBySessionId, getDbPathForMeeting } from "../../database.js";
 import { getMeetingDbPath, resolveLoomBaseDir } from "../../paths.js";
 import { getConfig } from "../../config.js";
@@ -307,6 +308,25 @@ export async function handleRoomPreview(req) {
    });
 }
 
+export async function handleOrchestratorPreview(req) {
+  let body;
+  try {
+    body = await readJsonBody(req, 64 * 1024);
+  } catch (err) {
+    return Response.json({ error: err.message }, { status: 400 });
+  }
+  try {
+    return Response.json(buildOrchestratorPromptPreview({
+      orchestrator: body?.orchestrator,
+      question: body?.question,
+      context: body?.context,
+      participants: body?.participants,
+    }));
+  } catch (err) {
+    return Response.json({ error: extractErrorInfo(err).message }, { status: 400 });
+  }
+}
+
 // --- LLM models (filter + per-tier assignment parity with old chat commands) ---
 
 export async function handleListLlmModels(url = null) {
@@ -567,7 +587,12 @@ async function handleStartMeetingInternal(req) {
   const requestedFeatures = body?.features && typeof body.features === "object" ? body.features : {};
   const features = normalizeFeatures(requestedFeatures);
   const requestedOrchestrator = body?.orchestrator && typeof body.orchestrator === "object" ? body.orchestrator : {};
-  const orchestratorConfig = normalizeOrchestratorConfig(requestedOrchestrator);
+  // Rejected enum values fall back to defaults silently inside normalize — log
+  // them so the operator knows a setting did not apply (audit Step 8).
+  const { config: orchestratorConfig, rejected: rejectedOrchestrator } = validateOrchestratorConfig(requestedOrchestrator);
+  if (rejectedOrchestrator.length > 0) {
+    logger.warn("dashboard_orchestrator_rejected", `Ignoring invalid orchestrator option(s), using defaults: ${rejectedOrchestrator.map((r) => `${r.field}='${r.value}'`).join(", ")}`);
+  }
   let maxRounds = body?.max_rounds ?? getConfig().defaultMaxRounds;
   if (!Number.isFinite(maxRounds) || maxRounds < 1) maxRounds = getConfig().defaultMaxRounds;
   maxRounds = Math.min(10, Math.max(1, Math.floor(maxRounds)));
@@ -762,7 +787,7 @@ async function handleStartMeetingInternal(req) {
     }
   })();
 
-  return Response.json({ ok: true, meeting_id: meetingId }, { status: 202 });
+  return Response.json({ ok: true, meeting_id: meetingId, ...(rejectedOrchestrator.length > 0 ? { orchestrator_warnings: rejectedOrchestrator } : {}) }, { status: 202 });
 }
 
 export async function handleCancelMeeting(req) {

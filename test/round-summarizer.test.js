@@ -4,6 +4,8 @@ import { StateManager } from "../src/services/state-manager.js";
 import { buildAgentStatesContext, summarizeRound } from "../src/round-summarizer.js";
 import { RoundService } from "../src/services/round-service.js";
 import { SynthesisCoordinator } from "../src/synthesis-coordinator.js";
+import { buildSynthesisPrompt } from "../src/prompts/synthesis.js";
+import { buildOrchestratorPromptPreview } from "../src/dashboard/server/orchestrator-preview.js";
 import { emptyAgentState } from "../src/state-patch.js";
 
 function makeManager() {
@@ -211,10 +213,69 @@ test("final synthesis uses the orchestrator model and behavior profile", async (
   assert.equal(prompts.length, 2);
   for (const prompt of prompts) {
     assert.deepEqual(prompt.model, { providerID: "orchestrator", modelID: "summarizer" });
-    assert.match(prompt.system, /adversarial reviewer/);
+    // Legacy adversarial_reviewer input normalizes to rigorous_auditor; the
+    // operator block appears exactly once (no verbatim duplication).
+    assert.match(prompt.system, /rigorous auditor/);
+    assert.doesNotMatch(prompt.system, /adversarial reviewer/);
     assert.match(prompt.system, /Operator instructions: Challenge weak evidence\./);
-    assert.match(prompt.system, /prioritize concrete next actions/);
+    assert.equal(prompt.system.split("Operator instructions:").length - 1, 1);
     assert.match(prompt.system, /technical audit/);
+    // Posture lives in the user-prompt doctrine now, not the system prompt.
+    assert.doesNotMatch(prompt.system, /Decision posture/);
   }
   assert.match(result.output, /## Executive Summary/);
+  // Posture renders in the user-prompt doctrine beside the numbered rules.
+  const user = buildSynthesisPrompt("Q", "t", [], [], "", [], "", { decisionPosture: "action_oriented" });
+  assert.match(user, /Operator decision posture:.*prioritize concrete next actions/);
+  assert.match(user, /outranked by every numbered rule below/);
+  const userDefault = buildSynthesisPrompt("Q", "t", [], [], "", [], "", {});
+  assert.doesNotMatch(userDefault, /Operator decision posture/);
+});
+
+test("orchestrator preview maps each setting to an exact prompt fragment", () => {
+  const preview = buildOrchestratorPromptPreview({
+    orchestrator: {
+      model: "test/preview-model",
+      role: "adversarial_reviewer",
+      customInstructions: "Challenge weak evidence.",
+      turnOrderPolicy: "anti_starvation",
+      summaryStyle: "exhaustive",
+      decisionPosture: "action_oriented",
+      synthesisStyle: "technical_audit",
+    },
+    question: "Should previews show configuration impact?",
+    context: "Use a synthetic fixture.",
+    participants: [
+      { id: "alpha", name: "Alpha", tier: "senior", persona: "Strategic.", agenda: "Direction." },
+      { id: "beta", name: "Beta", tier: "mid", persona: "Operational.", agenda: "Feasibility." },
+      { id: "gamma", name: "Gamma", tier: "junior", persona: "Extra.", agenda: "Extra." },
+    ],
+  });
+
+  assert.equal(preview.staticPreview, true);
+  assert.equal(preview.model, "test/preview-model");
+  assert.equal(preview.roundSummary.impacts.length, 5);
+  assert.equal(preview.finalSynthesis.impacts.length, 5);
+  // Per-task scoping: role/posture/custom do not reach the summary system.
+  assert.doesNotMatch(preview.roundSummary.system, /adversarial reviewer/);
+  assert.doesNotMatch(preview.roundSummary.system, /rigorous auditor/);
+  assert.doesNotMatch(preview.roundSummary.system, /Decision posture/);
+  assert.doesNotMatch(preview.roundSummary.system, /Operator instructions/);
+  assert.match(preview.roundSummary.system, /Be exhaustive/);
+  assert.match(preview.finalSynthesis.system, /rigorous auditor/);
+  // Posture moved to the user-prompt doctrine (same authority as the rules).
+  assert.doesNotMatch(preview.finalSynthesis.system, /Decision posture/);
+  assert.match(preview.finalSynthesis.user, /prioritize concrete next actions/);
+  assert.match(preview.finalSynthesis.system, /technical audit/);
+  assert.match(preview.roundSummary.user, /Should previews show configuration impact\?/);
+  assert.match(preview.finalSynthesis.user, /Should previews show configuration impact\?/);
+  assert.doesNotMatch(preview.finalSynthesis.user, /Gamma/);
+  assert.deepEqual(preview.roundSummary.impacts.map((impact) => impact.key), ["model", "role", "customInstructions", "decisionPosture", "summaryStyle"]);
+  assert.deepEqual(preview.finalSynthesis.impacts.map((impact) => impact.key), ["model", "role", "customInstructions", "decisionPosture", "synthesisStyle"]);
+  assert.match(preview.roundSummary.user, /\[tools: read\]/);
+  assert.equal(preview.sampleProvenance[0].source, "Current Step 1 draft");
+  assert.equal(preview.sampleProvenance[2].source, "Current Step 3 seats");
+  assert.match(preview.boundaryNote, /escaped deliberation data/);
+  assert.equal(preview.unusedByThesePrompts[0].label, "Turn-order policy");
+  assert.equal(preview.unusedByThesePrompts[0].value, "anti_starvation");
 });

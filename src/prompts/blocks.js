@@ -4,13 +4,25 @@ import { escapeDelimiters, delimitContext } from "./delimiters.js";
 import { renderMyStateMarkdown } from "../state-patch.js";
 import { TOOL_LADDER_LINE, TOOL_FAILURE_LINE, CITATION_LINE } from "./constants.js";
 
-export function getRecentContributionsBlock(contributions, participantId) {  if (!contributions || contributions.length === 0) return "";
+export function getRecentContributionsBlock(contributions, participantId) {
+  if (!contributions || contributions.length === 0) return "";
   const mine = contributions
     .filter((c) => c.participant_id === participantId && c.type !== "pass")
     .slice(-2)
     .map((c) => sanitizeForDisplay(c.content, 1200).slice(0, 1200));
-  if (mine.length === 0) return "";
-  return `Your last contributions:\n${mine.map((c) => `- "${c.slice(0, 600)}"`).join("\n")}`;
+  // The room, not just the mirror: a peer answering inline needs the
+  // conversation to answer in context. Previously the two-round ≤12 window
+  // collapsed to filter-to-self and the other fetched contributions were thrown
+  // away, leaving peers nearly blind (audit B4). Ballots and legacy reflection
+  // rows stay excluded as noise.
+  const others = contributions
+    .filter((c) => c.participant_id !== participantId && c.type !== "pass" && c.type !== "vote_response" && c.type !== "reflection")
+    .slice(-6)
+    .map((c) => `- "${sanitizeForDisplay(c.content, 600).replace(/\n/g, " ").slice(0, 600)}" [${c.participant_id}]`);
+  const parts = [];
+  if (mine.length > 0) parts.push(`Your last contributions:\n${mine.map((c) => `- "${c.slice(0, 600)}"`).join("\n")}`);
+  if (others.length > 0) parts.push(`Recent from the room:\n${others.join("\n")}`);
+  return parts.join("\n\n");
 }
 
 /**
@@ -40,6 +52,23 @@ export function buildAgentStateBlock(state) {
   if (state === null || state === undefined) return "";
   const body = escapeDelimiters(sanitizeForDisplay(renderMyStateMarkdown(state)));
   return `## Your State — CARRIED FORWARD\n\n${delimitContext(body, "MY_STATE")}`;
+}
+
+/**
+ * Peer-facing position context (audit B5): prefer the one-line position
+ * (stance + top bullets) over the full Σⁱ block. The full block (≈11 kB worst
+ * case) is the wrong trade inside a 60 s peer sub-prompt; the one-liner is the
+ * documented contract. Falls back to the full block only when there is no
+ * position to render at all, and to legacy reflection via buildPositionLine.
+ */
+export function buildTargetPositionContext(targetAgent, targetState) {
+  const forPosition = {
+    ...(targetAgent ?? {}),
+    state_stance: targetState?.stance ?? targetAgent?.state_stance,
+    state_bullets: targetState?.established ?? targetAgent?.state_bullets,
+    state_version: targetState?.version ?? targetAgent?.state_version,
+  };
+  return buildPositionLine(forPosition) || buildAgentStateBlock(targetState);
 }
 
 export function buildEvidenceGuidance(kind, { activeCount } = {}) {

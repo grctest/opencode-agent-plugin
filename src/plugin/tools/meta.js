@@ -18,7 +18,7 @@ export function createMetaTools({ config, resolveMeeting, activeLooms }) {
            } catch {}
          }
          if (!cfg?.enabled || !cfg?.loom?.loom_request_next) return { output: JSON.stringify({ error: "loom_request_next not enabled" }), metadata: { error: true }, title: "loom_request_next error" };
-         // Tier cap enforced downstream in round-executor/execute-turn (getPriorityCap); here clamp to 1-10
+         // Uniform cap enforced downstream in round-executor/execute-turn (getPriorityCap); here clamp to 1-10. No tier cap: urgency is judged on evidence, not rank.
         const prio = Math.min(10, Math.max(1, args.priority));
         const payload = { queued: true, priority: prio, reason: args.reason, note: "Turn request queued — will be considered for next round order." };
         return { output: JSON.stringify(payload), metadata: { queued: true, priority: payload.priority }, title: "loom_request_next queued" };

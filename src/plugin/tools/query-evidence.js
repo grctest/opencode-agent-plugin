@@ -1,6 +1,7 @@
 import { tool } from "@opencode-ai/plugin";
 import { MeetingDatabase } from "../../database.js";
 import { buildQueryPrompt, buildEvidencePrompt } from "../../prompts/interaction-prompts.js";
+import { truncateAtSentence } from "../../prompts/agent.js";
 import { QUERY_MODES, QUERY_MODE_NAMES, researchTools } from "../../prompts/query-modes.js";
 import { extractAgentResponse, mapToolResults } from "../../shared.js";
 import { degrade } from "../../utils/degrade.js";
@@ -32,17 +33,19 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
   return {
     loom_query: tool({
       description:
-        "Query one or more peers — pass `queries: [{target, question, mode}]`, one item per peer. Modes: " +
-        "'clarify' (default; factual answer), 'perspective' (solicit their stance on your statement — Position-tagged opinion), " +
-        "'evidence' (they MUST use a research tool; Finding + Source + Strength), 'critique' (adversarially stress-test your statement — most damaging objection), " +
-        "'risks' (failure modes + severity + mitigation), 'assumptions' (unstated premises + how to test them), 'alternatives' (genuinely different approaches). " +
+        "Query one or more peers — pass `queries: [{target, question, mode}]`, one item per peer. Pick the mode by what you need back: " +
+        "'clarify' (you lack a fact they stated), 'perspective' (you need their position on YOUR claim — they must commit), " +
+        "'critique' (you want your claim attacked — strongest objection, not a summary), 'risks'/'assumptions' (you suspect failure modes or hidden premises), " +
+        "'alternatives' (you want a genuinely different approach, not a variation), 'evidence' (only when you need an external source — they MUST use a research tool; Finding + Source + Strength). " +
         "Answers are returned inline for same-turn synthesis.",
       args: {
         queries: tool.schema
           .array(
             tool.schema.object({
               target: tool.schema.string().min(1).describe("Participant ID to query (e.g. 'junior_0')"),
-              question: tool.schema.string().min(1).max(500).describe("Your question for this target (1-500 chars)"),
+              // The asker calls mid-turn before writing prose, so no draft exists to
+              // show the target — the question MUST be self-contained (audit B3).
+              question: tool.schema.string().min(1).max(500).describe("Self-contained question for this target (1-500 chars). Include the specific claim you are asking about — the target cannot see your unfinished draft."),
               mode: tool.schema.enum(QUERY_MODE_NAMES).optional().describe("Query kind — default 'clarify'"),
             }),
           )
@@ -154,12 +157,17 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
                const roundContribs = stateManager.getWeave ? stateManager.getWeave().filter(c => c.round != null && c.round >= stateManager.getCurrentRound() - 1).slice(-12) : [];
 
               const callerForPrompt = caller ?? { config: { name: sourceName, tier: "mid", id: "unknown" } };
+              // The caller invokes mid-turn before writing prose, so there is no
+              // draft contribution to show. Passing `question` here too would render
+              // it twice (once per block); pass an explicit note instead and keep
+              // the question solely in the QUESTION block (audit B3).
+              const noDraftNote = "The asker invoked this query mid-turn, before writing their contribution — there is no draft to show. The question below is self-contained; answer it directly.";
               let prompt;
               if (mode === "evidence") {
                 prompt = buildEvidencePrompt(
                   callerForPrompt,
                   target,
-                  question,
+                  noDraftNote,
                   question,
                   roundContribs,
                    stateManager.getCurrentRound(),
@@ -170,7 +178,7 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
                 prompt = buildQueryPrompt(
                   callerForPrompt,
                   target,
-                  question,
+                  noDraftNote,
                   question,
                   roundContribs,
                   stateManager.getCurrentRound(),
@@ -193,7 +201,9 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
               }, meetingInfo.meetingId);
                if (!res || !res.ok) { results.push({ target: target.config.id, mode, error: res?.error?.message ?? "prompt failed" }); continue; }
                const { text, toolResults } = extractAgentResponse(res.data);
-              const content = (text ?? "").slice(0,2000);
+              // Sentence-boundary truncation with ellipsis, not a mid-word UTF-16
+              // slice that can cut mid-sentence or mid-surrogate-pair (audit B7).
+              const content = truncateAtSentence(text ?? "", 2000);
 
               // Persist as a typed contribution grouped under the invoker's batch
               try {

@@ -213,7 +213,7 @@ export class MeetingDatabase {
   setParticipantReflection(participantId, reflection) { const r = contribOps.setParticipantReflection(this.#db, this.#meetingId, participantId, reflection); this.#notify("participants"); return r; }
   getParticipantStatus(participantId) { return contribOps.getParticipantStatus(this.#db, this.#meetingId, participantId); }
   getAllParticipantsWithStatus() { return contribOps.getAllParticipantsWithStatus(this.#db, this.#meetingId); }
-  setRoundSummary(round, summary) { const r = contribOps.setRoundSummary(this.#db, this.#meetingId, round, summary); this.#notify("rounds"); return r; }
+  setRoundSummary(round, summary, orchestratorConfig = null) { const r = contribOps.setRoundSummary(this.#db, this.#meetingId, round, summary, orchestratorConfig); this.#notify("rounds"); return r; }
   getRoundSummaries(meetingId) { return contribOps.getRoundSummaries(this.#db, meetingId); }
   saveArtifact(artifact) { const r = contribOps.saveArtifact(this.#db, this.#meetingId, artifact); this.#notify("artifacts"); return r; }
   getArtifact(meetingId) { return contribOps.getArtifact(this.#db, meetingId); }

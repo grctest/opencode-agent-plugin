@@ -137,16 +137,16 @@ Models are discovered from the connected providers via `discoverModels()` (`prov
 
 ### The Tier System
 
-Four tiers determine agent behavior, authority, and LLM parameters:
+Four tiers describe persona purpose and voice; they grant no decision advantage:
 
 | Tier | `loom_request_next` Priority Cap | Rights |
 |------|-------------------------------|--------|
-| junior | 5 | contribute, request_turn |
-| mid | 7 | contribute, request_turn, call_vote |
-| senior | 9 | contribute, request_turn, call_vote |
+| junior | 10 | contribute, request_turn |
+| mid | 10 | contribute, request_turn, call_vote |
+| senior | 10 | contribute, request_turn, call_vote |
 | principal | 10 | contribute, request_turn, call_vote |
 
-`civilian` shares mid cap/rights via `utils/tier.js`. The rights flags are vestigial metadata — actual tool availability is governed by the `agentTools` config (Section 20), not tier rights.
+Turn-request priority is uniform (1–10) across tiers by design: tiers are setup-phase labels differentiating persona purpose, and seniority plays no part in turn-order decisions — the planner weighs the stated reason and evidence instead (`getPriorityCap` returns the uniform cap for every tier). `civilian` shares mid rights via `utils/tier.js`. The rights flags are vestigial metadata — actual tool availability is governed by the `agentTools` config (Section 20), not tier rights.
 
 **Behavioral guidance is defined in each persona's `tier_guidance` field** (the old static `getPromptForTier` tier strings still exist but are deprecated fallbacks). Each persona file is self-contained and user-editable:
 
@@ -249,7 +249,7 @@ Senior doctrine: name the irreversible commitment and its mitigation/rollback...
 
   ## OUTPUT CONTRACT — read this last, it governs your response
 
-  1. Length: 120-180 words for prose; 150-350 for code diffs (``` file=src/... ``` blocks).
+  1. Length: 350-700 words for prose (`LENGTH_LIMITS.agentProseWords`); 300-700 for code diffs (``` file=src/... ``` blocks, not counted toward the prose cap).
      One claim per sentence; preserve code and numbers verbatim.
   2. Grounding: engage prior work via [#id]; external facts add Source: https://… ;
      code references use file=src/path.ts:18; otherwise qualify as "in my experience…".
@@ -259,7 +259,7 @@ Senior doctrine: name the irreversible commitment and its mitigation/rollback...
           (factual), 'perspective' (their stance on your statement), 'evidence' (researched
           Finding+Source+Strength); loom_vote polls all peers on lettered options;
           loom_summon brings in a guest expert; loom_request_next requests speaking priority
-          next round (priority capped at <tier cap>).
+          next round (priority 1–10, uniform scale).
         - Interaction tools fan out to peers in parallel and return their answers inline within
           this same turn — wait for the result, then cite [#id] from the returned responses
           or tally in your final contribution.
@@ -293,7 +293,7 @@ Notes:
 - The tool list is assembled from `agentTools` config: built-ins plus the loom tools (`loom_query`, `loom_vote`, `loom_summon`, `loom_request_next`, `loom_pass`, `loom_state_patch`). There is no auto-injected prior-transcript RAG block; recall is supplied by the bounded state-of-play and live current-round contributions. When agent tools are disabled, the entire tool section is omitted. System prompt cache `systemPromptCache` is `TUNING.SYSTEM_PROMPT_CACHE_MAX` 50 LRU via `getSystemPromptCacheMax()` and keyed by `hashConfig` which includes `agentTools` digest (`enabled|loom|builtIn|maxCalls|sameTurn`) — changing `agentTools` busts cache.
 - `known_biases`: when a persona has more than two biases, they are deterministically rotated based on the participant name hash, so different agents surface different biases first.
 - There is no type-tag rule anywhere in the contract — agents write prose; calling `loom_pass` means pass.
-- Transcript `Live` block budgets `code 320 / prose 220` via `truncateAtSentence` (sentence-boundary, not mid-word `slice`).
+- Transcript `Live` block budgets ~800 chars prose / ~1200 chars code per contribution (≤12 contributions) via `truncateAtSentence` (sentence-boundary, not mid-word `slice`).
 
 ### The User Prompt (Weighted Golden Sandwich)
 
@@ -361,7 +361,7 @@ Open:
 - To challenge SoP: cite [#id] contradicting it + Source/tool output + falsifiable scenario.
 
 Rules:
-- 120-180 words for prose (code diffs excepted); never emit <<< >>> delimiters
+- 350-700 words for prose welcome (code diffs excepted); never emit <<< >>> delimiters
 - Cite [#id] when referencing prior work; introduce facts with Source/file= or qualify as experience
 - Preserve code and numbers verbatim — do not round or invent
 
@@ -378,7 +378,8 @@ Note the structure:
 - **No reflection section**: the participant's stored reflection is *not* injected into primary turns. Σⁱ.stance is the single source of truth for position; legacy reflection is the fallback only when stance is empty. Peer-facing prompts (query/vote/summon targets) see one line: `Your position (from your state vN): "…"` plus top bullets — never both stance and reflection side by side.
 - **Steering hint**: if the orchestrator queued a steering note (contribution-mix nudge), it is appended after the prompt body — consumed exactly once, by the round's first speaker only.
 - **Delimiters**: every untrusted block is wrapped in `<<<LOOM_LABEL>>>_BEGIN_` / `<<<LOOM_LABEL>>>_END_` to prevent prompt injection and boundary confusion. An empty section is omitted.
-- **Interaction-prompt deviation (deliberate):** the strict `O_t = current round only` rule above governs *primary* agent turns. Peer-facing sub-prompts built by `loom_query` / `loom_vote` / `loom_summon` (`src/plugin/tools/query-evidence.js`, `src/plugin/tools/vote-summon.js`) use a two-round window (`round >= currentRound - 1`, ≤12) so a peer answering an inline question has enough grounding to be useful. Those are sub-turns with their own budget, not the primary reasoning context, and the retention is still bounded — the O(1) claim is unaffected.
+- **Interaction-prompt deviation (deliberate):** the strict `O_t = current round only` rule above governs *primary* agent turns. Peer-facing sub-prompts built by `loom_query` / `loom_vote` / `loom_summon` (`src/plugin/tools/query-evidence.js`, `src/plugin/tools/vote-summon.js`) use a two-round window (`round >= currentRound - 1`, ≤12): the target's own last 2 contributions plus up to 6 recent room contributions (ballots and reflection rows excluded), so a peer answering an inline question sees the conversation, not just a mirror. Those are sub-turns with their own budget, not the primary reasoning context, and the retention is still bounded — the O(1) claim is unaffected.
+- **Peer questions are self-contained:** the caller invokes `loom_query` mid-turn before writing prose, so there is no draft to show — the `question` field must carry the specific claim being asked about, and the rendered prompt says so explicitly rather than duplicating the question into the contribution block.
 - **Salience: four surfaces carry the mandatory patch.** The paper makes it structurally impossible to omit (App. A.4 requires `state_patch` inside every response's JSON block), so our tool-channel split must recover that weight in prompt form. Production measurement before this change was **1 applied patch across 9 primary turns**, with the two strongest positions in the prompt both silent on it:
   1. **OUTPUT CONTRACT item 7**, marked `REQUIRED` and gated on `agentTools.loom.loom_state_patch` — states the ordering (prose first, then the call), the consequence (*your stance + bullets are the ONLY thing carried into your next turn; unpatched reasoning is discarded*), and a minimum-viable `{ stance: "..." }` so the bar stays low enough for weaker models.
   2. **Final line of the user prompt** (gated on `showState` — the state block actually rendered — rather than the config flag, since the two can disagree): "Then call loom_state_patch once — project your stance and 1-3 bullets so they survive into your next turn." Recency is the strongest available position.
@@ -396,7 +397,7 @@ An agent response is **untyped prose** (or a `loom_pass` tool call). `parseAgent
 
 **Tool calls** are first-class: `extractAgentResponse()` returns all completed/error ToolParts, and they are mapped onto the response as `tool_calls` (tool name, callID, status, output) for audit and dashboard display. Three tool-derived behaviors:
 
-1. **Turn requests** — if the agent called `loom_request_next`, its `{priority, reason}` is extracted from the tool results and attached as `response.request_next`, capped by tier (`getPriorityCap`: junior 5, mid/civilian 7, senior 9, principal 10).
+1. **Turn requests** — if the agent called `loom_request_next`, its `{priority, reason}` is extracted from the tool results and attached as `response.request_next`, clamped to the uniform 1–10 scale (`getPriorityCap` returns 10 for every tier — no seniority cap).
 2. **Same-turn synthesis** — when `agentTools.sameTurnSynthesis` is on and the turn contains successful `loom_query`/`loom_vote`/`loom_summon` calls, a second prompt on the same ephemeral session presents the tool outputs (each bounded to ~3.5k chars) with the instruction to synthesize the final contribution citing `[#id]` — and offers **no interaction tools** (`buildToolsMapWithoutLoom`) so results can't be re-fetched. The synthesized text replaces the first-pass text when substantive; otherwise the first pass stands.
 3. **Mandatory state patch** — every primary turn must produce one validated `loom_state_patch` call (per-agent execution state Σⁱ: stance + established/contested/open/facts/files). When the primary pass (and synthesis, if any) yields no applied patch and the turn was not a `loom_pass`, a single patch-retry prompt runs **last** on the same ephemeral session (order: primary → synthesis → patch), with prior validation issues quoted so the retry doesn't repeat identical args. The retry is skipped when `<15s` remains on the meeting deadline. Misses never fail the turn — prose is preserved, state stays at its prior version. Each turn records a per-turn outcome enum (§12) on `contributions.prompt_context.state_patch_outcome`; `loom_pass` turns are exempt (`exempt_pass`). Toggle: `agentTools.loom.loom_state_patch` (tool) + `agentTools.patchRetry` (retry kill-switch).
 
@@ -615,7 +616,7 @@ mitigations for the token theft concern and need to present them before the
 round closes"})
 ```
 
-After the turn completes, the executor scans the stored `tool_calls` for `loom_request_next` results and attaches `{priority, reason}` as `response.request_next`, capped at the requesting agent's tier cap (junior 5, mid/civilian 7, senior 9, principal 10) via `getPriorityCap`. Requests carry only `priority` and `reason`.
+After the turn completes, the executor scans the stored `tool_calls` for `loom_request_next` results and attaches `{priority, reason}` as `response.request_next`, clamped to 1–10 (`getPriorityCap` is uniform — seniority plays no part). Requests carry only `priority` and `reason`.
 
 ### Turn Request Resolution (`planTurnOrder`)
 
@@ -626,6 +627,8 @@ Running at the end of each round:
 3. **Multiple requests** → filter to valid requesters (participant exists and isn't failed), then prompt the planner via `buildTurnOrderPrompt`, which returns a JSON array of participant IDs:
 
 ```
+Respond with ONLY a JSON array of participant IDs, e.g. ["id1", "id2", "id3"].
+
 You are the turn order planner for a multi-agent deliberation. Favor longer,
 richer deliberation — give diverse voices room. Avoid starvation.
 
@@ -635,11 +638,11 @@ richer deliberation — give diverse voices room. Avoid starvation.
 ## Last Round Summary
 ...
 
-## Agent Turn Requests (priority already capped by tier)
-  - mid_security_engineer (Security Engineer, mid): Priority 8 — "..."
+## Agent Turn Requests (priority 1-10, same scale for every participant)
+  - mid_security_engineer (Security Engineer): Priority 8 — "..."
 
 ## Active Participants
-  - senior_architect (Architect Lead, senior, 3 contribs [has reflection])
+  - senior_architect (Architect Lead, 3 contribs [has reflection])
   - ...
 
 ## Task
@@ -653,7 +656,8 @@ Ranking doctrine (in order):
 3. Proposals introducing a new distinct option before refinements/supports
 4. Anti-starvation: anyone who spoke last without new reflection/evidence
    is demoted one rank
-5. Tie-break: (a) who spoke least recently, then (b) seniority
+5. Tie-break: (a) who spoke least recently, then (b) fewer contributions
+   this meeting, then (c) participant id (lexical) — never seniority
 
 Constraints:
 - Include every active participant exactly once
@@ -662,7 +666,7 @@ Constraints:
 Respond with ONLY a JSON array: ["id1", "id2", "id3"]
 ```
 
-The planner runs on the **fast-path model** when configured (otherwise the highest-tier model). The response is parsed with a balanced-bracket JSON-array scan (`extractBalancedJsonArray`) so a `]` inside a quoted ID can't truncate it, and validated against the participant list (unknown IDs dropped, missing participants appended). On LLM failure a deterministic fallback sorts by priority descending, then tier (principal > senior > mid/civilian > junior).
+No tier or seniority appears anywhere in the planner prompt by design — tiers are setup-phase purpose labels, not ordering inputs. The planner runs on the **fast-path model** when configured (otherwise the highest-tier model). The response is parsed with a balanced-bracket JSON-array scan (`extractBalancedJsonArray`) so a `]` inside a quoted ID can't truncate it, and validated against the participant list (unknown IDs dropped, missing participants appended). On LLM failure a deterministic fallback sorts by priority descending, then contributions ascending, then id.
 
 4. The ordered list is stored as `planned_turn_order` (and its head as `next_speaker_id`) and applied by `RoundInitializer.filterActiveParticipants()` next round.
 
@@ -725,7 +729,7 @@ engineering, security
 
 ### How It's Derived
 
-Primary path is **deterministic aggregation over per-agent states** (`aggregateStateOfPlay` in `src/state-patch.js`): each bucket collects bullets with holder attribution, dedupes case-insensitively, ranks by holder-count then recency, and takes the top 8; stances surface under Key Facts as `**Name (tier) stance**: …`; files are unioned (last 8). Output markdown shape is identical to the legacy path, so every consumer works untouched. Per-round cost drops from an `O(T)` full-weave scan to `O(P × buckets)`.
+Primary path is **deterministic aggregation over per-agent states** (`aggregateStateOfPlay` in `src/state-patch.js`): each bucket collects bullets with holder attribution, dedupes case-insensitively, ranks by holder-count then recency (round, then contribution id — lexicographic text is only the final deterministic tiebreak), and selects the top 8 with a per-holder cap (3) plus a coverage pass guaranteeing every active voice ≥1 slot; `established` maps to `## Decisions & Proposals` while `## Agreements` holds the true-consensus subset (≥2 holders); stances are ranked into Key Facts alongside evidence with a floor of 3 evidence slots; files are unioned most-recent-first by (round, contribution id). Output markdown shape is identical to the legacy path, so every consumer works untouched. Aggregation itself is `O(P × buckets)`; note the round finalizer still runs an `O(T)` uncaptured-contribution scan each round (with `vote_response` correctly excluded, since ballots are noise by design).
 
 Fallback is the legacy `updateStateOfPlay(weave, question, tags)` keyword/type scan, used when all states are empty (meeting start, flag off, old DB). Flag off is therefore a zero-behavior cliff: with no patches, aggregation returns `""` and the legacy scan runs exactly as before.
 
@@ -738,8 +742,10 @@ The orchestrator calls `updateStateOfPlay(weave, question, tags)` which categori
 | `support` | Agreements |
 | `challenge`, `dissent`, `critique_response` | Disagreements & Concerns |
 | `question` | Open Questions |
-| `query_response` | Key Facts — except modes `risks`/`assumptions`, which feed Open Questions |
-| `evidence_response`, `summoned_response` | Key Facts |
+| `query_response` | Key Facts — except modes `risks`/`assumptions`/`alternatives` (Open Questions) and `critique` (Disagreements) |
+| `perspective_response` | Open Questions (a position, not a finding) |
+| `evidence_response` | Key Facts — only when tool-backed; un-backed answers route to Open Questions as claimed-but-ungrounded |
+| `summoned_response` | Key Facts |
 | `reflection` | Key Facts, wrapped as `[Reflected: …]` |
 | `vote_response` | (excluded — individual ballots are noise; the tally carries the result) |
 | `synthesize`, `refuse` | (excluded) |
@@ -831,7 +837,7 @@ Preserve numbers verbatim — do not round, estimate, or invent.
 
 The **Evidence/Tool Signals** hint collects up to 4 evidence/query/tool-backed contributions sorted by strength ("Strength: strong" > tool-backed > plain, synthetic `write` excluded), so grounded claims are visible to the summarizer even when filtered out of the main list. When patches exist, a `## Agent States (carried)` line (`state: senior@v3, mid@v2`) is appended — no new LLM call.
 
-Runs via the fast-path-routable `#promptOrchestrator` type `"summary"` (Section 21). Transcript is budget-capped at 8k chars with `…[truncated]` marker when exceeded.
+Runs via the fast-path-routable `#promptOrchestrator` type `"summary"` (Section 21). Contributions are budgeted at 12k chars total (selected by evidence strength, emitted chronologically, each line capped at 1200 chars) with a `…[N further contribution(s) omitted]` marker when exceeded; the Agent States block is capped at 4k chars like the synthesis path's.
 
 ### Degraded Digest Fallback
 
@@ -875,7 +881,7 @@ Rules:
 
 ### The Synthesis Prompt
 
-`buildSynthesisPrompt(question, transcript, participants, tags, stateOfPlay, objections, userContext)` first runs **task-mode detection** (`detectTaskMode`): questions/tags matching code signals (`react`, `src/`, `.tsx`, `bug`, `refactor`, …) switch to **code-analysis mode**, which adds a required `## Proposed Fix` section with diff blocks and relaxed grounding for clearly-marked synthesized fixes; otherwise it is conversational mode.
+`buildSynthesisPrompt(question, transcript, participants, tags, stateOfPlay, objections, userContext, opts)` first runs **task-mode detection** (`detectTaskMode`, the single detector also used by the critique pass when deciding whether to request `## Proposed Fix`): questions/tags matching code signals (`react`, `src/`, `.tsx`, `bug`, `refactor`, …) switch to **code-analysis mode**, which adds a required `## Proposed Fix` section with diff blocks and relaxed grounding for clearly-marked synthesized fixes; otherwise it is conversational mode. Meeting tags are threaded through (the `## Tags (topic)` block renders), and build-vs-plan derives from the effective tools the meeting ran with (`opts.buildMode`), not from tags. Section budgets come from `LENGTH_LIMITS`, and the required-section contract is the single `SYNTHESIS_SECTION_CONTRACT` table shared by prompt, repair feedback, and validator.
 
 Condensed structure:
 
@@ -928,7 +934,7 @@ One word: High | Medium | Low — justified against the rubric:
 - Low = significant disagreement remains, or many failed/passed, or ungrounded key claims
 ```
 
-Only a bounded transcript is included (`formatFinalRoundTranscript`): earlier rounds appear as ~2-line digests, the final round in full (capped ~8k chars), plus each participant's stored reflection under `### Final Reflections`. Unresolved objections come from `collectObjections()` (challenges/dissent-type contributions across rounds; an objection is legacy once the final round shows activity).
+Only a bounded transcript is included (`formatFinalRoundTranscript`): every contribution line carries its stable `- **[#id] Name** (tier, type)` citation key (`pass` rows excluded); earlier rounds appear as ~2-line digests, the last 2 rounds in full (24k chars total, digests truncated first — the final round and state blocks are never cut for digests), plus each participant's stored reflection under `### Final Reflections`. Unresolved objections come from `collectObjections()` (untyped dissent found by keyword + `critique_response` type): an objection cited (`[#id]`) by the final round is resolved; one merely sharing vocabulary is `stale` (background, not live dissent); the rest stay unresolved and are mandatory dissent.
 
 ### Required-Section Repair
 
@@ -953,8 +959,8 @@ If the draft is accurate, grounded, and complete, respond with exactly: [NO_CHAN
 
 - `[NO_CHANGES]` → the original draft stands.
 - A complete revision replaces the draft.
-- A revision that dropped sections is re-sent with feedback.
-- On any error the original draft is kept.
+- A revision that dropped sections is re-sent with feedback; the best revision seen is kept, and retries stop early when an attempt makes no progress (no more burning full-prompt calls on a non-converging model).
+- On any error the best revision so far is kept (starting from the original draft).
 
 ### Finalization
 
@@ -1343,7 +1349,7 @@ One call can query multiple peers (1 per item). Each item specifies a `target` (
 
 **Execution flow:**
 1. Resolve each target (must exist, not failed/passed/muted).
-2. For each resolved target: build prompt via `buildQueryPrompt` (clarify/other modes) or `buildEvidencePrompt` (evidence mode) — source's contribution + question, target's recent contributions and stored reflection, seniority + round context.
+2. For each resolved target: build prompt via `buildQueryPrompt` (clarify/other modes) or `buildEvidencePrompt` (evidence mode) — the self-contained question (no draft exists mid-turn; the prompt states this explicitly), target's recent contributions plus recent room context, one-line position (`Your position (from your state vN)` + top bullets; the full Σⁱ block is the fallback only when no position exists), seniority + round context.
 3. Run `runEphemeralPrompt` for each target (parallel where possible).
 4. Persist each response as a typed contribution (`query_response` or `evidence_response`) under the invoker's `batch_id`.
 5. **Perspective mode side-effect:** the response replaces the target's stored `reflection` (pushed onto bounded `reflectionHistory`, max 5) and persists via `setParticipantReflection` — this is the primary write path for reflections (Section 12).
@@ -1381,7 +1387,7 @@ Brings in a **guest expert** from the persona pool (matched by name across all t
 
 **Signature:** `loom_request_next({ priority, reason })`
 
-A meta-level request (not a peer interaction) — queues a turn request for the next round's ordering algorithm. Priority capped by tier. The request is returned as `{ queued: true }` and processed during the post-phase turn-ordering step (Section 9).
+A meta-level request (not a peer interaction) — queues a turn request for the next round's ordering algorithm. Priority 1–10 on a uniform scale (no tier cap). The request is returned as `{ queued: true }` and processed during the post-phase turn-ordering step (Section 9).
 
 ### How Inline Responses Appear in the Caller's Context
 
@@ -1391,9 +1397,12 @@ Peer responses are returned as JSON payloads in the tool output. The caller's sy
 
 | Contribution Type | State of Play Section | Notes |
 |-------------------|----------------------|-------|
-| `query_response` (clarify/critique/risks/assumptions/alternatives) | Key Facts | Includes the target's answer |
-| `query_response` (perspective) | Key Facts | Also updates target's stored reflection |
-| `evidence_response` | Key Facts | Includes source + strength metadata |
+| `query_response` (clarify) | Key Facts | Includes the target's answer |
+| `query_response` (risks/assumptions/alternatives) | Open Questions | Unresolved angles, not findings |
+| `query_response` (critique) | Disagreements & Concerns | Adversarial objection |
+| `query_response` (perspective) | Open Questions | A position, not a finding; also updates target's stored reflection |
+| `evidence_response` (tool-backed) | Key Facts | Includes source + strength metadata |
+| `evidence_response` (no tool backing) | Open Questions | Claimed but ungrounded — needs verification |
 | `vote_response` | (excluded) | Individual ballots — outcome via invoker prose |
 | `summoned_response` | Key Facts | Guest expert perspective |
 
@@ -1576,7 +1585,7 @@ DB fresh `meetings`/`participants`/`persona_embeddings` enforce `CHECK` + `UNIQU
 | `agentTimeoutMs` | 240,000 | Per-agent LLM call timeout (fixed — no failure-based reduction) |
 | `synthesisTimeoutMs` | 180,000 | Synthesis draft/critique call timeout |
 | `defaultMaxRounds` | 4 | Default meeting rounds |
-| `minRounds` | 2 | Minimum rounds before the meeting can end (agents cannot pass before this) |
+| `minRounds` | 2 | Minimum rounds before the meeting can end (agents may still pass earlier — the tool accepts; all-passed before this re-opens deliberation instead of terminating) |
 | `fastPathModel` | `""` | Model for cheap orchestrator calls (empty = disabled) |
 | `maxRetryAttempts` | 2 | Retries for session creation / orchestrator prompts |
 | `retryBaseDelayMs` | 1,000 | Base retry delay |

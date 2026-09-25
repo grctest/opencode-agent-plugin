@@ -59,7 +59,11 @@ export async function promptChildSession(participant) {
   if (forumEnabled) {
     try {
       const dbForForum = this._db ?? this._stateManager?.getDatabase?.() ?? null;
-      if (dbForForum && typeof dbForForum.listForumTopics === "function") {
+      // Prefer the single-query activity-ordered prompt path over the N+1
+      // listForumTopics (one COUNT query per topic per turn) — audit A13.
+      if (dbForForum && typeof dbForForum.listForumTopicsForPrompt === "function") {
+        forumTopicsForPrompt = dbForForum.listForumTopicsForPrompt(10) ?? [];
+      } else if (dbForForum && typeof dbForForum.listForumTopics === "function") {
         forumTopicsForPrompt = dbForForum.listForumTopics({}) ?? [];
       } else if (this._stateManager?.getWeave) {
         // Fallback: derive from contributions if DB not available (should not happen)
@@ -104,7 +108,17 @@ export async function promptChildSession(participant) {
   } catch {}
 
   const activeCountPS = (() => { try { return this._stateManager.getActiveParticipants().length; } catch { return undefined; }})();
-  const systemPrompt = buildAgentSystemPrompt(participant, { activeCount: activeCountPS, agentTools: effectiveAgentTools });
+  // Assigned-model context window for the prompt's window claim (audit 3.4).
+  // Unknown models yield null and builders keep their default text unchanged.
+  const participantWindow = (() => {
+    try {
+      const m = this._getParticipantModel?.(participant) ?? participant?.config?.model;
+      const entry = (this._availableModels ?? []).find((a) => a && a.providerID === m?.providerID && a.modelID === m?.modelID);
+      const ctx = entry?.limit?.context;
+      return Number.isFinite(ctx) && ctx > 0 ? ctx : null;
+    } catch { return null; }
+  })();
+  const systemPrompt = buildAgentSystemPrompt(participant, { activeCount: activeCountPS, agentTools: effectiveAgentTools, contextWindow: participantWindow });
   let steeringHint = "";
   let consumedHint = "";
   // Atomic consume — hintLocked flag prevents double-consume if two promptChildSessions race
@@ -114,7 +128,8 @@ export async function promptChildSession(participant) {
       const plannedFirst = this._stateManager.getPlannedTurnOrder?.()?.[0] ?? this._stateManager.getNextSpeakerId?.();
       const isFirstSpeaker = !plannedFirst || plannedFirst === participant.config.id;
       if (isFirstSpeaker) consumedHint = this._stateManager.consumeNextRoundSteering();
-      steeringHint = consumedHint;
+      // Cap like every other untrusted prompt block (audit X5).
+      steeringHint = consumedHint.length > 300 ? consumedHint.slice(0, 300) : consumedHint;
     } catch {}
     // release lock after microtask so same-round second speaker can't re-consume same hint
     queueMicrotask(() => { this._hintLocked = false; });
@@ -133,6 +148,19 @@ export async function promptChildSession(participant) {
      forumEnabled,
      !!(effectiveAgentTools?.enabled && effectiveAgentTools?.loom?.loom_query),
      mandatoryCapabilities,
+     {
+       contextWindow: participantWindow,
+       // Previous round's clerk summary (rounds ≥2 only) — already paid for,
+       // already high quality; routed to agents instead of only the dashboard.
+       lastRoundSummary: (() => {
+         try {
+           if (currentRound <= 1) return "";
+           const rounds = this._stateManager.getRounds?.() ?? [];
+           const prev = rounds.filter((r) => r.number === currentRound - 1).pop() ?? [...rounds].pop();
+           return String(prev?.summary ?? "").trim();
+         } catch { return ""; }
+       })(),
+     },
    );
   const userPrompt = steeringHint ? `${userPromptBase}\n\n${delimitContext(steeringHint, "STEERING_HINT")}` : userPromptBase;
 
@@ -330,13 +358,23 @@ export async function promptChildSession(participant) {
   };
 
    let succeeded = false;
+   // A pass consumes no steering: hand the hint to the next speaker instead of
+   // dropping the round's only steering signal (audit X5).
+   const isPassResponse = (r) => Array.isArray(r?.tool_calls) && r.tool_calls.some((t) => t?.tool === "loom_pass" && t?.status !== "error");
+   const settleHint = (response) => {
+     if (!consumedHint) return;
+     if (isPassResponse(response)) {
+       try { this._stateManager.setNextRoundSteering(consumedHint); } catch {}
+     }
+     consumedHint = "";
+   };
    this._stateManager.beginTurn?.(participant.config.id);
    for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       const response = await this._executeAgentTurn(participant, activeModel, timeoutMs, promptContext);
       succeeded = true;
       localSucceeded = true;
-      if (consumedHint) consumedHint = "";
+      settleHint(response);
       return { result: response, error: null };
      } catch (err) {
       this._stateManager.discardActiveTurnPatch?.();
@@ -380,7 +418,7 @@ export async function promptChildSession(participant) {
         if (recovered) {
           succeeded = true;
           localSucceeded = true;
-          if (consumedHint) consumedHint = "";
+          settleHint(recovered);
           this._logger.info("synthesis_recovery_success", `${participant.config.name} recovered via synthesis from existing loom batch ${participant.currentBatchId}`);
           return { result: recovered, error: null };
         }
@@ -439,7 +477,7 @@ export async function promptChildSession(participant) {
         this._circuitBreaker.recordSuccess(activeModel);
       }
       localSucceeded = true;
-      if (consumedHint) consumedHint = "";
+      settleHint(response);
       return response;
     } catch (err) {
       this._stateManager.discardActiveTurnPatch?.();
@@ -487,7 +525,7 @@ export async function promptChildSession(participant) {
             error: lastError.value ? extractErrorInfo(lastError.value) : "unknown",
           };
           localSucceeded = true;
-          if (consumedHint) consumedHint = "";
+          settleHint(recoveredFb);
           this._logger.info("synthesis_recovery_success_fallback", `${participant.config.name} recovered via fallback synthesis from existing loom batch ${participant.currentBatchId}`);
           return recoveredFb;
         }

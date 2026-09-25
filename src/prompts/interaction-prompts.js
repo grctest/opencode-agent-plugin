@@ -1,7 +1,7 @@
 import { sanitizeForDisplay } from "../utils/sanitize.js";
 import { TIER_ORDER, LENGTH_LIMITS } from "./constants.js";
 import { QUERY_MODES } from "./query-modes.js";
-import { getRecentContributionsBlock, buildEvidenceGuidance, buildSeniorityContext, buildRoundContext, buildPositionLine, buildAgentStateBlock } from "./blocks.js";
+import { getRecentContributionsBlock, buildEvidenceGuidance, buildSeniorityContext, buildRoundContext, buildTargetPositionContext } from "./blocks.js";
 import { delimitContext } from "./delimiters.js";
 
 /** Builds a prompt for a queried agent to respond to a direct question from another agent.
@@ -22,7 +22,7 @@ export function buildQueryPrompt(sourceAgent, targetAgent, sourceContribution, q
   const toolSection = buildEvidenceGuidance(meta.guidanceKind);
 
   const recentMine = getRecentContributionsBlock(roundContributions, targetAgent.config.id);
-  const stateContext = buildAgentStateBlock(targetState) || buildPositionLine(targetAgent);
+  const stateContext = buildTargetPositionContext(targetAgent, targetState);
   const sopSnippet = stateOfPlay ? `State of Play — Open Questions (what answer would unblock):\n${sanitizeForDisplay(stateOfPlay, 600)}\n\n` : "";
 
   const header = `## ${mode === "clarify" ? "Direct Query" : `${mode.charAt(0).toUpperCase() + mode.slice(1)} Request`} — to ${sanitizeForDisplay(targetAgent.config.name)} (${targetAgent.config.tier}) from ${safeSourceName} (${sourceAgent.config.tier})
@@ -58,7 +58,7 @@ export function buildEvidencePrompt(sourceAgent, targetAgent, sourceContribution
   const toolSection = buildEvidenceGuidance("evidence");
 
   const recentMine = getRecentContributionsBlock(roundContributions, targetAgent.config.id);
-  const stateContext = buildAgentStateBlock(targetState) || buildPositionLine(targetAgent);
+  const stateContext = buildTargetPositionContext(targetAgent, targetState);
 
   return `## Evidence Request — to ${sanitizeForDisplay(targetAgent.config.name)} (${targetAgent.config.tier}) from ${safeSourceName} (${sourceAgent.config.tier})
 
@@ -91,7 +91,7 @@ export function buildVotePrompt(sourceAgent, targetAgent, sourceContribution, qu
     500
   );
 
-  const stateContext = buildAgentStateBlock(targetState) || buildPositionLine(targetAgent);
+  const stateContext = buildTargetPositionContext(targetAgent, targetState);
   const recentMine = getRecentContributionsBlock(roundContributions, targetAgent.config.id);
   const roundContext = buildRoundContext(currentRound, maxRounds);
   let sopOptions = "";
@@ -129,10 +129,16 @@ No contribution tags. Stay in character — your criterion should reflect your a
 /**
  * Builds a prompt for a summoned guest expert persona.
  */
-export function buildSummonPrompt(summonedPersona, requester, issue, roundContributions, currentRound, maxRounds, stateOfPlay = "") {
+export function buildSummonPrompt(summonedPersona, requester, issue, roundContributions, currentRound, maxRounds, stateOfPlay = "", question = "") {
   const safeRequesterName = sanitizeForDisplay(requester.config.name);
   const safeIssue = sanitizeForDisplay(issue);
   const safePersonaName = sanitizeForDisplay(summonedPersona.name);
+  // The canonical question, threaded explicitly: previously it arrived only
+  // inside the 700-char SoP slice, which can cut it on long SoPs and leaves
+  // round-1 guests (empty SoP) with no knowledge of what was asked (audit A13).
+  const questionBlock = question
+    ? `\n### Deliberation Question\n${delimitContext(sanitizeForDisplay(question, 2000), "QUESTION")}\n`
+    : "";
 
   const issueTokens = safeIssue.toLowerCase().split(/\W+/).filter(t => t.length > 2);
   const scored = (roundContributions || []).map((c) => {
@@ -174,7 +180,7 @@ ${sanitizeForDisplay(expertise, 300)}
 ${sanitizeForDisplay(style, 300)}
 
 ${delimitContext(safeIssue, "SUMMON_ISSUE")}
-${sopSnippet ? `### State of Play — Decisions (what's settled, build on it)\n${sopSnippet}\n` : ""}### Recent Relevant Contributions (relevance-scored, top 4)
+${questionBlock}${sopSnippet ? `### State of Play — Decisions (what's settled, build on it)\n${sopSnippet}\n` : ""}### Recent Relevant Contributions (relevance-scored, top 4)
 ${recentBlock}
 
 Round: ${roundContext}

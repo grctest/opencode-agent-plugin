@@ -53,6 +53,11 @@ function OutputTabBase({ artifact, status }) {
         <CardFooter className="flex items-center justify-between border-t bg-muted/20">
           <span className="text-xs text-muted-foreground">
             {artifact.created_at ? `Generated ${new Date(artifact.created_at).toLocaleString()}` : ""}
+            {artifact.orchestrator_config ? ` · Orchestrator: ${[
+              artifact.orchestrator_config.role,
+              artifact.orchestrator_config.decisionPosture,
+              artifact.orchestrator_config.synthesisStyle,
+            ].filter(Boolean).join(" · ")}` : ""}
           </span>
            <div className="flex items-center gap-2">
              <Button variant="ghost" size="sm" onClick={() => download("markdown")}>

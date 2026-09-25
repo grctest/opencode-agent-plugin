@@ -5,6 +5,32 @@ const dbLogger = new Logger();
 
 function qq(db, sql) { return db.query ? db.query(sql) : db.prepare(sql); }
 
+/**
+ * Bound tool-call payloads for storage (audit X6): in-memory tool results stay
+ * lossless for same-turn synthesis, but persisted rows cap string outputs at
+ * 4 kB with a truncated flag — a single webfetch dump must not make a row
+ * arbitrarily large. Shape-preserving: readers see the same array structure.
+ */
+export const STORED_TOOL_OUTPUT_MAX = 4000;
+export function boundToolCallsForStorage(toolCalls) {
+  if (!Array.isArray(toolCalls)) return toolCalls;
+  return toolCalls.map((t) => {
+    if (!t || typeof t !== "object") return t;
+    const out = t.output;
+    if (typeof out !== "string" || out.length <= STORED_TOOL_OUTPUT_MAX) return t;
+    return {
+      ...t,
+      output: `${out.slice(0, STORED_TOOL_OUTPUT_MAX)}\n…[output truncated for storage — full text in session audit log]`,
+      metadata: { ...(t.metadata ?? {}), truncated: true },
+    };
+  });
+}
+
+function serializeToolCalls(toolCalls) {
+  if (!toolCalls) return null;
+  return JSON.stringify(boundToolCallsForStorage(toolCalls));
+}
+
 export function addContribution(db, meetingId, contribution, getRoundFn) {
   qq(db,
       `INSERT INTO contributions (meeting_id, participant_id, round, type, content, target_which, batch_id, tool_calls, prompt_context, created_at)
@@ -18,7 +44,7 @@ export function addContribution(db, meetingId, contribution, getRoundFn) {
       contribution.content,
       contribution.targets_which ?? null,
       contribution.batch_id ?? null,
-      contribution.tool_calls ? JSON.stringify(contribution.tool_calls) : null,
+      serializeToolCalls(contribution.tool_calls),
       contribution.prompt_context ? JSON.stringify(contribution.prompt_context) : null,
       contribution.created_at ?? isoNow(),
     );
@@ -150,7 +176,7 @@ export function addContributionWithTurnRequest(db, meetingId, contribution, turn
         contribution.content,
         contribution.targets_which ?? null,
         contribution.batch_id ?? null,
-        contribution.tool_calls ? JSON.stringify(contribution.tool_calls) : null,
+        serializeToolCalls(contribution.tool_calls),
         contribution.prompt_context ? JSON.stringify(contribution.prompt_context) : null,
         contribution.created_at ?? isoNow(),
       );
@@ -287,13 +313,35 @@ export function getAllParticipantsWithStatus(db, meetingId) {
     }));
 }
 
-export function setRoundSummary(db, meetingId, round, summary) {
+export function setRoundSummary(db, meetingId, round, summary, orchestratorConfig = null) {
   db
     .prepare(
-      `INSERT INTO rounds (meeting_id, round, summary, created_at) VALUES (?, ?, ?, ?)
-         ON CONFLICT(meeting_id, round) DO UPDATE SET summary = excluded.summary, created_at = excluded.created_at`,
+      `INSERT INTO rounds (meeting_id, round, summary, orchestrator_config_json, created_at) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(meeting_id, round) DO UPDATE SET summary = excluded.summary, orchestrator_config_json = excluded.orchestrator_config_json, created_at = excluded.created_at`,
     )
-    .run(meetingId, round, summary ?? "", isoNow());
+    .run(
+      meetingId,
+      round,
+      summary ?? "",
+      orchestratorConfig ? JSON.stringify(orchestratorConfig) : null,
+      isoNow(),
+    );
+}
+
+export function getRoundSummaryConfigs(db, meetingId) {
+  const rows = db
+    .prepare(
+      `SELECT round, orchestrator_config_json FROM rounds WHERE meeting_id = ? ORDER BY round ASC`,
+    )
+    .all(meetingId);
+  const map = {};
+  for (const r of rows) {
+    if (!r.orchestrator_config_json) continue;
+    try {
+      map[r.round] = JSON.parse(r.orchestrator_config_json);
+    } catch {}
+  }
+  return map;
 }
 
 export function getRoundSummaries(db, meetingId) {

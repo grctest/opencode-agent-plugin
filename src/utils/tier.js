@@ -3,18 +3,29 @@ export const LOOKBACK = {
   SENDER_HISTORY: 6,
 };
 
-/** Priority caps per tier for turn request self-reporting. */
-export const TURN_REQUEST_PRIORITY_CAP = {
+/**
+ * Priority caps per tier for turn request self-reporting.
+ * @deprecated Seniority no longer gates priority: urgency is judged by the
+ * turn planner on evidence and reason, not rank. Kept frozen for
+ * backward-compatible imports; use getPriorityCap() instead.
+ */
+export const TURN_REQUEST_PRIORITY_CAP = Object.freeze({
   junior: 5,
   mid: 7,
   senior: 9,
   principal: 10,
   civilian: 7,
-};
+});
 
-/** Gets the maximum turn request priority a tier can self-report. */
-export function getPriorityCap(tier) {
-  return TURN_REQUEST_PRIORITY_CAP[tier] ?? 5;
+/**
+ * Gets the maximum turn request priority a participant can self-report.
+ * Uniform across tiers by design: tiers are setup-phase labels that
+ * differentiate persona purpose, and seniority plays no part in turn-order
+ * decisions. The planner weighs the stated reason and evidence instead.
+ */
+export const UNIFORM_PRIORITY_CAP = 10;
+export function getPriorityCap(_tier) {
+  return UNIFORM_PRIORITY_CAP;
 }
 
 /** Default rights configuration for tiers. */

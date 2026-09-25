@@ -180,7 +180,9 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
             system: promptContext.system_prompt,
             model,
             parts: [
-              { type: "text", text: promptContext.user_prompt },
+              // Same session already holds system + user prompt + turn-1 history;
+              // re-sending the ~10k-token user prompt duplicates it verbatim and
+              // reads as an instruction to produce the contribution again (audit B2).
               ...(result1.data.parts ?? []).filter(p => p.type === "text" && p.text).slice(-1).map(p => ({ type: "text", text: p.text })),
               { type: "text", text: synthesisInstruction },
             ],
@@ -273,7 +275,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
             system: promptContext.system_prompt,
             model,
             parts: [
-              { type: "text", text: promptContext.user_prompt },
+              // Same-session follow-up: user prompt already in history (audit B2).
               ...(result1?.data?.parts ?? []).filter((p) => p.type === "text" && p.text).slice(-1).map((p) => ({ type: "text", text: p.text })),
               { type: "text", text: patchInstruction },
             ],
@@ -326,17 +328,28 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
         try {
           const mandatoryInstruction = `This turn has unmet mandatory capabilities: ${missingMandatory.join("; ")}. Complete every applicable requirement now, using the exact tool names and valid targets. Do not repeat the prose; make the required tool call(s), then finish your contribution.`;
           this._logger.info("mandatory_capability_retry", `Requesting mandatory capability retry for ${participant.config.name}`, { participant: participant.config.id, round: currentRound, missing: missingMandatory });
+          // Loom-free map: this retry satisfies a capability, it must not open a
+          // new peer interaction with no synthesis pass to fold it in (audit B8).
+          // loom_request_next (fire-and-forget, no peer answers) and the forum
+          // tools stay available; loom_state_patch is re-added only when the
+          // state capability itself is what's missing, otherwise the retry
+          // could never satisfy it. loom_query/vote/summon stay off: their
+          // answers would arrive with no synthesis pass to fold them in.
+          // Same-session follow-up: user prompt already in history (audit B2).
+          const mandatoryToolsMap = buildToolsMapWithoutLoom(effectiveConfig, { activeCount: activeCountExec });
+          if (missingMandatory.some((m) => m.startsWith("SKILL.state")) && effectiveAgentTools?.loom?.loom_state_patch) {
+            mandatoryToolsMap.loom_state_patch = true;
+          }
           const resultM = await this._sessionManager.getContract().prompt({
             sessionId: ephemeralSessionId,
             system: promptContext.system_prompt,
             model,
             parts: [
-              { type: "text", text: promptContext.user_prompt },
               ...(result1?.data?.parts ?? []).filter((p) => p.type === "text" && p.text).slice(-1).map((p) => ({ type: "text", text: p.text })),
               { type: "text", text: mandatoryInstruction },
             ],
-            tools: toolsMap,
-            toolChoice: Object.keys(toolsMap).length > 0 ? "auto" : undefined,
+            tools: mandatoryToolsMap,
+            toolChoice: Object.keys(mandatoryToolsMap).length > 0 ? "auto" : undefined,
             timeoutMs: mandatoryRemaining,
             signal: abortController.signal,
           });

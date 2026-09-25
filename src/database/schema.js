@@ -7,7 +7,7 @@
  * directly; older files run only the migrations they are missing.
  */
 
-export const LATEST_SCHEMA_VERSION = 9;
+export const LATEST_SCHEMA_VERSION = 10;
 
 /**
  * Ordered migrations. MIGRATIONS[n] upgrades a DB at user_version n to n+1.
@@ -150,6 +150,19 @@ export const MIGRATIONS = [
     );
     if (!cols.has("orchestrator_config_json")) db.exec("ALTER TABLE meetings ADD COLUMN orchestrator_config_json TEXT");
   },
+  // v9 → v10: stamp the effective orchestrator config on the artefacts it
+  // shapes, so a summary/artifact read later is attributable to the options
+  // that produced it (audit O13/Step 7).
+  (db) => {
+    const roundCols = new Set(
+      db.prepare("PRAGMA table_info(rounds)").all().map((c) => c.name),
+    );
+    if (!roundCols.has("orchestrator_config_json")) db.exec("ALTER TABLE rounds ADD COLUMN orchestrator_config_json TEXT");
+    const artifactCols = new Set(
+      db.prepare("PRAGMA table_info(artifacts)").all().map((c) => c.name),
+    );
+    if (!artifactCols.has("orchestrator_config")) db.exec("ALTER TABLE artifacts ADD COLUMN orchestrator_config TEXT");
+  },
 ];
 
 export function initSchema(db) {
@@ -277,6 +290,7 @@ export function initSchema(db) {
       meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
       round INTEGER NOT NULL,
       summary TEXT NOT NULL DEFAULT '',
+      orchestrator_config_json TEXT,
       created_at TEXT NOT NULL,
       PRIMARY KEY (meeting_id, round)
     );
@@ -290,6 +304,7 @@ export function initSchema(db) {
       open_questions TEXT,
       confidence TEXT,
       refusals TEXT,
+      orchestrator_config TEXT,
       created_at TEXT NOT NULL
     );
 

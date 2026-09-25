@@ -32,9 +32,12 @@ export const STATE_PATCH_CAPS = {
   // storage and structuredClone cost for no reasoning value. Instead the newest
   // `pinnedFacts` pins are protected and older pins degrade to evictable.
   //
-  // Invariant: pinnedFacts === buckets, so an all-pinned facts bucket never
-  // stores more than the prompt renders — stored ⊆ visible ⊆ removable.
-  pinnedFacts: 8,
+  // Invariant: pinnedFacts + reserve <= buckets, so protected entries never
+  // exceed what the prompt renders — stored ⊆ visible ⊆ removable (audit A8).
+  // (Previously pinnedFacts === buckets, which allowed reserve + pinnedFacts = 10
+  // protected entries against an 8-entry render window, hiding mixed
+  // pinned/unpinned buckets from the model.)
+  pinnedFacts: 6,
   // Newest N entries per bucket are never FIFO-evicted, so a single 3-add call
   // cannot immediately churn the context it just wrote.
   reserve: 2,
@@ -241,9 +244,10 @@ export function renderMyStateMarkdown(state) {
 export function aggregateStateOfPlay(allStates, question, tags) {
   const entries = (allStates ?? []).map((e, i) => {
     if (e && Array.isArray(e.established)) {
-      return { id: e.id ?? `agent_${i}`, name: e.name ?? e.id ?? `agent_${i}`, tier: e.tier ?? "", state: e };
+      return { index: i, id: e.id ?? `agent_${i}`, name: e.name ?? e.id ?? `agent_${i}`, tier: e.tier ?? "", state: e };
     }
     return {
+      index: i,
       id: e?.id ?? `agent_${i}`,
       name: e?.name ?? e?.id ?? `agent_${i}`,
       tier: e?.tier ?? "",
@@ -257,50 +261,123 @@ export function aggregateStateOfPlay(allStates, question, tags) {
   });
   if (nonEmpty.length === 0) return "";
 
-  // bucket -> normalized key -> { text, holders:Set, recency }
-  const collect = (get) => {
+  const slotText = (v) => v.holders.size > 1 ? `${v.text} (${v.holders.size} holders)` : v.text;
+
+  // bucket -> normalized key -> ranked slot. Ranking is consensus-first
+  // (holders desc), then freshness (round desc, then contribution id desc);
+  // lexicographic text is only the final deterministic tiebreak, never the
+  // deciding signal (audit A2).
+  const rankSlots = (get, { minHolders = 1 } = {}) => {
     const map = new Map();
     for (const e of nonEmpty) {
       for (const item of get(e.state) ?? []) {
         const k = key(item);
         if (!k) continue;
-        if (!map.has(k)) map.set(k, { text: norm(item), holders: new Set(), recency: e.state.updated_round ?? 0, holderId: e.id });
+        if (!map.has(k)) map.set(k, { key: k, text: norm(item), holders: new Set(), holderIds: new Set(), recency: 0, updatedContributionId: 0, primaryId: e.id });
         const slot = map.get(k);
         slot.holders.add(e.name);
+        slot.holderIds.add(e.id);
         slot.recency = Math.max(slot.recency, e.state.updated_round ?? 0);
+        slot.updatedContributionId = Math.max(slot.updatedContributionId, e.state.updated_contribution_id ?? 0);
       }
     }
     return [...map.values()]
-      .sort((a, b) => b.holders.size - a.holders.size || b.recency - a.recency || (a.text < b.text ? -1 : 1))
-      .slice(0, STATE_PATCH_CAPS.buckets)
-      .map((v) => v.holders.size > 1 ? `${v.text} (${v.holders.size} holders)` : v.text);
+      .filter((slot) => slot.holders.size >= minHolders)
+      .sort((a, b) => b.holders.size - a.holders.size || b.recency - a.recency ||
+        b.updatedContributionId - a.updatedContributionId || (a.text < b.text ? -1 : 1));
   };
+
+  // Selection with representation guarantee: pass 1 covers every holder with
+  // their highest-ranked item (multi-holder items cover several at once), pass 2
+  // fills by rank subject to a per-holder cap — so no single agent can monopolise
+  // a section when nothing is shared yet (audit A2).
+  const takeSlots = (ranked, cap = STATE_PATCH_CAPS.buckets, perHolderCap = 3) => {
+    const taken = [];
+    const used = new Set();
+    const covered = new Set();
+    const counts = new Map();
+    const take = (slot) => {
+      taken.push(slot);
+      used.add(slot.key);
+      for (const id of slot.holderIds) {
+        covered.add(id);
+        counts.set(id, (counts.get(id) ?? 0) + 1);
+      }
+    };
+    for (const slot of ranked) {
+      if (taken.length >= cap) break;
+      if ([...slot.holderIds].some((id) => !covered.has(id))) take(slot);
+    }
+    for (const slot of ranked) {
+      if (taken.length >= cap) break;
+      if (used.has(slot.key)) continue;
+      if ((counts.get(slot.primaryId) ?? 0) >= perHolderCap) continue;
+      take(slot);
+    }
+    return taken;
+  };
+
+  const collect = (get, opts) => takeSlots(rankSlots(get, opts)).map(slotText);
 
   const established = collect((s) => s.established);
   const contested = collect((s) => s.contested);
   const open = collect((s) => s.open);
-  // Stances surface as Key Facts lines with holder attribution
-  const stances = nonEmpty
-    .filter((e) => e.state.stance && e.state.stance.trim())
-    .map((e) => `**${e.name}${e.tier ? ` (${e.tier})` : ""} stance**: ${norm(e.state.stance).slice(0, 400)}`);
-  const keyFacts = [...stances, ...collect((s) => s.facts)].slice(0, STATE_PATCH_CAPS.buckets);
+  // Decisions & Proposals carries established positions (never empty on the
+  // primary path); Agreements is the true-consensus subset held by ≥2 agents,
+  // which is also what the vote-ballot menu parses (audit A4).
+  const decisions = established;
+  const agreements = collect((s) => s.established, { minHolders: 2 });
 
-  // Files: union, dedupe, last 8
+  // Key Facts: stances ranked alongside evidence with an evidence floor, never
+  // 8/0 in either direction (audit A3). Stances lead (positions first), then
+  // grounded facts; at least EVIDENCE_MIN fact slots survive whenever they exist.
+  const EVIDENCE_MIN = 3;
+  const CAP = STATE_PATCH_CAPS.buckets;
+  const stanceTaken = nonEmpty
+    .filter((e) => e.state.stance && e.state.stance.trim())
+    .map((e) => ({
+      key: `stance:${e.id}`,
+      text: `**${e.name}${e.tier ? ` (${e.tier})` : ""} stance**: ${norm(e.state.stance).slice(0, STATE_PATCH_CAPS.stanceMax)}`,
+      holders: new Set([e.name]),
+      holderIds: new Set([e.id]),
+      recency: e.state.updated_round ?? 0,
+      updatedContributionId: e.state.updated_contribution_id ?? 0,
+      primaryId: e.id,
+      index: e.index,
+    }))
+    .sort((a, b) => b.recency - a.recency || a.index - b.index);
+  const factTaken = takeSlots(rankSlots((s) => s.facts));
+  const factKeep = Math.min(factTaken.length, Math.max(Math.min(EVIDENCE_MIN, factTaken.length), CAP - stanceTaken.length));
+  const stanceKeep = Math.min(stanceTaken.length, CAP - factKeep);
+  const keyFacts = [
+    ...stanceTaken.slice(0, stanceKeep).map((s) => s.text),
+    ...factTaken.slice(0, factKeep).map(slotText),
+  ];
+
+  // Files: union, dedupe, most-recent-first by (round, contribution id) — not
+  // roster-tail-first (audit A5). Stable sort keeps first-seen order on ties.
   const fileMap = new Map();
   for (const e of nonEmpty) {
     for (const f of e.state.files ?? []) {
       const k = key(f);
       if (!k) continue;
-      if (fileMap.has(k)) fileMap.delete(k);
-      fileMap.set(k, norm(f));
+      const round = e.state.updated_round ?? 0;
+      const cid = e.state.updated_contribution_id ?? 0;
+      const prev = fileMap.get(k);
+      if (!prev || round > prev.round || (round === prev.round && cid > prev.cid)) {
+        fileMap.set(k, { text: norm(f), round, cid });
+      }
     }
   }
-  const filesInvolved = [...fileMap.values()].slice(-8);
+  const filesInvolved = [...fileMap.values()]
+    .sort((a, b) => b.round - a.round || b.cid - a.cid)
+    .slice(0, STATE_PATCH_CAPS.buckets)
+    .map((v) => v.text);
 
   return formatStateOfPlay(
     {
-      decisions: [],
-      agreements: established,
+      decisions,
+      agreements,
       disagreements: contested,
       openQuestions: open,
       keyFacts,

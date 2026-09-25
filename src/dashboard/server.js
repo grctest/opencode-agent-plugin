@@ -28,6 +28,7 @@ import {
   setControlRuntime,
   handleListPersonas,
   handleRoomPreview,
+  handleOrchestratorPreview,
   handleListLlmModels,
   handleModelFilter,
   handleStartMeeting,
@@ -55,6 +56,7 @@ const ROUTE_MAP = new Map([
   ["/api/models/select", ["POST"]],
   ["/api/personas", ["GET"]],
   ["/api/room/preview", ["POST"]],
+  ["/api/orchestrator/preview", ["POST"]],
   ["/api/llm-models", ["GET"]],
   ["/api/llm-models/filter", ["POST"]],
   ["/api/meetings/start", ["POST"]],
@@ -337,6 +339,10 @@ export function startDashboard(directory, port, runtimeOpts = null) {
 
         if (url.pathname === "/api/room/preview") {
           return handleRoomPreview(req);
+        }
+
+        if (url.pathname === "/api/orchestrator/preview") {
+          return handleOrchestratorPreview(req);
         }
 
         if (url.pathname === "/api/llm-models") {

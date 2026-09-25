@@ -16,7 +16,7 @@ const MAX_SEATS = 7;
 const KNOWN_TIERS = new Set(["junior", "mid", "senior", "principal", "civilian"]);
 const FEATURE_MODES = new Set(["disabled", "optional", "mandatory"]);
 const ORCHESTRATOR_MODES = {
-  roles: new Set(["neutral_facilitator", "adversarial_reviewer", "decision_focused", "custom"]),
+  roles: new Set(["neutral_facilitator", "rigorous_auditor", "decision_focused", "custom"]),
   turnOrderPolicies: new Set(["balanced", "evidence_first", "anti_starvation"]),
   summaryStyles: new Set(["concise", "balanced", "exhaustive"]),
   decisionPostures: new Set(["preserve_spectrum", "consensus_seeking", "action_oriented"]),
@@ -50,6 +50,43 @@ export const DEFAULT_SETUP_FORM = {
   startedId: null,
   orchestrator: { ...DEFAULT_ORCHESTRATOR },
   features: { ...DEFAULT_FEATURES },
+};
+
+export const ORCHESTRATOR_BEHAVIOR_OPTIONS = {
+  role: [
+    { value: "neutral_facilitator", label: "Neutral facilitator", description: "Keeps the deliberation fair, inclusive, and focused on giving every participant a useful voice." },
+    { value: "rigorous_auditor", label: "Rigorous auditor", description: "Stress-tests claims, evidence, and attribution in the synthesis draft while staying neutral to all agendas." },
+    { value: "decision_focused", label: "Decision-focused", description: "Emphasizes actionable options, tradeoffs, owners, and next steps without hiding disagreement." },
+    { value: "custom", label: "Custom", description: "Uses the custom operating instructions below as the orchestrator's operating style." },
+  ],
+  turnOrderPolicy: [
+    { value: "balanced", label: "Balanced", description: "Balances evidence, urgency, participant diversity, and anti-starvation when choosing who speaks next." },
+    { value: "evidence_first", label: "Evidence first", description: "Prioritizes participants with strong evidence-backed challenges or requests when choosing who speaks next." },
+    { value: "anti_starvation", label: "Anti-starvation", description: "Strongly favors participants who have spoken least recently, while still handling urgent requests." },
+  ],
+  summaryStyle: [
+    { value: "balanced", label: "Balanced", description: "Produces thorough but compact summaries that preserve nuance, dissent, and unresolved tradeoffs." },
+    { value: "concise", label: "Concise", description: "Produces compact summaries that emphasize decisions, major evidence, and unresolved questions." },
+    { value: "exhaustive", label: "Exhaustive", description: "Retains more detail, competing positions, evidence, and open threads, even when summaries use more tokens." },
+  ],
+  decisionPosture: [
+    { value: "preserve_spectrum", label: "Preserve spectrum", description: "Keeps meaningful disagreement visible and maps the spectrum instead of forcing consensus." },
+    { value: "consensus_seeking", label: "Consensus-seeking", description: "Looks for a defensible shared direction while keeping dissent visible." },
+    { value: "action_oriented", label: "Action-oriented", description: "Prioritizes concrete next actions, owners, risks, and unresolved questions." },
+  ],
+  synthesisStyle: [
+    { value: "decision_oriented", label: "Decision-oriented", description: "Leads the final output with a clear decision or spectrum, followed by grounded reasoning and action items." },
+    { value: "conversational", label: "Conversational", description: "Leads with a human-readable synthesis of the conversation before formal decision structure." },
+    { value: "technical_audit", label: "Technical audit", description: "Leads with a technical audit covering files, evidence, risks, verification, and proposed fixes." },
+  ],
+};
+
+export const ORCHESTRATOR_BEHAVIOR_LABELS = {
+  role: "Role / Persona",
+  turnOrderPolicy: "Turn-order policy",
+  summaryStyle: "Summary style",
+  decisionPosture: "Decision posture",
+  synthesisStyle: "Synthesis style",
 };
 
 function asString(v) {

@@ -112,10 +112,12 @@ export function listTopicsForPrompt(db, meetingId, limit = 10) {
   try {
     const rows = qq(db, `
       SELECT t.id, t.title, t.created_at,
+             SUBSTR(t.body, 1, 200) AS preview,
              (SELECT COUNT(*) FROM forum_comments WHERE topic_id = t.id) AS comment_count,
              (SELECT MAX(created_at) FROM forum_comments WHERE topic_id = t.id) AS last_comment_at,
              COALESCE((SELECT MAX(created_at) FROM forum_comments WHERE topic_id = t.id), t.created_at) AS last_activity,
-             (SELECT author_id FROM forum_comments WHERE topic_id = t.id ORDER BY created_at DESC, id DESC LIMIT 1) AS latest_commenter_id
+             (SELECT author_id FROM forum_comments WHERE topic_id = t.id ORDER BY created_at DESC, id DESC LIMIT 1) AS latest_commenter_id,
+             (SELECT SUBSTR(body, 1, 200) FROM forum_comments WHERE topic_id = t.id ORDER BY created_at DESC, id DESC LIMIT 1) AS latest_preview
       FROM forum_topics t
       WHERE t.meeting_id = ?
       ORDER BY last_activity DESC, t.created_at DESC
@@ -135,6 +137,10 @@ export function listTopicsForPrompt(db, meetingId, limit = 10) {
     return rows.map(r => ({
       id: r.id,
       title: r.title,
+      // 200-char previews so prompt consumers can judge relevance without a
+      // blind loom_forum_read_topic call per topic (audit A13).
+      preview: r.preview ?? null,
+      latest_preview: r.latest_preview ?? null,
       comment_count: Number(r.comment_count ?? 0),
       latest_commenter_id: r.latest_commenter_id || null,
       latest_commenter_name: r.latest_commenter_id ? (nameMap.get(r.latest_commenter_id) ?? r.latest_commenter_id) : null,

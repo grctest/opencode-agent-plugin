@@ -101,7 +101,9 @@ export async function planTurnOrder({ stateOfPlay, roundSummary, turnRequests, p
 
   try {
     const result = await promptFn(
-      "You are a turn order planner. Return only a JSON array of participant IDs.",
+      // Format contract first, before any injected operator block can erode it
+      // (audit O12): identical restatement in the user prompt is reinforcement.
+      "Respond with ONLY a JSON array of participant IDs, e.g. [\"id1\", \"id2\"]. You are a turn order planner.",
       model,
       prompt,
     );
@@ -132,26 +134,25 @@ export async function planTurnOrder({ stateOfPlay, roundSummary, turnRequests, p
     new Logger().warn("turn_order_planning_failed", "Turn order planning failed — using fallback", info);
   }
 
-  // Fallback: sort by priority, then tier
+  // Fallback: sort by priority, then contributions, then id (never tier)
   return fallbackTurnOrder(validRequests, participants);
 }
 
 /**
  * Fallback turn order when LLM planning fails.
- * Sorts by priority descending, then by tier (principal > senior > mid > civilian/junior).
- * Civilian ranks at mid per utils/tier.js and the shared TIER_ORDER (audit 02 P4).
+ * Sorts by priority descending, then fewer contributions, then id — never by
+ * seniority: tiers are setup-phase purpose labels, not ordering inputs.
  */
 function fallbackTurnOrder(turnRequests, participants) {
-  const tierOrder = { principal: 0, senior: 1, mid: 2, civilian: 2, junior: 3 };
+  const byId = new Map(participants.map((p) => [p.config.id, p]));
 
-  // Sort requests by priority descending, then tier
+  // Sort requests by priority descending, then contributions ascending, then id
   const sorted = [...turnRequests].sort((a, b) => {
     if (b.priority !== a.priority) return b.priority - a.priority;
-    const pA = participants.find((p) => p.config.id === a.participant_id);
-    const pB = participants.find((p) => p.config.id === b.participant_id);
-    const tierA = tierOrder[pA?.config.tier] ?? 3;
-    const tierB = tierOrder[pB?.config.tier] ?? 3;
-    return tierA - tierB;
+    const cntA = byId.get(a.participant_id)?.contributions_count ?? 0;
+    const cntB = byId.get(b.participant_id)?.contributions_count ?? 0;
+    if (cntA !== cntB) return cntA - cntB;
+    return String(a.participant_id).localeCompare(String(b.participant_id));
   });
 
   // Build ordered list: requested participants first, then remaining

@@ -49,8 +49,24 @@ export class RoundService {
       this.#logger.warn("round_summary_state_snapshot_failed", `Round ${round.number} agent state snapshot unavailable`, { error: err?.message ?? String(err) });
     }
 
+    // Clerk context (audit O9/Step 5): round position, tier-free roster, prior
+    // SoP excerpt, and turn requests — all already in memory at this call site.
+    let summaryOpts = {};
     try {
-      round.summary = await summarizeRound(round, params.state, promptOrchestrator, getHighestTierModel, getFallbackModel, participantStates, orchestratorConfig);
+      const sm = this.#stateManager;
+      summaryOpts = {
+        maxRounds: typeof sm?.getMaxRounds === "function" ? sm.getMaxRounds() : null,
+        roster: typeof sm?.getParticipants === "function"
+          ? sm.getParticipants().filter((p) => p?.status !== "failed").map((p) => ({
+              id: p?.config?.id, contributions_count: p?.contributions_count ?? 0, status: p?.status,
+            }))
+          : [],
+        turnRequests: Array.isArray(round.turn_requests) ? round.turn_requests : [],
+        stateOfPlay: typeof sm?.getStateOfPlay === "function" ? sm.getStateOfPlay() : "",
+      };
+    } catch {}
+    try {
+      round.summary = await summarizeRound(round, params.state, promptOrchestrator, getHighestTierModel, getFallbackModel, participantStates, orchestratorConfig, summaryOpts);
     } catch (err) {
       this.#logger.warn("round_summary_failed", `Round ${round.number} summary failed — using digest fallback`, { error: err?.message ?? String(err) });
       round.summary = "";

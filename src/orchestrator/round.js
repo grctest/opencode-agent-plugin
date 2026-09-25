@@ -88,7 +88,11 @@ export async function _finalizeRound(updatedRound) {
       const weave = this._stateManager.getWeave();
       const hasUncapturedContribution = weave.some((contribution) => {
         if (contribution.type === "pass") return false;
-        if (["query_response", "perspective_response", "critique_response", "evidence_response", "summoned_response", "vote_response"].includes(contribution.type)) return true;
+        // vote_response is deliberately excluded from the SoP downstream
+        // (classifyContribution returns null for it — ballots are noise, the
+        // tally carries the result), so a vote must not force the legacy O(T)
+        // weave scan on its own (audit A7).
+        if (["query_response", "perspective_response", "critique_response", "evidence_response", "summoned_response"].includes(contribution.type)) return true;
         return contribution.type === "contribution" && contribution.prompt_context?.state_patch_outcome !== "applied";
       });
       if (!stateCoverageComplete || hasUncapturedContribution || !newStateOfPlay) {
@@ -102,7 +106,7 @@ export async function _finalizeRound(updatedRound) {
       this._stateManager.setStateOfPlay(newStateOfPlay);
       // Atomic: 3 writes in one SAVEPOINT — all-or-nothing
       await this._database.transaction(() => {
-        this._database.setRoundSummary(updatedRound.number, updatedRound.summary);
+        this._database.setRoundSummary(updatedRound.number, updatedRound.summary, this._options?.orchestratorConfig ?? null);
         this._database.setStateOfPlay(newStateOfPlay);
       });
 

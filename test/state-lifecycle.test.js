@@ -200,15 +200,11 @@ test("a same-round peer query receives the target's complete committed state", a
   }, { sessionID: "asker-session" });
   const payload = JSON.parse(result.output);
   assert.equal(payload.error, undefined);
-  assert.match(capturedPrompt, /## Your State — CARRIED FORWARD/);
-  for (const marker of [
-    "Responder private stance",
-    "Responder established memory",
-    "Responder contested memory",
-    "Responder open memory",
-    "Responder grounded memory",
-    "src/responder-only.ts",
-  ]) assert.match(capturedPrompt, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  // Peer prompts carry the one-line position contract, not the full Σⁱ block
+  // (audit B5): stance + top bullets present, full block absent.
+  assert.match(capturedPrompt, /Your position \(from your state v2\): "Responder private stance"/);
+  assert.match(capturedPrompt, /Responder established memory/);
+  assert.doesNotMatch(capturedPrompt, /## Your State — CARRIED FORWARD/);
 });
 
 test("a fresh perspective state replaces an older stance in subsequent context", () => {

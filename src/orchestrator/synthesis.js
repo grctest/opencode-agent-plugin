@@ -40,6 +40,15 @@ export async function _synthesize() {
       actual: `${orchestratorModel.providerID}/${orchestratorModel.modelID}`,
     });
     const transcriptData = this._database.getTranscriptData(this._meetingId);
+    // getTranscriptData returns only { question, fabric, rounds } — thread the
+    // meeting tags through so mode detection and the Tags block are live, and
+    // derive build mode from the effective tools the meeting actually ran with
+    // rather than from tags (audit D5).
+    transcriptData.tags = this._stateManager.getTags() ?? [];
+    try {
+      const at = this._roundExecutor?.getEffectiveAgentTools?.() ?? getConfig()?.agentTools;
+      transcriptData.buildMode = !!(at?.enabled && (at?.buildMode === true || at?.builtIn?.write === true || at?.builtIn?.edit === true));
+    } catch { transcriptData.buildMode = false; }
 
     const objections = collectObjections({
       rounds: this._stateManager.getRounds(),
@@ -121,6 +130,11 @@ export function _computeQualityTelemetry() {
   }
 
 export function _saveArtifact(artifact) {
+    // Stamp the effective orchestrator config so the artifact is attributable
+    // to the options that shaped it (audit O13/Step 7).
+    if (artifact && typeof artifact === "object" && !artifact.orchestrator_config) {
+      artifact.orchestrator_config = this._options?.orchestratorConfig ?? null;
+    }
     this._stateManager.setArtifact(artifact);
     if (this._database) {
       this._database.saveArtifact(artifact);

@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { List } from "react-window";
 import { useStore } from "@nanostores/react";
-import { $setupForm, resetSetupForm } from "../stores/setupForm.js";
+import { $setupForm, resetSetupForm, ORCHESTRATOR_BEHAVIOR_OPTIONS, ORCHESTRATOR_BEHAVIOR_LABELS } from "../stores/setupForm.js";
 import { Button } from "./ui/button.tsx";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "./ui/card.tsx";
 import { Badge } from "./ui/badge.tsx";
@@ -17,6 +17,7 @@ import { Alert, AlertTitle, AlertDescription } from "./ui/alert.tsx";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "./ui/collapsible.tsx";
 import { Spinner } from "./ui/spinner.tsx";
 import { PersonaPickerDialog } from "./PersonaPickerDialog.jsx";
+import { OrchestratorPreviewDialog } from "./OrchestratorPreviewDialog.jsx";
 import { TIER_META, AVATAR_EXPRESSION, AVATAR_COLORS } from "./tierMeta.jsx";
 
 function formatContext(n) {
@@ -126,47 +127,13 @@ function FeatureModeControl({ value, onChange, disabled }) {
   );
 }
 
-const ORCHESTRATOR_BEHAVIOR_HELP = {
-  role: {
-    neutral_facilitator: "Keeps the deliberation fair, inclusive, and focused on giving every participant a useful voice.",
-    adversarial_reviewer: "Challenges assumptions, weak evidence, and premature conclusions before the circle converges.",
-    decision_focused: "Emphasizes actionable options, tradeoffs, owners, and next steps without hiding disagreement.",
-    custom: "Uses the custom operating instructions below as the orchestrator's operating style.",
-  },
-  turnOrderPolicy: {
-    balanced: "Balances evidence, urgency, participant diversity, and anti-starvation when choosing who speaks next.",
-    evidence_first: "Prioritizes participants with strong evidence-backed challenges or requests when choosing who speaks next.",
-    anti_starvation: "Strongly favors participants who have spoken least recently, while still handling urgent requests.",
-  },
-  summaryStyle: {
-    concise: "Produces compact summaries that emphasize decisions, major evidence, and unresolved questions.",
-    balanced: "Produces thorough but compact summaries that preserve nuance, dissent, and unresolved tradeoffs.",
-    exhaustive: "Retains more detail, competing positions, evidence, and open threads, even when summaries use more tokens.",
-  },
-  decisionPosture: {
-    preserve_spectrum: "Keeps meaningful disagreement visible and maps the spectrum instead of forcing consensus.",
-    consensus_seeking: "Looks for a defensible shared direction while keeping dissent visible.",
-    action_oriented: "Prioritizes concrete next actions, owners, risks, and unresolved questions.",
-  },
-  synthesisStyle: {
-    decision_oriented: "Leads the final output with a clear decision or spectrum, followed by grounded reasoning and action items.",
-    conversational: "Leads with a human-readable synthesis of the conversation before formal decision structure.",
-    technical_audit: "Leads with a technical audit covering files, evidence, risks, verification, and proposed fixes.",
-  },
-};
-
-const ORCHESTRATOR_DEFAULT_VALUES = {
-  role: "neutral_facilitator",
-  turnOrderPolicy: "balanced",
-  summaryStyle: "balanced",
-  decisionPosture: "preserve_spectrum",
-  synthesisStyle: "decision_oriented",
-};
+function getOrchestratorBehaviorOption(key, value) {
+  const options = ORCHESTRATOR_BEHAVIOR_OPTIONS[key] ?? [];
+  return options.find((option) => option.value === value) ?? options[0];
+}
 
 function getOrchestratorBehaviorDescription(key, value) {
-  const descriptions = ORCHESTRATOR_BEHAVIOR_HELP[key] ?? {};
-  const selected = value || ORCHESTRATOR_DEFAULT_VALUES[key];
-  return descriptions[selected] || Object.values(descriptions)[0];
+  return getOrchestratorBehaviorOption(key, value)?.description;
 }
 
 export function SetupTab({ selectedMeeting, onStarted }) {
@@ -205,6 +172,10 @@ export function SetupTab({ selectedMeeting, onStarted }) {
   const [addOpen, setAddOpen] = useState(false);
   const [job, setJob] = useState(null);
   const [extendInput, setExtendInput] = useState("");
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [previewError, setPreviewError] = useState(null);
+  const [previewData, setPreviewData] = useState(null);
   const sectionRefs = useRef({});
 
   const scrollToSection = (key) => {
@@ -389,6 +360,26 @@ export function SetupTab({ selectedMeeting, onStarted }) {
       setBusy(null);
     }
   }, [refreshLlm]);
+
+  const openOrchestratorPreview = useCallback(async () => {
+    setPreviewOpen(true);
+    setPreviewBusy(true);
+    setPreviewError(null);
+    try {
+      const current = $setupForm.get();
+      setPreviewData(await postJSON("/api/orchestrator/preview", {
+        orchestrator: current.orchestrator,
+        question: current.question,
+        context: current.context,
+        participants: current.seats,
+      }));
+    } catch (err) {
+      setPreviewError(err.message);
+      setPreviewData(null);
+    } finally {
+      setPreviewBusy(false);
+    }
+  }, []);
 
   const modelRowKey = useCallback(
     (index, data) => data.items[index]?.key ?? index,
@@ -808,8 +799,17 @@ export function SetupTab({ selectedMeeting, onStarted }) {
 
       <Card ref={(el) => { sectionRefs.current.orchestrator = el; }}>
         <CardHeader>
-          <CardTitle>5. Orchestrator agent</CardTitle>
-          <CardDescription>Choose the coordinating model and define how it manages, summarizes, and synthesizes the deliberation.</CardDescription>
+          <div className="flex flex-wrap items-start gap-3">
+            <div className="min-w-0 flex-1">
+              <CardTitle>5. Orchestrator agent</CardTitle>
+              <CardDescription>Choose the coordinating model and define how it manages, summarizes, and synthesizes the deliberation.</CardDescription>
+            </div>
+            <div className="ml-auto">
+              <Button variant="outline" size="sm" onClick={openOrchestratorPreview} disabled={previewBusy || isFrozen} title={isFrozen ? "Locked while a deliberation is running" : "Show how the current orchestrator settings affect round summaries and final synthesis"}>
+                {previewBusy ? "Previewing…" : "Preview prompt impact"}
+              </Button>
+            </div>
+          </div>
         </CardHeader>
         <CardContent className="flex flex-col gap-5">
           <div className="flex flex-col gap-1.5">
@@ -825,16 +825,10 @@ export function SetupTab({ selectedMeeting, onStarted }) {
               <p className="text-xs text-muted-foreground">The model used for orchestrator calls, including turn planning, round summaries, and final synthesis; participant models remain independent.</p>
            </div>
            <div className="flex flex-col gap-2">
-             {[
-               ["role", "Role / Persona", "neutral_facilitator", "Neutral facilitator", "adversarial_reviewer", "Adversarial reviewer", "decision_focused", "Decision-focused", "custom", "Custom"],
-              ["turnOrderPolicy", "Turn-order policy", "balanced", "Balanced", "evidence_first", "Evidence first", "anti_starvation", "Anti-starvation"],
-              ["summaryStyle", "Summary style", "balanced", "Balanced", "concise", "Concise", "exhaustive", "Exhaustive"],
-              ["decisionPosture", "Decision posture", "preserve_spectrum", "Preserve spectrum", "consensus_seeking", "Consensus-seeking", "action_oriented", "Action-oriented"],
-              ["synthesisStyle", "Synthesis style", "decision_oriented", "Decision-oriented", "conversational", "Conversational", "technical_audit", "Technical audit"],
-             ].map(([key, label, ...options]) => (
+             {Object.entries(ORCHESTRATOR_BEHAVIOR_OPTIONS).map(([key, options]) => (
                <div key={key} className="flex items-center justify-between gap-4 rounded-lg border p-3">
                  <div className="min-w-0">
-                   <Label htmlFor={`loom-orchestrator-${key}`} className="cursor-default">{label}</Label>
+                   <Label htmlFor={`loom-orchestrator-${key}`} className="cursor-default">{ORCHESTRATOR_BEHAVIOR_LABELS[key]}</Label>
                     <p className="mt-0.5 text-xs text-muted-foreground" aria-live="polite">{getOrchestratorBehaviorDescription(key, orchestrator[key])}</p>
                  </div>
                  <Select value={orchestrator[key]} onValueChange={(value) => setOrchestratorField(key, value)} disabled={isFrozen}>
@@ -842,11 +836,9 @@ export function SetupTab({ selectedMeeting, onStarted }) {
                      <SelectValue placeholder="Select…" />
                    </SelectTrigger>
                    <SelectContent>
-                     {Array.from({ length: options.length / 2 }).map((_, index) => {
-                       const value = options[index * 2];
-                       const text = options[index * 2 + 1];
-                       return <SelectItem key={value} value={value}>{text}</SelectItem>;
-                     })}
+                     {options.map((option) => (
+                       <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                     ))}
                    </SelectContent>
                  </Select>
                </div>
@@ -943,6 +935,13 @@ export function SetupTab({ selectedMeeting, onStarted }) {
           onOpenChange={(v) => { if (!v) setSwapIdx(null); }}
         />
       )}
+      <OrchestratorPreviewDialog
+        open={previewOpen}
+        busy={previewBusy}
+        error={previewError}
+        preview={previewData}
+        onOpenChange={setPreviewOpen}
+      />
       {addOpen && (
         <PersonaPickerDialog
           mode="add"

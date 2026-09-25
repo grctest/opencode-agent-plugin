@@ -228,6 +228,22 @@ export class SessionManager {
     }
   }
 
+  /**
+   * One-shot orchestrator prompt on a fresh ephemeral session (audit O10/Step 4).
+   * Round summaries must never accumulate prior rounds' prompts and replies in
+   * session history (quadratic growth + self-anchoring); the turn planner keeps
+   * the persistent session, where cross-round awareness is the point. Do not
+   * "optimise" summaries back onto the shared session.
+   */
+  async promptOrchestratorEphemeral(system, model, message, timeoutMs) {
+    const ephemeralId = await this.#createSessionWithRetry("Loom · Orchestrator (ephemeral summary)");
+    try {
+      return await this.#promptOrchestratorOnce(ephemeralId, system, model, message, timeoutMs);
+    } finally {
+      await this.deleteEphemeralSession(ephemeralId).catch(() => {});
+    }
+  }
+
   clearOrchestratorSession() {
     this.#orchestratorSessionId = null;
   }

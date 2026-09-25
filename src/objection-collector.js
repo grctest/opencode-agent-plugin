@@ -38,13 +38,27 @@ export function collectObjections({ rounds, participants }) {
 
   const lastRound = rounds[rounds.length - 1];
   const finalRoundHasActivity = lastRound.contributions.length > 0;
-  // Only resolve if final round actually addresses the dissent (keyword overlap), not just any activity
+  // Resolution requires explicit evidence: a final-round contribution quoting or
+  // [#id]-citing the objection. Bare keyword overlap only marks the objection
+  // *stale* (raised earlier, not re-raised) — never resolved — because shared
+  // vocabulary produces false resolutions and paraphrase produces false
+  // live-dissent (audit D12). Callers must render stale distinctly from both
+  // live dissent and genuinely resolved concerns.
   const finalTexts = lastRound.contributions.map((c) => (c.content || "").toLowerCase()).join(" ");
   for (const o of objections) {
     if (o.round < lastRound.number && finalRoundHasActivity) {
+      if (finalTexts.includes(`[#${o.id}]`)) {
+        o.unresolved = false;
+        o.resolution = "cited";
+        continue;
+      }
       const kw = o.content.toLowerCase().split(/\W+/).filter((w) => w.length > 4).slice(0, 5);
       const addressed = kw.length === 0 || kw.some((k) => finalTexts.includes(k));
-      if (addressed) o.unresolved = false;
+      if (addressed) {
+        o.unresolved = false;
+        o.stale = true;
+        o.resolution = "stale";
+      }
     }
   }
   return objections;

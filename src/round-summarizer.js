@@ -5,7 +5,9 @@ import { SUBSTANTIVE_TYPES } from "./utils/contribution-types.js";
 import { renderMyStateMarkdown, STATE_PATCH_CAPS } from "./state-patch.js";
 import { sanitizeForPrompt } from "./utils/sanitize.js";
 import { delimitContext, escapeDelimiters } from "./prompts/delimiters.js";
-import { getSummaryGuidance } from "./orchestrator/models.js";
+import { getSummaryGuidance, orchestratorContextPolicy, getSummaryBand } from "./orchestrator/models.js";
+import { buildRoundContext } from "./prompts/blocks.js";
+import { sanitizeForDisplay } from "./utils/sanitize.js";
 
 const summarizerLogger = new Logger();
 const SUMMARY_TYPES = SUBSTANTIVE_TYPES;
@@ -87,36 +89,60 @@ export function buildAgentStatesContext(participantStates) {
     return "\n## Current Agent States\n_(No current state snapshots available.)_";
   }
   const body = participantStates.map(formatAgentStateSnapshot).join("\n\n");
-  return `\n## Current Agent States\n\n_These are bounded, per-agent projections, not a shared transcript. Attribute every state claim to its named holder._\n${delimitContext(body, "AGENT_STATES")}`;
+  // Same 4 kB bound as the synthesis path's Agent States block (audit C1/4.1) —
+  // the two blocks share a name and content but previously had different bounds.
+  const capped = body.length > 4000 ? `${body.slice(0, 4000)}\n…[further agent states omitted — see DB]` : body;
+  return `\n## Current Agent States\n\n_These are bounded, per-agent projections, not a shared transcript. Attribute every state claim to its named holder._\n${delimitContext(capped, "AGENT_STATES")}`;
 }
 
-/**
- * Generates a summary for a completed round using LLM-based summarization.
- * The orchestrator path retries empty responses; if the LLM still yields no
- * text, degrades to a deterministic contributions digest instead of throwing —
- * one flaky response must not kill the whole deliberation.
- */
-export async function summarizeRound(round, state, promptOrchestrator, getHighestTierModel, getFallbackModel, participantStates = [], orchestratorConfig = {}) {
-  const contribCount = round.contributions.length;
-  if (contribCount === 0) return "No contributions this round.";
+export function buildRoundSummarySystem(orchestratorConfig = {}) {
+  const band = getSummaryBand(orchestratorConfig);
+  return `You are a thorough deliberation clerk. ${band.words} words. Sentence style, human-readable, concise but thorough. Preserve numbers verbatim — do not round or invent. Never emit vec: traces.
 
-  // Try primary model, then fallback
-  const model = getHighestTierModel() ?? (getFallbackModel ? getFallbackModel() : null);
-  if (!model) throw new Error("No model available for semantic summary — check model assignment");
+${getSummaryGuidance(orchestratorConfig)}`;
+}
 
-  // Filter to only substantive contributions; keep evidence_response only when tool-backed; exclude passes
-  const summaryContributions = round.contributions.filter((c) => {
+export function filterRoundSummaryContributions(contributions = []) {
+  return contributions.filter((c) => {
     if (c.type === "pass") return false;
     if (!SUMMARY_TYPES.has(c.type)) return false;
     if (c.type === "evidence_response" && !(c.tool_calls && c.tool_calls.length > 0)) return false;
     return true;
   });
+}
 
-  // Build reflection outcome map and format contributions
+export function buildRoundSummaryUser(round, state, participantStates = [], orchestratorConfig = {}, opts = {}) {
+  const contribCount = round.contributions.length;
+  const summaryContributions = filterRoundSummaryContributions(round.contributions);
+  // Style-driven budget and word band (audit O1/O7/Step 6): the summaryStyle
+  // option changes what the clerk sees, not just what it is told to prefer.
+  const policy = orchestratorContextPolicy(orchestratorConfig, "summary");
+  const band = getSummaryBand(orchestratorConfig);
+
+  // Build reflection outcome map and format contributions, budgeted explicitly:
+  // select by evidence strength, emit chronologically, cap each line (audit C1/4.1).
   const reflectionMap = buildReflectionMap(round.contributions);
-  const formattedContributions = summaryContributions
-    .map((c) => formatContribution(c, reflectionMap))
-    .join("\n\n");
+  const CONTRIB_BUDGET = policy.budget;
+  const scored = summaryContributions.map((c) => {
+    const s = String(c.content ?? "").toLowerCase();
+    const strength = s.includes("strength: strong") ? 3
+      : ((c.tool_calls && c.tool_calls.length > 0) || s.includes("strength: weak")) ? 2
+      : s.includes("inconclusive") ? 1 : 0;
+    return { c, line: truncate(formatContribution(c, reflectionMap), 1200), strength };
+  });
+  const picked = new Set();
+  let used = 0;
+  for (const item of [...scored].sort((a, b) => b.strength - a.strength)) {
+    if (used + item.line.length > CONTRIB_BUDGET) continue;
+    used += item.line.length;
+    picked.add(item.c);
+  }
+  const omittedCount = scored.length - picked.size;
+  const formattedContributions = scored
+    .filter((item) => picked.has(item.c))
+    .map((item) => item.line)
+    .join("\n\n") +
+    (omittedCount > 0 ? `\n\n…[${omittedCount} further contribution(s) omitted — states + evidence signals retained]` : "");
 
   // Adapt prompt based on whether we have substantive contributions
   const hasSubstantiveContent = formattedContributions.trim().length > 0;
@@ -135,23 +161,47 @@ export async function summarizeRound(round, state, promptOrchestrator, getHighes
       return strengthScore(b) - strengthScore(a);
     });
   const evidenceHint = evidenceContribs.length > 0
-    ? `\n## Evidence / Tool Signals (do not invent — use only if cited)\n${evidenceContribs.slice(0, 6).map(c => `- [#${c.id}] ${c.participant_id}: ${c.content.slice(0, 350)}${c.tool_calls ? ` [tools: ${c.tool_calls.map(t=>t.tool).join(',')}]` : ""}`).join("\n")}`
+    ? `\n## Evidence / Tool Signals (do not invent — use only if cited)\n${evidenceContribs.slice(0, 6).map(c => `- [#${c.id}] ${c.participant_id}: ${truncate(c.content ?? "", 350)}${c.tool_calls ? ` [tools: ${c.tool_calls.map(t=>t.tool).join(',')}]` : ""}`).join("\n")}`
     : "";
 
   const stateHint = buildAgentStatesContext(participantStates);
 
+  // Round-position awareness, reused verbatim from the agent-side helper so the
+  // clerk adapts emphasis exactly as agents do (audit O9/Step 5).
+  const maxRounds = Number.isFinite(opts.maxRounds) && opts.maxRounds > 0 ? opts.maxRounds : null;
+  const roundContextLine = maxRounds
+    ? `\nRound: ${buildRoundContext(round.number ?? 1, maxRounds)}\n`
+    : "";
+  // Participant roster: id + activity only, never tier — seniority plays no
+  // part in orchestrator decisions.
+  const roster = Array.isArray(opts.roster) ? opts.roster.filter((p) => p && p.id) : [];
+  const rosterBlock = roster.length > 0
+    ? `\n## Participants (activity)\n${roster.map((p) => `- ${sanitizeForDisplay(String(p.id), 60)} — ${Number(p.contributions_count ?? 0)} contributions${p.status === "passed" ? " [passed]" : ""}`).join("\n")}\n`
+    : "";
+  // State-of-Play excerpt so "newly established vs already carried" is
+  // decidable from prior-round outcomes, not just positions (audit O9/Step 5).
+  const sopExcerpt = opts.stateOfPlay
+    ? `\n## State of Play (prior rounds — what was already established)\n${delimitContext(sanitizeForDisplay(String(opts.stateOfPlay), 600), "PRIOR_STATE_OF_PLAY")}\n`
+    : "";
+  // Turn requests with priorities: the clerk should note pending procedural
+  // state, not just substantive positions (audit O9/Step 5).
+  const turnRequests = Array.isArray(opts.turnRequests) ? opts.turnRequests : [];
+  const requestsBlock = turnRequests.length > 0
+    ? `\n## Turn Requests (for next round)\n${turnRequests.slice(0, 8).map((r) => `- ${sanitizeForDisplay(String(r.participant_id ?? "?"), 60)} P${Number(r.priority) || "?"}: ${sanitizeForDisplay(String(r.reason ?? ""), 120)}`).join("\n")}\n`
+    : "";
+
   // Detect mode for summary shape
   const isCodeRound = formattedContributions.includes("file=") || formattedContributions.includes("```") || (state.tags || []).some(t => /engineering|code|programming/i.test(t));
 
-  const prompt = hasSubstantiveContent
-    ? `You are a thorough deliberation clerk. Summarize round ${round.number || "?"} in 180-350 words — sentence style, human-readable first. Concise but thorough; preserve nuance, don't yap. Preserve numbers verbatim — do not round or invent.
+  return hasSubstantiveContent
+    ? `You are a thorough deliberation clerk. Summarize round ${round.number || "?"} in ${band.words} words — sentence style, human-readable first. Concise but thorough; preserve nuance, don't yap. Preserve numbers verbatim — do not round or invent.
 
 ## Question
 ${state.question || "(no question provided)"}
-
+${roundContextLine}${rosterBlock}${sopExcerpt}
 ## Round ${round.number || "?"} Contributions
 ${formattedContributions}
-${evidenceHint}${stateHint}
+${evidenceHint}${requestsBlock}${stateHint}
 
 ## Output — 4-5 bullets, each 1-3 sentences (human-readable, then auditable):
 
@@ -166,18 +216,33 @@ Rules: Agent States are remembered positions and standing context, not independe
 
 ## Question
 ${state.question || "(no question provided)"}
-
+${roundContextLine}${rosterBlock}
 ## Round ${round.number || "?"}
 Contribution types: ${round.contributions.map((c) => c.type).join(", ")}
 Turn requests: ${round.turn_requests.length}
 ${evidenceHint}${stateHint}
 
 ## Instructions
-Provide 180-350 word summary with 4-5 bullets (Established / Contested / Evidence / Open / Code if applicable) noting no substantive deliberation but mentioning contribution types and any turn requests. Agent States are remembered positions and standing context, not independent evidence; attribute them to their named holder and do not add a separate Agent States bullet. Use uncited state only as context, and place it under Evidence only when an explicit Source: or [#id] resolves to a listed contribution or tool signal. Sentence style, human-readable. Preserve numbers verbatim.`;
+Provide ${band.words} word summary with 4-5 bullets (Established / Contested / Evidence / Open / Code if applicable) noting no substantive deliberation but mentioning contribution types and any turn requests. Agent States are remembered positions and standing context, not independent evidence; attribute them to their named holder and do not add a separate Agent States bullet. Use uncited state only as context, and place it under Evidence only when an explicit Source: or [#id] resolves to a listed contribution or tool signal. Sentence style, human-readable. Preserve numbers verbatim.`;
+}
 
-  const semanticSummary = await promptOrchestrator(`You are a thorough deliberation clerk. 180-350 words. Sentence style, human-readable, concise but thorough. Preserve numbers verbatim — do not round or invent. Never emit vec: traces.
+/**
+ * Generates a summary for a completed round using LLM-based summarization.
+ * The orchestrator path retries empty responses; if the LLM still yields no
+ * text, degrades to a deterministic contributions digest instead of throwing —
+ * one flaky response must not kill the whole deliberation.
+ */
+export async function summarizeRound(round, state, promptOrchestrator, getHighestTierModel, getFallbackModel, participantStates = [], orchestratorConfig = {}, summaryOpts = {}) {
+  const contribCount = round.contributions.length;
+  if (contribCount === 0) return "No contributions this round.";
 
-${getSummaryGuidance(orchestratorConfig)}`, model, prompt, "summary");
+  // Try primary model, then fallback
+  const model = getHighestTierModel() ?? (getFallbackModel ? getFallbackModel() : null);
+  if (!model) throw new Error("No model available for semantic summary — check model assignment");
+
+  const summaryContributions = filterRoundSummaryContributions(round.contributions);
+  const prompt = buildRoundSummaryUser(round, state, participantStates, orchestratorConfig, summaryOpts);
+  const semanticSummary = await promptOrchestrator(buildRoundSummarySystem(orchestratorConfig), model, prompt, "summary");
 
   if (semanticSummary && semanticSummary.trim().length > 0) {
     return semanticSummary.trim();

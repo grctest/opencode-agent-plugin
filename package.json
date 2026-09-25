@@ -29,6 +29,7 @@
     "bundle": "node scripts/build.mjs",
     "dev": "node scripts/build.mjs --watch",
     "check": "node scripts/check.mjs",
+    "docs:verify": "node scripts/docs-verify.mjs",
     "install:plugin": "npm run bundle && node scripts/install.mjs",
     "update:plugin": "npm run bundle && node scripts/update.mjs",
     "model:download": "node scripts/model.mjs download",
