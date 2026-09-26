@@ -102,6 +102,28 @@ export async function _synthesize() {
     return finalOutput;
   }
 
+/**
+ * Synthesis-only completion for a meeting whose rounds are all persisted but
+ * whose artifact row was never written (kill landed between the terminal
+ * status persist and saveArtifact). Runs the normal synthesis path without
+ * executing any further rounds, then re-applies the original terminal status
+ * (restore forces in-memory status to weaving, and _synthesize persists that
+ * via _persistState — without this step finish would regress terminal state).
+ */
+export async function finishSynthesis(originalStatus) {
+  const output = await this._synthesize();
+  try {
+    const valid = ["converged", "cancelled", "timeout", "max_rounds_reached", "aborted"];
+    if (valid.includes(originalStatus) && this._stateManager.getStatus() !== originalStatus) {
+      this._stateManager.transitionTo(originalStatus);
+      await this._persistState();
+    }
+  } catch (err) {
+    this._logger.warn("finish_status_restore_failed", `Could not re-apply terminal status ${originalStatus} after finish`, extractErrorInfo(err));
+  }
+  return output;
+}
+
 export function _computeQualityTelemetry() {
     try {
       const weave = this._stateManager.getWeave();

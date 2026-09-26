@@ -1,4 +1,4 @@
-import { existsSync, copyFileSync, mkdirSync } from "node:fs";
+import { existsSync, copyFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
@@ -164,23 +164,37 @@ function tryCheckpointDb(dbPath) {
   }
 }
 
-function tryImmutableOpen(dbPath) {
-  // Last resort for a WAL that cannot be checkpointed (read-only FS,
-  // DrvFs lock, corrupt WAL): open the main image without WAL recovery
-  // so the last checkpointed state is still readable instead of the
-  // meeting vanishing from the dashboard.
+/**
+ * Open a plain readonly handle. bun:sqlite defers WAL recovery until the
+ * first read — a bare `new Database(path, {readonly:true})` can succeed and
+ * then throw SQLITE_READONLY on the first SELECT — so the probe makes
+ * recovery failures surface at open instead of leaking to the caller's query.
+ */
+function openPlainReadonly(dbPath) {
   const Cls = getDatabaseClass();
   if (!Cls) throw new Error("Database class not initialized — call ensureDb() first");
-  // SQLite URI immutable=1 skips WAL recovery entirely.
+  const db = new Cls(dbPath, { readonly: true });
+  try { db.exec("PRAGMA busy_timeout = 5000"); } catch {}
+  probeReadonlyDb(db);
+  return db;
+}
+
+/**
+ * Last-resort open for a WAL that cannot be checkpointed (read-only volume,
+ * foreign lock, corrupt WAL): `immutable=1` reads the main image without WAL
+ * recovery; if that fails, read a copy (no sidecars alongside it). Serves the
+ * LAST CHECKPOINTED state — committed-but-uncheckpointed rows are lost, which
+ * callers must flag as `degraded` and never build recovery decisions on.
+ */
+function openDegradedReadonly(dbPath) {
+  const Cls = getDatabaseClass();
+  if (!Cls) throw new Error("Database class not initialized — call ensureDb() first");
   try {
     const db = new Cls(`file:${dbPath}?immutable=1`, { readonly: true });
     try { db.exec("PRAGMA busy_timeout = 5000"); } catch {}
     probeReadonlyDb(db);
-    return { db, recovered: true, degraded: "immutable" };
+    return { db, degraded: "immutable" };
   } catch {}
-  // Fallback: copy the main image to tmp and read the copy (no -wal/-shm
-  // alongside it, so no recovery is attempted). WAL-only tail is lost,
-  // but committed history renders.
   try {
     mkdirSync(join(tmpdir(), "loom-ro"), { recursive: true });
     const tmpPath = join(tmpdir(), "loom-ro", `ro-${Date.now()}-${Math.floor(Math.random() * 1e6)}.db`);
@@ -188,7 +202,8 @@ function tryImmutableOpen(dbPath) {
     const db = new Cls(tmpPath, { readonly: true });
     try { db.exec("PRAGMA busy_timeout = 5000"); } catch {}
     probeReadonlyDb(db);
-    return { db, recovered: true, degraded: "copy" };
+    try { unlinkSync(tmpPath); } catch {}
+    return { db, degraded: "copy" };
   } catch (err) {
     err.isRecoveryAttempt = true;
     throw err;
@@ -196,119 +211,105 @@ function tryImmutableOpen(dbPath) {
 }
 
 /**
- * Open a SQLite database in readonly mode, tolerating WAL recovery state.
- *
- * Background: a WAL-mode DB with an uncheckpointed WAL (force-closed server,
- * crashed writer, DrvFs mount) requires a write to recover on open. A pure
- * `readonly:true` open then fails with `SQLITE_READONLY: attempt to write a
- * readonly database` even for SELECTs — and bun:sqlite defers that failure
- * until the first read, so we probe inside this function.
- *
- * Strategy: readonly open + probe. On a readonly-recovery error only, run a
- * single writable `wal_checkpoint(TRUNCATE)` and retry readonly once. When
- * the checkpoint itself cannot run, fall back to an immutable / copy open of
- * the last checkpointed image so history still renders. BUSY / LOCKED errors
- * are rethrown untouched so callers keep their existing non-blocking
- * skip-and-retry behavior.
- *
- * Returns `{ db, recovered, degraded? }`. Throws on failure; `isRecoveryAttempt`
- * distinguishes unrecoverable readonly errors for distinct log codes.
+ * The ordered ways to open a database readonly. A strategy advances only on
+ * a WAL-recovery error — BUSY/LOCKED and corruption propagate immediately —
+ * and the final (degraded) strategy is terminal: its failure is flagged and
+ * rethrown so callers keep their skip-and-retry behavior.
  */
-export function openReadonlyDatabase(dbPath, { checkpointOnReadonly = true } = {}) {
-  const DatabaseClass = getDatabaseClass();
-  if (!DatabaseClass) throw new Error("Database class not initialized — call ensureDb() first");
-  const openProbe = () => {
-    const db = new DatabaseClass(dbPath, { readonly: true });
-    try { db.exec("PRAGMA busy_timeout = 5000"); } catch {}
-    probeReadonlyDb(db);
-    return db;
-  };
-  try {
-    return { db: openProbe(), recovered: false };
-  } catch (err) {
-    if (!checkpointOnReadonly || !isReadonlyWalError(err)) throw err;
-    const checkpointed = tryCheckpointDb(dbPath);
-    void checkpointed;
+function buildReadonlyOpenStrategies(dbPath) {
+  return [
+    { name: "readonly", open: () => ({ db: openPlainReadonly(dbPath) }) },
+    { name: "checkpoint", open: () => { tryCheckpointDb(dbPath); return { db: openPlainReadonly(dbPath) }; } },
+    { name: "degraded", open: () => openDegradedReadonly(dbPath) },
+  ];
+}
+
+function openStrategies(dbPath) {
+  let sawRecoveryFailure = false;
+  for (const strategy of buildReadonlyOpenStrategies(dbPath)) {
+    let opened;
     try {
-      return { db: openProbe(), recovered: true };
-    } catch (retryErr) {
-      if (!isReadonlyWalError(retryErr)) {
-        retryErr.isRecoveryAttempt = true;
-        throw retryErr;
+      opened = strategy.open();
+    } catch (err) {
+      if (!isReadonlyWalError(err)) {
+        if (sawRecoveryFailure) err.isRecoveryAttempt = true;
+        throw err;
       }
-      // Writable checkpoint didn't help (read-only FS / DrvFs lock /
-      // corrupt WAL) — serve the last checkpointed image instead of
-      // dropping the meeting from the dashboard.
-      try {
-        return tryImmutableOpen(dbPath);
-      } catch (fallbackErr) {
-        fallbackErr.isRecoveryAttempt = true;
-        throw fallbackErr;
+      if (strategy.name === "degraded") {
+        err.isRecoveryAttempt = true;
+        throw err;
       }
+      sawRecoveryFailure = true;
+      continue;
     }
+    return {
+      db: opened.db,
+      recovered: sawRecoveryFailure,
+      ...(opened.degraded ? { degraded: opened.degraded } : {}),
+    };
   }
+  throw new Error("openStrategies: exhausted readonly open strategies without a result");
 }
 
 /**
- * Run a read callback against a readonly handle with WAL-recovery retry.
- * Covers the case where `open` probes fine but a later `prepare` still hits
- * SQLITE_READONLY (e.g. WAL appeared between open and query). Retries once
- * after a writable checkpoint, then via the immutable/copy fallback.
+ * Open a SQLite database in readonly mode, tolerating WAL recovery state.
+ *
+ * Background: a WAL-mode DB with an uncheckpointed WAL (force-closed server,
+ * crashed writer, DrvFs mount) requires a write to recover on open — see
+ * buildReadonlyOpenStrategies for the ordered recovery ladder.
+ *
+ * Returns `{ db, recovered, degraded? }` where `recovered` means at least
+ * one recovery strategy ran and `degraded` marks the last-resort open.
+ */
+export function openReadonlyDatabase(dbPath) {
+  return openStrategies(dbPath);
+}
+
+/**
+ * Run a read callback against a readonly handle with the same recovery
+ * ladder. Covers the case where the open probes fine but a later `prepare`
+ * still hits SQLITE_READONLY (e.g. a WAL appeared between open and query).
  * Always closes the handle. Returns `{ result, recovered, degraded? }`.
  */
-export function withReadonlyDb(dbPath, fn, { checkpointOnReadonly = true } = {}) {
-  const opened = openReadonlyDatabase(dbPath, { checkpointOnReadonly });
-  let db = opened.db;
-  const close = () => { try { db?.close(); } catch {} db = null; };
-  try {
-    const result = fn(db);
-    const out = { result, recovered: opened.recovered };
-    if (opened.degraded) out.degraded = opened.degraded;
-    close();
-    return out;
-  } catch (err) {
-    close();
-    if (!checkpointOnReadonly || !isReadonlyWalError(err)) throw err;
-    tryCheckpointDb(dbPath);
-    let retry = null;
+export function withReadonlyDb(dbPath, fn) {
+  let sawRecoveryFailure = false;
+  for (const strategy of buildReadonlyOpenStrategies(dbPath)) {
+    let opened;
     try {
-      retry = openReadonlyDatabase(dbPath, { checkpointOnReadonly: false });
-    } catch {
-      const fb = tryImmutableOpen(dbPath);
-      try {
-        const result = fn(fb.db);
-        try { fb.db?.close(); } catch {}
-        return { result, recovered: true, degraded: fb.degraded };
-      } catch (fnErr) {
-        try { fb.db?.close(); } catch {}
-        fnErr.isRecoveryAttempt = true;
-        throw fnErr;
+      opened = strategy.open();
+    } catch (err) {
+      if (!isReadonlyWalError(err)) {
+        if (sawRecoveryFailure) err.isRecoveryAttempt = true;
+        throw err;
       }
+      if (strategy.name === "degraded") {
+        err.isRecoveryAttempt = true;
+        throw err;
+      }
+      sawRecoveryFailure = true;
+      continue;
     }
+    const db = opened.db;
     try {
-      const result = fn(retry.db);
-      const out = { result, recovered: true };
-      if (retry.degraded) out.degraded = retry.degraded;
-      try { retry.db?.close(); } catch {}
+      const result = fn(db);
+      const out = { result, recovered: sawRecoveryFailure };
+      if (opened.degraded) out.degraded = opened.degraded;
+      try { db.close(); } catch {}
       return out;
-    } catch (retryErr) {
-      try { retry.db?.close(); } catch {}
-      if (!isReadonlyWalError(retryErr)) {
-        retryErr.isRecoveryAttempt = true;
-        throw retryErr;
+    } catch (err) {
+      try { db.close(); } catch {}
+      if (!isReadonlyWalError(err)) {
+        if (sawRecoveryFailure) err.isRecoveryAttempt = true;
+        throw err;
       }
-      const fb = tryImmutableOpen(dbPath);
-      try {
-        const result = fn(fb.db);
-        try { fb.db?.close(); } catch {}
-        return { result, recovered: true, degraded: fb.degraded };
-      } catch (fnErr) {
-        try { fb.db?.close(); } catch {}
-        fnErr.isRecoveryAttempt = true;
-        throw fnErr;
+      if (strategy.name === "degraded") {
+        err.isRecoveryAttempt = true;
+        throw err;
       }
+      sawRecoveryFailure = true;
     }
   }
+  throw new Error("withReadonlyDb: exhausted readonly open strategies without a result");
 }
 
 /**

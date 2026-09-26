@@ -172,6 +172,15 @@ export function SetupTab({ selectedMeeting, onStarted }) {
   const [addOpen, setAddOpen] = useState(false);
   const [job, setJob] = useState(null);
   const [extendInput, setExtendInput] = useState("");
+  const [resumeStatus, setResumeStatus] = useState(null);
+  const [resumeParts, setResumeParts] = useState(null);
+  const [resumedId, setResumedId] = useState(null);
+  const [resumeWarnings, setResumeWarnings] = useState([]);
+  const [resumeMeta, setResumeMeta] = useState(null);
+  const [finishInfo, setFinishInfo] = useState(null);
+  const [finishedId, setFinishedId] = useState(null);
+  const [finishWarnings, setFinishWarnings] = useState([]);
+  const [finishMeta, setFinishMeta] = useState(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewError, setPreviewError] = useState(null);
@@ -265,6 +274,57 @@ export function SetupTab({ selectedMeeting, onStarted }) {
     const t = setInterval(poll, 3000);
     return () => { cancelled = true; clearInterval(t); };
   }, []);
+
+  // Detect an interrupted meeting: DB row still weaving/initializing but no
+  // active job (e.g. server force-closed mid-round). Resume-only triage.
+  // Also detects synthesis orphans: terminal status but no artifact row
+  // (kill between status persist and artifact save) for the Finish action.
+  useEffect(() => {
+    if (!selectedMeeting || job?.running) {
+      setResumeStatus(null);
+      setResumeParts(null);
+      setFinishInfo(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/state?meeting=${selectedMeeting}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        const status = data?.status ?? null;
+        setResumeStatus(status);
+        if (status === "weaving" || status === "initializing") {
+          setFinishInfo(null);
+          try {
+            const pres = await fetch(`/api/participants?meeting=${selectedMeeting}`);
+            if (pres.ok) {
+              const pdata = await pres.json();
+              if (!cancelled) setResumeParts(Array.isArray(pdata) ? pdata.length : null);
+            }
+          } catch {}
+        } else if (status) {
+          setResumeParts(null);
+          try {
+            const ares = await fetch(`/api/artifact?meeting=${selectedMeeting}`);
+            if (!cancelled) {
+              if (ares.ok) {
+                const adata = await ares.json();
+                setFinishInfo({ status, hasArtifact: !!(adata && adata.content) });
+              } else {
+                setFinishInfo({ status, hasArtifact: null });
+              }
+            }
+          } catch {}
+        } else {
+          setResumeParts(null);
+          setFinishInfo(null);
+        }
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [selectedMeeting, job]);
 
   const enabledKeys = useMemo(
     () => new Set((llm?.models ?? []).filter((m) => m.enabled && !m.unhealthy).map((m) => m.key)),
@@ -476,6 +536,44 @@ export function SetupTab({ selectedMeeting, onStarted }) {
     }
   };
 
+  const doResume = async () => {
+    if (!selectedMeeting) return;
+    setError(null);
+    setBusy("resume");
+    try {
+      const data = await postJSON("/api/meetings/resume", { meeting_id: selectedMeeting });
+      setResumedId(selectedMeeting);
+      setResumeWarnings(Array.isArray(data?.warnings) ? data.warnings : []);
+      setResumeMeta({ recovered: !!data?.recovered, degraded: !!data?.degraded });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const doFinish = async () => {
+    if (!selectedMeeting) return;
+    setError(null);
+    setBusy("finish");
+    try {
+      const data = await postJSON("/api/meetings/finish", { meeting_id: selectedMeeting });
+      if (data?.artifact_present) {
+        setFinishedId(selectedMeeting);
+        setFinishWarnings([]);
+        setFinishMeta({ recovered: !!data?.recovered, degraded: !!data?.degraded, regenerated: !!data?.report_regenerated });
+      } else {
+        setFinishedId(selectedMeeting);
+        setFinishWarnings(Array.isArray(data?.warnings) ? data.warnings : []);
+        setFinishMeta({ recovered: !!data?.recovered, degraded: !!data?.degraded, regenerated: false });
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const doExtend = async () => {
     if (!selectedMeeting || extendInput.trim().length < 3) return;
     setError(null);
@@ -517,7 +615,77 @@ export function SetupTab({ selectedMeeting, onStarted }) {
             <AlertDescription>Follow it in the Timeline tab (meeting {startedId.slice(0, 8)}…).</AlertDescription>
           </Alert>
         )}
-         {error && (
+        {resumedId && (
+          <Alert className="mt-3 border-emerald-500/40 bg-emerald-500/10">
+            <AlertTitle>Deliberation resumed</AlertTitle>
+            <AlertDescription>
+              <span>Continuing meeting {resumedId.slice(0, 8)}… from where it left off — follow it in the Timeline tab.</span>
+              {resumeMeta?.recovered && (
+                <div className="mt-1 text-xs opacity-80">Crash WAL was checkpointed before resuming; history is complete.</div>
+              )}
+              {resumeMeta?.degraded && (
+                <div className="mt-1 text-xs opacity-80">Warning: reads fell back to the last checkpointed image — recent turns may be missing.</div>
+              )}
+              {resumeWarnings.length > 0 && (
+                <ul className="mt-1 list-disc pl-5">
+                  {resumeWarnings.map((w, i) => (
+                    <li key={i}>Model change for {w.seat}: {w.requested} unavailable — {w.detail}</li>
+                  ))}
+                </ul>
+              )}
+            </AlertDescription>
+          </Alert>
+        )}
+        {finishedId && (
+          <Alert className="mt-3 border-emerald-500/40 bg-emerald-500/10">
+            <AlertTitle>Deliberation finished</AlertTitle>
+            <AlertDescription>
+              <span>Synthesis completed for meeting {finishedId.slice(0, 8)}… — see the Output tab.</span>
+              {finishMeta?.regenerated && (
+                <div className="mt-1 text-xs opacity-80">The report file was regenerated from the stored output.</div>
+              )}
+              {finishMeta?.degraded && (
+                <div className="mt-1 text-xs opacity-80">Warning: reads fell back to the last checkpointed image.</div>
+              )}
+              {finishWarnings.length > 0 && (
+                <ul className="mt-1 list-disc pl-5">
+                  {finishWarnings.map((w, i) => (
+                    <li key={i}>Model change for {w.seat}: {w.requested} unavailable — {w.detail}</li>
+                  ))}
+                </ul>
+              )}
+            </AlertDescription>
+          </Alert>
+        )}
+        {selectedMeeting && !job?.running && (resumeStatus === "weaving" || resumeStatus === "initializing") && resumeParts === 0 && (
+          <Alert className="mt-3 border-amber-500/40 bg-amber-500/10">
+            <AlertTitle>Deliberation interrupted</AlertTitle>
+            <AlertDescription>This meeting stopped before participants were saved — it cannot be resumed. Start a fresh deliberation below.</AlertDescription>
+          </Alert>
+        )}
+        {selectedMeeting && !job?.running && (resumeStatus === "weaving" || resumeStatus === "initializing") && resumeParts !== 0 && (
+          <Alert className="mt-3 border-amber-500/40 bg-amber-500/10">
+            <AlertTitle>Deliberation interrupted</AlertTitle>
+            <AlertDescription className="flex items-center justify-between gap-2">
+              <span>The server stopped mid-run. Committed turns are preserved — resume completes the interrupted round first, then continues.</span>
+              <Button variant="outline" size="sm" onClick={doResume} disabled={busy === "resume"}>
+                {busy === "resume" ? "Resuming…" : "Resume"}
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
+        {selectedMeeting && !job?.running && finishInfo && ["converged", "cancelled", "timeout", "max_rounds_reached", "aborted"].includes(finishInfo.status) && finishInfo.hasArtifact === false && (
+          <Alert className="mt-3 border-amber-500/40 bg-amber-500/10">
+            <AlertTitle>Synthesis never completed</AlertTitle>
+            <AlertDescription className="flex items-center justify-between gap-2">
+              <span>This meeting ended ({finishInfo.status}) but its output was never written. Finish runs synthesis only — no new rounds.</span>
+              <Button variant="outline" size="sm" onClick={doFinish} disabled={busy === "finish"}>
+                {busy === "finish" ? "Finishing…" : "Finish"}
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
+        {error && (
            <Alert variant="destructive" className="mt-3" role="alert">
              <AlertTitle>Something went wrong</AlertTitle>
              <AlertDescription>{error}</AlertDescription>

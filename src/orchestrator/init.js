@@ -80,13 +80,40 @@ export async function initialize() {
 
       // Index personas into the meeting database for vector similarity search.
       // Skip if already indexed for this meeting (per-meeting scoping).
-      const { isEmbedderInitialized } = await import("../services/embedding-service.js");
+      const { isEmbedderInitialized, getEmbeddingDim } = await import("../services/embedding-service.js");
       if (isEmbedderInitialized()) {
         try {
           this._personaIndex = new PersonaIndex(db);
-          if (db.countPersonaEmbeddings() === 0) {
+          const activeModel = this._options.embedding_model ?? getConfig().embeddingModel ?? null;
+          let activeDim = null;
+          try { activeDim = getEmbeddingDim(); } catch {}
+          const needsIndex = async () => {
+            if (db.countPersonaEmbeddings() === 0) return "empty";
+            // Reuse only when the stamped geometry matches the active model:
+            // after an embedding-model upgrade, old vectors target reflections
+            // wrongly (or the dim table is empty → silent keyword fallback).
+            let stamped = null;
+            let stampedDim = null;
+            try {
+              const m = db.getMeeting();
+              stamped = m?.embedding_model ?? null;
+              stampedDim = m?.embedding_dim ?? null;
+            } catch {}
+            const norm = (v) => v ?? null;
+            if (norm(stamped) !== norm(activeModel) || Number(norm(stampedDim)) !== Number(norm(activeDim))) {
+              return "model_mismatch";
+            }
+            return null;
+          };
+          const reason = await needsIndex();
+          if (reason) {
+            if (reason === "model_mismatch") {
+              this._logger.info("persona_embeddings_stale", "Stored persona vectors were built with a different embedding model — reindexing");
+              try { db.clearPersonaEmbeddings(); } catch {}
+            }
             const personas = getPersonas();
             await this._personaIndex.indexAll(personas);
+            try { db.setEmbeddingModel(activeModel, activeDim); } catch {}
             if (db.countPersonaEmbeddings() > 0) {
               try { db.setSemanticDegraded(false); } catch {}
             }

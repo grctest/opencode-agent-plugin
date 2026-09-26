@@ -57,12 +57,35 @@ export class MeetingExtender {
     // parses extensions back out of fabric with a regex keyed on it (audit 05 LS7).
     const safePrompt = sanitizeForPrompt(newPrompt ?? "", 8000);
     const extraRounds = this.#deriveExtraRounds();
+    const extensionBlock = `**User Input:** ${safePrompt}`;
+    const prevFabric = (() => { try { return database.getFabric(); } catch { return stateManager.getFabric(); } })();
+
+    // Idempotency: a killed extend may have committed the fabric append +
+    // max_rounds bump before dying. Retrying Extend with the SAME prompt must
+    // not append/bump twice (dashboard parses extensions by splitting on the
+    // marker, and agents would see the prompt twice). A different prompt is a
+    // genuine new extension and applies normally.
+    const alreadyApplied = typeof prevFabric === "string" && prevFabric.endsWith(extensionBlock);
+    if (alreadyApplied) {
+      this.#logger.info("extended_idempotent", "Extension already applied (fabric ends with identical block) — skipping mutation");
+      stateManager.forceTransitionTo("weaving");
+      try { database.clearAgentErrors(); } catch {}
+      for (const p of stateManager.getParticipants()) {
+        const pid = p.config?.id ?? p.id;
+        if (!pid) continue;
+        stateManager.setParticipantStatus(pid, "listening");
+        database.setParticipantStatus(pid, "listening");
+      }
+      await sessionManager.postProgress(
+        `🧵 Extending loom — previous extension already applied, continuing without duplicating input`
+      );
+      return;
+    }
 
     // Fabric + max-rounds + round marker must apply atomically or not at all
     // (audit 05 LS7): half-applied extensions leave inconsistent state.
     // Snapshot in-memory state before DB transaction so we can revert on rollback.
     const prevMaxRounds = stateManager.getMaxRounds();
-    const prevFabric = (() => { try { return database.getFabric(); } catch { return stateManager.getFabric(); } })();
     let txSucceeded = false;
     if (typeof database.transaction === "function") {
       try {

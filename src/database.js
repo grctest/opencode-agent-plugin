@@ -84,7 +84,7 @@ export class MeetingDatabase {
     await ensureDb();
     const { result } = withReadonlyDb(dbPath, (db) =>
       db.prepare(
-        `SELECT id, question, context, status, round, max_rounds, convergence, fabric, orchestrator_provider_id, orchestrator_model_id, feature_toggles_json, orchestrator_config_json
+        `SELECT id, question, context, status, round, max_rounds, convergence, fabric, parent_session_id, opencode_session_id, orchestrator_provider_id, orchestrator_model_id, feature_toggles_json, orchestrator_config_json
          FROM meetings LIMIT 1`
       ).get(),
     );
@@ -209,6 +209,7 @@ export class MeetingDatabase {
   getMeeting() { return meetingOps.getMeeting(this.#db, this.#meetingId); }
   setNextSpeaker(nextSpeakerId) { const r = meetingOps.setNextSpeaker(this.#db, this.#meetingId, nextSpeakerId); this.#notify("meetings"); return r; }
   setStats(statsJson) { const r = meetingOps.setStats(this.#db, this.#meetingId, statsJson); this.#notify("meetings"); return r; }
+  setEmbeddingModel(model, dim) { const r = meetingOps.setEmbeddingModel(this.#db, this.#meetingId, model, dim); this.#notify("meetings"); return r; }
   getOpencodeSessionId() { return meetingOps.getOpencodeSessionId(this.#db, this.#meetingId); }
 
   addContribution(meetingId, contribution) { const r = contribOps.addContribution(this.#db, meetingId, contribution, () => this.getRound()); this.#notify("contributions"); return r; }

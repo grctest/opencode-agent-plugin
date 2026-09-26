@@ -393,6 +393,12 @@ export function setStats(db, meetingId, statsJson) {
     .run(statsJson ?? null, meetingId);
 }
 
+export function setEmbeddingModel(db, meetingId, model, dim) {
+  db
+    .prepare("UPDATE meetings SET embedding_model = ?, embedding_dim = ? WHERE id = ?")
+    .run(model ?? null, dim ?? null, meetingId);
+}
+
 export function getOpencodeSessionId(db, meetingId) {
   try {
     const row = db

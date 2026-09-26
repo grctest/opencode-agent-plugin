@@ -30,6 +30,10 @@ export const Loom = async (input) => {
   setDefaultConfigDirectory(directory);
   const config = createConfig(directory);
   loadSessionIndex(directory);
+  try {
+    const { sweepRecoveryLitter } = await import("./database/maintenance.js");
+    sweepRecoveryLitter(directory);
+  } catch {}
   const logger = new Logger();
 
   const configSource = getConfigSource();

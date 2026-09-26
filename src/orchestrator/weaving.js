@@ -27,7 +27,7 @@ export async function runMeeting() {
      }
   }
 
- export async function extendMeeting(newPrompt) {
+  export async function extendMeeting(newPrompt) {
     this._startTime = Date.now();
     if (this._timeBudget) this._timeBudget.reset(this._startTime, this._meetingTimeoutMs);
     this._cancelled = false;
@@ -61,6 +61,34 @@ export async function runMeeting() {
       this._stallWatchdog.stop();
     }
     return output;
+  }
+
+  /**
+   * Resume a meeting interrupted by a sudden server kill. Caller must have
+   * run initialize() first (restores DB state into memory).
+   *
+   * Unlike runMeeting() (fresh start) this first continues the interrupted
+   * round in place — re-driving only its missing speakers and finalizing it —
+   * so a partial round is completed rather than abandoned. Returns the final
+   * synthesized output like runMeeting().
+   */
+  export async function resumeMeeting() {
+    try { await this._sessionManager.postProgress(`🧵 Resuming interrupted deliberation — continuing from round ${this._stateManager.getCurrentRound()}.`); } catch {}
+    this._stallWatchdog.start(
+      () => {
+        const status = this._stateManager.getStatus();
+        return status === "initializing" || status === "weaving" ? status : "weaving";
+      },
+      () => this._cancelled,
+    );
+    try {
+      const continued = await this._continueInterruptedRound();
+      if (continued === false) return await this._synthesize();
+      await this._runWeavingLoop();
+      return await this._synthesize();
+    } finally {
+      this._stallWatchdog.stop();
+    }
   }
 
 export async function _runWeavingLoop() {

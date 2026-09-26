@@ -34,6 +34,8 @@ import {
   handleStartMeeting,
   handleCancelMeeting,
   handleExtendMeeting,
+  handleResumeMeeting,
+  handleFinishMeeting,
   handleJobStatus,
 } from "./server/control.js";
 import { getMeetingDbPath, isValidMeetingId } from "./api/free.js";
@@ -50,6 +52,10 @@ import { ensureDb, repairDatabase, isReadonlyError } from "../database/connectio
  */
 function startupRepairMeetingDbs(directory) {
   (async () => {
+    try {
+      const { sweepRecoveryLitter } = await import("../database/maintenance.js");
+      sweepRecoveryLitter(directory);
+    } catch {}
     try { await ensureDb(); } catch { return; }
     let dir = null;
     try { dir = join(resolveLoomBaseDir(directory), "meetings"); } catch { return; }
@@ -98,6 +104,8 @@ const ROUTE_MAP = new Map([
   ["/api/meetings/start", ["POST"]],
   ["/api/meetings/cancel", ["POST"]],
   ["/api/meetings/extend", ["POST"]],
+  ["/api/meetings/resume", ["POST"]],
+  ["/api/meetings/finish", ["POST"]],
   ["/api/jobs", ["GET"]],
   ["/api/metrics", ["GET"]],
   ["/api/logs", ["GET"]],
@@ -474,6 +482,14 @@ export function startDashboard(directory, port, runtimeOpts = null) {
 
         if (url.pathname === "/api/meetings/extend") {
           return handleExtendMeeting(req);
+        }
+
+        if (url.pathname === "/api/meetings/resume") {
+          return handleResumeMeeting(req);
+        }
+
+        if (url.pathname === "/api/meetings/finish") {
+          return handleFinishMeeting(req);
         }
 
         if (url.pathname === "/api/jobs") {

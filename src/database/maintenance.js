@@ -1,4 +1,8 @@
 import { Logger, extractErrorInfo } from "../logger.js";
+import { existsSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { resolveLoomBaseDir } from "../paths.js";
 
 const dbLogger = new Logger();
 
@@ -87,4 +91,59 @@ export function cleanupOldErrors(db) {
 
 export function cleanupOldVectors(db) {
   // Fabric vector cleanup removed with VectorIndex — persona vectors are small and per-meeting; no pruning needed.
+}
+
+/**
+ * Sweep crash litter: temp/rename files a SIGKILL can orphan (no finally runs).
+ * - meetings/*.tmp.* (report rename tmps), loom *.tmp.* (filter/health persists)
+ * - tmpdir()/loom-preview-* (killed room previews) and tmpdir()/loom-ro/ro-*
+ *   (readonly-copy fallback files, never unlinked after serving)
+ * Age-gated so a concurrently-live writer's fresh tmp is never touched.
+ * Never touches meetings (the deliberation record) or lock files.
+ * Returns the number of files removed.
+ */
+export function sweepRecoveryLitter(directory) {
+  let swept = 0;
+  const rm = (p) => { try { unlinkSync(p); swept++; } catch {} };
+  const rmOlderThan = (p, maxAgeMs) => {
+    try {
+      if (Date.now() - statSync(p).mtimeMs > maxAgeMs) rm(p);
+    } catch {}
+  };
+  const HOUR = 3600000;
+  try {
+    const base = resolveLoomBaseDir(directory);
+    for (const name of safeReaddir(base)) {
+      if (name.includes(".tmp.") || name.endsWith(".tmp")) rmOlderThan(join(base, name), HOUR);
+    }
+    const meetings = join(base, "meetings");
+    for (const name of safeReaddir(meetings)) {
+      if (name.includes(".tmp.") || name.endsWith(".tmp")) rmOlderThan(join(meetings, name), HOUR);
+    }
+  } catch {}
+  try {
+    const tmp = tmpdir();
+    for (const name of safeReaddir(tmp)) {
+      if (name.startsWith("loom-preview-")) rmOlderThan(join(tmp, name), HOUR);
+    }
+    try {
+      const roDir = join(tmp, "loom-ro");
+      for (const name of safeReaddir(roDir)) {
+        if (name.startsWith("ro-") && name.endsWith(".db")) rmOlderThan(join(roDir, name), 24 * HOUR);
+      }
+    } catch {}
+  } catch {}
+  if (swept > 0) {
+    try { dbLogger.info("recovery_litter_swept", `Removed ${swept} orphaned temp file(s) left by a previous crash`); } catch {}
+  }
+  return swept;
+}
+
+function safeReaddir(dir) {
+  try {
+    if (!existsSync(dir)) return [];
+    return readdirSync(dir);
+  } catch {
+    return [];
+  }
 }

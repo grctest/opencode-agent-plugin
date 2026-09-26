@@ -5,6 +5,71 @@ import { truncate } from "../shared.js";
 import { SUMMARY_TRUNCATE_LEN } from "./constants.js";
 // TimeBudget is owned by MeetingOrchestrator; round helpers use this._timeBudget when available (Phase 3 centralization)
 
+/**
+ * Continue a round left partial by a sudden server kill.
+ *
+ * Normal `runRound()` always starts a NEW round (initializeRound increments),
+ * so resuming after a mid-round crash would abandon the interrupted round's
+ * unspoken speakers and leave its summary permanently empty. This instead
+ * re-drives the restored round-N object with only its missing speakers, then
+ * finalizes it (summary + State of Play) so the record is complete.
+ *
+ * Pure passes leave no contribution row (only passes with tool evidence are
+ * persisted), so a participant recorded as passed-but-rowless is re-prompted —
+ * they simply see the turns committed since their pass.
+ *
+ * Returns true (finalized — caller should continue the weaving loop), false
+ * (finalize converged the meeting — caller should synthesize now), or null
+ * (no partial round — caller should run the normal loop).
+ */
+export async function _continueInterruptedRound() {
+  const timeBudget = this._timeBudget;
+  if (this._tokenBudgetExceeded?.()) return null;
+  if (timeBudget ? timeBudget.remainingMs() <= 0 : this._remainingMs() <= 0) return null;
+
+  const roundNum = this._stateManager.getCurrentRound();
+  if (!Number.isFinite(roundNum) || roundNum <= 0) return null;
+  const round = this._stateManager.getRounds().find((r) => r.number === roundNum) ?? null;
+  if (!round) return null;
+  if (round.summary && String(round.summary).trim()) return null; // already finalized
+
+  const spoken = new Set((round.contributions ?? []).map((c) => c.participant_id));
+  const { activeParticipants, skipped } = this._roundInitializer.filterActiveParticipants(this._stateManager, round);
+  if (skipped.length > 0) {
+    try { await this._sessionManager.postProgress(`⏭️ Skipped: ${skipped.join(", ")} (inactive, no new reflections)`); } catch {}
+  }
+  const remaining = activeParticipants.filter((p) => !spoken.has(p.config.id));
+
+  if (remaining.length === 0) {
+    // Everyone spoke but the finalize transaction never ran (kill between
+    // last turn commit and finalize) — just finalize to write summary + SoP.
+    this._logger.info("resume_round_finalize_only", `Round ${roundNum} fully spoken before crash — finalizing without new turns`);
+    this._notifyUpdate();
+    return this._finalizeRound(round);
+  }
+
+  this._logger.info("resume_round_continue", `Resuming interrupted round ${roundNum} with ${remaining.length}/${activeParticipants.length} remaining speakers`);
+  try { await this._sessionManager.postProgress(`🧵 Resuming interrupted round ${roundNum} — ${remaining.length} speaker(s) left to hear.`); } catch {}
+
+  if (!this._roundExecutor) {
+    throw new LoomError("RoundExecutor not initialized — call initialize() first", { phase: "round_execution", recoverable: false });
+  }
+  const deadline = timeBudget ? timeBudget.deadline() : this._startTime + this._meetingTimeoutMs;
+  const { round: updatedRound } = await this._roundService.runRound({
+    round,
+    activeParticipants: remaining,
+    promptOrchestrator: async (system, model, message, type) => this._promptOrchestrator(system, model, message, type, round.number),
+    getHighestTierModel: () => this._getOrchestratorModel(),
+    getFallbackModel: () => this._getAllowedFallbackModel(),
+    orchestratorConfig: this._options.orchestratorConfig,
+    state: this._stateManager.getState(),
+    deadline,
+  });
+
+  this._notifyUpdate();
+  return this._finalizeRound(updatedRound);
+}
+
 export async function runRound() {
     const timeBudget = this._timeBudget;
 

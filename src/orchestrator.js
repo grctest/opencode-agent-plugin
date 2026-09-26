@@ -214,6 +214,7 @@ export class MeetingOrchestrator {
   async initialize() { return initHelpers.initialize.call(this); }
   async runMeeting() { return weavingHelpers.runMeeting.call(this); }
   async extendMeeting(newPrompt) { return weavingHelpers.extendMeeting.call(this, newPrompt); }
+  async resumeMeeting() { return weavingHelpers.resumeMeeting.call(this); }
   async _runWeavingLoop() { return weavingHelpers._runWeavingLoop.call(this); }
   _tokenBudgetExceeded() { return weavingHelpers._tokenBudgetExceeded.call(this); }
   _remainingMs() {
@@ -233,6 +234,7 @@ export class MeetingOrchestrator {
     return weavingHelpers._checkTimeout.call(this);
   }
   async runRound() { return roundHelpers.runRound.call(this); }
+  async _continueInterruptedRound() { return roundHelpers._continueInterruptedRound.call(this); }
   async _finalizeRound(round) { return roundHelpers._finalizeRound.call(this, round); }
   _isPersistenceError(err) { return roundHelpers._isPersistenceError.call(this, err); }
   async _persistState() { return roundHelpers._persistState.call(this); }
@@ -240,6 +242,7 @@ export class MeetingOrchestrator {
   _logError(context, error, phase) { return roundHelpers._logError.call(this, context, error, phase); }
   _notifyUpdate() { return roundHelpers._notifyUpdate.call(this); }
   async _synthesize() { return synthesisHelpers._synthesize.call(this); }
+  async finishSynthesis(originalStatus) { return synthesisHelpers.finishSynthesis.call(this, originalStatus); }
   _computeQualityTelemetry() { return synthesisHelpers._computeQualityTelemetry.call(this); }
   _saveArtifact(artifact) { return synthesisHelpers._saveArtifact.call(this, artifact); }
   _saveMeetingMetrics() { return synthesisHelpers._saveMeetingMetrics.call(this); }
