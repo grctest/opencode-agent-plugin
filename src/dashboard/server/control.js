@@ -22,6 +22,7 @@ import { createModelPlan } from "../../model-discovery.js";
 import { buildOrchestratorPromptPreview } from "./orchestrator-preview.js";
 import { MeetingDatabase, findMeetingBySessionId, getDbPathForMeeting } from "../../database.js";
 import { getMeetingDbPath, resolveLoomBaseDir } from "../../paths.js";
+import { invalidateMeetingsCache } from "../api/free.js";
 import { getConfig } from "../../config.js";
 import { Logger, extractErrorInfo } from "../../logger.js";
 import { sanitizeForPrompt, sanitizeForDisplay } from "../../utils/sanitize.js";
@@ -734,6 +735,8 @@ async function handleStartMeetingInternal(req) {
     } finally {
       try { db.close(); } catch {}
     }
+    try { invalidateMeetingsCache(getDirectory()); } catch {}
+    logger.info("meeting_created", `Meeting DB ready at ${dbPath}`, { meetingId, dbPath, sessionID, directory: getDirectory() });
   } catch (err) {
     const info = extractErrorInfo(err);
     logger.error("dashboard_meeting_setup_failed", "Meeting DB setup failed", { ...info, dbPath });
@@ -927,6 +930,7 @@ async function handleExtendMeetingInternal(req) {
   runtime.activeLooms.set(meetingId, extEngine);
   runningMeetingId = meetingId;
   jobs.set(meetingId, { phase: "running", startedAt: new Date().toISOString(), extended: true });
+  try { invalidateMeetingsCache(getDirectory()); } catch {}
 
   (async () => {
     try {

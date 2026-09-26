@@ -256,13 +256,50 @@ export function useMeetingApi(meetingId, resetKey) {
     abortRef.current = controller;
     const signal = controller.signal;
     setLoading(true);
+    const fetchMeetingOnce = () => fetch(`/api/meeting?meeting=${id}&include_context=1&limit=100`, { signal });
     try {
-      const res = await fetch(`/api/meeting?meeting=${id}&include_context=1&limit=100`, { signal });
+      let res = await fetchMeetingOnce();
       if (!res.ok) {
-        if (res.status === 404) {
-          throw new Error("Meeting not found. It may have been deleted or is still initializing.");
+        // Prefer the server's structured error (code/detail) so a 404 caused
+        // by a missing DB file reads differently from an invalid id or a
+        // DB-open failure.
+        let serverMessage = null;
+        let serverCode = null;
+        try {
+          const body = await res.json();
+          if (body && typeof body.error === "string" && body.error) serverMessage = body.error;
+          if (body && typeof body.code === "string") serverCode = body.code;
+        } catch {
+          // Non-JSON error body — fall back to status-based messages below
         }
-        throw new Error(`Failed to load meeting (HTTP ${res.status})`);
+        const needsRepair = serverCode === "db_open_failed" || serverCode === "db_readonly_unrecoverable"
+          || (serverMessage && /db_open_failed|db_readonly_unrecoverable|readonly|WAL/i.test(serverMessage));
+        if (needsRepair && !signal.aborted) {
+          // Force-closed server left a WAL needing a writable checkpoint —
+          // repair once server-side, then retry the load instead of
+          // rendering empty Timeline/Output tabs.
+          try {
+            const rep = await fetch(`/api/repair?meeting=${id}`, { signal });
+            if (rep.ok) {
+              res = await fetchMeetingOnce();
+              if (res.ok) {
+                serverMessage = null;
+                serverCode = null;
+              } else {
+                try {
+                  const b2 = await res.json();
+                  if (b2?.error) serverMessage = b2.error;
+                } catch {}
+              }
+            }
+          } catch {}
+        }
+        if (!res.ok) {
+          if (res.status === 404) {
+            throw new Error(serverMessage ?? "Meeting not found. It may have been deleted or is still initializing.");
+          }
+          throw new Error(serverMessage ?? `Failed to load meeting (HTTP ${res.status})`);
+        }
       }
       const data = await res.json();
       if (data.error) {

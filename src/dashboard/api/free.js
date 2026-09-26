@@ -3,9 +3,23 @@ import { existsSync, readdirSync, statSync, readFileSync } from "node:fs";
 import { resolveLoomBaseDir } from "../../paths.js";
 import { Database } from "bun:sqlite";
 import { getModelBaseDir } from "../../services/model-manager.js";
+import { withReadonlyDb } from "../../database/connection.js";
 
 const listMeetingsCache = new Map(); // directory -> { at, data }
 const LIST_MEETINGS_TTL_MS = 2000;
+
+/**
+ * Drop the cached meetings list for a directory (or all directories when
+ * omitted) so a newly created meeting is visible on the next poll instead of
+ * after the TTL. Called by the control plane after start/extend.
+ */
+export function invalidateMeetingsCache(directory = null) {
+  if (directory == null) {
+    listMeetingsCache.clear();
+    return;
+  }
+  listMeetingsCache.delete(directory || "__global__");
+}
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -70,39 +84,31 @@ export function listMeetings(directory) {
   const PAGINATION_LIMIT = 100;
   const filesToScan = files.sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, PAGINATION_LIMIT).map((file) => file.path);
   for (const file of filesToScan) {
-    let db = null;
-    let retries = 2;
     let state = null;
     let participantCount = 0;
-    while (retries >= 0) {
-      try {
-        db = new Database(file, { readonly: true });
-        try { db.exec("PRAGMA busy_timeout = 5000"); } catch {}
-        state = db
+    try {
+      const { result } = withReadonlyDb(file, (db) => {
+        const s = db
           .prepare(
             `SELECT id as meeting_id, question, status, round, max_rounds, convergence, created_at FROM meetings LIMIT 1`,
           )
           .get();
-        participantCount = (
-          db.prepare(`SELECT COUNT(*) as count FROM participants`).get()
-        )?.count ?? 0;
-        break;
-      } catch (err) {
-        const msg = String(err?.message ?? err);
-        const isBusy = /SQLITE_BUSY|busy|locked/i.test(msg);
-        try { if (db) db.close(); } catch {}
-        db = null;
-        if (isBusy && retries > 0) {
-          retries--;
-          // Busy — skip this file this tick; next poll will retry (non-blocking)
-          break;
-        }
-        break;
-      } finally {
-        if (state !== null) { try { if (db) db.close(); } catch {} db = null; }
-      }
+        const pc = s
+          ? (db.prepare(`SELECT COUNT(*) as count FROM participants`).get())?.count ?? 0
+          : 0;
+        return { state: s ?? null, participantCount: pc };
+      });
+      state = result.state;
+      participantCount = result.participantCount;
+    } catch (err) {
+      const msg = String(err?.message ?? err);
+      const isBusy = /SQLITE_BUSY|busy|locked/i.test(msg);
+      // Busy — skip this file this tick; next poll will retry (non-blocking).
+      // Readonly-unrecoverable already retried + degraded inside
+      // withReadonlyDb; dropping the file here only skips one poll tick.
+      void isBusy;
+      state = null;
     }
-    if (db) { try { db.close(); } catch {} }
     if (state) {
       meetings.push({
         meeting_id: state.meeting_id,

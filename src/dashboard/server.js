@@ -37,8 +37,44 @@ import {
   handleJobStatus,
 } from "./server/control.js";
 import { getMeetingDbPath, isValidMeetingId } from "./api/free.js";
+import { resolveLoomBaseDir } from "../paths.js";
 import { getDatabasesBySessionId } from "../database/session-index.js";
 import { findMeetingBySessionId } from "../database/lookup.js";
+import { ensureDb, repairDatabase, isReadonlyError } from "../database/connection.js";
+
+/**
+ * Best-effort startup repair: a force-closed server leaves WAL sidecars
+ * requiring a writable checkpoint before any readonly open can read.
+ * Checkpoint every meeting DB once at startup (bounded, failures ignored)
+ * so last session's deliberation renders immediately after relaunch.
+ */
+function startupRepairMeetingDbs(directory) {
+  (async () => {
+    try { await ensureDb(); } catch { return; }
+    let dir = null;
+    try { dir = join(resolveLoomBaseDir(directory), "meetings"); } catch { return; }
+    let files = [];
+    try {
+      const { readdirSync, statSync: st } = await import("node:fs");
+      files = readdirSync(dir)
+        .filter((f) => f.endsWith(".db"))
+        .map((f) => {
+          const p = join(dir, f);
+          let m = 0;
+          try { m = st(p).mtimeMs; } catch {}
+          return { p, m };
+        })
+        .sort((a, b) => b.m - a.m)
+        .slice(0, 100)
+        .map((e) => e.p);
+    } catch { return; }
+    let repaired = 0;
+    for (const p of files) {
+      try { if (repairDatabase(p)) repaired++; } catch {}
+    }
+    if (repaired > 0) console.warn(`[Loom dashboard] startup repair checkpointed ${repaired}/${files.length} meeting DB(s)`);
+  })().catch(() => {});
+}
 
 const ROUTE_MAP = new Map([
   ["/", ["GET"]],
@@ -75,6 +111,7 @@ const ROUTE_MAP = new Map([
   ["/api/forum/topic", ["GET"]],
   ["/api/export", ["GET"]],
   ["/api/export/stream", ["GET"]],
+  ["/api/repair", ["GET"]],
   ["/api/stream", ["GET"]],
 ]);
 function methodGuard(pathname, method) {
@@ -89,17 +126,62 @@ const ASSETS_DIR = findAssetsDir();
 function getMeetingApi(url, directory) {
   const meetingId = url.searchParams.get("meeting");
   if (!meetingId || !isValidMeetingId(meetingId)) {
-    return { error: Response.json({ error: "valid meeting id required" }, { status: 400 }) };
+    return { error: Response.json({ error: "valid meeting id required", code: "invalid_meeting_id" }, { status: 400 }) };
   }
-  const dbPath = getMeetingDbPath(directory, meetingId);
+  let dbPath = null;
+  try {
+    dbPath = getMeetingDbPath(directory, meetingId);
+  } catch (err) {
+    console.warn(`[Loom dashboard] meeting path lookup threw for ${meetingId}:`, err instanceof Error ? err.message : String(err));
+  }
   if (!dbPath) {
-    return { error: Response.json({ error: "not found" }, { status: 404 }) };
+    // Distinguish "no such file" from other failures so the UI can tell a
+    // still-initializing meeting apart from a bad id. The expected path is
+    // logged with the serving directory to expose base-dir mismatches
+    // (e.g. stale dashboard directory vs. writer directory on WSL mounts).
+    const base = resolveLoomBaseDir(directory);
+    console.warn(`[Loom dashboard] meeting not found: id=${meetingId} directory=${directory} base=${base} expected=${join(base, "meetings", `${meetingId}.db`)}`);
+    return { error: Response.json({ error: `Meeting ${meetingId.slice(0, 8)}… not found. It may have been deleted or is still initializing. [meeting_not_found]`, code: "meeting_not_found", meeting_id: meetingId }, { status: 404 }) };
   }
-  return { api: DashboardApi.get(dbPath), meetingId };
+  try {
+    return { api: DashboardApi.get(dbPath), meetingId };
+  } catch (err) {
+    console.warn(`[Loom dashboard] meeting DB open failed for ${meetingId} at ${dbPath}:`, err instanceof Error ? err.message : String(err));
+    if (isReadonlyError(err)) {
+      return { error: Response.json({ error: `Meeting database needs WAL recovery and could not be checkpointed (${err instanceof Error ? err.message : "unknown error"}). Try GET /api/repair?meeting=${meetingId}, then reload. [db_readonly_unrecoverable]`, code: "db_readonly_unrecoverable", meeting_id: meetingId }, { status: 500 }) };
+    }
+    return { error: Response.json({ error: `Meeting database could not be opened (${err instanceof Error ? err.message : "unknown error"}). [db_open_failed]`, code: "db_open_failed" }, { status: 500 }) };
+  }
+}
+
+export function handleRepairMeeting(url, directory) {
+  const meetingId = url.searchParams.get("meeting");
+  if (!meetingId || !isValidMeetingId(meetingId)) {
+    return Response.json({ error: "valid meeting id required", code: "invalid_meeting_id" }, { status: 400 });
+  }
+  let dbPath = null;
+  try { dbPath = getMeetingDbPath(directory, meetingId); } catch {}
+  if (!dbPath) {
+    return Response.json({ error: `Meeting ${meetingId.slice(0, 8)}… not found. [meeting_not_found]`, code: "meeting_not_found", meeting_id: meetingId }, { status: 404 });
+  }
+  try { DashboardApi.cache.delete(dbPath); } catch {}
+  let repaired = false;
+  try { repaired = repairDatabase(dbPath); } catch { repaired = false; }
+  try {
+    const api = DashboardApi.get(dbPath);
+    const state = api.getState();
+    if (!state) {
+      return Response.json({ error: `Meeting database repaired but contains no meeting row. [db_empty]`, code: "db_empty", meeting_id: meetingId, repaired }, { status: 500 });
+    }
+    return Response.json({ ok: true, meeting_id: meetingId, repaired, status: state.status, round: state.round });
+  } catch (err) {
+    return Response.json({ error: `Repair failed (${err instanceof Error ? err.message : "unknown error"}). [db_open_failed]`, code: "db_open_failed", meeting_id: meetingId, repaired }, { status: 500 });
+  }
 }
 
 export function startDashboard(directory, port, runtimeOpts = null) {
   initEmbeddingModel();
+  startupRepairMeetingDbs(directory);
   if (runtimeOpts) {
     try { setControlRuntime(runtimeOpts); } catch {}
   }
@@ -186,6 +268,35 @@ export function startDashboard(directory, port, runtimeOpts = null) {
                     created_at: state.created_at,
                     participant_count: participantCount,
                   });
+                }
+              } catch {}
+            }
+            if (meetings.length === 0) {
+              // Fallback: the in-memory session index is populated at plugin
+              // startup and persisted asynchronously with lock coalescing, so
+              // a dropped persist (or a dashboard reused across sessions with
+              // a stale ownerSessionId) can leave it empty right after start.
+              // A direct DB scan still finds the meeting by opencode_session_id.
+              try {
+                const found = await findMeetingBySessionId(directory, sessionId);
+                if (found?.dbPath) {
+                  try {
+                    const api = DashboardApi.get(found.dbPath);
+                    const state = api.getState();
+                    if (state) {
+                      meetings.push({
+                        meeting_id: found.meetingId,
+                        question: state.question ?? found.question,
+                        status: state.status ?? found.status,
+                        round: state.round ?? found.round,
+                        max_rounds: state.max_rounds ?? found.max_rounds,
+                        convergence: state.convergence,
+                        created_at: state.created_at,
+                        participant_count: api.getParticipants().length,
+                      });
+                      console.warn(`[Loom dashboard] session index miss for ${sessionId} — served ${found.meetingId} via DB scan fallback`);
+                    }
+                  } catch {}
                 }
               } catch {}
             }
@@ -524,6 +635,10 @@ export function startDashboard(directory, port, runtimeOpts = null) {
               "Cache-Control": "no-cache",
             },
           });
+        }
+
+        if (url.pathname === "/api/repair") {
+          return handleRepairMeeting(url, directory);
         }
 
         if (url.pathname === "/api/stream") {

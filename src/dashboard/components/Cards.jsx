@@ -2,6 +2,7 @@ import { useMemo, memo } from "react";
 import { cn } from "../utils.js";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
+import { normalizePipeTables } from "../../utils/markdown-tables.js";
 import { TierBadge, TypeBadge } from "./Badges.jsx";
 import { Card, CardContent, CardHeader } from "./ui/card.tsx";
 import { Badge } from "./ui/badge.tsx";
@@ -21,7 +22,9 @@ export function renderMarkdown(content) {
   if (!content) return "";
   const cached = mdCache.get(content);
   if (cached !== undefined) return cached;
-  const raw = marked.parse(content, { async: false });
+  // Repair LLM pipe-tables missing the GFM delimiter row (| --- | … |) —
+  // without it marked emits raw pipe text instead of a <table>.
+  const raw = marked.parse(normalizePipeTables(content), { async: false });
   const sanitized = DOMPurify.sanitize(raw, { FORBID_TAGS: ["svg", "math", "style", "script", "iframe", "object", "embed", "form", "input", "link", "img", "meta", "video", "base", "audio", "template"], FORBID_ATTR: ["style"] });
   mdCache.set(content, sanitized);
   while (mdCache.size > MD_CACHE_MAX) {

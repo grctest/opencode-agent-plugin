@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import { Logger, extractErrorInfo } from "./logger.js";
 import { initSchema, runMigrations } from "./database/schema.js";
 import { resolveLoomBaseDir, getMeetingDbPath } from "./paths.js";
-import { ensureDb, getDatabaseClass, isoNow, resolveVecPath, safeParseJsonArray } from "./database/connection.js";
+import { ensureDb, getDatabaseClass, isoNow, resolveVecPath, safeParseJsonArray, isDrvFsPath, withReadonlyDb } from "./database/connection.js";
 import { maintenanceDue, markMaintained, checkIntegrity, cleanupOldErrors, cleanupOldVectors, checkpointWal, vacuumIfNeeded } from "./database/maintenance.js";
 import * as meetingOps from "./database/meeting-operations.js";
 import * as contribOps from "./database/contribution-operations.js";
@@ -64,10 +64,8 @@ export class MeetingDatabase {
 
   static async readParticipants(dbPath) {
     await ensureDb();
-    const DatabaseClass = getDatabaseClass();
-    const db = new DatabaseClass(dbPath, { readonly: true });
-    try {
-      return db.prepare(
+    const { result } = withReadonlyDb(dbPath, (db) =>
+      db.prepare(
         `SELECT id, name, persona, agenda, tier, provider_id, model_id, session_id, session_version, status, reflection, known_biases, communication_style, preferred_contribution_types, anti_patterns, tier_guidance, reflection_guidance, tags, expertise
          FROM participants WHERE status != 'summoned' ORDER BY tier ASC`
       ).all().map((row) => ({
@@ -77,32 +75,34 @@ export class MeetingDatabase {
         anti_patterns: safeParseJsonArray(row.anti_patterns) ?? [],
         tags: safeParseJsonArray(row.tags) ?? [],
         expertise: safeParseJsonArray(row.expertise) ?? [],
-      }));
-    } catch (err) { throw err; } finally {
-      try { db.close(); } catch {}
-    }
+      })),
+    );
+    return result;
   }
 
   static async readMeeting(dbPath) {
     await ensureDb();
-    const DatabaseClass = getDatabaseClass();
-    const db = new DatabaseClass(dbPath, { readonly: true });
-    try {
-      const row = db.prepare(
+    const { result } = withReadonlyDb(dbPath, (db) =>
+      db.prepare(
         `SELECT id, question, context, status, round, max_rounds, convergence, fabric, orchestrator_provider_id, orchestrator_model_id, feature_toggles_json, orchestrator_config_json
          FROM meetings LIMIT 1`
-      ).get();
-      return row ?? null;
-    } catch (err) { throw err; } finally {
-      try { db.close(); } catch {}
-    }
+      ).get(),
+    );
+    return result ?? null;
   }
 
   constructor(dbPath, meetingId) {
     this.#meetingId = meetingId;
     const existedBefore = existsSync(dbPath);
-    mkdirSync(dirname(dbPath), { recursive: true, mode: 0o700 });
-    try { chmodSync(dirname(dbPath), 0o700); } catch {}
+    // On WSL DrvFs mounts (/mnt/c, …) chmod is emulated and can render files
+    // inaccessible — create without POSIX modes and skip hardening there.
+    const skipPermHardening = isDrvFsPath(dbPath);
+    if (skipPermHardening) {
+      mkdirSync(dirname(dbPath), { recursive: true });
+    } else {
+      mkdirSync(dirname(dbPath), { recursive: true, mode: 0o700 });
+      try { chmodSync(dirname(dbPath), 0o700); } catch {}
+    }
     const DatabaseClass = getDatabaseClass();
     let db;
     try {
@@ -110,13 +110,25 @@ export class MeetingDatabase {
       this.#db = db;
       this.#db.exec("PRAGMA foreign_keys = ON");
       this.#db.exec("PRAGMA busy_timeout = 5000");
-      const jm = this.#db.prepare("PRAGMA journal_mode = WAL").get();
-      if (jm?.journal_mode !== "wal") dbLogger.warn("pragma_journal_mode_fallback", `journal_mode WAL not achieved (got ${jm?.journal_mode ?? "unknown"}) — concurrency reduced`, { journal_mode: jm?.journal_mode });
-      this.#db.exec("PRAGMA synchronous = NORMAL");
-      this.#db.exec("PRAGMA wal_autocheckpoint = 1000");
-      try { chmodSync(dbPath, 0o600); } catch {}
-      for (const suffix of ["-wal", "-shm"]) {
-        try { if (existsSync(`${dbPath}${suffix}`)) chmodSync(`${dbPath}${suffix}`, 0o600); } catch {}
+      // DrvFs (/mnt/c, …): SQLite WAL locking is unreliable and a force-close
+      // leaves -wal/-shm requiring a writable recovery on every readonly open.
+      // DELETE mode has no WAL sidecars, so a killed server reopens cleanly.
+      const useDeleteMode = isDrvFsPath(dbPath);
+      const wantMode = useDeleteMode ? "DELETE" : "WAL";
+      const jm = this.#db.prepare(`PRAGMA journal_mode = ${wantMode}`).get();
+      const gotMode = String(jm?.journal_mode ?? "").toLowerCase();
+      if (gotMode !== wantMode.toLowerCase()) dbLogger.warn("pragma_journal_mode_fallback", `journal_mode ${wantMode} not achieved (got ${jm?.journal_mode ?? "unknown"}) — concurrency reduced`, { journal_mode: jm?.journal_mode });
+      if (!useDeleteMode) {
+        this.#db.exec("PRAGMA synchronous = NORMAL");
+        this.#db.exec("PRAGMA wal_autocheckpoint = 1000");
+      } else {
+        this.#db.exec("PRAGMA synchronous = FULL");
+      }
+      if (!skipPermHardening) {
+        try { chmodSync(dbPath, 0o600); } catch {}
+        for (const suffix of ["-wal", "-shm"]) {
+          try { if (existsSync(`${dbPath}${suffix}`)) chmodSync(`${dbPath}${suffix}`, 0o600); } catch {}
+        }
       }
       const vecPath = resolveVecPath();
       if (vecPath && existsSync(vecPath)) {

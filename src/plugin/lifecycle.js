@@ -4,6 +4,17 @@ import { TERMINAL_STATUSES } from "../constants.js";
 const logger = new Logger();
 
 export function createLifecycleHandlers(activeLooms) {
+  const checkpointEnginesSync = () => {
+    // Force-close safety: flush WALs to the main image while the writer is
+    // still alive so a later readonly open needs no recovery write.
+    const seen = new Set();
+    for (const [, engine] of activeLooms) {
+      if (seen.has(engine)) continue;
+      seen.add(engine);
+      try { engine.getDatabase?.()?.checkpoint?.(); } catch {}
+    }
+  };
+
   const markActiveMeetingsAborted = () => {
     const seen = new Set();
     for (const [id, engine] of activeLooms) {
@@ -17,6 +28,7 @@ export function createLifecycleHandlers(activeLooms) {
         }
       } catch { /* best effort */ }
     }
+    checkpointEnginesSync();
   };
 
   const markActiveMeetingsAbortedAsync = async () => {
@@ -34,6 +46,7 @@ export function createLifecycleHandlers(activeLooms) {
     }
     // Allow cancel to propagate to DB checkpoint — 800ms with unref so it doesn't hang tests
     await new Promise((r) => { const t = setTimeout(r, 800); if (t.unref) t.unref(); });
+    checkpointEnginesSync();
   };
 
   function setupProcessHandlers() {

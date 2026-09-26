@@ -109,7 +109,7 @@ Total 1500-3500 words welcome; concise but thorough — preserve numbers verbati
 Human-first plain narrative (no citations). 2-4 sentences: what was asked, what the deliberation found, and the key tradeoff/next step. For code: also state files touched and whether live edits occurred.
 
 ## Decision
-If convergent: one-paragraph direct answer citing key [#id]s (grouped per block, no vec: leak). If divergent / open-ended: write “No single decision — spectrum below” then map options in a table | Option | Holder(s) | Evidence (30-35w + one grouped cite) | Tradeoff (30-35w) | — still cite [#id]s per option. Preserve numbers verbatim. Dissent does not force a decision. Keep cells concise, not paragraphs.
+If convergent: one-paragraph direct answer citing key [#id]s (grouped per block, no vec: leak). If divergent / open-ended: write “No single decision — spectrum below” then map options in a table | Option | Holder(s) | Evidence (30-35w + one grouped cite) | Tradeoff (30-35w) | — still cite [#id]s per option. Tables MUST include the GFM delimiter row as the second line (| --- | --- | --- | --- |) or they will not render. Preserve numbers verbatim. Dissent does not force a decision. Keep cells concise, not paragraphs.
 
 ## Reasoning
 4-8 bullets or short paragraphs. Each bullet references who argued what and on what evidence. Show tradeoffs and synthesis between views. Group cites per block. DEDUPLICATE: do not repeat Decision table numbers verbatim; reference rows (“see Position B Evidence”) and explain divergence/synthesis. Preserve numbers verbatim only when new.
@@ -133,7 +133,7 @@ Unresolved Objections above must appear here. High dissent is fine — map it, d
 Human-first plain narrative (no citations). 2-4 sentences: what was asked, what the deliberation found, and the key open tradeoff. Write for a busy human scanning — concise.
 
 ## Decision
-If convergent: one-paragraph direct answer citing key [#id]s (grouped per block, never vec:). If divergent / open-ended: write “No single decision — spectrum below” then present a table | Position | Holder(s) | Evidence (30-35w max + one grouped cite) | Tradeoff (30-35w max) | — still cite [#id]s per row. Preserve numbers verbatim. Do not force consensus; mapping the disagreement is a valid outcome. Keep cells concise.
+If convergent: one-paragraph direct answer citing key [#id]s (grouped per block, never vec:). If divergent / open-ended: write “No single decision — spectrum below” then present a table | Position | Holder(s) | Evidence (30-35w max + one grouped cite) | Tradeoff (30-35w max) | — still cite [#id]s per row. Tables MUST include the GFM delimiter row as the second line (| --- | --- | --- | --- |) or they will not render. Preserve numbers verbatim. Do not force consensus; mapping the disagreement is a valid outcome. Keep cells concise.
 
 ## Reasoning
 4-8 bullets or short paragraphs. Each bullet references who argued what and on what evidence. Show tradeoffs and how views synthesize or diverge. Group cites per block. DEDUPLICATE vs Decision: Decision maps positions, Reasoning explains why they emerged/diverged — do not copy-paste Evidence numbers thrice; reference Decision rows when possible.

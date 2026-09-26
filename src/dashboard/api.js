@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { existsSync, readdirSync, statSync, readFileSync } from "node:fs";
 import { resolveLoomBaseDir } from "../paths.js";
 import { parseReflections, safeParseJson, normalizeToolCalls } from "../utils/db-parsing.js";
+import { openReadonlyDatabase, repairDatabase, isReadonlyError } from "../database/connection.js";
 import * as queriesHelpers from "./api/queries.js";
 import * as exportsHelpers from "./api/exports.js";
 import { TUNING } from "../config/defaults.js";
@@ -92,8 +93,8 @@ export class DashboardApi {
 
   constructor(dbPath) {
     this._dbPath = dbPath;
-    this._db = new Database(dbPath, { readonly: true });
-    try { this._db.exec("PRAGMA busy_timeout = 5000"); } catch {}
+    // Tolerates WAL-recovery state (WSL DrvFs): single checkpoint + retry inside.
+    this._db = openReadonlyDatabase(dbPath).db;
     this._lastModified = Date.now();
     this._openedAt = Date.now();
     try {
@@ -119,6 +120,34 @@ export class DashboardApi {
     this._lastModified = Date.now();
   }
 
+  _reopen() {
+    try { if (!this._db?.closed) this._db.close(); } catch {}
+    const opened = openReadonlyDatabase(this._dbPath);
+    this._db = opened.db;
+    try { this._fileMtimeMs = statSync(this._dbPath).mtimeMs; } catch {}
+    try { this.#walMtime = statSync(this._dbPath + "-wal").mtimeMs; } catch { this.#walMtime = 0; }
+    try { this.#shmMtime = statSync(this._dbPath + "-shm").mtimeMs; } catch { this.#shmMtime = 0; }
+    this._openedAt = Date.now();
+  }
+
+  /**
+   * Run a read against the long-lived readonly handle, recovering from a
+   * WAL left behind by a force-closed server. A readonly handle opened
+   * before the WAL appeared (or whose WAL changed under it) throws
+   * SQLITE_READONLY on query — checkpoint + reopen + retry once so
+   * completed deliberations render instead of empty tabs.
+   */
+  _withRecovery(fn) {
+    try {
+      return fn();
+    } catch (err) {
+      if (!isReadonlyError(err)) throw err;
+      try { repairDatabase(this._dbPath); } catch {}
+      try { this._reopen(); } catch { throw err; }
+      return fn();
+    }
+  }
+
   #refreshing = null;
 
   _maybeRefresh() {
@@ -137,8 +166,7 @@ export class DashboardApi {
         const shmChanged = shmMtime !== this.#shmMtime;
         if (mainChanged || walChanged || shmChanged) {
           try { if (!this._db?.closed) this._db.close(); } catch {}
-          this._db = new Database(this._dbPath, { readonly: true });
-          try { this._db.exec("PRAGMA busy_timeout = 5000"); } catch {}
+          this._db = openReadonlyDatabase(this._dbPath).db;
           this._fileMtimeMs = mtimeMs;
           this.#walMtime = walMtime;
           this.#shmMtime = shmMtime;
@@ -152,127 +180,144 @@ export class DashboardApi {
     this.#refreshing.finally(() => { this.#refreshing = null; });
   }
   getState(...args) {
-    return queriesHelpers.getState.apply(this, args);
+    return this._withRecovery(() => queriesHelpers.getState.apply(this, args));
   }
   getStateWithStats(...args) {
-    return queriesHelpers.getStateWithStats.apply(this, args);
+    return this._withRecovery(() => queriesHelpers.getStateWithStats.apply(this, args));
   }
   getArtifact(...args) {
-    return queriesHelpers.getArtifact.apply(this, args);
+    return this._withRecovery(() => queriesHelpers.getArtifact.apply(this, args));
   }
   getParticipants(...args) {
-    return queriesHelpers.getParticipants.apply(this, args);
+    return this._withRecovery(() => queriesHelpers.getParticipants.apply(this, args));
   }
   getAgentErrors(...args) {
-    return queriesHelpers.getAgentErrors.apply(this, args);
+    return this._withRecovery(() => queriesHelpers.getAgentErrors.apply(this, args));
   }
   getAgentErrorsAfter(...args) {
-    return queriesHelpers.getAgentErrorsAfter.apply(this, args);
+    return this._withRecovery(() => queriesHelpers.getAgentErrorsAfter.apply(this, args));
   }
   getMaxOrchestratorMessageId(...args) {
-    return queriesHelpers.getMaxOrchestratorMessageId.apply(this, args);
+    return this._withRecovery(() => queriesHelpers.getMaxOrchestratorMessageId.apply(this, args));
   }
   getContributions(...args) {
-    return queriesHelpers.getContributions.apply(this, args);
+    return this._withRecovery(() => queriesHelpers.getContributions.apply(this, args));
   }
   getContributionsAfter(...args) {
-    return queriesHelpers.getContributionsAfter.apply(this, args);
+    return this._withRecovery(() => queriesHelpers.getContributionsAfter.apply(this, args));
   }
   getContributionsCount(...args) {
-    return queriesHelpers.getContributionsCount.apply(this, args);
+    return this._withRecovery(() => queriesHelpers.getContributionsCount.apply(this, args));
   }
   getContributionsSince(...args) {
-    return queriesHelpers.getContributionsSince.apply(this, args);
+    return this._withRecovery(() => queriesHelpers.getContributionsSince.apply(this, args));
   }
 
   getTurnRequests(limit = 500) {
-    const n = Math.min(Math.max(limit ?? 500, 0), 500);
-    return this._db
-      .prepare(
-        `SELECT id, participant_id, target_participant_id, round, content, priority, created_at
-         FROM turn_requests ORDER BY id ASC LIMIT ?`,
-      )
-      .all(n)
-      .map(mapTurnRequest);
+    return this._withRecovery(() => {
+      const n = Math.min(Math.max(limit ?? 500, 0), 500);
+      return this._db
+        .prepare(
+          `SELECT id, participant_id, target_participant_id, round, content, priority, created_at
+           FROM turn_requests ORDER BY id ASC LIMIT ?`,
+        )
+        .all(n)
+        .map(mapTurnRequest);
+    });
   }
 
   getMaxTurnRequestId() {
-    const row = this._db.prepare(`SELECT MAX(id) as max_id FROM turn_requests`).get();
-    return row?.max_id ?? 0;
+    return this._withRecovery(() => {
+      const row = this._db.prepare(`SELECT MAX(id) as max_id FROM turn_requests`).get();
+      return row?.max_id ?? 0;
+    });
   }
 
   getTurnRequestsSince(sinceId, limit = 500) {
-    const n = Math.min(Math.max(limit ?? 500, 0), 500);
-    return this._db
-      .prepare(
-        `SELECT id, participant_id, target_participant_id, round, content, priority, created_at
-         FROM turn_requests WHERE id > ? ORDER BY id ASC LIMIT ?`,
-      )
-      .all(sinceId, n)
-      .map(mapTurnRequest);
+    return this._withRecovery(() => {
+      const n = Math.min(Math.max(limit ?? 500, 0), 500);
+      return this._db
+        .prepare(
+          `SELECT id, participant_id, target_participant_id, round, content, priority, created_at
+           FROM turn_requests WHERE id > ? ORDER BY id ASC LIMIT ?`,
+        )
+        .all(sinceId, n)
+        .map(mapTurnRequest);
+    });
   }
 
   getOrchestratorMessagesSince(sinceId, meetingId) {
-    return this._db
-      .prepare(
-        `SELECT id, msg_type, role, content, round, created_at
-         FROM orchestrator_messages WHERE id > ? AND meeting_id = ? ORDER BY id ASC`,
-      )
-      .all(sinceId, meetingId)
-      .map((r) => ({
-        id: r.id,
-        type: r.msg_type,
-        role: r.role,
-        content: r.content,
-        round: r.round,
-        created_at: r.created_at,
-      }));
+    return this._withRecovery(() =>
+      this._db
+        .prepare(
+          `SELECT id, msg_type, role, content, round, created_at
+           FROM orchestrator_messages WHERE id > ? AND meeting_id = ? ORDER BY id ASC`,
+        )
+        .all(sinceId, meetingId)
+        .map((r) => ({
+          id: r.id,
+          type: r.msg_type,
+          role: r.role,
+          content: r.content,
+          round: r.round,
+          created_at: r.created_at,
+        })),
+    );
   }
 
   getOrchestratorMessages(meetingId) {
-    return this._db
-      .prepare(
-        `SELECT id, msg_type, role, content, round, created_at
-         FROM orchestrator_messages WHERE meeting_id = ? ORDER BY id ASC`,
-      )
-      .all(meetingId)
-      .map((r) => ({
-        id: r.id,
-        type: r.msg_type,
-        role: r.role,
-        content: r.content,
-        round: r.round,
-        created_at: r.created_at,
-      }));
+    return this._withRecovery(() =>
+      this._db
+        .prepare(
+          `SELECT id, msg_type, role, content, round, created_at
+           FROM orchestrator_messages WHERE meeting_id = ? ORDER BY id ASC`,
+        )
+        .all(meetingId)
+        .map((r) => ({
+          id: r.id,
+          type: r.msg_type,
+          role: r.role,
+          content: r.content,
+          round: r.round,
+          created_at: r.created_at,
+        })),
+    );
   }
 
   getMaxContributionId() {
-    const row = this._db
-      .prepare(`SELECT MAX(id) as maxId FROM contributions`)
-      .get();
-    return row.maxId ?? 0;
+    return this._withRecovery(() => {
+      const row = this._db
+        .prepare(`SELECT MAX(id) as maxId FROM contributions`)
+        .get();
+      return row.maxId ?? 0;
+    });
   }
 
   getRoundSummaries(meetingId) {
-    const rows = this._db
-      .prepare(
-        `SELECT round, summary FROM rounds WHERE meeting_id = ? ORDER BY round ASC`,
-      )
-      .all(meetingId);
-    const map = {};
-    for (const r of rows) map[r.round] = r.summary;
-    return map;
+    return this._withRecovery(() => {
+      const rows = this._db
+        .prepare(
+          `SELECT round, summary FROM rounds WHERE meeting_id = ? ORDER BY round ASC`,
+        )
+        .all(meetingId);
+      const map = {};
+      for (const r of rows) map[r.round] = r.summary;
+      return map;
+    });
   }
 
   getMaxErrorId() {
-    const row = this._db
-      .prepare(`SELECT MAX(id) as maxId FROM agent_errors`)
-      .get();
-    return row.maxId ?? 0;
+    return this._withRecovery(() => {
+      const row = this._db
+        .prepare(`SELECT MAX(id) as maxId FROM agent_errors`)
+        .get();
+      return row.maxId ?? 0;
+    });
   }
 
   getContributionContext(contributionId) {
-    const contribution = this._db
+    return this._withRecovery(() => {
+      const contribution = this._db
       .prepare(
         `SELECT id, meeting_id, participant_id, round, type, tool_calls, prompt_context, batch_id, created_at
          FROM contributions WHERE id = ?`,
@@ -328,37 +373,40 @@ export class DashboardApi {
       prompt_context: safeParseJson(contribution.prompt_context),
       created_at: contribution.created_at,
     };
+    });
   }
 
   getAgentContext(meetingId, participantId) {
-    const meeting = this._db
-      .prepare(`SELECT fabric, question FROM meetings WHERE id = ?`)
-      .get(meetingId);
-    const participant = this._db
-      .prepare(`SELECT name, persona, agenda, tier, provider_id, model_id FROM participants WHERE id = ? AND meeting_id = ?`)
-      .get(participantId, meetingId);
-    return { meeting, participant };
+    return this._withRecovery(() => {
+      const meeting = this._db
+        .prepare(`SELECT fabric, question FROM meetings WHERE id = ?`)
+        .get(meetingId);
+      const participant = this._db
+        .prepare(`SELECT name, persona, agenda, tier, provider_id, model_id FROM participants WHERE id = ? AND meeting_id = ?`)
+        .get(participantId, meetingId);
+      return { meeting, participant };
+    });
   }
   getForumTopics(...args) {
-    return queriesHelpers.getForumTopics.apply(this, args);
+    return this._withRecovery(() => queriesHelpers.getForumTopics.apply(this, args));
   }
   getStatePatchSummary(...args) {
-    return queriesHelpers.getStatePatchSummary.apply(this, args);
+    return this._withRecovery(() => queriesHelpers.getStatePatchSummary.apply(this, args));
   }
   getForumTopic(...args) {
-    return queriesHelpers.getForumTopic.apply(this, args);
+    return this._withRecovery(() => queriesHelpers.getForumTopic.apply(this, args));
   }
   getMaxForumTopicId() {
-    return queriesHelpers.getMaxForumTopicId.apply(this);
+    return this._withRecovery(() => queriesHelpers.getMaxForumTopicId.apply(this));
   }
   getMaxForumCommentId() {
-    return queriesHelpers.getMaxForumCommentId.apply(this);
+    return this._withRecovery(() => queriesHelpers.getMaxForumCommentId.apply(this));
   }
   exportMarkdown(...args) {
-    return exportsHelpers.exportMarkdown.apply(this, args);
+    return this._withRecovery(() => exportsHelpers.exportMarkdown.apply(this, args));
   }
   exportJSON(...args) {
-    return exportsHelpers.exportJSON.apply(this, args);
+    return this._withRecovery(() => exportsHelpers.exportJSON.apply(this, args));
   }
 
   /**
@@ -378,11 +426,13 @@ export class DashboardApi {
    * Get the embedding model information for this meeting.
    */
   getEmbeddingModel(meetingId) {
-    const meeting = this._db
-      .prepare(`SELECT embedding_model, embedding_dim FROM meetings WHERE id = ?`)
-      .get(meetingId);
-    return meeting ?? null;
+    return this._withRecovery(() => {
+      const meeting = this._db
+        .prepare(`SELECT embedding_model, embedding_dim FROM meetings WHERE id = ?`)
+        .get(meetingId);
+      return meeting ?? null;
+    });
   }
 }
 
-export { listDownloadedModels, listMeetings, isValidMeetingId, getMeetingDbPath } from "./api/free.js";
+export { listDownloadedModels, listMeetings, isValidMeetingId, getMeetingDbPath, invalidateMeetingsCache } from "./api/free.js";
