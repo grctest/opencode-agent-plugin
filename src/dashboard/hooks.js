@@ -227,7 +227,7 @@ export function useEmbeddingStatus() {
   return status;
 }
 
-export function useMeetingApi(meetingId, resetKey) {
+export function useMeetingApi(meetingId, resetKey, meetings = [], onSelectMeeting = null) {
   const [state, setState] = useState(null);
   const [participants, setParticipants] = useState([]);
   const [contributions, setContributions] = useState([]);
@@ -245,6 +245,18 @@ export function useMeetingApi(meetingId, resetKey) {
   const [error, setError] = useState(null);
   const lastPollIdRef = useRef(0);
   const abortRef = useRef(null);
+  const meetingsRef = useRef(meetings);
+  const seenMeetingIdsRef = useRef(new Set());
+  const onSelectMeetingRef = useRef(onSelectMeeting);
+  useEffect(() => {
+    meetingsRef.current = meetings;
+    for (const m of meetings) {
+      if (m?.meeting_id) seenMeetingIdsRef.current.add(m.meeting_id);
+    }
+  }, [meetings]);
+  useEffect(() => {
+    onSelectMeetingRef.current = onSelectMeeting;
+  }, [onSelectMeeting]);
 
   const fetchMeetingData = useCallback(async (id) => {
     if (!id) {
@@ -259,6 +271,48 @@ export function useMeetingApi(meetingId, resetKey) {
     const fetchMeetingOnce = () => fetch(`/api/meeting?meeting=${id}&include_context=1&limit=100`, { signal });
     try {
       let res = await fetchMeetingOnce();
+      if (res.status === 404) {
+        const body404 = await res.json().catch(() => null);
+        const code404 = body404?.code;
+        const known = meetingsRef.current ?? [];
+        // Stale selection self-heal: this meeting was visible in the list
+        // earlier this session and is gone now (deleted DB, or a URL param
+        // from an earlier session) — fall back to the newest available
+        // meeting, exactly what a page refresh does, no refresh required.
+        if (
+          code404 === "meeting_not_found"
+          && seenMeetingIdsRef.current.has(id)
+          && known.length > 0
+          && !known.some((m) => m.meeting_id === id)
+          && typeof onSelectMeetingRef.current === "function"
+        ) {
+          onSelectMeetingRef.current(known[0].meeting_id);
+          return;
+        }
+        // Transient: the server's own 404 wording says "or may be still
+        // initializing" — a just-created DB file can lag its visibility on
+        // slow/network filesystems (WSL/DrvFs). Back off and retry before
+        // showing the error banner; only give up after a real budget.
+        let attempts = 0;
+        while (res.status === 404 && attempts < 8 && !signal.aborted) {
+          attempts++;
+          await new Promise((r) => setTimeout(r, Math.min(500 * 2 ** (attempts - 1), 4000)));
+          if (signal.aborted) break;
+          res = await fetchMeetingOnce();
+        }
+        if (res.status === 404 && !signal.aborted) {
+          const known2 = meetingsRef.current ?? [];
+          if (
+            code404 === "meeting_not_found"
+            && known2.length > 0
+            && !known2.some((m) => m.meeting_id === id)
+            && typeof onSelectMeetingRef.current === "function"
+          ) {
+            onSelectMeetingRef.current(known2[0].meeting_id);
+            return;
+          }
+        }
+      }
       if (!res.ok) {
         // Prefer the server's structured error (code/detail) so a 404 caused
         // by a missing DB file reads differently from an invalid id or a

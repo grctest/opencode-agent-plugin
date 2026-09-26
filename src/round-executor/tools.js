@@ -1,6 +1,6 @@
 import { getConfig, resolveBuiltInTools, resolveLoomTools } from "../config.js";
 
-export function buildToolsMap(config, { activeCount } = {}) {
+export function buildToolsMap(config, { activeCount, omitStatePatch = false } = {}) {
   const agentToolsConfig = config.agentTools;
   const toolsMap = {};
   if (agentToolsConfig?.enabled) {
@@ -19,7 +19,10 @@ export function buildToolsMap(config, { activeCount } = {}) {
     if (loom.loom_summon) toolsMap.loom_summon = true;
     if (loom.loom_request_next && !isSolo) toolsMap.loom_request_next = true;
     if (loom.loom_pass) toolsMap.loom_pass = true;
-    if (loom.loom_state_patch) toolsMap.loom_state_patch = true;
+    // Single-attempt state patch: when omitted here (primary turn), the one
+    // and only loom_state_patch call happens in the final pass after queries
+    // and synthesis — never as a competing offer during the main turn.
+    if (loom.loom_state_patch && !omitStatePatch) toolsMap.loom_state_patch = true;
     if (loom.loom_forum) {
       toolsMap.loom_forum_create_topic = true;
       toolsMap.loom_forum_list_topics = true;

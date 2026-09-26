@@ -137,7 +137,10 @@ ${isBuildModeGlobal
         if (loom.loom_summon) tools.push('loom_summon');
         if (loom.loom_request_next && !isSolo) tools.push('loom_request_next');
         if (loom.loom_pass) tools.push('loom_pass');
-        if (loom.loom_state_patch) tools.push('loom_state_patch');
+        // loom_state_patch is deliberately NOT in the primary-turn tool list:
+        // the turn's single patch attempt is requested as a dedicated final
+        // step (see the bullet below), so offering it here would invite a
+        // patch that precedes peer answers.
         if (loom.loom_forum) {
           tools.push('loom_forum_create_topic', 'loom_forum_list_topics', 'loom_forum_read_topic', 'loom_forum_add_comment');
         }
@@ -170,8 +173,8 @@ Loom Interaction Tools — real tool use (required, auditable):${isSolo ? "" : `
   - **loom_vote**: call a vote with lettered options (A) ... B) ...). All active peers vote in parallel; tally returned inline.`}
   - **loom_summon**: summon a guest expert persona. Returned inline.${isSolo ? "" : `
   - **loom_request_next**: request to speak next with priority/reason. For next round planning.`}
-  - **loom_pass**: pass when you have nothing new. Include reason. Ends when all active participants pass (the round limit or a timeout can also end it) — not a failure to dissent. loom_pass and loom_state_patch are mutually exclusive in one turn: call at most one of them.
-  - **loom_state_patch**: ${statePatchMandatory ? "required once per non-pass turn" : "optional"} to project what survives — your stance + 1-3 bullets. Details in the tool description, which is authoritative for arguments and eviction.
+  - **loom_pass**: pass when you have nothing new. Include reason. Ends when all active participants pass (the round limit or a timeout can also end it) — not a failure to dissent. loom_pass and loom_state_patch are mutually exclusive in one turn: a pass skips the state projection and vice versa.
+  - **loom_state_patch**: ${statePatchMandatory ? "required once per non-pass turn" : "optional"} to project what survives — your stance + 1-3 bullets. You will be asked for it as a dedicated final step at the end of your turn (one call, after your contribution and any peer answers) — do not call it during your main turn. Details in the tool description, which is authoritative for arguments and eviction.
 ${loom.loom_forum ? `Forum — async sub-discussions between participants:
   - **loom_forum_create_topic**: propose a sub-problem or question — pass \`title, body, tags?\`. Returns topic_id.
   - **loom_forum_list_topics**: browse existing topics — optional tag filter. Returns titles + comment counts.
@@ -274,7 +277,7 @@ ${statePatchMandatory ? "  (Passing is the one turn that does NOT require loom_s
   5. Identity — persona and agenda shape framing, not facts. Precedence: OUTPUT CONTRACT > persona/tier guidance > State of Play > Live. Persona voice never overrides budgets or the tool channel.
   6. Voice — thorough and human-readable; dissent is welcome and not penalized.
   7. Collaboration (open-ended & programming): for debates, map spectrum and steelman counter-views before concluding; for code, read then propose diff (or write in BUILD), then handoff: **Handoff: @role — verify file=X covers case Y**.
-${statePatchMandatory ? `  8. **REQUIRED — loom_state_patch, once, every non-pass turn** (decide before you call: a patch locks out a later pass). Prose is discarded; only patched state carries forward — argument details in the tool description.
+${statePatchMandatory ? `  8. **REQUIRED — loom_state_patch, once, every non-pass turn** — you will be asked for it as the final step of your turn (after your contribution and any peer answers); a pass skips it and vice versa. Prose is discarded; only patched state carries forward — argument details in the tool description.
 ` : ""}
   `;
 
@@ -402,10 +405,10 @@ _Use these ids verbatim for loom_query. Example: {target: "${exampleId}", questi
 
   const stateGuidance = showState
     ? mandatoryCapabilities.skillState
-      ? `- **Your State is yours to maintain** — call loom_state_patch once per turn, after your prose (argument details live in the tool description). This is the only memory you carry: anything you do not patch is discarded before your next turn, so a turn that reasons well but patches nothing has wasted the work. Stale bullets you don't remove stay. Evidence (with Source/[#id]) survives eviction longer — re-assert anything still load-bearing each turn.
+      ? `- **Your State is yours to maintain** — at the end of your turn you will be asked to project it with a single loom_state_patch call, made as your final action after your prose and any peer answers (argument details live in the tool description). This is the only memory you carry: anything you do not patch is discarded before your next turn, so a turn that reasons well but patches nothing has wasted the work. Stale bullets you don't remove stay. Evidence (with Source/[#id]) survives eviction longer — re-assert anything still load-bearing each turn.
 - **Live is current round only** — anything older you still need must already be in Your State; if it isn't, re-establish it from the digest (don't quote full old prose).
 `
-      : `- **Your State is optional here** — use loom_state_patch when you want to carry a bounded stance or evidence into a later turn. Prose alone is not carried forward when the tool is enabled.
+      : `- **Your State is optional here** — when asked at the end of your turn, use the single loom_state_patch call to carry a bounded stance or evidence into a later turn. Prose alone is not carried forward when the tool is enabled.
 - **Live is current round only** — anything older you still need must already be in Your State; if it isn't, re-establish it from the digest (don't quote full old prose).
 `
     : "";
@@ -450,5 +453,5 @@ Rules: contract §1 (length) · §2 (citations) · §3 (boundaries) govern. Keep
 ${steeringBlock}
 Make your contribution or pass.${showState && mandatoryCapabilities.skillState ? `
 
-Then call loom_state_patch once — project your stance and 1-3 bullets so they survive into your next turn. Nothing you write in prose carries forward on its own.` : ""}`;
+Then call loom_state_patch once when asked at the end of your turn — your single state update, made as your final action after your prose and any peer answers, projecting your stance and 1-3 bullets so they survive into your next turn. Nothing you write in prose carries forward on its own.` : ""}`;
 }

@@ -58,7 +58,9 @@ test("tool budget is worded as guidance, not a hard cap", () => {
   assert.match(sys, /logged, not hard-stopped/);
 });
 
-// 3. Tools described == tools offered, across config combos.
+// 3. Tools described == tools offered, across config combos. The comparison
+// targets the PRIMARY turn's map: loom_state_patch is omitted there (its single
+// attempt is the dedicated final pass), so it must not be advertised either.
 function availableSet(sys) {
   const m = sys.match(/Available: ([^\n]+)/);
   assert.ok(m, "Available line missing");
@@ -68,7 +70,7 @@ function availableSet(sys) {
 }
 function offeredSet(agentTools, activeCount) {
   return new Set(
-    Object.keys(buildToolsMap({ agentTools }, { activeCount }))
+    Object.keys(buildToolsMap({ agentTools }, { activeCount, omitStatePatch: true }))
       .map((n) => (n.startsWith("loom_forum_") ? "loom_forum" : n)),
   );
 }
@@ -85,6 +87,18 @@ for (const [label, mutate, activeCount] of [
     assert.deepEqual([...availableSet(sys)].sort(), [...offeredSet(at, activeCount)].sort());
   });
 }
+
+// 3a. Single-attempt patch design: the primary map omits loom_state_patch, and
+// the final pass map contains ONLY loom_state_patch (one attempt, last action).
+test("state patch is offered once, in the final pass only", () => {
+  const at = cloneTools();
+  const primary = buildToolsMap({ agentTools: at }, { activeCount: 5, omitStatePatch: true });
+  assert.ok(!("loom_state_patch" in primary), "primary turn must not offer loom_state_patch");
+  const finalPass = { loom_state_patch: true };
+  assert.deepEqual(Object.keys(finalPass), ["loom_state_patch"]);
+  assert.match(buildAgentSystemPrompt(participant(), { activeCount: 5, agentTools: at }), /loom_state_patch/);
+  assert.doesNotMatch(buildAgentSystemPrompt(participant(), { activeCount: 5, agentTools: at }).match(/Available: ([^\n]+)/)?.[1] ?? "", /loom_state_patch/);
+});
 
 // 3b. Forum descriptions vanish with the flag (not just the tool list).
 test("forum description block is gated on loom_forum", () => {

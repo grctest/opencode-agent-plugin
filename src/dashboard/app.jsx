@@ -275,7 +275,7 @@ export function App() {
   const meetings = useMeetingsList();
   const { resetKey } = useSSEReset(selectedMeeting);
   const embeddingStatus = useEmbeddingStatus();
-   const { state, participants, contributions, turnRequests, orchestratorMessages, roundSummaries, agentErrors, artifact, forumTopics, statePatchSummary, error } = useMeetingApi(selectedMeeting, resetKey);
+    const { state, participants, contributions, turnRequests, orchestratorMessages, roundSummaries, agentErrors, artifact, forumTopics, statePatchSummary, error } = useMeetingApi(selectedMeeting, resetKey, meetings, setSelectedMeeting);
    const forumsEnabled = state?.features?.forums !== "disabled";
   const handleSSEEvent = useCallback((data) => {
     if (data.type === "contributions") {

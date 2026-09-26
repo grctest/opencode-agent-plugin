@@ -134,7 +134,7 @@ export const OverviewTab = memo(({
             readOnly
             value={state.question ?? ""}
             placeholder="No knit message"
-            className="flex-1 min-h-[280px] lg:min-h-[320px] h-full resize-none bg-white dark:bg-input/30 font-mono text-sm field-sizing-fixed overflow-auto"
+            className="flex-1 min-h-[280px] lg:min-h-[320px] h-full resize-none bg-transparent font-mono text-sm field-sizing-fixed overflow-auto"
           />
         </div>
       </div>

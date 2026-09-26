@@ -19,7 +19,7 @@
   --typeset-flow: 1.25em;
 }
 
-@custom-variant dark (&:is(.dark *));
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 @source "../dashboard/**/*.{js,jsx,ts,tsx}";
 @source "../**/*.{js,jsx,ts,tsx}";
