@@ -180,6 +180,31 @@ When you ask a question, the Loom uses **embedding similarity** (not LLM domain 
 
 Each tier has different behavioral guidance defined in each persona's `tier_guidance` field, blended with a per-tier doctrine line in the agent system prompt. Personas also include a `reflection_guidance` field used when peers solicit their stance via `loom_query mode=perspective`. Personas can be customized by editing the JSON files in the `personas/` directory. The `civilian` tier maps to `mid` seniority via `utils/tier.js`.
 
+### Writing a persona: the lens is not a body
+
+Agents are **text agents**. Their entire instrument set is `read`, `glob`, `grep`,
+`websearch`, `webfetch`, optionally `bash` (allowlisted, off by default), and the
+`loom_*` peer tools. A persona therefore shapes *how an agent reasons and what it
+demands as evidence* — never what it physically does. A persona may have a body in
+its backstory ("you have watched", "in my experience"), but every **instruction**
+field (`agenda`, `tier_guidance`, `reflection_guidance`, `anti_patterns`) must be
+satisfiable with those tools:
+
+| Instead of | Write |
+|---|---|
+| "Run the proposal on the cheapest phone" | "Price the interaction from the code: what loads, what blocks, what it costs on a slow connection" |
+| "Cite the standard you know by feel" | "Cite the standard you can point to, or reason from first principles and say so" |
+| "Observe the team's reaction in the review" | "Name what the review would have to check, and where it would catch the regression" |
+| "Test every flow with a screen reader" | "Audit the flow in the markup: focus order, accessible names, announced errors" |
+| "Measure the yield on the line" | "Name the numbers: yield, cycle time, the control limit, and the source of each" |
+
+The loader enforces this: `lintEmbodiment` in `composer/persona-loader.js` warns on
+device claims, body-only verbs, external-system access, and unverifiable
+"you know it by feel" phrasing, and `test/prompt-lint.test.js` fails CI on any
+bundled persona that trips it. Two companion lints keep lenses portable
+(`lintRangeRule` — at most one analogy, plus an off-ramp sentence) and guidance
+from becoming an agenda echo (`lintCircularity`).
+
 ## Dashboard
 
 Run `/loom_viz` to start the real-time web dashboard. It auto-detects the most recent meeting and streams updates as they happen.

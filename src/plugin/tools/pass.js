@@ -3,7 +3,7 @@ import { tool } from "@opencode-ai/plugin";
 export function createPassTool({ config, resolveMeeting, activeLooms }) {
   return {
     loom_pass: tool({
-      description: "Pass on your current turn. Use when you have nothing new to contribute. The deliberation ends when all participants pass.",
+      description: "Pass on your current turn. Use when you have nothing new to contribute. loom_pass and loom_state_patch are mutually exclusive in one turn — call at most one of them. The deliberation ends when all active participants pass (the round limit or a timeout can also end it).",
       args: {
         reason: tool.schema.string().max(200).optional()
           .describe("Optional: why you're passing (e.g., 'covered by #3', 'not my expertise')"),

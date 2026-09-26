@@ -8,7 +8,7 @@ import { selectFallbackModel } from "../../services/model-service.js";
 import { incrementKeyedCounter, recordLatency } from "../../metrics.js";
 import { extractErrorInfo } from "../../logger.js";
 import { buildToolsMap, buildToolsMapWithoutLoom } from "../tools.js";
-import { delimitContext } from "../../prompts/delimiters.js";
+
 
 export async function promptChildSession(participant) {
   const prevStatus = participant.status;
@@ -96,7 +96,9 @@ export async function promptChildSession(participant) {
     const allPs = this._stateManager.getParticipants?.() ?? [];
     const selfId = participant.config.id;
     otherParticipantsForPrompt = allPs
-      .filter(p => p.config.id !== selfId && p.status !== "failed")
+      // Only queryable peers: listening/speaking. Passed/failed participants
+      // are listed nowhere — the roster text promises exactly this (audit N7).
+      .filter(p => p.config.id !== selfId && (p.status === "listening" || p.status === "speaking"))
       .map(p => ({
         id: p.config.id,
         name: p.config.name,
@@ -146,10 +148,17 @@ export async function promptChildSession(participant) {
     otherParticipantsForPrompt,
      myState,
      forumEnabled,
-     !!(effectiveAgentTools?.enabled && effectiveAgentTools?.loom?.loom_query),
+     // Solo suppression: with ≤1 active participant loom_query/loom_vote are
+     // removed from the tool map, so the roster must not be rendered either
+     // (audit N7 — system prompt and tool map both said no, roster said yes).
+     (!!(effectiveAgentTools?.enabled && effectiveAgentTools?.loom?.loom_query) && !(Number.isFinite(activeCountPS) && activeCountPS <= 1)),
      mandatoryCapabilities,
      {
        contextWindow: participantWindow,
+       maxRounds: (() => { try { return this._stateManager.getMaxRounds?.(); } catch { return undefined; } })(),
+       // Steering hint renders inside the builder, before the final patch line,
+       // so recency keeps the mandatory call (audit P1-D). Empty = no block.
+       steeringHint,
        // Previous round's clerk summary (rounds ≥2 only) — already paid for,
        // already high quality; routed to agents instead of only the dashboard.
        lastRoundSummary: (() => {
@@ -162,7 +171,7 @@ export async function promptChildSession(participant) {
        })(),
      },
    );
-  const userPrompt = steeringHint ? `${userPromptBase}\n\n${delimitContext(steeringHint, "STEERING_HINT")}` : userPromptBase;
+  const userPrompt = userPromptBase;
 
   const promptContext = {
     type: "agent_turn",

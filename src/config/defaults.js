@@ -84,6 +84,18 @@ export const DEFAULT_CONFIG = {
     },
     sameTurnSynthesis: true,
     patchRetry: true,
+    // Capability policy — single default shared with the Setup tab
+    // (control.js FEATURE_MODES). skillState:true matches the dashboard
+    // default; the four salience surfaces in prompts/agent.js (contract item 7,
+    // tool-list line, guidance bullet, final line) all gate on these flags,
+    // so a config-file meeting and a Setup-tab meeting now see one policy.
+    mandatory: {
+      forums: false,
+      skillState: true,
+      agentQueries: false,
+      localSearch: false,
+      onlineResearch: false,
+    },
     reflection: {
       bash: false,
       glob: false,
@@ -139,6 +151,11 @@ export const NESTED_SCHEMA = {
   'agentTools.loom.loom_state_patch': { type: 'boolean' },
   'agentTools.sameTurnSynthesis': { type: 'boolean' },
   'agentTools.patchRetry': { type: 'boolean' },
+  'agentTools.mandatory.forums': { type: 'boolean' },
+  'agentTools.mandatory.skillState': { type: 'boolean' },
+  'agentTools.mandatory.agentQueries': { type: 'boolean' },
+  'agentTools.mandatory.localSearch': { type: 'boolean' },
+  'agentTools.mandatory.onlineResearch': { type: 'boolean' },
   'agentTools.reflection.bash': { type: 'boolean' },
   'agentTools.reflection.glob': { type: 'boolean' },
   'agentTools.reflection.grep': { type: 'boolean' },

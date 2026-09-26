@@ -47,10 +47,10 @@ export const QUERY_MODES = {
     guidanceKind: "reflection",
     toolChoice: "auto",
     contentPrefix: (targetName) => `[Perspective from ${targetName}]`,
-    taskBlock: () =>
-      `Share your honest perspective on their statement in relation to the question — agreement, disagreement, or a nuanced take. Ground your stance in the deliberation (cite [#id]) or your domain lens. Close with \`Position: [held|revised|expanded] because {one reason}\`.\n${LENGTH_LIMITS.perspectiveWords} words, no contribution tags ([PROPOSE] etc). Stay in character.`,
-    systemPrompt: (target) =>
-      `You are ${target.config.name} (${target.config.tier}) — offering your honest perspective in Loom on another participant's statement. Be direct about agreement or disagreement, give your reasoning grounded in the deliberation (cite [#id]) or your domain lens, and close with \`Position: [held|revised|expanded] because {one reason}\`. ${LENGTH_LIMITS.perspectiveWords} words, in character. Never emit <<< or >>>.`,
+    taskBlock: (guidance = "") =>
+      `Share your honest perspective on their statement in relation to the question — agreement, disagreement, or a nuanced take. Ground your stance in the deliberation (cite [#id]) or your domain lens. Close with \`Position: [held|revised|expanded] because {one reason}\`.\n${LENGTH_LIMITS.perspectiveWords} words, no contribution tags ([PROPOSE] etc). Stay in character.${guidance ? `\nLens guidance: ${guidance}` : ""}`,
+    systemPrompt: (target, guidance = "") =>
+      `You are ${target.config.name} (${target.config.tier}) — offering your honest perspective in Loom on another participant's statement. Be direct about agreement or disagreement, give your reasoning grounded in the deliberation (cite [#id]) or your domain lens, and close with \`Position: [held|revised|expanded] because {one reason}\`. ${LENGTH_LIMITS.perspectiveWords} words, in character. Never emit <<< or >>>.${guidance ? ` Lens guidance: ${guidance}` : ""}`,
   },
 
   evidence: {

@@ -210,8 +210,13 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
             const deduped2 = writeSynthetic2.filter(s => !effective1.some(e => e.title === s.title));
             finalToolResults = [...effective1, ...effective2, ...deduped2];
             finalToolResults = truncateToolResults(finalToolResults, agentToolsConfig);
-            if (agentText2 && agentText2.trim().length >= 10) {
+            const priorLen = (agentText1 ?? "").trim().length;
+            const synthLen = (agentText2 ?? "").trim().length;
+            const substantive = synthLen >= 200 || (priorLen > 0 && synthLen >= Math.floor(priorLen / 2));
+            if (agentText2 && substantive) {
               finalText = agentText2;
+            } else if (synthLen >= 10) {
+              this._logger.warn("synthesis_too_short", `Synthesis for ${participant.config.name} returned only ${synthLen} chars — keeping first turn text (${priorLen} chars)`, { participant: participant.config.id, round: currentRound });
             } else {
               this._logger.warn("synthesis_empty", `Synthesis for ${participant.config.name} returned empty — using first turn text`);
             }
@@ -245,6 +250,10 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
     })();
     const hasContentForPatch = (finalText && String(finalText).trim().length > 0) || (finalToolResults ?? []).length > 0;
     let patchDeadlineSkipped = false;
+    // Tracks whether the patch-retry above already ran: the mandatory-capability
+    // retry below must not re-nag SKILL.state in the same turn (audit P0-B —
+    // two near-identical nags, two extra LLM calls, on the worst-case turn).
+    let patchRetryAttempted = false;
     if (patchEnabled && patchRetryEnabled && !hasAppliedPatch(finalToolResults) && !loomPassCall && hasContentForPatch) {
       // Surface primary-pass validation issues so the retry does not repeat identical args blindly
       let issuesHint = "";
@@ -267,6 +276,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
         }
       }
       if (patchRemaining !== 0) {
+        patchRetryAttempted = true;
         try {
           this._logger.info("state_patch_retry", `Requesting loom_state_patch retry for ${participant.config.name}`, { participant: participant.config.id, round: currentRound });
           const patchToolsMap = buildToolsMap(effectiveConfig, { activeCount: activeCountExec });
@@ -310,7 +320,15 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
     const hasSuccessfulOneOf = (toolNames) => toolNames.some((toolName) => hasSuccessfulTool(toolName));
     const missingMandatory = [];
     if (mandatoryCapabilities.forums && !hasSuccessfulOneOf(["loom_forum_create_topic", "loom_forum_list_topics", "loom_forum_read_topic", "loom_forum_add_comment"])) missingMandatory.push("Forums: call loom_forum_list_topics, loom_forum_read_topic, loom_forum_create_topic, or loom_forum_add_comment");
-    if (mandatoryCapabilities.skillState && !hasSuccessfulTool("loom_state_patch")) missingMandatory.push("SKILL.state: call loom_state_patch");
+    // SKILL.state is covered by the dedicated patch-retry above: if that retry
+    // already ran and missed, a second nag in the same turn adds an LLM call
+    // for no new information (audit P0-B).
+    if (mandatoryCapabilities.skillState && !hasSuccessfulTool("loom_state_patch") && !patchRetryAttempted) missingMandatory.push("SKILL.state: call loom_state_patch");
+    if (patchRetryAttempted && mandatoryCapabilities.skillState && !hasSuccessfulTool("loom_state_patch")) {
+      try {
+        this._logger.debug("mandatory_state_retry_suppressed", `SKILL.state mandatory retry suppressed for ${participant.config.name} — patch-retry already ran this turn`, { participant: participant.config.id, round: currentRound });
+      } catch {}
+    }
     if (mandatoryCapabilities.agentQueries && Number.isFinite(activeCountExec) && activeCountExec > 1 && !hasSuccessfulOneOf(["loom_query", "loom_vote", "loom_summon", "loom_request_next"])) missingMandatory.push("Agent-to-agent: call loom_query, loom_vote, loom_summon, or loom_request_next with an eligible peer");
     if (mandatoryCapabilities.localSearch && !hasSuccessfulOneOf(["read", "glob", "grep"])) missingMandatory.push("Local search: call read, glob, or grep");
     if (mandatoryCapabilities.onlineResearch && !hasSuccessfulOneOf(["websearch", "webfetch"])) missingMandatory.push("Online research: call websearch or webfetch");
@@ -326,7 +344,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
       }
       if (mandatoryRemaining !== 0) {
         try {
-          const mandatoryInstruction = `This turn has unmet mandatory capabilities: ${missingMandatory.join("; ")}. Complete every applicable requirement now, using the exact tool names and valid targets. Do not repeat the prose; make the required tool call(s), then finish your contribution.`;
+          const mandatoryInstruction = `This turn has unmet mandatory capabilities: ${missingMandatory.join("; ")}. Complete every applicable requirement now, using the exact tool names and valid targets. Do not repeat the prose — make ONLY the required tool call(s). Your earlier contribution is already recorded; no replacement prose is needed.`;
           this._logger.info("mandatory_capability_retry", `Requesting mandatory capability retry for ${participant.config.name}`, { participant: participant.config.id, round: currentRound, missing: missingMandatory });
           // Loom-free map: this retry satisfies a capability, it must not open a
           // new peer interaction with no synthesis pass to fold it in (audit B8).
@@ -358,7 +376,15 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
             const retryResponse = extractAgentResponse(resultM.data);
             const effectiveM = truncateToolResults(retryResponse.toolResults ?? [], agentToolsConfig);
             if (effectiveM.length > 0) finalToolResults = truncateToolResults([...finalToolResults, ...effectiveM], agentToolsConfig);
-            if (retryResponse.text && retryResponse.text.trim().length > 0) finalText = retryResponse.text;
+            // Enforcement retries harvest tool calls only: the retry instruction
+            // tells the model not to repeat the prose, so its text must never
+            // displace the primary contribution (audit N0 — a compliant model
+            // returns a one-line filler that would silently replace full prose).
+            if (retryResponse.text && retryResponse.text.trim().length > 0) {
+              try {
+                this._logger.debug("mandatory_retry_text_ignored", `Ignoring ${retryResponse.text.trim().length}-char prose from mandatory retry for ${participant.config.name} — primary contribution preserved`, { participant: participant.config.id, round: currentRound });
+              } catch {}
+            }
             const retryPatch = effectiveM.find((t) => t.tool === "loom_state_patch" && t.metadata?.applied === true);
             if (retryPatch) statePatchVersion = retryPatch.metadata?.version ?? null;
           } else {

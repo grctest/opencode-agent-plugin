@@ -200,5 +200,5 @@ export function buildTierDoctrine(tier, guidance) {
   };
   const doc = doctrineMap[tier] ?? "Contribute a falsifiable claim or question — avoid generalities; be thorough, use the context window.";
   const safe = escapeDelimiters(sanitizeForDisplay(guidance, 1500));
-  return `${doc}\n${safe}`;
+  return `${doc}\nPersona lens (subordinate to contract):\n${safe}`;
 }

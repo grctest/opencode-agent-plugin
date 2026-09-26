@@ -103,7 +103,13 @@ test("mandatory capability modes are reflected in turn prompts", () => {
   assert.match(system, /required once per non-pass turn/i);
   assert.match(user, /requires one forum tool call/i);
   assert.match(user, /eligible peer interaction tool/i);
-  const optionalSystem = buildAgentSystemPrompt(participant, { activeCount: 3, agentTools: DEFAULT_CONFIG.agentTools });
+  // DEFAULT_CONFIG now ships mandatory.skillState:true (parity with the Setup
+  // tab default — audit P0-E), so the default prompt carries the REQUIRED line.
+  const defaultSystem = buildAgentSystemPrompt(participant, { activeCount: 3, agentTools: DEFAULT_CONFIG.agentTools });
+  assert.match(defaultSystem, /required once per non-pass turn/i);
+  const optionalTools = structuredClone(DEFAULT_CONFIG.agentTools);
+  optionalTools.mandatory = { forums: false, skillState: false, agentQueries: false, localSearch: false, onlineResearch: false };
+  const optionalSystem = buildAgentSystemPrompt(participant, { activeCount: 3, agentTools: optionalTools });
   assert.doesNotMatch(optionalSystem, /required once per non-pass turn/i);
 });
 

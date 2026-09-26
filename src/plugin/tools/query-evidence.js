@@ -189,7 +189,10 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
                  );
               }
 
-              const systemPrompt = meta.systemPrompt(target);
+              // Persona reflection lens for perspective answers (audit N2/P2-G).
+              const perspectiveGuidance = mode === "perspective" && typeof target?.config?.reflection_guidance === "string"
+                ? target.config.reflection_guidance.trim().slice(0, 400) : "";
+              const systemPrompt = meta.systemPrompt(target, perspectiveGuidance);
               const res = await sessionManager.runEphemeralPrompt(target, {
                 system: systemPrompt,
                 model,

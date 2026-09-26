@@ -23,6 +23,11 @@ export function buildQueryPrompt(sourceAgent, targetAgent, sourceContribution, q
 
   const recentMine = getRecentContributionsBlock(roundContributions, targetAgent.config.id);
   const stateContext = buildTargetPositionContext(targetAgent, targetState);
+  // reflection_guidance is consumed here (audit N2/P2-G): perspective-mode
+  // targets answer through their persona's reflection lens. Other modes ignore it.
+  const reflectionGuidance = mode === "perspective" && typeof targetAgent?.config?.reflection_guidance === "string" && targetAgent.config.reflection_guidance.trim()
+    ? sanitizeForDisplay(targetAgent.config.reflection_guidance.trim().slice(0, 400))
+    : "";
   const sopSnippet = stateOfPlay ? `State of Play — Open Questions (what answer would unblock):\n${sanitizeForDisplay(stateOfPlay, 600)}\n\n` : "";
 
   const header = `## ${mode === "clarify" ? "Direct Query" : `${mode.charAt(0).toUpperCase() + mode.slice(1)} Request`} — to ${sanitizeForDisplay(targetAgent.config.name)} (${targetAgent.config.tier}) from ${safeSourceName} (${sourceAgent.config.tier})
@@ -35,7 +40,7 @@ ${sopSnippet}${recentMine ? recentMine + "\n\n" : ""}${stateContext ? stateConte
 Round: ${roundContext}
 
 ## Task
-${meta.taskBlock()}
+${meta.taskBlock(reflectionGuidance)}
 ${toolSection}`;
   return header;
 }
@@ -167,6 +172,18 @@ export function buildSummonPrompt(summonedPersona, requester, issue, roundContri
   const sopSnippet = stateOfPlay
     ? delimitContext(sanitizeForDisplay(stateOfPlay, 700), "STATE_OF_PLAY")
     : "";
+  // Guest voice (audit P1-I): summoned experts previously received persona text
+  // only — no tier lens, bias, or anti-pattern — even though vote-summon.js
+  // copies all three into the summoned config. One line each keeps guests in
+  // voice without approaching a primary turn's budget.
+  const guestLens = summonedPersona.tier_guidance ? sanitizeForDisplay(String(summonedPersona.tier_guidance), 300).replace(/\n/g, " ").trim() : "";
+  const guestBias = Array.isArray(summonedPersona.known_biases) && summonedPersona.known_biases.length > 0
+    ? sanitizeForDisplay(String(summonedPersona.known_biases[0]), 160).replace(/\n/g, " ").trim() : "";
+  const guestCraft = Array.isArray(summonedPersona.anti_patterns) && summonedPersona.anti_patterns.length > 0
+    ? sanitizeForDisplay(String(summonedPersona.anti_patterns[0]), 200).replace(/\n/g, " ").trim() : "";
+  const lensBlock = (guestLens || guestBias || guestCraft)
+    ? `\n### Lens\n${guestLens ? `${guestLens}\n` : ""}${guestBias ? `Watch for this tendency in yourself: ${guestBias}.\n` : ""}${guestCraft ? `Craft: ${guestCraft}\n` : ""}`
+    : "";
 
   return `## Guest Expert — ${safePersonaName} (${summonedPersona.tier}) summoned by ${safeRequesterName} (${requester.config.tier})
 
@@ -178,6 +195,7 @@ ${sanitizeForDisplay(expertise, 300)}
 
 ### Voice
 ${sanitizeForDisplay(style, 300)}
+${lensBlock}
 
 ${delimitContext(safeIssue, "SUMMON_ISSUE")}
 ${questionBlock}${sopSnippet ? `### State of Play — Decisions (what's settled, build on it)\n${sopSnippet}\n` : ""}### Recent Relevant Contributions (relevance-scored, top 4)
