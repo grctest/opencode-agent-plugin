@@ -492,6 +492,7 @@ function normalizeFeatures(raw = {}) {
     localSearch: normalizeFeatureMode(raw.localSearch, localFallback),
     onlineResearch: normalizeFeatureMode(raw.onlineResearch, onlineFallback),
     agentCommands: raw.agentCommands !== false,
+    parallelQueries: raw.parallelQueries !== false,
   };
 }
 
@@ -536,6 +537,7 @@ function buildMeetingAgentTools(features, base = getConfig().agentTools) {
     onlineResearch: features.onlineResearch === "mandatory",
   };
   tools.patchRetry = features.skillState === "mandatory";
+  tools.parallelQueries = features.parallelQueries !== false;
   return tools;
 }
 

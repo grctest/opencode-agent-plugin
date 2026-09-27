@@ -37,6 +37,7 @@ const DEFAULT_FEATURES = {
   localSearch: "optional",
   onlineResearch: "optional",
   agentCommands: true,
+  parallelQueries: true,
 };
 
 export const DEFAULT_SETUP_FORM = {
@@ -164,6 +165,7 @@ function sanitizeForm(raw) {
     localSearch: normalizeMode(rawFeatures.localSearch, normalizeMode(legacyAgentTools, DEFAULT_FEATURES.localSearch)),
     onlineResearch: normalizeMode(rawFeatures.onlineResearch, normalizeMode(legacyAgentTools, DEFAULT_FEATURES.onlineResearch)),
     agentCommands: typeof rawFeatures.agentCommands === "boolean" ? rawFeatures.agentCommands : DEFAULT_FEATURES.agentCommands,
+    parallelQueries: typeof rawFeatures.parallelQueries === "boolean" ? rawFeatures.parallelQueries : DEFAULT_FEATURES.parallelQueries,
   };
   return {
     version: FORM_VERSION,

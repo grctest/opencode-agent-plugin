@@ -1365,7 +1365,7 @@ One call can query multiple peers (1 per item). Each item specifies a `target` (
 **Execution flow:**
 1. Resolve each target (must exist, not failed/passed/muted).
 2. For each resolved target: build prompt via `buildQueryPrompt` (clarify/other modes) or `buildEvidencePrompt` (evidence mode) — the self-contained question (no draft exists mid-turn; the prompt states this explicitly), target's recent contributions plus recent room context, one-line position (`Your position (from your state vN)` + top bullets; the full Σⁱ block is the fallback only when no position exists), seniority + round context.
-3. Run `runEphemeralPrompt` for each target (parallel where possible).
+3. Run `runEphemeralPrompt` for each target — **parallel by default** (`agentTools.parallelQueries`, Setup-tab toggle; off = serial loop). Parallel runs use batched fan-out (`src/utils/fanout.js`: default 5/batch, ~100/min budget from `TUNING.FANOUT`, order-preserving, all-settled — one slow/failed peer never blocks the others). Prompts run concurrently; persistence stays serial in request order (two-phase) so contribution IDs are monotonic.
 4. Persist each response as a typed contribution (`query_response` or `evidence_response`) under the invoker's `batch_id`.
 5. **Perspective mode side-effect:** the response replaces the target's stored `reflection` (pushed onto bounded `reflectionHistory`, max 5) and persists via `setParticipantReflection` — this is the primary write path for reflections (Section 12).
 
@@ -1377,7 +1377,7 @@ One call can query multiple peers (1 per item). Each item specifies a `target` (
 
 **Signature:** `loom_vote({ question })`
 
-Fan-out to **all other active participants** (the source does not ballot; failed/passed participants are excluded). Each voter is prompted in parallel and the source interprets the returned tally.
+Fan-out to **all other active participants** (the source does not ballot; failed/passed participants are excluded). Voters are prompted in **parallel batches** (`src/utils/fanout.js`: default 5/batch, ~100/min budget from `TUNING.FANOUT`) and the source interprets the returned tally. Partial failures are per-voter entries — one failed ballot never blocks the rest. Note: at very large room sizes (e.g. 300 participants ≈ 60 batches) full fan-out is complete but slow by design; the caller waits for all batches.
 
 - **Prompt** (`buildVotePrompt`): poll question, source's contribution, voter's last 2 contributions and stored reflection, round context.
 - **Ballot format:** `[Vote: <letter>]` + 1–2 sentences reasoning. `extractVoteLetter()` accepts the tag or a standalone capital letter.

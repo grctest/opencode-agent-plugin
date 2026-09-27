@@ -8,6 +8,9 @@ import { degrade } from "../../utils/degrade.js";
 import { Logger } from "../../logger.js";
 import { resolveCaller, resolveModel, buildBatchId, findExistingQueryResponse } from "./shared.js";
 import { auditLoomTool } from "./audit.js";
+import { mapInBatches, batchDelayForRpm } from "../../utils/fanout.js";
+import { TUNING } from "../../config/defaults.js";
+import { getConfig } from "../../config.js";
 const logger = new Logger();
 
 function normalizeQueries(args, maxTargets = 3) {
@@ -122,156 +125,201 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
             for (const p of allParticipants) s.add(buildBatchId(meetingIdForBatch, currentRound, p?.config?.id));
             return [...s];
           })();
-           for (const { participant: target, question, mode } of resolved) {
-            if (context.abort?.aborted || context.signal?.aborted) break;
-            const meta = QUERY_MODES[mode];
-            // Idempotent retry guard: reuse existing response instead of re-prompting peer.
-            // Uses normalized question + broad fallback (batch drift / status reset) per shared helper.
-            try {
-              const weave = stateManager.getWeave ? stateManager.getWeave() : [];
-              const existing = findExistingQueryResponse(weave, {
-                batchId: batchIdForCheck,
-                fallbackBatchIds: allBatchCandidates,
-                targetId: target.config.id,
-                contributionType: meta.contributionType,
-                question,
-                sourceId: caller?.config?.id ?? null,
-                round: currentRound,
-              });
-              if (existing) {
-                const raw = (existing.content ?? "").replace(/^\[.+?\]\s*/m, "").trim();
-                results.push({ target: target.config.id, name: target.config.name, mode, content: raw.slice(0,800), contributionId: existing.id, reused: true });
-                continue;
-              }
-            } catch {}
-            try {
-              let model = resolveModel(engine, target, stateManager);
-              if (!model) {
-                logger.warn("participant_model_missing", `No model resolvable for ${target.config.id} — ${meta.contributionType} skipped`, { participant: target.config.id });
-                results.push({ target: target.config.id, mode, error: "peer model unavailable — could not respond (no model assignment); treat their claim as unverified" });
-                continue;
-              }
+           const parallel = effectiveCfg?.parallelQueries !== false;
+           const fanoutCfg = (() => { try { return getConfig()?.tuning?.FANOUT ?? TUNING.FANOUT; } catch { return TUNING.FANOUT; } })();
+           const queryBatchSize = Math.max(1, Number(fanoutCfg?.queryBatch) || 5);
+           const queryDelayMs = batchDelayForRpm(queryBatchSize, Number(fanoutCfg?.rpm) || 100);
+           const fanoutSignal = context.abort ?? context.signal ?? null;
+
+           // Per-target prompt task — pure prompt phase, no state mutation.
+           // Persistence happens sequentially afterwards in request order
+           // (two-phase: prompt parallel-batched, persist serial) so
+           // contribution IDs stay monotonic and DB writes never interleave.
+           const runSingleQuery = async ({ participant: target, question, mode }) => {
+             const meta = QUERY_MODES[mode];
+             // Idempotent retry guard: reuse existing response instead of re-prompting peer.
+             // Uses normalized question + broad fallback (batch drift / status reset) per shared helper.
+             try {
+               const weave = stateManager.getWeave ? stateManager.getWeave() : [];
+               const existing = findExistingQueryResponse(weave, {
+                 batchId: batchIdForCheck,
+                 fallbackBatchIds: allBatchCandidates,
+                 targetId: target.config.id,
+                 contributionType: meta.contributionType,
+                 question,
+                 sourceId: caller?.config?.id ?? null,
+                 round: currentRound,
+               });
+               if (existing) {
+                 const raw = (existing.content ?? "").replace(/^\[.+?\]\s*/m, "").trim();
+                 return { kind: "reused", target, mode, content: raw.slice(0, 800), contributionId: existing.id };
+               }
+             } catch {}
+             try {
+               const model = resolveModel(engine, target, stateManager);
+               if (!model) {
+                 logger.warn("participant_model_missing", `No model resolvable for ${target.config.id} — ${meta.contributionType} skipped`, { participant: target.config.id });
+                 return { target, mode, kind: "error", error: "peer model unavailable — could not respond (no model assignment); treat their claim as unverified" };
+               }
 
                const stateOfPlay = stateManager.getStateOfPlay?.() ?? "";
                const targetState = stateManager.getParticipantState?.(target.config.id) ?? null;
                const roundContribs = stateManager.getWeave ? stateManager.getWeave().filter(c => c.round != null && c.round >= stateManager.getCurrentRound() - 1).slice(-12) : [];
 
-              const callerForPrompt = caller ?? { config: { name: sourceName, tier: "mid", id: "unknown" } };
-              // The caller invokes mid-turn before writing prose, so there is no
-              // draft contribution to show. Passing `question` here too would render
-              // it twice (once per block); pass an explicit note instead and keep
-              // the question solely in the QUESTION block (audit B3).
-              const noDraftNote = "The asker invoked this query mid-turn, before writing their contribution — there is no draft to show. The question below is self-contained; answer it directly.";
-              let prompt;
-              if (mode === "evidence") {
-                prompt = buildEvidencePrompt(
-                  callerForPrompt,
-                  target,
-                  noDraftNote,
-                  question,
-                  roundContribs,
+               const callerForPrompt = caller ?? { config: { name: sourceName, tier: "mid", id: "unknown" } };
+               // The caller invokes mid-turn before writing prose, so there is no
+               // draft contribution to show. Passing `question` here too would render
+               // it twice (once per block); pass an explicit note instead and keep
+               // the question solely in the QUESTION block (audit B3).
+               const noDraftNote = "The asker invoked this query mid-turn, before writing their contribution — there is no draft to show. The question below is self-contained; answer it directly.";
+               let prompt;
+               if (mode === "evidence") {
+                 prompt = buildEvidencePrompt(
+                   callerForPrompt,
+                   target,
+                   noDraftNote,
+                   question,
+                   roundContribs,
                    stateManager.getCurrentRound(),
                    stateManager.getMaxRounds(),
                    targetState
                  );
-              } else {
-                prompt = buildQueryPrompt(
-                  callerForPrompt,
-                  target,
-                  noDraftNote,
-                  question,
-                  roundContribs,
-                  stateManager.getCurrentRound(),
-                  stateManager.getMaxRounds(),
+               } else {
+                 prompt = buildQueryPrompt(
+                   callerForPrompt,
+                   target,
+                   noDraftNote,
+                   question,
+                   roundContribs,
+                   stateManager.getCurrentRound(),
+                   stateManager.getMaxRounds(),
                    stateOfPlay,
                    mode,
                    targetState
                  );
-              }
+               }
 
-              // Persona reflection lens for perspective answers (audit N2/P2-G).
-              const perspectiveGuidance = mode === "perspective" && typeof target?.config?.reflection_guidance === "string"
-                ? target.config.reflection_guidance.trim().slice(0, 400) : "";
-              const systemPrompt = meta.systemPrompt(target, perspectiveGuidance);
-              const res = await sessionManager.runEphemeralPrompt(target, {
-                system: systemPrompt,
-                model,
-                parts: [{ type: "text", text: prompt }],
-                tools: researchTools(),
-                timeoutMs: meta.timeoutMs,
-                signal: context.abort,
-                abort: context.abort,
-              }, meetingInfo.meetingId);
-               if (!res || !res.ok) { results.push({ target: target.config.id, mode, error: res?.error?.message ?? "prompt failed" }); continue; }
+               // Persona reflection lens for perspective answers (audit N2/P2-G).
+               const perspectiveGuidance = mode === "perspective" && typeof target?.config?.reflection_guidance === "string"
+                 ? target.config.reflection_guidance.trim().slice(0, 400) : "";
+               const systemPrompt = meta.systemPrompt(target, perspectiveGuidance);
+               const res = await sessionManager.runEphemeralPrompt(target, {
+                 system: systemPrompt,
+                 model,
+                 parts: [{ type: "text", text: prompt }],
+                 tools: researchTools(),
+                 timeoutMs: meta.timeoutMs,
+                 signal: context.abort,
+                 abort: context.abort,
+               }, meetingInfo.meetingId);
+               if (!res || !res.ok) return { target, mode, kind: "error", error: res?.error?.message ?? "prompt failed" };
                const { text, toolResults } = extractAgentResponse(res.data);
-              // Sentence-boundary truncation with ellipsis, not a mid-word UTF-16
-              // slice that can cut mid-sentence or mid-surrogate-pair (audit B7).
-              const content = truncateAtSentence(text ?? "", 2000);
+               // Sentence-boundary truncation with ellipsis, not a mid-word UTF-16
+               // slice that can cut mid-sentence or mid-surrogate-pair (audit B7).
+               const content = truncateAtSentence(text ?? "", 2000);
+               return { target, mode, question, meta, kind: "prompted", content, text, toolResults, systemPrompt, prompt, stateOfPlay, targetState, roundContribs };
+             } catch (e) {
+               return { target, mode, kind: "error", error: e.message };
+             }
+           };
 
-              // Persist as a typed contribution grouped under the invoker's batch
-              try {
-                const callerForBatch = resolveCaller(allParticipants, stateManager.getWeave?.() ?? [], context.sessionID) || caller;
-                // Deterministic fallback keeps batch linkable: meetingId-round-callerId
-                const fallbackBatch = buildBatchId(stateManager.getState?.()?.id ?? meetingInfo.meetingId, stateManager.getCurrentRound?.() ?? 0, caller?.config?.id);
-                const batchId = callerForBatch?.currentBatchId ?? caller?.currentBatchId ?? fallbackBatch;
-                const currentRound = stateManager.getCurrentRound();
-                let roundObj = null;
-                try { const st = stateManager.getState(); roundObj = (st.rounds || []).find(r => r.number === currentRound) || null; } catch {}
-                const contributionTools = mapToolResults(toolResults);
-                const contrib = {
-                  id: stateManager.nextContributionId(),
-                  round: currentRound,
-                  participant_id: target.config.id,
-                  content: `${meta.contentPrefix(target.config.name, sourceName)}\n\n${content}`,
-                  type: meta.contributionType,
-                  targets_which: null,
-                  batch_id: batchId,
-                  tool_calls: contributionTools ?? [],
-                  prompt_context: {
-                    type: meta.contributionType,
-                    mode,
-                    question,
-                    round: currentRound,
-                    source_participant_id: caller?.config?.id ?? null,
-                    source_participant_name: sourceName,
-                    source_batch_id: batchId,
-                    system_prompt: systemPrompt,
-                    user_prompt: prompt,
-                    state_of_play: stateOfPlay,
-                     state_version: targetState?.version ?? 0,
-                    round_contributions_used: roundContribs.slice(-4).map(c => ({ id: c.id, participant_id: c.participant_id, type: c.type, content: (c.content ?? "").slice(0,300) })),
-                  },
-                  created_at: new Date().toISOString(),
-                };
-                stateManager.addContribution(contrib);
-                if (roundObj) roundObj.contributions.push(contrib);
-                degrade("contribution_db_failed", "Failed to persist contribution — visible in memory only this session", () => db.addContributionWithTurnRequest(stateManager.getState().id, contrib, null), null);
+           // Serial persistence in request order — the only writer.
+           const persistQueryOutcome = (outcome) => {
+             if (!outcome) return;
+             const { target, mode } = outcome;
+             if (outcome.kind === "reused") {
+               results.push({ target: target.config.id, name: target.config.name, mode, content: outcome.content, contributionId: outcome.contributionId, reused: true });
+               return;
+             }
+             if (outcome.kind === "error") {
+               results.push({ target: target.config.id, mode, error: outcome.error });
+               return;
+             }
+             const { question, meta, content, text, toolResults, systemPrompt, prompt, stateOfPlay, targetState, roundContribs } = outcome;
+             // Persist as a typed contribution grouped under the invoker's batch
+             try {
+               const callerForBatch = resolveCaller(allParticipants, stateManager.getWeave?.() ?? [], context.sessionID) || caller;
+               // Deterministic fallback keeps batch linkable: meetingId-round-callerId
+               const fallbackBatch = buildBatchId(stateManager.getState?.()?.id ?? meetingInfo.meetingId, stateManager.getCurrentRound?.() ?? 0, caller?.config?.id);
+               const batchId = callerForBatch?.currentBatchId ?? caller?.currentBatchId ?? fallbackBatch;
+               const currentRound = stateManager.getCurrentRound();
+               let roundObj = null;
+               try { const st = stateManager.getState(); roundObj = (st.rounds || []).find(r => r.number === currentRound) || null; } catch {}
+               const contributionTools = mapToolResults(toolResults);
+               const contrib = {
+                 id: stateManager.nextContributionId(),
+                 round: currentRound,
+                 participant_id: target.config.id,
+                 content: `${meta.contentPrefix(target.config.name, sourceName)}\n\n${content}`,
+                 type: meta.contributionType,
+                 targets_which: null,
+                 batch_id: batchId,
+                 tool_calls: contributionTools ?? [],
+                 prompt_context: {
+                   type: meta.contributionType,
+                   mode,
+                   question,
+                   round: currentRound,
+                   source_participant_id: caller?.config?.id ?? null,
+                   source_participant_name: sourceName,
+                   source_batch_id: batchId,
+                   system_prompt: systemPrompt,
+                   user_prompt: prompt,
+                   state_of_play: stateOfPlay,
+                   state_version: targetState?.version ?? 0,
+                   round_contributions_used: roundContribs.slice(-4).map(c => ({ id: c.id, participant_id: c.participant_id, type: c.type, content: (c.content ?? "").slice(0, 300) })),
+                 },
+                 created_at: new Date().toISOString(),
+               };
+               stateManager.addContribution(contrib);
+               if (roundObj) roundObj.contributions.push(contrib);
+               degrade("contribution_db_failed", "Failed to persist contribution — visible in memory only this session", () => db.addContributionWithTurnRequest(stateManager.getState().id, contrib, null), null);
 
-                // Perspective answers update the responder's stored reflection — this path
-                // is replacing automatic challenge/dissent reflections long-term.
-                if (mode === "perspective" && text && text.trim()) {
-                  try {
-                    const trimmed = text.trim();
-                    target.reflection = trimmed;
-                    if (!Array.isArray(target.reflectionHistory)) target.reflectionHistory = [];
-                    target.reflectionHistory.push({ round: currentRound, text: trimmed, at: Date.now() });
-                    if (target.reflectionHistory.length > 5) target.reflectionHistory.shift();
-                    db.setParticipantReflection(target.config.id, trimmed);
-                    // SKILL.state single-source-of-truth (§5.7): mark dirty so the
-                    // responder's next mandatory loom_state_patch picks the position
-                    // up as stance (one-turn lag max, no extra LLM call).
-                    try { stateManager.markStateDirty?.(target.config.id); } catch {}
-                  } catch {}
-                }
+               // Perspective answers update the responder's stored reflection — this path
+               // is replacing automatic challenge/dissent reflections long-term.
+               if (mode === "perspective" && text && text.trim()) {
+                 try {
+                   const trimmed = text.trim();
+                   target.reflection = trimmed;
+                   if (!Array.isArray(target.reflectionHistory)) target.reflectionHistory = [];
+                   target.reflectionHistory.push({ round: currentRound, text: trimmed, at: Date.now() });
+                   if (target.reflectionHistory.length > 5) target.reflectionHistory.shift();
+                   db.setParticipantReflection(target.config.id, trimmed);
+                   // SKILL.state single-source-of-truth (§5.7): mark dirty so the
+                   // responder's next mandatory loom_state_patch picks the position
+                   // up as stance (one-turn lag max, no extra LLM call).
+                   try { stateManager.markStateDirty?.(target.config.id); } catch {}
+                 } catch {}
+               }
 
-                results.push({ target: target.config.id, name: target.config.name, mode, content: content.slice(0,800), contributionId: contrib.id });
-              } catch {
-                results.push({ target: target.config.id, name: target.config.name, mode, content: content.slice(0,800) });
-              }
-            } catch (e) {
-              results.push({ target: target.config.id, mode, error: e.message });
-            }
-          }
+               results.push({ target: target.config.id, name: target.config.name, mode, content: content.slice(0, 800), contributionId: contrib.id });
+             } catch {
+               results.push({ target: target.config.id, name: target.config.name, mode, content: content.slice(0, 800) });
+             }
+           };
+
+           if (!parallel) {
+             for (const item of resolved) {
+               if (context.abort?.aborted || context.signal?.aborted) break;
+               persistQueryOutcome(await runSingleQuery(item));
+             }
+           } else {
+             // Parallel fan-out in rate-limited batches (default 5/batch, ~100/min):
+             // order-preserving, all-settled — one slow/failed peer never blocks others.
+             const settled = await mapInBatches(resolved,
+               async (item) => {
+                 try {
+                   return await runSingleQuery(item);
+                 } catch (e) {
+                   return { target: item.participant, mode: item.mode, kind: "error", error: e?.message ?? "fan-out failed" };
+                 }
+               },
+               { batchSize: queryBatchSize, delayMs: queryDelayMs, signal: fanoutSignal });
+             for (const s of settled) {
+               if (s.ok) persistQueryOutcome(s.value);
+               else results.push({ target: "unknown", mode: "clarify", error: s.error?.message ?? "fan-out failed" });
+             }
+           }
           const inlinePayload = { inline: true, queries, responses: results, note: "Inline query — peer answers returned for synthesis and stored as indented rows." };
           const outputStr = JSON.stringify(inlinePayload);
           // Durable audit for Tool use tab — captures loom_query even if ToolPart extraction fails or mixed with forum in same turn

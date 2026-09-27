@@ -1025,7 +1025,14 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
                   <p className="text-xs text-muted-foreground">Allow allowlisted shell commands. Bash is always optional.</p>
                 </div>
                 <Switch id="loom-feature-agentCommands" checked={features.agentCommands !== false} onCheckedChange={(value) => setFeature("agentCommands", value === true)} disabled={isFrozen || readOnly} aria-label="Bash commands" />
-             </div>
+              </div>
+              <div className="flex items-center justify-between gap-4 rounded-md px-2 py-1.5 hover:bg-muted/50">
+                <div className="min-w-0">
+                  <Label htmlFor="loom-feature-parallelQueries" className="cursor-pointer">Parallel peer queries</Label>
+                  <p className="text-xs text-muted-foreground">Fan out multi-target queries and votes concurrently in rate-limited batches. Off runs them sequentially.</p>
+                </div>
+                <Switch id="loom-feature-parallelQueries" checked={features.parallelQueries !== false} onCheckedChange={(value) => setFeature("parallelQueries", value === true)} disabled={isFrozen || readOnly} aria-label="Parallel peer queries" />
+              </div>
           </div>
         </CardContent>
       </Card>

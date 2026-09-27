@@ -14,6 +14,7 @@ export const TUNING = {
   MAX_DB_CACHE_SIZE: 10,
   VOTE_TIMEOUT_MS: 60_000,
   SUMMON_TIMEOUT_MS: 90_000,
+  FANOUT: { queryBatch: 5, voteBatch: 5, rpm: 100 },
   CONTENT_TRUNCATION: { question: 10000, result: 4000, content: 4000, summary: 800 },
   TRANSCRIPT_BUDGET: { critiqueChunk: 8000, fullLimit: 24000 },
   STATE_OF_PLAY: { bucketCap: 8, truncation: 500, reflectionTruncation: 400 },
@@ -103,6 +104,7 @@ export const DEFAULT_CONFIG = {
     maxToolCallsPerTurn: 12,
     maxToolOutputTokens: 12000,
     maxQueryTargetsPerTurn: 3,
+    parallelQueries: true,
   },
 };
 
@@ -160,6 +162,7 @@ export const NESTED_SCHEMA = {
   'agentTools.maxToolCallsPerTurn': { type: 'number', min: 1, max: 50 },
   'agentTools.maxToolOutputTokens': { type: 'number', min: 1000, max: 20000 },
   'agentTools.maxQueryTargetsPerTurn': { type: 'number', min: 1, max: 7 },
+  'agentTools.parallelQueries': { type: 'boolean' },
   'modelFallback.enabled': { type: 'boolean' },
   'modelFallback.maxRetriesPerModel': { type: 'number', min: 0, max: 5 },
   'modelFallback.maxFallbackAttempts': { type: 'number', min: 0, max: 3 },

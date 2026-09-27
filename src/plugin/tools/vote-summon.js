@@ -9,6 +9,7 @@ import { TUNING } from "../../config/defaults.js";
 import { getConfig } from "../../config.js";
 import { resolveCaller, resolveModel, buildBatchId, normalizeQuestionForMatch } from "./shared.js";
 import { auditLoomTool } from "./audit.js";
+import { mapInBatches, batchDelayForRpm } from "../../utils/fanout.js";
 
 export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
   return {
@@ -113,9 +114,14 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
             const payload = { inline: true, question: args.question, tally: tallyContent.slice(0,800), votes: [], note: "Vote completed inline — source only (no voters, source does not ballot)." };
             return { output: JSON.stringify(payload), metadata: { inline: true }, title: "loom_vote:source only" };
           }
-          // Parallel fan-out to voters — with hardened retry guard (any plausible batch + source+round fallback)
+          // Parallel fan-out to voters in rate-limited batches (default 5/batch,
+          // ~100/min) — with hardened retry guard (any plausible batch + source+round fallback)
           const voteResponses = [];
           const voterResults = [];
+          const voteFanoutCfg = (() => { try { return getConfig()?.tuning?.FANOUT ?? TUNING.FANOUT; } catch { return TUNING.FANOUT; } })();
+          const voteBatchSize = Math.max(1, Number(voteFanoutCfg?.voteBatch) || 5);
+          const voteDelayMs = batchDelayForRpm(voteBatchSize, Number(voteFanoutCfg?.rpm) || 100);
+          const voteSignal = context.abort ?? context.signal ?? null;
             const findExistingVoteForVoter = (voterId, questionNorm) => {
              try {
                const weave = stateManager.getWeave ? stateManager.getWeave() : [];
@@ -129,7 +135,7 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
                return null;
              } catch { return null; }
            };
-          await Promise.allSettled(voters.map(async (voter) => {
+          await mapInBatches(voters, async (voter) => {
             // Idempotent skip: reuse existing vote for any plausible batch instead of re-prompting
             try {
                const existing = findExistingVoteForVoter(voter.config.id, normQuestionV);
@@ -238,7 +244,7 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
                voterResults.push({ voter: voter.config.id, error: err.message });
                restoreVoterStatus();
              }
-          }));
+          }, { batchSize: voteBatchSize, delayMs: voteDelayMs, signal: voteSignal });
           // Tally generation — source does not ballot, only voter responses counted
           const { lines: tallyLines } = sharedVoteTally.buildTally({
             question: args.question,
