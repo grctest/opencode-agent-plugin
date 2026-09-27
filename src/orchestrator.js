@@ -36,7 +36,6 @@ import * as roundHelpers from "./orchestrator/round.js";
 import * as synthesisHelpers from "./orchestrator/synthesis.js";
 import * as modelsHelpers from "./orchestrator/models.js";
 import * as initHelpers from "./orchestrator/init.js";
-import { TimeBudget } from "./orchestrator/time-budget.js";
 
 export { SUMMARY_TRUNCATE_LEN, MAX_ORCHESTRATOR_MESSAGES } from "./constants.js";
 
@@ -58,7 +57,6 @@ export class MeetingOrchestrator {
   _cancelled = false;
   _closed = false;
   _startTime = 0;
-  _meetingTimeoutMs = 0;
   _sessionManager = null;
   _logger = null;
   _orchestratorMessages = [];
@@ -67,8 +65,6 @@ export class MeetingOrchestrator {
   _personaIndex = null;
   _availableModels = [];
   _maxTotalTokens = 0;
-  /** @type {import("./orchestrator/time-budget.js").TimeBudget} */
-  _timeBudget;
 
   constructor(options) {
     this._meetingId = options.meetingId ?? crypto.randomUUID();
@@ -77,7 +73,6 @@ export class MeetingOrchestrator {
     this._client = options.client;
     this._directory = options.directory;
     this._parentSessionId = options.parentSessionId;
-    this._meetingTimeoutMs = options.meetingTimeoutMs ?? getConfig().defaultMeetingTimeoutMs ?? 0;
     this._maxTotalTokens = options.maxTotalTokens ?? getConfig().maxTotalTokens ?? 0;
     this._availableModels = options.availableModels ?? [];
 
@@ -121,8 +116,6 @@ export class MeetingOrchestrator {
       },
       logger: this._logger,
     });
-
-    this._timeBudget = new TimeBudget(this._startTime, this._meetingTimeoutMs);
   }
 
    getDbPath() {
@@ -213,26 +206,11 @@ export class MeetingOrchestrator {
   async _promptOrchestrator(system, model, message, type, round) { return modelsHelpers._promptOrchestrator.call(this, system, model, message, type, round); }
   async initialize() { return initHelpers.initialize.call(this); }
   async runMeeting() { return weavingHelpers.runMeeting.call(this); }
-  async extendMeeting(newPrompt) { return weavingHelpers.extendMeeting.call(this, newPrompt); }
+  async extendMeeting(newPrompt, additionalRounds) { return weavingHelpers.extendMeeting.call(this, newPrompt, additionalRounds); }
   async resumeMeeting() { return weavingHelpers.resumeMeeting.call(this); }
   async _runWeavingLoop() { return weavingHelpers._runWeavingLoop.call(this); }
   _tokenBudgetExceeded() { return weavingHelpers._tokenBudgetExceeded.call(this); }
-  _remainingMs() {
-    if (this._timeBudget) return this._timeBudget.remainingMs();
-    return weavingHelpers._remainingMs.call(this);
-  }
   _raceWithGuardTimer(promise, timeoutMs, label) { return weavingHelpers._raceWithGuardTimer.call(this, promise, timeoutMs, label); }
-  _checkTimeout() {
-    if (this._timeBudget) {
-      if (this._timeBudget.checkTimeout()) {
-        this._stateManager.transitionTo("timeout");
-        this._logger.warn("timeout", "Meeting timed out", { elapsed: Date.now() - this._startTime, limit: this._meetingTimeoutMs });
-        return true;
-      }
-      return false;
-    }
-    return weavingHelpers._checkTimeout.call(this);
-  }
   async runRound() { return roundHelpers.runRound.call(this); }
   async _continueInterruptedRound() { return roundHelpers._continueInterruptedRound.call(this); }
   async _finalizeRound(round) { return roundHelpers._finalizeRound.call(this, round); }

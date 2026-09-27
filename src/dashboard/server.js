@@ -23,6 +23,7 @@ import {
   PACKAGE_VERSION,
 } from "./server/helpers.js";
 import { isAllowedDashboardHost, hasDashboardCapability, isSameOriginRequest } from "./security.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 import { createPollSystem } from "./server/poll.js";
 import {
   setControlRuntime,
@@ -194,8 +195,16 @@ export function startDashboard(directory, port, runtimeOpts = null) {
     try { setControlRuntime(runtimeOpts); } catch {}
   }
 
-  const capabilityToken = `${crypto.randomUUID().replace(/-/g, "")}${crypto.randomUUID().replace(/-/g, "")}`;
   const capabilityCookie = `loom_dashboard_${port}`;
+  // Deterministic token: SHA-256 of the owning opencode session id (or the
+  // resolved base dir + port for standalone dashboards). Deriving instead of
+  // generating means a server restart (plugin reload, /loom_stop → /loom_viz)
+  // keeps the browser's capability cookie valid — previously every start
+  // rotated the token and all /api/* calls 401'd until a manual refresh.
+  const stableId = runtimeOpts?.ownerSessionId && String(runtimeOpts.ownerSessionId).trim()
+    ? String(runtimeOpts.ownerSessionId).trim()
+    : `${resolveLoomBaseDir(directory)}:${port}`;
+  const capabilityToken = Buffer.from(sha256(new TextEncoder().encode(stableId))).toString("hex");
   const pollSystem = createPollSystem(directory);
   const { sseClients, lastContributionId, lastOrchestratorMsgId, lastInterjectionId, lastErrorId, participantStatusCache, broadcast, subscribeToWrites, unsubscribeFromWrites, pingTimer, restartPollTimer } = pollSystem;
   let pollTimer = pollSystem.getPollTimer();

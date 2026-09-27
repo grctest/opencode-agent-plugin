@@ -12,7 +12,6 @@ import { persistentAtom } from "@nanostores/persistent";
  */
 
 const FORM_VERSION = 5;
-const MAX_SEATS = 7;
 const KNOWN_TIERS = new Set(["junior", "mid", "senior", "principal", "civilian"]);
 const FEATURE_MODES = new Set(["disabled", "optional", "mandatory"]);
 const ORCHESTRATOR_MODES = {
@@ -148,7 +147,7 @@ function sanitizePreview(raw) {
 function sanitizeForm(raw) {
   if (!raw || typeof raw !== "object") return { ...DEFAULT_SETUP_FORM };
   const seats = Array.isArray(raw.seats)
-    ? raw.seats.map(sanitizeSeat).filter(Boolean).slice(0, MAX_SEATS)
+    ? raw.seats.map(sanitizeSeat).filter(Boolean)
     : [];
   const maxRounds = Number.isFinite(+raw.maxRounds) ? +raw.maxRounds : 4;
   const rawFeatures = raw.features && typeof raw.features === "object" ? raw.features : {};

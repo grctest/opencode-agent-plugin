@@ -11,13 +11,12 @@ import { StateManager } from "../services/state-manager.js";
 import { PersistenceService } from "../services/persistence-service.js";
 import { extractErrorInfo } from "../logger.js";
 
-export async function initialize() {
+  export async function initialize() {
     if (this._stateManager.getStatus() !== "initializing") {
       return;
     }
 
     this._startTime = Date.now();
-    if (this._timeBudget) this._timeBudget.reset(this._startTime, this._meetingTimeoutMs);
 
     try {
       const dbPath = this.getDbPath();

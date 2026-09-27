@@ -158,76 +158,67 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
     let finalToolResults = effective1;
 
     if (needsSynthesis) {
-      let remainingMs = timeoutMs;
       let synthRan = false;
-      if (timeoutMs !== 0 && this._deadline && Number.isFinite(this._deadline) && this._deadline !== Infinity) {
-        const remaining = this._deadline - Date.now();
-        if (remaining < 15000) {
-          this._logger.warn("synthesis_deadline_skipped", `Skipping same-turn synthesis for ${participant.config.name} — deadline ${remaining}ms remaining (needs 15s)`);
+      const synthesisToolsMap = buildToolsMapWithoutLoom(effectiveConfig, { activeCount: activeCountExec });
+      const loomOutputs = cappedLoomCalls.map(tc => {
+        const out = typeof tc.output === "string" ? tc.output : JSON.stringify(tc.output);
+        return `Tool ${tc.tool} (${tc.callID}) returned:\n${out}`;
+      }).join("\n\n");
+      const synthesisInstruction = `Loom tool results (${loomOutputs.length} chars, complete — not truncated):\n${loomOutputs}\n\nNow synthesize your final contribution incorporating these responses. Cite [#id] when referencing peer answers. Do not re-call loom_query/loom_vote/loom_summon — you have the results. Stay in character and follow OUTPUT CONTRACT.`;
+      if (!loomOutputs.trim()) {
+        this._logger.warn("synthesis_empty_outputs", `Skipping synthesis for ${participant.config.name} — loom outputs empty after budget cap`);
+      } else {
+        this._logger.info("synthesis_prompt", `Same-turn synthesis for ${participant.config.name} with ${loomSynthesisCalls.length} loom result(s)`, { tools: loomSynthesisCalls.map(t=>t.tool) });
+        const synthStart = Date.now();
+        synthRan = true;
+        const result2 = await this._sessionManager.getContract().prompt({
+          sessionId: ephemeralSessionId,
+          system: promptContext.system_prompt,
+          model,
+          parts: [
+            // Same session already holds system + user prompt + turn-1 history;
+            // re-sending the ~10k-token user prompt duplicates it verbatim and
+            // reads as an instruction to produce the contribution again (audit B2).
+            ...(result1.data.parts ?? []).filter(p => p.type === "text" && p.text).slice(-1).map(p => ({ type: "text", text: p.text })),
+            { type: "text", text: synthesisInstruction },
+          ],
+          tools: synthesisToolsMap,
+          toolChoice: Object.keys(synthesisToolsMap).length > 0 ? "auto" : undefined,
+          timeoutMs,
+          signal: abortController.signal,
+        });
+        const synthMs = Date.now() - synthStart;
+        recordLatency("llm_synthesis_ms", synthMs);
+        if (result2.ok) {
+          this._recordTokens(result2);
+          const { text: agentText2, toolResults: toolResults2 } = extractAgentResponse(result2.data);
+          if (toolResults2.length > 0) {
+            const tools2 = toolResults2.map((t) => ({
+              tool: t.tool,
+              callID: t.callID,
+              status: t.status ?? null,
+              hasOutput: !!t.output,
+            }));
+            this._logger.info("synthesis_tool_results", `${participant.config.name} synthesis used ${toolResults2.length} tool(s)`, { tools: tools2 });
+          }
+          const effective2 = truncateToolResults(toolResults2, agentToolsConfig);
+          const writeSynthetic2 = extractFileBlockTools(agentText2 ?? "");
+          const deduped2 = writeSynthetic2.filter(s => !effective1.some(e => e.title === s.title));
+          finalToolResults = [...effective1, ...effective2, ...deduped2];
+          finalToolResults = truncateToolResults(finalToolResults, agentToolsConfig);
+          const priorLen = (agentText1 ?? "").trim().length;
+          const synthLen = (agentText2 ?? "").trim().length;
+          const substantive = synthLen >= 200 || (priorLen > 0 && synthLen >= Math.floor(priorLen / 2));
+          if (agentText2 && substantive) {
+            finalText = agentText2;
+          } else if (synthLen >= 10) {
+            this._logger.warn("synthesis_too_short", `Synthesis for ${participant.config.name} returned only ${synthLen} chars — keeping first turn text (${priorLen} chars)`, { participant: participant.config.id, round: currentRound });
+          } else {
+            this._logger.warn("synthesis_empty", `Synthesis for ${participant.config.name} returned empty — using first turn text`);
+          }
         } else {
-          remainingMs = Math.min(timeoutMs, Math.max(15000, remaining - 1000));
-          const synthesisToolsMap = buildToolsMapWithoutLoom(effectiveConfig, { activeCount: activeCountExec });
-          const loomOutputs = cappedLoomCalls.map(tc => {
-            const out = typeof tc.output === "string" ? tc.output : JSON.stringify(tc.output);
-            return `Tool ${tc.tool} (${tc.callID}) returned:\n${out.slice(0, 3500)}`;
-          }).join("\n\n");
-          const synthesisInstruction = `Loom tool results (budget ${loomOutputs.length} chars):\n${loomOutputs}\n\nNow synthesize your final contribution incorporating these responses. Cite [#id] when referencing peer answers. Do not re-call loom_query/loom_vote/loom_summon — you have the results. Stay in character and follow OUTPUT CONTRACT.`;
-          if (!loomOutputs.trim()) {
-            this._logger.warn("synthesis_empty_outputs", `Skipping synthesis for ${participant.config.name} — loom outputs empty after budget cap`);
-          } else {
-          this._logger.info("synthesis_prompt", `Same-turn synthesis for ${participant.config.name} with ${loomSynthesisCalls.length} loom result(s)`, { tools: loomSynthesisCalls.map(t=>t.tool), remainingMs });
-          const synthStart = Date.now();
-          synthRan = true;
-          const result2 = await this._sessionManager.getContract().prompt({
-            sessionId: ephemeralSessionId,
-            system: promptContext.system_prompt,
-            model,
-            parts: [
-              // Same session already holds system + user prompt + turn-1 history;
-              // re-sending the ~10k-token user prompt duplicates it verbatim and
-              // reads as an instruction to produce the contribution again (audit B2).
-              ...(result1.data.parts ?? []).filter(p => p.type === "text" && p.text).slice(-1).map(p => ({ type: "text", text: p.text })),
-              { type: "text", text: synthesisInstruction },
-            ],
-            tools: synthesisToolsMap,
-            toolChoice: Object.keys(synthesisToolsMap).length > 0 ? "auto" : undefined,
-            timeoutMs: remainingMs,
-            signal: abortController.signal,
-          });
-          const synthMs = Date.now() - synthStart;
-          recordLatency("llm_synthesis_ms", synthMs);
-          if (result2.ok) {
-            this._recordTokens(result2);
-            const { text: agentText2, toolResults: toolResults2 } = extractAgentResponse(result2.data);
-            if (toolResults2.length > 0) {
-              const tools2 = toolResults2.map((t) => ({
-                tool: t.tool,
-                callID: t.callID,
-                status: t.status ?? null,
-                hasOutput: !!t.output,
-              }));
-              this._logger.info("synthesis_tool_results", `${participant.config.name} synthesis used ${toolResults2.length} tool(s)`, { tools: tools2 });
-            }
-            const effective2 = truncateToolResults(toolResults2, agentToolsConfig);
-            const writeSynthetic2 = extractFileBlockTools(agentText2 ?? "");
-            const deduped2 = writeSynthetic2.filter(s => !effective1.some(e => e.title === s.title));
-            finalToolResults = [...effective1, ...effective2, ...deduped2];
-            finalToolResults = truncateToolResults(finalToolResults, agentToolsConfig);
-            const priorLen = (agentText1 ?? "").trim().length;
-            const synthLen = (agentText2 ?? "").trim().length;
-            const substantive = synthLen >= 200 || (priorLen > 0 && synthLen >= Math.floor(priorLen / 2));
-            if (agentText2 && substantive) {
-              finalText = agentText2;
-            } else if (synthLen >= 10) {
-              this._logger.warn("synthesis_too_short", `Synthesis for ${participant.config.name} returned only ${synthLen} chars — keeping first turn text (${priorLen} chars)`, { participant: participant.config.id, round: currentRound });
-            } else {
-              this._logger.warn("synthesis_empty", `Synthesis for ${participant.config.name} returned empty — using first turn text`);
-            }
-          } else {
-            this._logger.warn("synthesis_failed", `Synthesis prompt failed for ${participant.config.name}: ${result2.error?.message ?? "unknown"}`);
-            finalToolResults = [...effective1, ...extractFileBlockTools(agentText1 ?? "")];
-          }
-          }
+          this._logger.warn("synthesis_failed", `Synthesis prompt failed for ${participant.config.name}: ${result2.error?.message ?? "unknown"}`);
+          finalToolResults = [...effective1, ...extractFileBlockTools(agentText1 ?? "")];
         }
       }
       if (!synthRan && !finalToolResults.some(t => t.metadata?.synthetic || t.tool === "write")) {
@@ -250,7 +241,6 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
       return hit?.metadata?.version ?? null;
     })();
     const hasContentForPatch = (finalText && String(finalText).trim().length > 0) || (finalToolResults ?? []).length > 0;
-    let patchDeadlineSkipped = false;
     const hasSuccessfulTool = (toolName) => (finalToolResults ?? []).some((t) => t.tool === toolName && t.status !== "error" && t.output != null);
     const hasSuccessfulOneOf = (toolNames) => toolNames.some((toolName) => hasSuccessfulTool(toolName));
     const missingMandatory = [];
@@ -261,16 +251,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
     if (mandatoryCapabilities.localSearch && !hasSuccessfulOneOf(["read", "glob", "grep"])) missingMandatory.push("Local search: call read, glob, or grep");
     if (mandatoryCapabilities.onlineResearch && !hasSuccessfulOneOf(["websearch", "webfetch"])) missingMandatory.push("Online research: call websearch or webfetch");
     if (!loomPassCall && missingMandatory.length > 0) {
-      let mandatoryRemaining = timeoutMs;
-      if (timeoutMs !== 0 && this._deadline && Number.isFinite(this._deadline) && this._deadline !== Infinity) {
-        const remaining = this._deadline - Date.now();
-        if (remaining < 15000) {
-          mandatoryRemaining = 0;
-        } else {
-          mandatoryRemaining = Math.min(timeoutMs, Math.max(15000, remaining - 1000));
-        }
-      }
-      if (mandatoryRemaining !== 0) {
+      if (timeoutMs !== 0) {
         try {
           const mandatoryInstruction = `This turn has unmet mandatory capabilities: ${missingMandatory.join("; ")}. Complete every applicable requirement now, using the exact tool names and valid targets. Do not repeat the prose — make ONLY the required tool call(s). Your earlier contribution is already recorded; no replacement prose is needed.`;
           this._logger.info("mandatory_capability_retry", `Requesting mandatory capability retry for ${participant.config.name}`, { participant: participant.config.id, round: currentRound, missing: missingMandatory });
@@ -294,7 +275,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
             ],
             tools: mandatoryToolsMap,
             toolChoice: Object.keys(mandatoryToolsMap).length > 0 ? "auto" : undefined,
-            timeoutMs: mandatoryRemaining,
+            timeoutMs,
             signal: abortController.signal,
           });
           if (resultM.ok) {
@@ -328,18 +309,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
     // version and the turn still succeeds (prose is preserved).
     if (patchEnabled && !loomPassCall && statePatchVersion == null && hasContentForPatch) {
       const patchInstruction = `Your contribution is recorded. This is your one and only loom_state_patch call for this turn — your final action. Project what should survive: your current stance (1 sentence) + 1-3 bullets across established/contested/open/facts/files (facts need Source: or [#id], optionally with Strength: strong/weak) + exact-text remove entries for outdated bullets. At least one field. No prose needed beyond the call. Peer answers from this turn are already in your history — reflect them in what you project.`;
-      let patchRemaining = timeoutMs;
-      if (timeoutMs !== 0 && this._deadline && Number.isFinite(this._deadline) && this._deadline !== Infinity) {
-        const remaining = this._deadline - Date.now();
-        if (remaining < 15000) {
-          this._logger.warn("state_patch_final_skipped_deadline", `Skipping final loom_state_patch pass for ${participant.config.name} — deadline ${remaining}ms remaining (needs 15s)`);
-          patchRemaining = 0;
-          patchDeadlineSkipped = true;
-        } else {
-          patchRemaining = Math.min(timeoutMs, Math.max(15000, remaining - 1000));
-        }
-      }
-      if (patchRemaining !== 0) {
+      if (timeoutMs !== 0) {
         try {
           this._logger.info("state_patch_final", `Requesting the turn's single loom_state_patch for ${participant.config.name}`, { participant: participant.config.id, round: currentRound });
           const patchToolsMap = { loom_state_patch: true };
@@ -354,7 +324,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
             ],
             tools: patchToolsMap,
             toolChoice: "auto",
-            timeoutMs: patchRemaining,
+            timeoutMs,
             signal: abortController.signal,
           });
           if (resultP.ok) {
@@ -394,15 +364,12 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
         ? "exempt_pass"
         : statePatchVersion != null
           ? "applied"
-          : patchDeadlineSkipped
-            ? "skipped_deadline"
-            : patchRejected
-              ? "rejected"
-              : patchAttempted
-                ? "unverified"
-                : "never_attempted";
+          : patchRejected
+            ? "rejected"
+            : patchAttempted
+              ? "unverified"
+              : "never_attempted";
     let patchOutcomeDetail = null;
-    if (patchOutcome === "skipped_deadline") patchOutcomeDetail = "final patch pass skipped: <15s remained on the meeting deadline";
     if (patchOutcome === "rejected") {
       const bad = (finalToolResults ?? []).find(
         (t) => t.tool === "loom_state_patch" && (t.status === "error" || t.metadata?.validationFailed || t.metadata?.persistenceFailed),

@@ -1,4 +1,6 @@
 import { getDatabasesBySessionId, deleteMeetingFiles, deleteMeetingsBySessionId } from "../database.js";
+import { auditLoomTool } from "./tools/audit.js";
+import { resolveCaller } from "./tools/shared.js";
 
 export const PROGRESS_PATTERN =
   /^\[(?:info|warn|error)\] (?:🎬|⚠️|ℹ️|📋|🔄|⏭️|✅|🛑|⏱️|💰|🧵|.*is thinking\.\.\.|Round \d+|Synthesizing|Completed|Error:)/;
@@ -14,7 +16,7 @@ const TOOL_REQUIRED_OVERRIDES = {
   // loom_query, loom_evidence, loom_vote, loom_summon, loom_request_next, loom_status, loom_cancel etc. already correct
 };
 
-export function createEventHandlers({ directory, activeLooms = null }) {
+export function createEventHandlers({ directory, activeLooms = null, resolveMeeting = null }) {
   return {
     "tool.definition": async (input, output) => {
       const override = TOOL_REQUIRED_OVERRIDES[input.toolID];
@@ -45,10 +47,47 @@ event: async ({ event }) => {
     },
 
     "tool.execute.after": async (input, output) => {
-      // Dashboard-first: deliberation output stays in the dashboard (Timeline /
-      // Output tabs) and the per-meeting .md report file. Nothing is relayed
-      // to chat.
-      return;
+      // Intercept tool executions in Loom sessions and record them in tool_audit.
+      // This is the execution-layer safety net for built-in tools (websearch,
+      // webfetch, read, glob, grep, bash, write, edit, patch, lsp): their ToolParts
+      // are captured by extractAgentResponse, but a partial/failed provider response
+      // can drop them. The audit row survives regardless and is merged into the
+      // Tool use tab by mergeAuditsIntoContributions (queries.js), which dedups
+      // against ToolPart-captured calls so each call appears exactly once.
+      // loom_* tools are skipped — their execute functions already audit via
+      // auditLoomTool with richer context.
+      try {
+        if (!resolveMeeting || !input?.sessionID || !input?.tool) return;
+        const toolName = input.tool;
+        if (toolName.startsWith("loom_")) return;
+        const meeting = await resolveMeeting(input.sessionID);
+        if (!meeting) return;
+        const engine = activeLooms?.get(meeting.meetingId);
+        if (!engine) return;
+        const stateManager = engine.getStateManager?.();
+        const db = engine.getDatabase?.();
+        if (!stateManager || !db) return;
+        const participants = stateManager.getParticipants?.() ?? [];
+        const weave = stateManager.getWeave?.() ?? [];
+        const caller = resolveCaller(participants, weave, input.sessionID);
+        if (!caller) return;
+        const outputStr = typeof output?.output === "string"
+          ? output.output
+          : (output?.output != null ? JSON.stringify(output.output) : "");
+        auditLoomTool({
+          db,
+          stateManager,
+          caller,
+          meetingId: meeting.meetingId,
+          tool: toolName,
+          input: input.args,
+          output: outputStr,
+          status: "completed",
+          title: output?.title ?? null,
+        });
+      } catch (err) {
+        try { console.warn(`[loom] tool.execute.after audit failed for ${input?.tool}: ${err?.message ?? err}`); } catch {}
+      }
     },
 
     "experimental.chat.messages.transform": async (_input, output) => {

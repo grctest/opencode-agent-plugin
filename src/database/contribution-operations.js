@@ -6,24 +6,16 @@ const dbLogger = new Logger();
 function qq(db, sql) { return db.query ? db.query(sql) : db.prepare(sql); }
 
 /**
- * Bound tool-call payloads for storage (audit X6): in-memory tool results stay
- * lossless for same-turn synthesis, but persisted rows cap string outputs at
- * 4 kB with a truncated flag — a single webfetch dump must not make a row
- * arbitrarily large. Shape-preserving: readers see the same array structure.
+ * Tool-call payloads are stored LOSSLESS (no truncation): every executed tool
+ * call — including large websearch/webfetch outputs — is persisted in full so
+ * the Tool use tab and any audit consumer see complete evidence. SQLite TEXT
+ * columns hold multi-MB values comfortably; row size is bounded in practice by
+ * provider output limits, not by an application cap.
+ * Kept as a named function (identity) so existing imports keep working.
  */
-export const STORED_TOOL_OUTPUT_MAX = 4000;
+export const STORED_TOOL_OUTPUT_MAX = Infinity;
 export function boundToolCallsForStorage(toolCalls) {
-  if (!Array.isArray(toolCalls)) return toolCalls;
-  return toolCalls.map((t) => {
-    if (!t || typeof t !== "object") return t;
-    const out = t.output;
-    if (typeof out !== "string" || out.length <= STORED_TOOL_OUTPUT_MAX) return t;
-    return {
-      ...t,
-      output: `${out.slice(0, STORED_TOOL_OUTPUT_MAX)}\n…[output truncated for storage — full text in session audit log]`,
-      metadata: { ...(t.metadata ?? {}), truncated: true },
-    };
-  });
+  return toolCalls;
 }
 
 function serializeToolCalls(toolCalls) {

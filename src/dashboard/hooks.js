@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { reloadForDashboardAuth, clearDashboardAuthReload } from "./auth.js";
 
 export function usePersistedState(key, defaultValue) {
   const [value, setValue] = useState(() => {
@@ -271,6 +272,8 @@ export function useMeetingApi(meetingId, resetKey, meetings = [], onSelectMeetin
     const fetchMeetingOnce = () => fetch(`/api/meeting?meeting=${id}&include_context=1&limit=100`, { signal });
     try {
       let res = await fetchMeetingOnce();
+      if (res.status === 401 && reloadForDashboardAuth()) return;
+      if (res.ok) clearDashboardAuthReload();
       if (res.status === 404) {
         const body404 = await res.json().catch(() => null);
         const code404 = body404?.code;

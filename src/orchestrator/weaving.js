@@ -27,9 +27,8 @@ export async function runMeeting() {
      }
   }
 
-  export async function extendMeeting(newPrompt) {
+  export async function extendMeeting(newPrompt, additionalRounds) {
     this._startTime = Date.now();
-    if (this._timeBudget) this._timeBudget.reset(this._startTime, this._meetingTimeoutMs);
     this._cancelled = false;
     this._stallWatchdog.reset();
     try { this._sessionManager?.clearOrchestratorSession?.(); } catch {}
@@ -44,6 +43,9 @@ export async function runMeeting() {
         stateManager: this._stateManager,
         sessionManager: this._sessionManager,
         newPrompt,
+        ...(additionalRounds !== undefined && additionalRounds !== null
+          ? { extraRounds: additionalRounds }
+          : {}),
       });
       // Clear breaker history so previously failed models can be retried in new rounds.
       // Keep current model selection — do not reassign provider_id/model_id.
@@ -115,20 +117,14 @@ export async function _runWeavingLoop() {
         break;
       }
 
-       if (this._tokenBudgetExceeded()) {
-         this._stateManager.transitionTo("timeout");
-         const spentBefore = (this._callStats.input_tokens ?? 0) + (this._callStats.output_tokens ?? 0);
-         try { await this._sessionManager.postProgress(`💰 Token budget reached (${spentBefore} ≥ ${this._maxTotalTokens}) — ending deliberation and generating output.`, "warn"); } catch {}
-         break;
-       }
-       if (this._remainingMs() <= 0) {
-        this._stateManager.transitionTo("timeout");
-        try { await this._sessionManager.postProgress("⏱️ Loom timed out — generating output from collected contributions.", "warn"); } catch {}
-        this._logger.warn("timeout", "Meeting timed out", { elapsed: Date.now() - this._startTime, limit: this._meetingTimeoutMs });
-        break;
-      }
+        if (this._tokenBudgetExceeded()) {
+          this._stateManager.transitionTo("timeout");
+          const spentBefore = (this._callStats.input_tokens ?? 0) + (this._callStats.output_tokens ?? 0);
+          try { await this._sessionManager.postProgress(`💰 Token budget reached (${spentBefore} ≥ ${this._maxTotalTokens}) — ending deliberation and generating output.`, "warn"); } catch {}
+          break;
+        }
 
-      continueWeaving = await this.runRound();
+       continueWeaving = await this.runRound();
       this._notifyUpdate();
       if (continueWeaving && this._tokenBudgetExceeded()) {
         this._stateManager.transitionTo("timeout");
@@ -152,18 +148,6 @@ export async function _runWeavingLoop() {
     return spent >= this._maxTotalTokens;
   }
 
-  export function _remainingMs() {
-    if (this._timeBudget) {
-      try { return this._timeBudget.remainingMs(); } catch { /* fallback */ }
-      // Fallback to clock-aware if timeBudget clock differs
-      if (typeof this._timeBudget.clock === "function") {
-        try { return this._timeBudget.remainingMs(); } catch {}
-      }
-    }
-    if (!this._meetingTimeoutMs || this._meetingTimeoutMs <= 0) return Infinity;
-    return this._startTime + this._meetingTimeoutMs - Date.now();
-  }
-
 export function _raceWithGuardTimer(promise, timeoutMs, label) {
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error(`${label}: invalid timeout ${timeoutMs}`);
     let timer;
@@ -174,20 +158,5 @@ export function _raceWithGuardTimer(promise, timeoutMs, label) {
     return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timer));
   }
 
- export function _checkTimeout() {
-    if (this._timeBudget) {
-      if (this._timeBudget.checkTimeout()) {
-        this._stateManager.transitionTo("timeout");
-        this._logger.warn("timeout", "Meeting timed out", { elapsed: Date.now() - this._startTime, limit: this._meetingTimeoutMs });
-        return true;
-      }
-      return false;
-    }
-    if (this._remainingMs() <= 0) {
-      this._stateManager.transitionTo("timeout");
-      this._logger.warn("timeout", "Meeting timed out", { elapsed: Date.now() - this._startTime, limit: this._meetingTimeoutMs });
-      return true;
-    }
-    return false;
-  }
+
 

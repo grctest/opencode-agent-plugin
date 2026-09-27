@@ -41,8 +41,6 @@ async function postJSON(url, body) {
   return data;
 }
 
-const MAX_SEATS = 7;
-
 const MODEL_ROW_HEIGHT = 40;
 
 function ModelRow({ index, style, ariaAttributes, items, disabled, onToggle }) {
@@ -136,7 +134,7 @@ function getOrchestratorBehaviorDescription(key, value) {
   return getOrchestratorBehaviorOption(key, value)?.description;
 }
 
-export function SetupTab({ selectedMeeting, onStarted }) {
+export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingParticipants }) {
   // Draft form state lives in a persistent per-session nanostore, so tab
   // switches (which unmount this component) and page refreshes never lose it.
   // Transient UI (catalog, llm, busy, errors, dialogs, jobs) stays in useState.
@@ -185,7 +183,53 @@ export function SetupTab({ selectedMeeting, onStarted }) {
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewError, setPreviewError] = useState(null);
   const [previewData, setPreviewData] = useState(null);
+  const [extendRounds, setExtendRounds] = useState(4);
   const sectionRefs = useRef({});
+
+  // A meeting with persisted participants has already run (or is running):
+  // its stored configuration is mirrored into the form, read-only. Question,
+  // context, rounds, seats, capabilities and orchestrator all come from the
+  // durable meeting row — nothing on the page can be edited.
+  const storedRunParticipants = Array.isArray(meetingParticipants) ? meetingParticipants : [];
+  const readOnly = storedRunParticipants.length > 0;
+  // "Already run" is a terminal-state message — while the meeting is actively
+  // weaving (job running, or interrupted mid-run) the "running"/"interrupted"
+  // banners own the headline instead.
+  const meetingActive = !!job?.running || resumeStatus === "weaving" || resumeStatus === "initializing";
+  const storedRunPopulatedFor = useRef(null);
+  useEffect(() => {
+    if (!readOnly || !selectedMeeting || storedRunPopulatedFor.current === selectedMeeting) return;
+    storedRunPopulatedFor.current = selectedMeeting;
+    const cur = $setupForm.get();
+    const s = meetingState;
+    const pick = (obj) => (obj && typeof obj === "object" ? obj : {});
+    patchForm({
+      question: typeof s?.question === "string" ? s.question : "",
+      context: typeof s?.context === "string" ? s.context : "",
+      maxRounds: Number.isFinite(Number(s?.max_rounds))
+        ? Math.min(10, Math.max(1, Math.floor(Number(s.max_rounds))))
+        : cur.maxRounds,
+      seats: storedRunParticipants.map((p) => ({
+        id: p.id,
+        name: p.name,
+        persona: p.persona,
+        agenda: p.agenda,
+        tier: p.tier,
+        tags: p.tags ?? [],
+        expertise: p.expertise ?? [],
+        known_biases: p.known_biases ?? [],
+        communication_style: p.communication_style ?? "",
+        preferred_contribution_types: p.preferred_contribution_types ?? [],
+        anti_patterns: p.anti_patterns ?? [],
+        tier_guidance: p.tier_guidance ?? "",
+        reflection_guidance: p.reflection_guidance ?? "",
+        model: p.provider_id && p.model_id ? `${p.provider_id}/${p.model_id}` : null,
+        approved: true,
+      })),
+      features: { ...cur.features, ...pick(s?.features) },
+      orchestrator: { ...cur.orchestrator, ...pick(s?.orchestrator) },
+    });
+  }, [readOnly, selectedMeeting, meetingState, storedRunParticipants]);
 
   const scrollToSection = (key) => {
     sectionRefs.current[key]?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -193,8 +237,10 @@ export function SetupTab({ selectedMeeting, onStarted }) {
 
   // Fill seats missing a model (or holding a now-disabled one) from the tier
   // suggestion, else the first enabled model. Returns the same array ref when
-  // nothing changed so setSeats bails out without re-rendering.
+  // nothing changed so setSeats bails out without re-rendering. Skipped
+  // entirely for stored-run meetings: their persisted models are shown as-is.
   const fillSeatModels = (seatList, llmData, extraSuggested = null) => {
+    if (readOnly) return seatList;
     const enabled = (llmData?.models ?? []).filter((m) => m.enabled && !m.unhealthy).map((m) => m.key);
     const enabledSet = new Set(enabled);
     const sugg = { ...(extraSuggested ?? {}) };
@@ -250,6 +296,17 @@ export function SetupTab({ selectedMeeting, onStarted }) {
   }, [fillOrchestratorModel]);
 
   useEffect(() => { refreshLlm(); }, [refreshLlm]);
+
+  // "Deliberation started/resumed" are transient action feedback: once the
+  // job poll shows that meeting running (or the selection moves on), the
+  // "running" banner supersedes them — they must never stack. "finished" is a
+  // terminal confirmation: it clears only if the meeting runs again (e.g.
+  // after an extend) or the selection moves on.
+  useEffect(() => {
+    if (startedId && (job?.running === startedId || startedId !== selectedMeeting)) setStartedId(null);
+    if (resumedId && (job?.running === resumedId || resumedId !== selectedMeeting)) setResumedId(null);
+    if (finishedId && (job?.running === finishedId || finishedId !== selectedMeeting)) setFinishedId(null);
+  }, [startedId, resumedId, finishedId, job?.running, selectedMeeting]);
 
   // Backfill seat models once model data arrives after seats were composed
   // (e.g. auto-select ran before the provider list loaded).
@@ -387,11 +444,7 @@ export function SetupTab({ selectedMeeting, onStarted }) {
       setAddOpen(false);
       return;
     }
-    if (seats.length >= MAX_SEATS) {
-      setAddOpen(false);
-      return;
-    }
-    setSeats((prev) => (prev.length >= MAX_SEATS ? prev : [...prev, { ...persona, tier, approved: true, model: defaultModelForTier(tier) }]));
+    setSeats((prev) => [...prev, { ...persona, tier, approved: true, model: defaultModelForTier(tier) }]);
     setAddOpen(false);
     setGuidance(null);
   };
@@ -576,10 +629,17 @@ export function SetupTab({ selectedMeeting, onStarted }) {
 
   const doExtend = async () => {
     if (!selectedMeeting || extendInput.trim().length < 3) return;
+    const rounds = Number.isFinite(Number(extendRounds))
+      ? Math.min(10, Math.max(1, Math.floor(Number(extendRounds))))
+      : undefined;
     setError(null);
     setBusy("extend");
     try {
-      await postJSON("/api/meetings/extend", { meeting_id: selectedMeeting, question: extendInput.trim() });
+      await postJSON("/api/meetings/extend", {
+        meeting_id: selectedMeeting,
+        question: extendInput.trim(),
+        ...(rounds !== undefined ? { additional_rounds: rounds } : {}),
+      });
       setExtendInput("");
     } catch (err) {
       setError(err.message);
@@ -594,12 +654,20 @@ export function SetupTab({ selectedMeeting, onStarted }) {
     <div className="flex flex-col gap-5 max-w-4xl pb-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <StepHeader steps={steps} />
-        <Button variant="ghost" size="sm" onClick={clearForm} disabled={isFrozen} title={isFrozen ? "Locked while a deliberation is running" : "Reset the setup form to empty (running deliberations are unaffected)"}>
+        <Button variant="ghost" size="sm" onClick={clearForm} disabled={isFrozen || readOnly} title={isFrozen ? "Locked while a deliberation is running" : readOnly ? "Locked — this deliberation's configuration is read-only" : "Reset the setup form to empty (running deliberations are unaffected)"}>
           Clear form
         </Button>
       </div>
 
       <div aria-live="polite">
+        {readOnly && !meetingActive && (
+          <Alert className="border-primary/40 bg-primary/5">
+            <AlertTitle>Deliberation already run</AlertTitle>
+            <AlertDescription>
+              This meeting's configuration is loaded from its stored data and is read-only. Use “Extend current deliberation” below to send new input and add rounds.
+            </AlertDescription>
+          </Alert>
+        )}
         {job?.running && (
           <Alert className="border-amber-500/40 bg-amber-500/10">
             <AlertTitle>Deliberation running</AlertTitle>
@@ -723,7 +791,7 @@ export function SetupTab({ selectedMeeting, onStarted }) {
               placeholder="e.g. Should we migrate our authentication from sessions to JWT?"
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
-              disabled={isFrozen}
+              disabled={isFrozen || readOnly}
             />
           </div>
           <div className="flex flex-col gap-1.5">
@@ -734,7 +802,7 @@ export function SetupTab({ selectedMeeting, onStarted }) {
               placeholder="Background, files to consider, constraints…"
               value={context}
               onChange={(e) => setContext(e.target.value)}
-              disabled={isFrozen}
+              disabled={isFrozen || readOnly}
             />
           </div>
           <div className="flex flex-wrap items-center gap-3">
@@ -744,11 +812,11 @@ export function SetupTab({ selectedMeeting, onStarted }) {
                 id="loom-rounds"
                 type="number"
                 min={1}
-                 max={10}
+                max={10}
                 value={maxRounds}
                 onChange={(e) => setMaxRounds(e.target.value)}
                 className="w-20"
-                disabled={isFrozen}
+                disabled={isFrozen || readOnly}
               />
             </div>
           </div>
@@ -767,7 +835,7 @@ export function SetupTab({ selectedMeeting, onStarted }) {
               </CardDescription>
             </div>
             <div className="ml-auto">
-              <Button variant="outline" size="sm" onClick={() => refreshLlm(true)} disabled={busy !== null || isFrozen} title={isFrozen ? "Locked while a deliberation is running" : "Rescan providers (list is otherwise cached for 60s)"}>
+              <Button variant="outline" size="sm" onClick={() => refreshLlm(true)} disabled={busy !== null || isFrozen || readOnly} title={isFrozen ? "Locked while a deliberation is running" : readOnly ? "Locked — this deliberation's configuration is read-only" : "Rescan providers (list is otherwise cached for 60s)"}>
                 Refresh providers
               </Button>
             </div>
@@ -793,7 +861,7 @@ export function SetupTab({ selectedMeeting, onStarted }) {
                 rowCount={(llm?.models ?? []).length}
                 rowHeight={MODEL_ROW_HEIGHT}
                 rowKey={modelRowKey}
-                rowProps={{ items: llm?.models ?? [], disabled: busy === "models" || isFrozen, onToggle: toggleModel }}
+                rowProps={{ items: llm?.models ?? [], disabled: busy === "models" || isFrozen || readOnly, onToggle: toggleModel }}
                 overscanCount={4}
                 style={{ height: "100%", width: "100%" }}
               />
@@ -818,8 +886,8 @@ export function SetupTab({ selectedMeeting, onStarted }) {
                 <Button
                   size="sm"
                   onClick={doPreview}
-                  disabled={!canAutoSelect || !filterOk || isFrozen}
-                  title={isFrozen ? "Locked while a deliberation is running" : !filterOk ? "Enable at least one model in step 2 first" : canAutoSelect ? "Compose a suggested room from your question" : "Enter a question of at least 3 characters first"}
+                  disabled={!canAutoSelect || !filterOk || isFrozen || readOnly}
+                  title={isFrozen ? "Locked while a deliberation is running" : readOnly ? "Locked — this deliberation's configuration is read-only" : !filterOk ? "Enable at least one model in step 2 first" : canAutoSelect ? "Compose a suggested room from your question" : "Enter a question of at least 3 characters first"}
                 >
                   {busy === "preview" && <Spinner className="mr-2" />}
                   {busy === "preview" ? "Composing…" : "Auto-select"}
@@ -829,8 +897,8 @@ export function SetupTab({ selectedMeeting, onStarted }) {
                 variant="outline"
                 size="sm"
                 onClick={openAdd}
-                disabled={seats.length >= MAX_SEATS || !filterOk || isFrozen}
-                title={isFrozen ? "Locked while a deliberation is running" : !filterOk ? "Enable at least one model in step 2 first" : seats.length >= MAX_SEATS ? `Room is full (${MAX_SEATS} seats max)` : "Browse the persona catalog and add a seat"}
+                disabled={!filterOk || isFrozen || readOnly}
+                title={isFrozen ? "Locked while a deliberation is running" : readOnly ? "Locked — this deliberation's configuration is read-only" : !filterOk ? "Enable at least one model in step 2 first" : "Browse the persona catalog and add a seat"}
               >
                 {seats.length === 0 ? "Manually add persona" : "Add persona"}
               </Button>
@@ -901,7 +969,7 @@ export function SetupTab({ selectedMeeting, onStarted }) {
                       <Select
                         value={s.model ?? ""}
                         onValueChange={(v) => setSeats((prev) => prev.map((x, j) => (j === i ? { ...x, model: v } : x)))}
-                        disabled={isFrozen}
+                        disabled={isFrozen || readOnly}
                       >
                         <SelectTrigger id={`loom-seat-model-${i}`} size="sm" className="min-w-56 max-w-full font-mono text-xs" aria-label={`Model for ${s.name}`}>
                           <SelectValue placeholder="Select model…" />
@@ -914,10 +982,10 @@ export function SetupTab({ selectedMeeting, onStarted }) {
                  </Select>
                </div>
                       <div className="mt-0.5 flex flex-wrap items-center gap-2">
-                        <Button variant="outline" size="sm" onClick={() => setSwapIdx(i)} disabled={isFrozen} aria-label={`Swap ${s.name} for another persona`}>
+                        <Button variant="outline" size="sm" onClick={() => setSwapIdx(i)} disabled={isFrozen || readOnly} aria-label={`Swap ${s.name} for another persona`}>
                           Swap
                         </Button>
-                      <Button variant="ghost" size="sm" onClick={() => removeSeat(i)} disabled={isFrozen} aria-label={`Remove ${s.name} from the room`}>
+                      <Button variant="ghost" size="sm" onClick={() => removeSeat(i)} disabled={isFrozen || readOnly} aria-label={`Remove ${s.name} from the room`}>
                         Remove
                       </Button>
                     </div>
@@ -925,9 +993,6 @@ export function SetupTab({ selectedMeeting, onStarted }) {
                 </div>
               );
             })}
-            {seats.length >= MAX_SEATS && (
-              <p className="text-xs text-muted-foreground">Room is full ({MAX_SEATS} seats max) — remove a seat to add a different one.</p>
-            )}
           </CardContent>
       </Card>
 
@@ -951,15 +1016,15 @@ export function SetupTab({ selectedMeeting, onStarted }) {
                    <Label className="cursor-default">{label}</Label>
                    <p className="text-xs text-muted-foreground">{description}</p>
                  </div>
-                 <FeatureModeControl value={features[key] ?? "optional"} onChange={(value) => setFeature(key, value)} disabled={isFrozen} />
-               </div>
-             ))}
-             <div className="flex items-center justify-between gap-4 rounded-md px-2 py-1.5 hover:bg-muted/50">
-               <div className="min-w-0">
-                 <Label htmlFor="loom-feature-agentCommands" className="cursor-pointer">Bash commands</Label>
-                 <p className="text-xs text-muted-foreground">Allow allowlisted shell commands. Bash is always optional.</p>
-               </div>
-               <Switch id="loom-feature-agentCommands" checked={features.agentCommands !== false} onCheckedChange={(value) => setFeature("agentCommands", value === true)} disabled={isFrozen} aria-label="Bash commands" />
+                  <FeatureModeControl value={features[key] ?? "optional"} onChange={(value) => setFeature(key, value)} disabled={isFrozen || readOnly} />
+                </div>
+              ))}
+              <div className="flex items-center justify-between gap-4 rounded-md px-2 py-1.5 hover:bg-muted/50">
+                <div className="min-w-0">
+                  <Label htmlFor="loom-feature-agentCommands" className="cursor-pointer">Bash commands</Label>
+                  <p className="text-xs text-muted-foreground">Allow allowlisted shell commands. Bash is always optional.</p>
+                </div>
+                <Switch id="loom-feature-agentCommands" checked={features.agentCommands !== false} onCheckedChange={(value) => setFeature("agentCommands", value === true)} disabled={isFrozen || readOnly} aria-label="Bash commands" />
              </div>
           </div>
         </CardContent>
@@ -973,7 +1038,7 @@ export function SetupTab({ selectedMeeting, onStarted }) {
               <CardDescription>Choose the coordinating model and define how it manages, summarizes, and synthesizes the deliberation.</CardDescription>
             </div>
             <div className="ml-auto">
-              <Button variant="outline" size="sm" onClick={openOrchestratorPreview} disabled={previewBusy || isFrozen} title={isFrozen ? "Locked while a deliberation is running" : "Show how the current orchestrator settings affect round summaries and final synthesis"}>
+              <Button variant="outline" size="sm" onClick={openOrchestratorPreview} disabled={previewBusy || isFrozen || readOnly} title={isFrozen ? "Locked while a deliberation is running" : readOnly ? "Locked — this deliberation's configuration is read-only" : "Show how the current orchestrator settings affect round summaries and final synthesis"}>
                 {previewBusy ? "Previewing…" : "Preview prompt impact"}
               </Button>
             </div>
@@ -982,7 +1047,7 @@ export function SetupTab({ selectedMeeting, onStarted }) {
         <CardContent className="flex flex-col gap-5">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="loom-orchestrator-model">Orchestrator model</Label>
-            <Select value={orchestrator.model ?? ""} onValueChange={(value) => setOrchestratorField("model", value)} disabled={isFrozen || !enabledModels.length}>
+            <Select value={orchestrator.model ?? ""} onValueChange={(value) => setOrchestratorField("model", value)} disabled={isFrozen || readOnly || !enabledModels.length}>
               <SelectTrigger id="loom-orchestrator-model" className="max-w-xl font-mono text-xs" aria-label="Orchestrator model">
                 <SelectValue placeholder="Select a model…" />
               </SelectTrigger>
@@ -999,7 +1064,7 @@ export function SetupTab({ selectedMeeting, onStarted }) {
                    <Label htmlFor={`loom-orchestrator-${key}`} className="cursor-default">{ORCHESTRATOR_BEHAVIOR_LABELS[key]}</Label>
                     <p className="mt-0.5 text-xs text-muted-foreground" aria-live="polite">{getOrchestratorBehaviorDescription(key, orchestrator[key])}</p>
                  </div>
-                 <Select value={orchestrator[key]} onValueChange={(value) => setOrchestratorField(key, value)} disabled={isFrozen}>
+                  <Select value={orchestrator[key]} onValueChange={(value) => setOrchestratorField(key, value)} disabled={isFrozen || readOnly}>
                    <SelectTrigger id={`loom-orchestrator-${key}`} size="sm" className="w-44 shrink-0 font-normal">
                      <SelectValue placeholder="Select…" />
                    </SelectTrigger>
@@ -1021,7 +1086,7 @@ export function SetupTab({ selectedMeeting, onStarted }) {
               placeholder="e.g. Favor explicit tradeoffs, keep dissent visible, and call out assumptions before recommending action."
               value={orchestrator.customInstructions}
               onChange={(event) => setOrchestratorField("customInstructions", event.target.value)}
-              disabled={isFrozen}
+              disabled={isFrozen || readOnly}
             />
           </div>
         </CardContent>
@@ -1034,14 +1099,30 @@ export function SetupTab({ selectedMeeting, onStarted }) {
             <CardDescription>Send new input to the circle selected in the sidebar.</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="flex gap-2">
-              <Input
-                placeholder="New input for the circle…"
-                value={extendInput}
-                onChange={(e) => setExtendInput(e.target.value)}
-                aria-label="New input for the current deliberation"
-                disabled={!!job?.running}
-              />
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="min-w-56 flex-1">
+                <Input
+                  placeholder="New input for the circle…"
+                  value={extendInput}
+                  onChange={(e) => setExtendInput(e.target.value)}
+                  aria-label="New input for the current deliberation"
+                  disabled={!!job?.running}
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <Label htmlFor="loom-extend-rounds" className="text-xs text-muted-foreground">Additional rounds</Label>
+                <Input
+                  id="loom-extend-rounds"
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={extendRounds}
+                  onChange={(e) => setExtendRounds(e.target.value)}
+                  className="w-20"
+                  disabled={!!job?.running}
+                  aria-label="Additional rounds to grant"
+                />
+              </div>
               <Button variant="outline" onClick={doExtend} disabled={extendInput.trim().length < 3 || !!job?.running || busy === "extend"}>
                 {busy === "extend" ? "Extending…" : "Extend"}
               </Button>
@@ -1081,8 +1162,8 @@ export function SetupTab({ selectedMeeting, onStarted }) {
           <Button
             size="lg"
             onClick={doStart}
-            disabled={!canStart}
-            title={canStart ? "Start the deliberation" : `Waiting on: ${requirements.filter((r) => !r.met).map((r) => r.label).join("; ")}`}
+            disabled={!canStart || readOnly}
+            title={readOnly ? "Locked — this deliberation's configuration is read-only" : canStart ? "Start the deliberation" : `Waiting on: ${requirements.filter((r) => !r.met).map((r) => r.label).join("; ")}`}
             aria-describedby="loom-start-checklist"
           >
             {busy === "start" && <Spinner className="mr-2" />}

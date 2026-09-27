@@ -15,7 +15,7 @@ import { buildSynthesisPrompt } from "../src/prompts/synthesis.js";
 import { validateSynthesisSections, SYNTHESIS_SECTION_CONTRACT } from "../src/synthesizer.js";
 import { collectObjections } from "../src/objection-collector.js";
 import { buildToolsMapWithoutLoom } from "../src/round-executor/tools.js";
-import { boundToolCallsForStorage, STORED_TOOL_OUTPUT_MAX } from "../src/database/contribution-operations.js";
+import { boundToolCallsForStorage } from "../src/database/contribution-operations.js";
 import { sanitizeForDisplay } from "../src/utils/sanitize.js";
 import { escapeDelimiters } from "../src/prompts/delimiters.js";
 import { LENGTH_LIMITS } from "../src/prompts/constants.js";
@@ -318,17 +318,17 @@ test("code-span decisions and mode routing classify correctly", () => {
   assert.ok(!facts.includes("I stand by short-lived tokens"), "position misfiled as fact");
 });
 
-// 20. X6 — persisted tool outputs are bounded with a flag; shape preserved.
-test("stored tool calls cap string outputs and flag truncation", () => {
-  const big = "x".repeat(STORED_TOOL_OUTPUT_MAX + 1000);
+// 20. X6 — persisted tool outputs are LOSSLESS (no truncation); shape preserved.
+test("stored tool calls preserve full outputs without truncation", () => {
+  const big = "x".repeat(20000);
   const out = boundToolCallsForStorage([
     { tool: "webfetch", output: big, metadata: {} },
     { tool: "loom_pass", output: "ok" },
   ]);
-  assert.ok(out[0].output.length <= STORED_TOOL_OUTPUT_MAX + 100);
-  assert.equal(out[0].metadata.truncated, true);
+  assert.equal(out[0].output, big);
+  assert.equal(out[0].output.length, 20000);
+  assert.equal(out[0].metadata?.truncated, undefined);
   assert.equal(out[1].output, "ok");
-  assert.equal(out[1].metadata?.truncated, undefined);
 });
 
 // 11. A11/X4 — protection and render windows agree; no silent drift.

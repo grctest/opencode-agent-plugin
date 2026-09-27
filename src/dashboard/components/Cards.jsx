@@ -6,7 +6,8 @@ import { normalizePipeTables } from "../../utils/markdown-tables.js";
 import { TierBadge, TypeBadge } from "./Badges.jsx";
 import { Card, CardContent, CardHeader } from "./ui/card.tsx";
 import { Badge } from "./ui/badge.tsx";
-import { Avatar, AvatarFallback } from "./ui/avatar.tsx";
+import { Avatar as PersonaAvatar } from "./Avatar.tsx";
+import { AVATAR_EXPRESSION, AVATAR_COLORS } from "./tierMeta.jsx";
 import { Spinner } from "./ui/spinner.tsx";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./ui/dialog.tsx";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip.tsx";
@@ -91,28 +92,21 @@ export const ContentDialog = memo(({ open, onClose, title, className, children }
 });
 
 export const ParticipantCard = memo(({ participant, error, contributionsByRound, isReflecting, onSelect }) => {
-  const initials = participant.name?.slice(0, 2).toUpperCase() ?? "?";
   const statusColor = error ? "bg-destructive" : (participant.status === "speaking" || isReflecting) ? "bg-amber-500 animate-pulse" : participant.status === "passed" ? "bg-muted-foreground/50" : "bg-transparent";
   const hasErrorBorder = !!error;
   return (
     <Card
-      className={cn("cursor-pointer transition-colors hover:bg-accent hover:border-ring py-3 px-3 gap-2", hasErrorBorder && "border-destructive")}
+      className={cn("cursor-pointer transition-colors hover:bg-accent hover:border-ring py-2 px-3 gap-2", hasErrorBorder && "border-destructive")}
       onClick={() => onSelect?.(participant)}
       role="button"
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect?.(participant); } }}
     >
       <div className="flex items-center gap-2">
-        <Avatar className="size-7 shrink-0">
-          <AvatarFallback className="text-[10px]">{initials}</AvatarFallback>
-        </Avatar>
+        <PersonaAvatar name={participant.name} extra="Sidebar" size={28} title={participant.name} expression={AVATAR_EXPRESSION} colors={AVATAR_COLORS} />
         <span className={cn("size-2 rounded-full shrink-0", statusColor)} />
         <span className="text-xs font-medium truncate flex-1">{participant.name}</span>
-        <TierBadge tier={participant.tier} />
       </div>
-      {participant.model_id && (
-        <span className="text-[11px] text-muted-foreground truncate block">{participant.model_id}</span>
-      )}
       {error && (
         <Tooltip>
           <TooltipTrigger asChild>

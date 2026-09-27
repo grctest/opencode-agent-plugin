@@ -60,14 +60,9 @@ export class RoundExecutor {
   }
 
   _failedInCurrentRound = 0;
-  _deadline = null;
   _roundSessionIds = null;
   _dbFailedThisMeeting = null;
   _queuedSpeakers = null;
-
-  setDeadline(deadline) {
-    this._deadline = deadline;
-  }
 
   isModelHealthy(model) {
     return this._circuitBreaker.isHealthy(model);
@@ -197,19 +192,9 @@ export class RoundExecutor {
       }
       this._roundSessionIds = null;
     }
-    // Deadline helper that also marks skipped speakers as passed internally for accounting
-    // Only enforce when deadline is finite (0 = no limit / Infinity)
-    const hasDeadline = this._deadline && Number.isFinite(this._deadline) && this._deadline !== Infinity;
-    const skipped = [];
     try {
       while (remainingSpeakers.length > 0) {
-      if (hasDeadline && Date.now() > this._deadline - 1000) {
-        this._logger.warn("deadline_exceeded", `Deadline exceeded mid-round — stopping ${remainingSpeakers.length} remaining speakers`);
-        this._options.onProgress?.(`⏱️ Deadline reached — skipping remaining ${remainingSpeakers.length} speakers`);
-        skipped.push(...remainingSpeakers.splice(0));
-        break;
-      }
-      const batchId = randomUUID();
+       const batchId = randomUUID();
       const p = remainingSpeakers.shift();
       p.currentBatchId = batchId;
       this._turnOrder.push(p.config.id);
@@ -230,13 +215,6 @@ export class RoundExecutor {
       await this._handlePromptResult(p, result, round, error);
       }
     } finally {
-        if (skipped.length > 0) {
-          for (const p of skipped) {
-            try {
-              this._db.recordAgentError(this._stateManager.getMeetingId(), p.config.id, this._stateManager.getCurrentRound(), "deadline_skipped", "Skipped due to meeting deadline", 0);
-            } catch {}
-          }
-        }
         if (this._roundSessionIds) {
           await this._cleanupRoundSessions([...this._roundSessionIds.values()]);
           this._roundSessionIds = null;

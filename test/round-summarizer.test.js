@@ -149,7 +149,6 @@ test("round service snapshots state after prompt execution, not from the pre-rou
   };
   const roundExecutor = {
     resetRoundStats() {},
-    setDeadline() {},
     async runPromptPhase(targetRound) {
       manager.setParticipantState("agent", populatedState({ stance: "Freshly committed stance", version: 2 }));
       targetRound.contributions.push({ id: 1, participant_id: "agent", type: "contribution", content: "Fresh answer." });

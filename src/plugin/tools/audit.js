@@ -1,9 +1,10 @@
 function safeAuditValue(value) {
   if (value == null) return null;
   const serialized = typeof value === "string" ? value : JSON.stringify(value) ?? String(value);
+  // Secret redaction only — no length cap: tool_audit rows are lossless so the
+  // Tool use tab and audit consumers see complete tool inputs/outputs.
   return serialized
-    .replace(/(authorization|api[_-]?key|bearer|token|password|secret|client[_-]?secret|private[_-]?key)(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,}\]]+)/gi, "$1$2[REDACTED]")
-    .slice(0, 12000);
+    .replace(/(authorization|api[_-]?key|bearer|token|password|secret|client[_-]?secret|private[_-]?key)(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,}\]]+)/gi, "$1$2[REDACTED]");
 }
 
 export function auditLoomTool({ db, stateManager, caller, meetingId, tool, input, output, status = "completed", title = null }) {

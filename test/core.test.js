@@ -156,7 +156,6 @@ test("safe defaults are finite and shell-free", () => {
   assert.equal(DEFAULT_CONFIG.agentTools.builtIn.bash.enabled, false);
   assert.ok(DEFAULT_CONFIG.agentTimeoutMs > 0);
   assert.ok(DEFAULT_CONFIG.synthesisTimeoutMs > 0);
-  assert.ok(DEFAULT_CONFIG.defaultMeetingTimeoutMs > 0);
   assert.ok(DEFAULT_CONFIG.agentTools.maxQueryTargetsPerTurn > 0);
 });
 

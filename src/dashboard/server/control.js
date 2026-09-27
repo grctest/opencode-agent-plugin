@@ -453,8 +453,8 @@ export async function handleModelFilter(req) {
 // --- Meeting lifecycle ---
 
 function validateParticipants(list) {
-  if (!Array.isArray(list) || list.length < 2 || list.length > 7) {
-    return "participants must be an array of 2-7 entries";
+  if (!Array.isArray(list) || list.length < 2) {
+    return "participants must be an array of at least 2 entries";
   }
   for (let i = 0; i < list.length; i++) {
     const p = list[i];
@@ -760,7 +760,6 @@ async function handleStartMeetingInternal(req) {
     opencodeSessionId: sessionID,
     participants,
     maxRounds,
-     meetingTimeoutMs: getConfig().defaultMeetingTimeoutMs,
      tags: [],
      orchestratorModel: { providerID: orchestratorProvider, modelID: orchestratorModel },
      orchestratorConfig: resolvedOrchestratorConfig,
@@ -892,6 +891,14 @@ async function handleExtendMeetingInternal(req) {
   const sessionID = runtime.ownerSessionId || `dashboard-${meetingId.slice(0, 8)}`;
   const context = body?.context ? sanitizeForPrompt(String(body.context), 8000) : "No additional context provided.";
 
+  // Optional explicit round grant from the dashboard "Additional rounds"
+  // input; invalid values fall back to the extender's derived default.
+  let additionalRounds;
+  if (body?.additional_rounds !== undefined && body?.additional_rounds !== null) {
+    const n = Math.floor(Number(body.additional_rounds));
+    if (Number.isFinite(n) && n >= 1) additionalRounds = Math.min(10, n);
+  }
+
   const extEngine = new MeetingOrchestrator({
     client: runtime.client,
     directory: getDirectory(),
@@ -922,7 +929,6 @@ async function handleExtendMeetingInternal(req) {
       };
     }),
      maxRounds: Math.min(10, Math.max(1, Math.floor(Number(getConfig().defaultMaxRounds) || 4))),
-     meetingTimeoutMs: getConfig().defaultMeetingTimeoutMs,
       orchestratorModel: extensionOrchestrator,
       orchestratorConfig: resolvedExtensionOrchestratorConfig,
       agentTools: buildMeetingAgentTools(extensionFeatures),
@@ -938,7 +944,7 @@ async function handleExtendMeetingInternal(req) {
   (async () => {
     try {
       await extEngine.initialize();
-      const artifact = await extEngine.extendMeeting(question);
+      const artifact = await extEngine.extendMeeting(question, additionalRounds);
       const extState = extEngine.getState();
       const fullReport = `# Loom Deliberation (Extended)\n\n**New Input:** ${sanitizeForDisplay(question, 5000)}\n\n**Participants:** ${existingParts.map((p) => `${p.name} (${p.tier})`).join(", ")}\n\n**Total Rounds:** ${extState.current_round}\n\n**Meeting ID:** ${extEngine.getMeetingId()}\n\n---\n\n${artifact}`;
       writeReportFileHelper(getDirectory(), extEngine.getMeetingId(), fullReport, logger);
@@ -1198,7 +1204,6 @@ async function handleResumeWithContext(req, _mode) {
     opencodeSessionId: resumeOpencodeSessionId,
     participants: ctx.participants,
     maxRounds: resumeMaxRounds,
-    meetingTimeoutMs: getConfig().defaultMeetingTimeoutMs,
     orchestratorModel: ctx.orchestrator,
     orchestratorConfig: ctx.orchestratorConfig,
     agentTools: buildMeetingAgentTools(ctx.features),
@@ -1324,7 +1329,6 @@ async function handleFinishMeetingInternal(req) {
     opencodeSessionId: finishOpencodeSessionId,
     participants: ctx.participants,
     maxRounds: Math.min(10, Math.max(1, Math.floor(Number(existingMeeting.max_rounds) || Number(getConfig().defaultMaxRounds) || 4))),
-    meetingTimeoutMs: getConfig().defaultMeetingTimeoutMs,
     orchestratorModel: ctx.orchestrator,
     orchestratorConfig: ctx.orchestratorConfig,
     agentTools: buildMeetingAgentTools(ctx.features),

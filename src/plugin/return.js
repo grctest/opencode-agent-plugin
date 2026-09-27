@@ -332,6 +332,6 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
       }),
 
     },
-    ...createEventHandlers({ directory, activeLooms }),
+    ...createEventHandlers({ directory, activeLooms, resolveMeeting }),
   };
 }

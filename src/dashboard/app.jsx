@@ -8,6 +8,7 @@ import { ForumTab } from "./components/ForumTab.jsx";
 import { OutputTab } from "./components/OutputTab.jsx";
 import { ErrorBoundary } from "./ErrorBoundary.jsx";
 import { usePersistedState, useMeetingApi, useSSEReset, useEmbeddingStatus } from "./hooks.js";
+import { reloadForDashboardAuth, clearDashboardAuthReload } from "./auth.js";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "./components/ui/tabs.tsx";
 import { Button } from "./components/ui/button.tsx";
 import { Alert, AlertTitle, AlertDescription } from "./components/ui/alert.tsx";
@@ -50,6 +51,8 @@ function useSSE(meetingId, onEvent) {
         try {
           const timestamp = new Date().toISOString();
           const cRes = await fetch(`/api/contributions?meeting=${meetingId}&since=${lastPollIdRef.current}&include_context=0`, { signal: controller.signal });
+          if (cRes.status === 401 && reloadForDashboardAuth()) return;
+          if (cRes.ok) clearDashboardAuthReload();
           if (cRes.ok) {
             const contribs = await cRes.json();
             const arr = Array.isArray(contribs) ? contribs : (contribs.contributions ?? []);
@@ -412,6 +415,8 @@ export function App() {
                   <SetupTab
                     selectedMeeting={selectedMeeting}
                     onStarted={(id) => { setSelectedMeeting(id); setActiveTab("timeline"); }}
+                    meetingState={state}
+                    meetingParticipants={participants}
                   />
                 </ErrorBoundary>
               </TabsContent>

@@ -34,11 +34,10 @@ export class RoundService {
    * @param {Function} [params.getFallbackModel]
    * @returns {Promise<Object>} Updated round with summary
    */
-   async runRound(params) {
-     const { round, activeParticipants, promptOrchestrator, getHighestTierModel, getFallbackModel, deadline, orchestratorConfig } = params;
+    async runRound(params) {
+      const { round, activeParticipants, promptOrchestrator, getHighestTierModel, getFallbackModel, orchestratorConfig } = params;
 
     this.#roundExecutor.resetRoundStats();
-    if (Number.isFinite(deadline)) this.#roundExecutor.setDeadline(deadline);
 
     await this.#roundExecutor.runPromptPhase(round, activeParticipants);
 

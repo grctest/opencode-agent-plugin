@@ -27,30 +27,8 @@ export async function promptChildSession(participant) {
   const baseTimeoutMs = baseTimeoutMsRaw === 0 ? 0 : (Number.isFinite(baseTimeoutMsRaw) ? Math.max(10000, Math.min(600000, baseTimeoutMsRaw)) : 240000);
   const timeoutMsBase = baseTimeoutMs;
   let timeoutMs = timeoutMsBase;
-  // Deadline is disabled (P1 Option A -> Infinity), so this block is now no-op for normal runs.
-  // Kept for internal API where meetingTimeoutMs may be set directly.
-  if (timeoutMs !== 0 && this._deadline && Number.isFinite(this._deadline) && this._deadline !== Infinity) {
-    const remaining = this._deadline - Date.now();
-    // Only clamp when meeting deadline is actually constraining; never punish
-    // a healthy 60-120s base timeout down to 5s — that guaranteed failure for
-    // tool-heavy turns (loom_query/vote/summon each need 60-90s). Use a 30s
-    // floor and only shave off 1s buffer when well clear of expiry.
-    if (Number.isFinite(remaining) && remaining < timeoutMsBase) {
-      if (remaining <= 5000) {
-        // Deadline truly imminent — allow a degraded but non-trivial window
-        // rather than 5s (which always times out). Let the weaving loop's
-        // deadline_exceeded guard handle skipping remaining speakers instead.
-        timeoutMs = Math.max(15000, Math.min(timeoutMsBase, remaining - 500));
-        this._logger.warn("deadline_clamped_floor", `${participant.config.name} — deadline ${remaining}ms remaining, using degraded ${timeoutMs}ms timeout (floor 15s)`);
-      } else if (remaining < 30000) {
-        timeoutMs = Math.max(20000, Math.min(timeoutMsBase, remaining - 1000));
-      } else {
-        timeoutMs = Math.min(timeoutMsBase, remaining - 1000);
-      }
-    }
-  }
 
-   const currentRound = this._stateManager.getCurrentRound();
+    const currentRound = this._stateManager.getCurrentRound();
    const forumEnabled = !!(effectiveAgentTools?.enabled && effectiveAgentTools?.loom?.loom_forum);
    const mandatoryCapabilities = effectiveAgentTools?.mandatory ?? {};
 
@@ -263,12 +241,12 @@ export async function promptChildSession(participant) {
     const loomOutputsRaw = existing.map((c) => {
       const src = c.prompt_context?.source_participant_id ? `batch ${c.prompt_context.source_batch_id ?? c.batch_id}` : `batch ${c.batch_id}`;
       const toolHint = c.type === "vote_response" ? "loom_vote" : c.type === "summoned_response" ? "loom_summon" : "loom_query";
-      const content = (c.content ?? "").slice(0, 800);
+      const content = (c.content ?? "");
       return `Tool ${toolHint} (${c.id}) via ${src} returned:\n${content}`;
     }).join("\n\n");
     if (!loomOutputsRaw.trim()) return null;
-    // Truncate similar to execute-turn (12k)
-    const loomOutputs = loomOutputsRaw.slice(0, 12000);
+    // Lossless: the recovery synthesis parses complete peer answers.
+    const loomOutputs = loomOutputsRaw;
     const synthesisInstruction = `Loom tool results RECOVERED from earlier attempt (reused, not re-executed — ${existing.length} peer contribution(s) already persisted for batch ${participant.currentBatchId}):\n${loomOutputs}\n\nNow synthesize your final contribution incorporating these responses. Cite [#id] when referencing peer answers. Do not re-call loom_query/loom_vote/loom_summon — you have the results. Stay in character and follow OUTPUT CONTRACT.`;
     const activeCountExec = (() => { try { return this._stateManager.getActiveParticipants().length; } catch { return undefined; }})();
     const synthesisToolsMap = buildToolsMapWithoutLoom(config, { activeCount: activeCountExec });
@@ -276,15 +254,7 @@ export async function promptChildSession(participant) {
     // session risks "session busy" if the timed-out prompt is still draining server-side.
     let ephemeralSessionId;
     try { ephemeralSessionId = await this._options.createEphemeralSession(participant); this._sessionManager.registerSessionMeeting(ephemeralSessionId, this._stateManager.getMeetingId()); } catch { return null; }
-    const synthRemaining = (() => {
-      let rem = remainingTimeout === 0 ? Infinity : remainingTimeout;
-      if (this._deadline && Number.isFinite(this._deadline) && this._deadline !== Infinity) {
-        const dl = this._deadline - Date.now();
-        if (dl < 15000) return 0;
-        rem = Math.min(rem, Math.max(15000, dl - 1000));
-      }
-      return rem;
-    })();
+    const synthRemaining = remainingTimeout === 0 ? Infinity : remainingTimeout;
     if (synthRemaining !== Infinity && synthRemaining <= 0) {
       if (ephemeralSessionId) { try { await this._options.deleteEphemeralSession(ephemeralSessionId); } catch {} try { this._sessionManager.unregisterSession(ephemeralSessionId); } catch {} }
       return null;
@@ -330,7 +300,7 @@ export async function promptChildSession(participant) {
         tool: c.type === "vote_response" ? "loom_vote" : c.type === "summoned_response" ? "loom_summon" : "loom_query",
         callID: `reused-${c.id}`,
         status: "completed",
-        output: JSON.stringify({ reused: true, contributionId: c.id, type: c.type, content: (c.content ?? "").slice(0,500) }),
+        output: JSON.stringify({ reused: true, contributionId: c.id, type: c.type, content: (c.content ?? "") }),
         title: `reused:${c.type}:${c.id}`,
         metadata: { reused: true, inline: true },
       }));
@@ -414,16 +384,7 @@ export async function promptChildSession(participant) {
 
       // Recovery: if we already have loom results for this batch, synthesize from them instead of re-executing tools
       if (hasExisting && attempt < maxRetries) {
-        const remainingForRecovery = (() => {
-          const effTimeout = timeoutMs === 0 ? Infinity : timeoutMs;
-          if (this._deadline && Number.isFinite(this._deadline) && this._deadline !== Infinity) {
-            const rem = this._deadline - Date.now();
-            if (rem < 15000) return 15000;
-            return Math.max(15000, Math.min(effTimeout, rem - 1000));
-          }
-          return effTimeout;
-        })();
-        const recovered = await trySynthesisFromExisting(activeModel, remainingForRecovery);
+        const recovered = await trySynthesisFromExisting(activeModel, timeoutMs === 0 ? Infinity : timeoutMs);
         if (recovered) {
           succeeded = true;
           localSucceeded = true;
@@ -436,20 +397,7 @@ export async function promptChildSession(participant) {
       }
 
       if (attempt < maxRetries) {
-        let delay = Math.min(1000 * Math.pow(2, attempt) + Math.random() * 500, 8000);
-        if (this._deadline && Number.isFinite(this._deadline) && this._deadline !== Infinity) {
-          const remaining = this._deadline - Date.now();
-          // Need at least 20s to make a retry worthwhile (tool-heavy turns need it)
-          if (remaining < 20000) {
-            this._logger.warn("prompt_retry_skipped_deadline", `${participant.config.name} — skipping retry, deadline imminent (${remaining}ms remaining, need 20s)`);
-            break;
-          }
-          delay = Math.min(delay, Math.max(0, remaining - 5000));
-          if (delay <= 0) {
-            this._logger.warn("prompt_retry_skipped_deadline", `${participant.config.name} — skipping retry, deadline imminent`);
-            break;
-          }
-        }
+        const delay = Math.min(1000 * Math.pow(2, attempt) + Math.random() * 500, 8000);
         this._logger.warn("prompt_retry", `${participant.config.name} — attempt ${attempt + 1}/${maxRetries + 1} failed on ${this._modelKey(activeModel)}, error: ${info.message}${info.statusCode ? ` (${info.statusCode})` : ''} — retrying in ${Math.round(delay)}ms`, info);
         await new Promise((r) => { const t = setTimeout(r, delay); if (t.unref) t.unref(); });
       }
@@ -517,15 +465,7 @@ export async function promptChildSession(participant) {
       // Fallback recovery: reuse already-persisted loom batch if available
       const hasExistingFallback = collectExistingLoomResults().length > 0;
       if (hasExistingFallback && attempt + 1 < fallbackAttempts) {
-        const remainingForRecoveryFb = (() => {
-          const effTimeout = timeoutMs === 0 ? Infinity : timeoutMs;
-          if (this._deadline && Number.isFinite(this._deadline) && this._deadline !== Infinity) {
-            const rem = this._deadline - Date.now();
-            if (rem < 15000) return 15000;
-            return Math.max(15000, Math.min(effTimeout, rem - 1000));
-          }
-          return effTimeout;
-        })();
+        const remainingForRecoveryFb = timeoutMs === 0 ? Infinity : timeoutMs;
         const recoveredFb = await trySynthesisFromExisting(fallbackModel, remainingForRecoveryFb);
         if (recoveredFb) {
           recoveredFb._fallback = {
@@ -541,13 +481,7 @@ export async function promptChildSession(participant) {
       }
 
       if (attempt + 1 < fallbackAttempts) {
-        let delay = Math.min(1000 * Math.pow(2, attempt) + Math.random() * 500, 8000);
-        if (this._deadline && Number.isFinite(this._deadline) && this._deadline !== Infinity) {
-          const remaining = this._deadline - Date.now();
-          if (remaining < 20000) break;
-          delay = Math.min(delay, Math.max(0, remaining - 5000));
-          if (delay <= 0) break;
-        }
+        const delay = Math.min(1000 * Math.pow(2, attempt) + Math.random() * 500, 8000);
         this._logger.warn("fallback_retry", `${participant.config.name} — fallback attempt ${attempt + 1}/${fallbackAttempts} failed on ${this._modelKey(fallbackModel)}, retrying in ${Math.round(delay)}ms`, info);
         await new Promise((r) => { const t = setTimeout(r, delay); if (t.unref) t.unref(); });
       }

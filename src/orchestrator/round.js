@@ -3,7 +3,7 @@ import { LoomError, extractErrorInfo } from "../logger.js";
 import { updateStateOfPlay, mergeStateOfPlay } from "../state-of-play.js";
 import { truncate } from "../shared.js";
 import { SUMMARY_TRUNCATE_LEN } from "./constants.js";
-// TimeBudget is owned by MeetingOrchestrator; round helpers use this._timeBudget when available (Phase 3 centralization)
+// MeetingOrchestrator owns the round helpers' shared state (Phase 3 centralization).
 
 /**
  * Continue a round left partial by a sudden server kill.
@@ -23,9 +23,7 @@ import { SUMMARY_TRUNCATE_LEN } from "./constants.js";
  * (no partial round — caller should run the normal loop).
  */
 export async function _continueInterruptedRound() {
-  const timeBudget = this._timeBudget;
   if (this._tokenBudgetExceeded?.()) return null;
-  if (timeBudget ? timeBudget.remainingMs() <= 0 : this._remainingMs() <= 0) return null;
 
   const roundNum = this._stateManager.getCurrentRound();
   if (!Number.isFinite(roundNum) || roundNum <= 0) return null;
@@ -54,7 +52,6 @@ export async function _continueInterruptedRound() {
   if (!this._roundExecutor) {
     throw new LoomError("RoundExecutor not initialized — call initialize() first", { phase: "round_execution", recoverable: false });
   }
-  const deadline = timeBudget ? timeBudget.deadline() : this._startTime + this._meetingTimeoutMs;
   const { round: updatedRound } = await this._roundService.runRound({
     round,
     activeParticipants: remaining,
@@ -63,7 +60,6 @@ export async function _continueInterruptedRound() {
     getFallbackModel: () => this._getAllowedFallbackModel(),
     orchestratorConfig: this._options.orchestratorConfig,
     state: this._stateManager.getState(),
-    deadline,
   });
 
   this._notifyUpdate();
@@ -71,28 +67,6 @@ export async function _continueInterruptedRound() {
 }
 
 export async function runRound() {
-    const timeBudget = this._timeBudget;
-
-    if (timeBudget ? timeBudget.checkTimeout() : this._checkTimeout()) {
-      if (timeBudget) {
-        this._stateManager.transitionTo("timeout");
-        this._logger.warn("timeout", "Meeting timed out", { elapsed: Date.now() - this._startTime, limit: this._meetingTimeoutMs });
-      }
-      await this._sessionManager.postProgress("⏱️ Loom timed out — generating output from collected contributions.", "warn");
-      return false;
-    }
-
-    const remaining = timeBudget ? timeBudget.remainingMs() : this._remainingMs();
-    const isExpiredGrace = timeBudget ? timeBudget.isExpired(5000) : remaining < 5000;
-    if (isExpiredGrace) {
-      this._stateManager.transitionTo("timeout");
-      await this._sessionManager.postProgress("⏱️ Loom timed out — generating output from collected contributions.", "warn");
-      this._logger.warn("timeout", "Meeting timed out before round start", { remaining });
-      return false;
-    }
-
-    const deadline = timeBudget ? timeBudget.deadline() : this._startTime + this._meetingTimeoutMs;
-
     const round = this._roundInitializer.initializeRound(this._stateManager, this._database, () => this._notifyUpdate());
     const { activeParticipants, skipped } = this._roundInitializer.filterActiveParticipants(this._stateManager, round);
 
@@ -114,10 +88,9 @@ export async function runRound() {
       activeParticipants,
       promptOrchestrator: async (system, model, message, type) => this._promptOrchestrator(system, model, message, type, round.number),
        getHighestTierModel: () => this._getOrchestratorModel(),
-        getFallbackModel: () => this._getAllowedFallbackModel(),
+       getFallbackModel: () => this._getAllowedFallbackModel(),
        orchestratorConfig: this._options.orchestratorConfig,
        state: this._stateManager.getState(),
-      deadline,
     });
 
     return this._finalizeRound(updatedRound);

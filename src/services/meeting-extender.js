@@ -46,6 +46,7 @@ export class MeetingExtender {
       stateManager,
       sessionManager,
       newPrompt,
+      extraRounds,
     } = params;
 
     if (!database) {
@@ -56,7 +57,11 @@ export class MeetingExtender {
     // `**User Input:**` marker MUST survive — the dashboard's ExtensionBanner
     // parses extensions back out of fabric with a regex keyed on it (audit 05 LS7).
     const safePrompt = sanitizeForPrompt(newPrompt ?? "", 8000);
-    const extraRounds = this.#deriveExtraRounds();
+    // Caller-provided round count wins (dashboard "Additional rounds" input);
+    // otherwise derive from config the way we always have.
+    const grantedRounds = Number.isFinite(extraRounds) && extraRounds >= 1
+      ? Math.min(10, Math.floor(extraRounds))
+      : this.#deriveExtraRounds();
     const extensionBlock = `**User Input:** ${safePrompt}`;
     const prevFabric = (() => { try { return database.getFabric(); } catch { return stateManager.getFabric(); } })();
 
@@ -92,7 +97,7 @@ export class MeetingExtender {
         await database.transaction(() => {
           database.setFabric(`${prevFabric}\n\n**User Input:** ${safePrompt}`);
           database.setRound(stateManager.getCurrentRound());
-          database.setMaxRounds(prevMaxRounds + extraRounds);
+          database.setMaxRounds(prevMaxRounds + grantedRounds);
         });
         txSucceeded = true;
       } catch (err) {
@@ -104,12 +109,12 @@ export class MeetingExtender {
       // No transaction support — sequential best-effort (legacy path)
       database.setFabric(`${prevFabric}\n\n**User Input:** ${safePrompt}`);
       database.setRound(stateManager.getCurrentRound());
-      database.setMaxRounds(prevMaxRounds + extraRounds);
+      database.setMaxRounds(prevMaxRounds + grantedRounds);
       txSucceeded = true;
     }
 
     if (txSucceeded) {
-      stateManager.setMaxRounds(prevMaxRounds + extraRounds);
+      stateManager.setMaxRounds(prevMaxRounds + grantedRounds);
       const newFabric = database.getFabric();
       stateManager.setFabric(newFabric);
       // Make extension visible via context (agents read getContext())
@@ -138,8 +143,8 @@ export class MeetingExtender {
     }
 
     await sessionManager.postProgress(
-      `🧵 Extending loom — adding ${extraRounds} more rounds (now ${stateManager.getMaxRounds()} total)`
+      `🧵 Extending loom — adding ${grantedRounds} more rounds (now ${stateManager.getMaxRounds()} total)`
     );
-    this.#logger.info("extended", "Meeting extended", { newMaxRounds: stateManager.getMaxRounds(), extraRounds });
+    this.#logger.info("extended", "Meeting extended", { newMaxRounds: stateManager.getMaxRounds(), grantedRounds });
   }
 }
