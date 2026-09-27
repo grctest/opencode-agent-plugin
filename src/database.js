@@ -210,6 +210,11 @@ export class MeetingDatabase {
   setNextSpeaker(nextSpeakerId) { const r = meetingOps.setNextSpeaker(this.#db, this.#meetingId, nextSpeakerId); this.#notify("meetings"); return r; }
   setStats(statsJson) { const r = meetingOps.setStats(this.#db, this.#meetingId, statsJson); this.#notify("meetings"); return r; }
   setEmbeddingModel(model, dim) { const r = meetingOps.setEmbeddingModel(this.#db, this.#meetingId, model, dim); this.#notify("meetings"); return r; }
+  setRateLimitState(rateLimitJson) {
+    const r = meetingOps.setRateLimitState(this.#db, this.#meetingId, rateLimitJson);
+    this.#notify("meetings");
+    return r;
+  }
   getOpencodeSessionId() { return meetingOps.getOpencodeSessionId(this.#db, this.#meetingId); }
 
   addContribution(meetingId, contribution) { const r = contribOps.addContribution(this.#db, meetingId, contribution, () => this.getRound()); this.#notify("contributions"); return r; }

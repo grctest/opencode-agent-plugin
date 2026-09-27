@@ -6,8 +6,9 @@ import { OverviewTab } from "./components/OverviewTab.jsx";
 import { TimelineTab } from "./components/TimelineTab.jsx";
 import { ForumTab } from "./components/ForumTab.jsx";
 import { OutputTab } from "./components/OutputTab.jsx";
+import { RateLimitBanner } from "./components/RateLimitBanner.jsx";
 import { ErrorBoundary } from "./ErrorBoundary.jsx";
-import { usePersistedState, useMeetingApi, useSSEReset, useEmbeddingStatus } from "./hooks.js";
+import { usePersistedState, useMeetingApi, useSSEReset, useEmbeddingStatus, useRateLimit } from "./hooks.js";
 import { reloadForDashboardAuth, clearDashboardAuthReload } from "./auth.js";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "./components/ui/tabs.tsx";
 import { Button } from "./components/ui/button.tsx";
@@ -278,25 +279,33 @@ export function App() {
   const meetings = useMeetingsList();
   const { resetKey } = useSSEReset(selectedMeeting);
   const embeddingStatus = useEmbeddingStatus();
-    const { state, participants, contributions, turnRequests, orchestratorMessages, roundSummaries, agentErrors, artifact, forumTopics, statePatchSummary, error } = useMeetingApi(selectedMeeting, resetKey, meetings, setSelectedMeeting);
+  const { state, participants, contributions, turnRequests, orchestratorMessages, roundSummaries, agentErrors, artifact, forumTopics, statePatchSummary, error } = useMeetingApi(selectedMeeting, resetKey, meetings, setSelectedMeeting);
+   const { rateLimit, dismiss: dismissRateLimit } = useRateLimit();
+   useEffect(() => {
+     if (state?.rate_limit_state) {
+       window.dispatchEvent(new CustomEvent("loom-rate-limit", { detail: state.rate_limit_state }));
+     }
+   }, [state?.rate_limit_state]);
    const forumsEnabled = state?.features?.forums !== "disabled";
-  const handleSSEEvent = useCallback((data) => {
+   const handleSSEEvent = useCallback((data) => {
     if (data.type === "contributions") {
       const newContribs = data.data;
       if (newContribs && newContribs.length > 0) window.dispatchEvent(new CustomEvent("loom-new-contributions", { detail: newContribs }));
     } else if (data.type === "state") window.dispatchEvent(new CustomEvent("loom-state-update", { detail: data.data }));
-    else if (data.type === "participants") window.dispatchEvent(new CustomEvent("loom-participants-update", { detail: data.data }));
-    else if (data.type === "agent_error") window.dispatchEvent(new CustomEvent("loom-agent-error", { detail: data.data }));
-    else if (data.type === "agent_errors_cleared") window.dispatchEvent(new CustomEvent("loom-agent-errors-cleared", { detail: data }));
-    else if (data.type === "artifact") window.dispatchEvent(new CustomEvent("loom-artifact", { detail: data.data }));
-    else if (data.type === "turn_requests") {
+     else if (data.type === "participants") window.dispatchEvent(new CustomEvent("loom-participants-update", { detail: data.data }));
+     else if (data.type === "agent_error") window.dispatchEvent(new CustomEvent("loom-agent-error", { detail: data.data }));
+     else if (data.type === "agent_errors_cleared") window.dispatchEvent(new CustomEvent("loom-agent-errors-cleared", { detail: data }));
+     else if (data.type === "artifact") window.dispatchEvent(new CustomEvent("loom-artifact", { detail: data.data }));
+     else if (data.type === "turn_requests") {
       const newTrs = data.data;
       if (newTrs && newTrs.length > 0) window.dispatchEvent(new CustomEvent("loom-new-turn-requests", { detail: newTrs }));
     } else if (data.type === "orchestrator_messages") window.dispatchEvent(new CustomEvent("loom-orchestrator-messages", { detail: data.data }));
-    else if (data.type === "round_summaries") window.dispatchEvent(new CustomEvent("loom-round-summaries", { detail: data.data }));
-    else if (data.type === "forum_update") window.dispatchEvent(new CustomEvent("loom-forum-update", { detail: data.data }));
+     else if (data.type === "round_summaries") window.dispatchEvent(new CustomEvent("loom-round-summaries", { detail: data.data }));
+     else if (data.type === "forum_update") window.dispatchEvent(new CustomEvent("loom-forum-update", { detail: data.data }));
+     else if (data.type === "rate_limit") window.dispatchEvent(new CustomEvent("loom-rate-limit", { detail: data.data }));
+     else if (data.type === "rate_limit_cleared") window.dispatchEvent(new CustomEvent("loom-rate-limit-cleared", { detail: data.data }));
   }, []);
-  const { connected, reconnectAttempt } = useSSE(selectedMeeting, handleSSEEvent);
+   const { connected, reconnectAttempt } = useSSE(selectedMeeting, handleSSEEvent);
   useEffect(() => {
     if (meetings.length > 0 && !selectedMeeting) {
       const params = new URLSearchParams(window.location.search);
@@ -369,6 +378,7 @@ export function App() {
       <TooltipProvider delayDuration={0}>
         <Toaster />
         <div className="flex h-[100dvh] overflow-hidden">
+          <RateLimitBanner rateLimit={rateLimit} onDismiss={dismissRateLimit} />
           {error && (
             <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 w-full max-w-lg px-4">
               <Alert variant="destructive">
@@ -460,6 +470,7 @@ export function App() {
                     orchestratorMessages={orchestratorMessages}
                     roundSummaries={roundSummaries}
                     selectedMeeting={selectedMeeting}
+                    meetingStatus={state?.status ?? null}
                   />
                 </ErrorBoundary>
               </TabsContent>

@@ -3,7 +3,7 @@ import { parseReflections, safeParseJson, normalizeToolCalls } from "../../utils
 export function getState() {
     const row = this._db
       .prepare(
-        `SELECT id as meeting_id, question, context, status, round, max_rounds, convergence, fabric, stats, reflecting_participants, querying_participants, evidence_participants, summoning_participants, state_of_play, semantic_degraded, persistence_degraded, feature_toggles_json, orchestrator_config_json, created_at
+        `SELECT id as meeting_id, question, context, status, round, max_rounds, convergence, fabric, stats, reflecting_participants, querying_participants, evidence_participants, summoning_participants, state_of_play, semantic_degraded, persistence_degraded, feature_toggles_json, orchestrator_config_json, rate_limit_state, created_at
          FROM meetings LIMIT 1`,
       )
       .get();
@@ -75,6 +75,15 @@ export function getState() {
       }
     } else {
       row.summoning_participants = [];
+    }
+    if (row.rate_limit_state) {
+      try {
+        row.rate_limit_state = JSON.parse(row.rate_limit_state);
+      } catch {
+        row.rate_limit_state = null;
+      }
+    } else {
+      row.rate_limit_state = null;
     }
     return row;
   }

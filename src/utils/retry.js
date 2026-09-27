@@ -28,6 +28,113 @@ export function isRateLimitError(err) {
   return false;
 }
 
+const GO_UPSELL_MESSAGE = "Free usage exceeded, subscribe to Go";
+const GO_UPSELL_URL = "https://opencode.ai/go";
+
+function parseRetryAfterMs(headers) {
+  if (!headers) return null;
+  const retryAfterMs = headers["retry-after-ms"];
+  if (retryAfterMs) {
+    const parsed = Number.parseFloat(retryAfterMs);
+    if (!Number.isNaN(parsed) && parsed > 0) return Math.ceil(parsed);
+  }
+  const retryAfter = headers["retry-after"];
+  if (retryAfter) {
+    const seconds = Number.parseFloat(retryAfter);
+    if (!Number.isNaN(seconds) && seconds > 0) return Math.ceil(seconds * 1000);
+    const dateMs = Date.parse(retryAfter);
+    if (!Number.isNaN(dateMs) && dateMs > Date.now()) return Math.ceil(dateMs - Date.now());
+  }
+  return null;
+}
+
+function formatResetDuration(ms) {
+  if (!ms || ms <= 0) return "less than a minute";
+  const seconds = Math.max(0, Math.ceil(ms / 1000));
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.ceil((seconds % 3600) / 60);
+  if (days > 0) return hours > 0 ? `${days}d ${hours}h` : `${days}d`;
+  if (hours > 0) return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+  return minutes > 0 ? `${minutes}m` : `${seconds}s`;
+}
+
+export function classifyRateLimitError(err) {
+  if (!err) return null;
+  const statusCode = err.status ?? err.statusCode ?? err.providerData?.statusCode;
+  const responseBody = err.providerData?.responseBody ?? err.responseBody ?? "";
+  const responseHeaders = err.providerData?.responseHeaders ?? err.responseHeaders ?? null;
+  const message = err.message ?? "";
+  const bodyStr = typeof responseBody === "string" ? responseBody : JSON.stringify(responseBody ?? "");
+
+  if (statusCode === 429 || /\b429\b/.test(message)) {
+    if (bodyStr.includes("FreeUsageLimitError")) {
+      return {
+        type: "free_tier_limit",
+        message: GO_UPSELL_MESSAGE,
+        retryAfterMs: null,
+        action: {
+          reason: "free_tier_limit",
+          title: "Free limit reached",
+          message: "Subscribe to OpenCode Go for reliable access to the best open-source models, starting at $5/month.",
+          label: "subscribe",
+          link: GO_UPSELL_URL,
+        },
+      };
+    }
+
+    if (bodyStr.includes("GoUsageLimitError")) {
+      let workspace = "";
+      let limitName = "";
+      try {
+        const body = JSON.parse(bodyStr);
+        workspace = body?.metadata?.workspace ?? "";
+        limitName = body?.metadata?.limitName ?? "";
+      } catch {}
+      const retryAfterMs = parseRetryAfterMs(responseHeaders);
+      const resetIn = retryAfterMs != null ? formatResetDuration(retryAfterMs) : "";
+      const displayMessage = `${limitName ? `${limitName} usage limit` : "Usage limit"} reached.${resetIn ? ` It will reset in ${resetIn}.` : ""} To continue using this model now, enable usage from your available balance`;
+      const link = workspace ? `https://opencode.ai/workspace/${workspace}/go` : "https://opencode.ai/go";
+      return {
+        type: "account_rate_limit",
+        message: displayMessage,
+        retryAfterMs,
+        action: {
+          reason: "account_rate_limit",
+          title: "Go limit reached",
+          message: displayMessage,
+          label: "open settings",
+          link,
+        },
+      };
+    }
+
+    const retryAfterMs = parseRetryAfterMs(responseHeaders);
+    return {
+      type: "transient_rate_limit",
+      message: message || "Rate limit exceeded. Please try again later.",
+      retryAfterMs,
+      action: null,
+    };
+  }
+
+  if (/rate.?limit|too many requests|rate_limit/i.test(message)) {
+    return {
+      type: "transient_rate_limit",
+      message,
+      retryAfterMs: null,
+      action: null,
+    };
+  }
+
+  return null;
+}
+
+export function isHardRateLimitError(err) {
+  const classification = classifyRateLimitError(err);
+  return classification !== null && (classification.type === "free_tier_limit" || classification.type === "account_rate_limit");
+}
+
 export function isRetryableError(err) {
   if (!err) return false;
 
@@ -68,6 +175,10 @@ export function isRetryableError(err) {
     return true;
   }
 
+  if (isHardRateLimitError(err)) {
+    return false;
+  }
+
   if (isRateLimitError(err) || err.status === 408 || err.statusCode === 408) {
     return true;
   }
@@ -86,6 +197,7 @@ export function isRetryableError(err) {
  * @param {number} [options.jitterMs=500] - Random jitter to add to delay
  * @param {(err: Error, attempt: number) => boolean} [options.retryable] - Custom retryable check
  * @param {(err: Error, attempt: number, delay: number) => void} [options.onRetry] - Callback on retry
+ * @param {(err: Error) => number|null} [options.getRetryAfterMs] - Extract Retry-After delay from error
  * @returns {Promise<T>} Result of the function
  */
 export async function withRetry(fn, options = {}) {
@@ -96,6 +208,7 @@ export async function withRetry(fn, options = {}) {
     jitterMs = DEFAULT_RETRY_CONFIG.jitterMs,
     retryable = isRetryableError,
     onRetry = () => {},
+    getRetryAfterMs = null,
   } = options;
 
   let lastError;
@@ -112,17 +225,29 @@ export async function withRetry(fn, options = {}) {
       
       if (attempt === maxAttempts - 1 || !retryable(err)) {
         if (attempt > 0) {
-          // Retry exhaustion is observable (audit 07 EH3)
           incrementKeyedCounter('retry_events', 'exhausted');
         }
         throw err;
       }
       incrementKeyedCounter('retry_events', 'attempted');
       
-      const delay = Math.min(
-        baseDelayMs * Math.pow(2, attempt) + Math.random() * jitterMs,
-        maxDelayMs
-      );
+      let delay;
+      if (getRetryAfterMs) {
+        const retryAfter = getRetryAfterMs(err);
+        if (retryAfter != null && retryAfter > 0) {
+          delay = retryAfter;
+        } else {
+          delay = Math.min(
+            baseDelayMs * Math.pow(2, attempt) + Math.random() * jitterMs,
+            maxDelayMs
+          );
+        }
+      } else {
+        delay = Math.min(
+          baseDelayMs * Math.pow(2, attempt) + Math.random() * jitterMs,
+          maxDelayMs
+        );
+      }
       
       onRetry(err, attempt, delay);
       

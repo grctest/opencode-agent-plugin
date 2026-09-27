@@ -1,6 +1,6 @@
 import { extractText } from "./shared.js";
 import { extractErrorInfo } from "./logger.js";
-import { withRetry, isRetryableError } from "./utils/retry.js";
+import { withRetry, isRetryableError, isHardRateLimitError, classifyRateLimitError } from "./utils/retry.js";
 import { getConfig } from "./config.js";
 
 /**
@@ -147,6 +147,7 @@ export class SessionContract {
         if (d.statusCode) err.status = d.statusCode;
         err.providerError = assistantError.name ?? null;
         err.providerData = d;
+        err.rateLimitClassification = classifyRateLimitError(err);
         // Preserve partial response (may contain already-executed ToolParts)
         err.partialData = result.data ?? null;
         throw err;
@@ -160,6 +161,9 @@ export class SessionContract {
         error: null,
       };
     } catch (error) {
+      if (error && !error.rateLimitClassification) {
+        error.rateLimitClassification = classifyRateLimitError(error);
+      }
       // Audit-first: preserve whatever partial data the server returned so
       // already-executed tool calls are not silently lost on failure.
       // Callers treat falsy data as "nothing", so this is backward-compatible;

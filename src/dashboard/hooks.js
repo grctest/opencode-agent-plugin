@@ -491,3 +491,33 @@ export function useMeetingApi(meetingId, resetKey, meetings = [], onSelectMeetin
     refetch: () => fetchMeetingData(meetingId),
   };
 }
+
+export function useRateLimit() {
+  const [rateLimit, setRateLimit] = useState(null);
+
+  useEffect(() => {
+    const handleRateLimit = (e) => {
+      const data = e.detail;
+      if (data) {
+        setRateLimit(data);
+      }
+    };
+
+    const handleRateLimitCleared = () => {
+      setRateLimit(null);
+    };
+
+    window.addEventListener("loom-rate-limit", handleRateLimit);
+    window.addEventListener("loom-rate-limit-cleared", handleRateLimitCleared);
+    return () => {
+      window.removeEventListener("loom-rate-limit", handleRateLimit);
+      window.removeEventListener("loom-rate-limit-cleared", handleRateLimitCleared);
+    };
+  }, []);
+
+  const dismiss = useCallback(() => {
+    setRateLimit(null);
+  }, []);
+
+  return { rateLimit, dismiss };
+}

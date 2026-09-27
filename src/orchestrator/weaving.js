@@ -1,6 +1,7 @@
 
 import { TUNING } from "../config/defaults.js";
 import { getConfig } from "../config.js";
+import { isHardRateLimitError } from "../utils/retry.js";
 
 export async function runMeeting() {
     await this.initialize();
@@ -122,6 +123,15 @@ export async function _runWeavingLoop() {
           const spentBefore = (this._callStats.input_tokens ?? 0) + (this._callStats.output_tokens ?? 0);
           try { await this._sessionManager.postProgress(`💰 Token budget reached (${spentBefore} ≥ ${this._maxTotalTokens}) — ending deliberation and generating output.`, "warn"); } catch {}
           break;
+        }
+
+        const rateLimitError = this._checkRateLimitError?.();
+        if (rateLimitError) {
+          const halted = await this._haltForRateLimit(rateLimitError);
+          if (halted) {
+            continueWeaving = false;
+            break;
+          }
         }
 
        continueWeaving = await this.runRound();

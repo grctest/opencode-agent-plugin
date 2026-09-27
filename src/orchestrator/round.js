@@ -3,6 +3,7 @@ import { LoomError, extractErrorInfo } from "../logger.js";
 import { updateStateOfPlay, mergeStateOfPlay } from "../state-of-play.js";
 import { truncate } from "../shared.js";
 import { SUMMARY_TRUNCATE_LEN } from "./constants.js";
+import { isHardRateLimitError } from "../utils/retry.js";
 // MeetingOrchestrator owns the round helpers' shared state (Phase 3 centralization).
 
 /**
@@ -83,17 +84,24 @@ export async function runRound() {
       throw new LoomError("RoundExecutor not initialized — call initialize() first", { phase: "round_execution", recoverable: false });
     }
 
-    const { round: updatedRound } = await this._roundService.runRound({
-      round,
-      activeParticipants,
-      promptOrchestrator: async (system, model, message, type) => this._promptOrchestrator(system, model, message, type, round.number),
-       getHighestTierModel: () => this._getOrchestratorModel(),
-       getFallbackModel: () => this._getAllowedFallbackModel(),
-       orchestratorConfig: this._options.orchestratorConfig,
-       state: this._stateManager.getState(),
-    });
+    try {
+      const { round: updatedRound } = await this._roundService.runRound({
+        round,
+        activeParticipants,
+        promptOrchestrator: async (system, model, message, type) => this._promptOrchestrator(system, model, message, type, round.number),
+         getHighestTierModel: () => this._getOrchestratorModel(),
+         getFallbackModel: () => this._getAllowedFallbackModel(),
+         orchestratorConfig: this._options.orchestratorConfig,
+         state: this._stateManager.getState(),
+      });
 
-    return this._finalizeRound(updatedRound);
+      return this._finalizeRound(updatedRound);
+    } catch (err) {
+      if (isHardRateLimitError(err)) {
+        this._setRateLimitError?.(err);
+      }
+      throw err;
+    }
   }
 
 export async function _finalizeRound(updatedRound) {

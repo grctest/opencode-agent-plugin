@@ -120,6 +120,7 @@ const ROUTE_MAP = new Map([
   ["/api/forum/topic", ["GET"]],
   ["/api/export", ["GET"]],
   ["/api/export/stream", ["GET"]],
+  ["/api/timeline/export", ["GET"]],
   ["/api/repair", ["GET"]],
   ["/api/stream", ["GET"]],
 ]);
@@ -660,6 +661,24 @@ export function startDashboard(directory, port, runtimeOpts = null) {
               "Cache-Control": "no-cache",
             },
           });
+        }
+
+        if (url.pathname === "/api/timeline/export") {
+          const { api, meetingId, error } = getMeetingApi(url, directory);
+          if (error) return error;
+          try {
+            const payload = api.exportTimeline(meetingId);
+            const filename = `loom-timeline-${meetingId.slice(0, 8)}-${Date.now()}.json`;
+            return new Response(JSON.stringify(payload, null, 2), {
+              headers: {
+                "Content-Type": "application/json; charset=utf-8",
+                "Content-Disposition": `attachment; filename="${filename}"`,
+              },
+            });
+          } catch (err) {
+            console.error("[Loom dashboard] timeline export failed", err instanceof Error ? err.message : String(err));
+            return Response.json({ error: "timeline export failed" }, { status: 500, headers: SECURITY_HEADERS });
+          }
         }
 
         if (url.pathname === "/api/repair") {

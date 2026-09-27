@@ -85,10 +85,11 @@ export const DEFAULT_CONFIG = {
     sameTurnSynthesis: true,
     patchRetry: true,
     // Capability policy — single default shared with the Setup tab
-    // (control.js FEATURE_MODES). skillState:true matches the dashboard
-    // default; the four salience surfaces in prompts/agent.js (contract item 7,
-    // tool-list line, guidance bullet, final line) all gate on these flags,
-    // so a config-file meeting and a Setup-tab meeting now see one policy.
+    // (control.js SKILL_STATE_MODES). skillState:true means the SKILL.state
+    // toggle is on: every non-pass turn ends with the dedicated
+    // loom_state_patch final pass. The four salience surfaces in
+    // prompts/agent.js (contract item 8, tool-list line, guidance bullet,
+    // final line) all render REQUIRED whenever the tool is enabled.
     mandatory: {
       forums: false,
       skillState: true,

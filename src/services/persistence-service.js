@@ -30,22 +30,23 @@ export class PersistenceService {
    * @param {Object} stats
    * @param {number} [maxRounds] - when provided, persisted in same txn
    */
-   async persistState(sharedState, nextSpeakerId, stats, maxRounds = null) {
+  async persistState(sharedState, nextSpeakerId, stats, maxRounds = null) {
     await this.#db.transaction(async (db) => {
       const now = isoNow();
+      const rateLimitState = sharedState.rate_limit_state ?? null;
       let result;
       if (maxRounds != null) {
-        result = db.prepare("UPDATE meetings SET fabric = ?, round = ?, status = ?, next_speaker_id = ?, stats = ?, max_rounds = ?, updated_at = ? WHERE id = ?")
-          .run(sharedState.fabric, sharedState.round, sharedState.status, nextSpeakerId ?? null, stats ? JSON.stringify(stats) : null, maxRounds, now, this.#meetingId);
+        result = db.prepare("UPDATE meetings SET fabric = ?, round = ?, status = ?, next_speaker_id = ?, stats = ?, max_rounds = ?, rate_limit_state = ?, updated_at = ? WHERE id = ?")
+          .run(sharedState.fabric, sharedState.round, sharedState.status, nextSpeakerId ?? null, stats ? JSON.stringify(stats) : null, maxRounds, rateLimitState ? JSON.stringify(rateLimitState) : null, now, this.#meetingId);
       } else {
-        result = db.prepare("UPDATE meetings SET fabric = ?, round = ?, status = ?, next_speaker_id = ?, stats = ?, updated_at = ? WHERE id = ?")
-          .run(sharedState.fabric, sharedState.round, sharedState.status, nextSpeakerId ?? null, stats ? JSON.stringify(stats) : null, now, this.#meetingId);
+        result = db.prepare("UPDATE meetings SET fabric = ?, round = ?, status = ?, nextSpeaker_id = ?, stats = ?, rate_limit_state = ?, updated_at = ? WHERE id = ?")
+          .run(sharedState.fabric, sharedState.round, sharedState.status, nextSpeakerId ?? null, stats ? JSON.stringify(stats) : null, rateLimitState ? JSON.stringify(rateLimitState) : null, now, this.#meetingId);
       }
       if (result.changes === 0) {
         throw new Error(`persistState: no meeting row updated for id ${this.#meetingId} — stale or missing meeting`);
       }
     });
-   }
+  }
 
    /**
     * Persists max_rounds to the database.

@@ -25,7 +25,6 @@ export function createPollSystem(directory) {
   const broadcast = (meetingId, event) => {
     const clients = sseClients.get(meetingId);
     if (!clients || clients.size === 0) return;
-    // Drain pending queue first if any
     const queue = pendingQueues.get(meetingId);
     if (queue && queue.length > 0) {
       for (const q of queue) {
@@ -44,7 +43,6 @@ export function createPollSystem(directory) {
           if (!entry.slowSince) entry.slowSince = Date.now();
           else if (Date.now() - entry.slowSince > SLOW_CONSUMER_TIMEOUT_MS) clients.delete(entry);
           else {
-            // Backpressure: queue instead of drop, cap 100
             if (!pendingQueues.has(meetingId)) pendingQueues.set(meetingId, []);
             const q = pendingQueues.get(meetingId);
             if (q.length < 100) q.push(event);
@@ -58,6 +56,8 @@ export function createPollSystem(directory) {
       }
     }
   };
+
+  const lastRateLimitState = new Map();
 
   const pollSingleMeeting = (meetingId) => {
     const clients = sseClients.get(meetingId);
@@ -120,6 +120,17 @@ export function createPollSystem(directory) {
         if (prevState !== stateStr) {
           participantStatusCache.set(`state:${meetingId}`, stateStr);
           broadcast(meetingId, { type: "state", data: state, timestamp: new Date().toISOString() });
+        }
+        const rateLimitState = state.rate_limit_state ?? null;
+        const prevRateLimit = lastRateLimitState.get(meetingId) ?? null;
+        const rateLimitStr = JSON.stringify(rateLimitState);
+        if (JSON.stringify(prevRateLimit) !== rateLimitStr) {
+          lastRateLimitState.set(meetingId, rateLimitState);
+          if (rateLimitState) {
+            broadcast(meetingId, { type: "rate_limit", data: rateLimitState, timestamp: new Date().toISOString() });
+          } else {
+            broadcast(meetingId, { type: "rate_limit_cleared", data: { meeting_id: meetingId }, timestamp: new Date().toISOString() });
+          }
         }
       }
       const participants = api.getParticipants();

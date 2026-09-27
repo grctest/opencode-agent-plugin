@@ -399,6 +399,12 @@ export function setEmbeddingModel(db, meetingId, model, dim) {
     .run(model ?? null, dim ?? null, meetingId);
 }
 
+export function setRateLimitState(db, meetingId, rateLimitJson) {
+  db
+    .prepare("UPDATE meetings SET rate_limit_state = ?, updated_at = ? WHERE id = ?")
+    .run(rateLimitJson ?? null, new Date().toISOString(), meetingId);
+}
+
 export function getOpencodeSessionId(db, meetingId) {
   try {
     const row = db

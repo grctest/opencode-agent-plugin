@@ -13,7 +13,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collap
 import { Spinner } from "./ui/spinner.tsx";
 import { Table, TableBody, TableCell, TableRow } from "./ui/table.tsx";
 import { Separator } from "./ui/separator.tsx";
-import { MessageSquareIcon, TriangleAlertIcon, CopyIcon, CheckIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react";
+import { MessageSquareIcon, TriangleAlertIcon, CopyIcon, CheckIcon, ChevronDownIcon, ChevronRightIcon, DownloadIcon } from "lucide-react";
 
 function getToolCallsArray(contribution) {
   if (!contribution) return [];
@@ -400,6 +400,7 @@ const TimelineTabBase = ({
   orchestratorMessages,
   roundSummaries = {},
   selectedMeeting,
+  meetingStatus = null,
 }) => {
   const listRef = useRef(null);
   const [dialogContribution, setDialogContribution] = useState(null);
@@ -546,8 +547,83 @@ const TimelineTabBase = ({
     contributions,
   }), [flatItems, onToggleCollapse, participantName, contributions, handleDialogOpen, handleOrchestratorDialogOpen]);
 
+  // Timeline extract for preservation/evaluation: full setup + ordered
+  // turns/rounds/summaries + per-step tool use, context window, responses.
+  // Shown only once the deliberation is not ongoing — terminal states, plus
+  // pause/cancel/crash (status weaving/initializing but no job running).
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState(null);
+  const [jobRunning, setJobRunning] = useState(null);
+  useEffect(() => {
+    if (!selectedMeeting) { setJobRunning(null); return; }
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const res = await fetch("/api/jobs");
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (!cancelled) setJobRunning(data?.running === selectedMeeting);
+      } catch { /* transient — keep last known */ }
+    };
+    check();
+    const t = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      check();
+    }, 5000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [selectedMeeting]);
+  // statusOngoing with a live (or still-unknown) job => ongoing; statusOngoing
+  // with a confirmed-idle job => paused/crashed => not ongoing => export
+  // allowed. Terminal states export as long as nothing is actively weaving.
+  const deliberationOngoing = (meetingStatus === "weaving" || meetingStatus === "initializing" || isWeaving) && jobRunning !== false;
+  const showExport = !!selectedMeeting && !deliberationOngoing && !!meetingStatus;
+  const handleExport = useCallback(async () => {
+    if (!selectedMeeting || exporting) return;
+    setExporting(true);
+    setExportError(null);
+    try {
+      const res = await fetch(`/api/timeline/export?meeting=${encodeURIComponent(selectedMeeting)}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error ?? `Export failed (HTTP ${res.status})`);
+      }
+      const payload = await res.json();
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `loom-timeline-${String(selectedMeeting).slice(0, 8)}-${Date.now()}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setExporting(false);
+    }
+  }, [selectedMeeting, exporting]);
+
   return (
     <div className="pt-4">
+      {showExport && (
+        <div className="flex items-center justify-end gap-2 mb-2">
+          {exportError && (
+            <span className="text-xs text-destructive" role="alert">{exportError}</span>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExport}
+            disabled={exporting}
+            aria-label={exporting ? "Extracting timeline…" : "Extract full timeline as JSON"}
+            title="Download the full timeline (setup, ordered turns/rounds/summaries, tool use, context, responses) as JSON for preservation and evaluation"
+          >
+            {exporting ? <Spinner className="mr-2 size-3.5" /> : <DownloadIcon className="size-3.5 mr-1" />}
+            {exporting ? "Extracting…" : "Extract timeline"}
+          </Button>
+        </div>
+      )}
       {pollError && (
         <Alert variant="destructive" className="mb-3" role="alert" aria-live="polite">
           <TriangleAlertIcon />

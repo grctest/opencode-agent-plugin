@@ -65,6 +65,8 @@ export class MeetingOrchestrator {
   _personaIndex = null;
   _availableModels = [];
   _maxTotalTokens = 0;
+  _rateLimitError = null;
+  _rateLimitRetryAt = null;
 
   constructor(options) {
     this._meetingId = options.meetingId ?? crypto.randomUUID();
@@ -197,31 +199,111 @@ export class MeetingOrchestrator {
     }
   }
 
+  _checkRateLimitError() {
+    if (this._rateLimitError) {
+      const classification = this._rateLimitError.rateLimitClassification;
+      if (classification && (classification.type === "free_tier_limit" || classification.type === "account_rate_limit")) {
+        if (classification.retryAfterMs && Date.now() >= this._rateLimitRetryAt) {
+          this._rateLimitError = null;
+          this._rateLimitRetryAt = null;
+          this._clearRateLimitState();
+          return null;
+        }
+        return this._rateLimitError;
+      }
+    }
+    return null;
+  }
+
+  _setRateLimitError(error) {
+    const classification = error.rateLimitClassification;
+    if (!classification) return;
+    this._rateLimitError = error;
+    this._rateLimitRetryAt = classification.retryAfterMs
+      ? Date.now() + classification.retryAfterMs
+      : null;
+    this._persistRateLimitState();
+  }
+
+  _persistRateLimitState() {
+    if (!this._database || !this._stateManager) return;
+    try {
+      const state = this._stateManager.getState();
+      const classification = this._rateLimitError?.rateLimitClassification;
+      if (!classification) {
+        state.rate_limit_state = null;
+      } else {
+        state.rate_limit_state = {
+          type: classification.type,
+          message: classification.message,
+          retryAfterMs: classification.retryAfterMs,
+          retryAt: this._rateLimitRetryAt ? new Date(this._rateLimitRetryAt).toISOString() : null,
+          action: classification.action,
+          timestamp: new Date().toISOString(),
+        };
+      }
+      this._stateManager.transitionTo("rate_limited");
+      this._database.setRateLimitState?.(state.rate_limit_state ? JSON.stringify(state.rate_limit_state) : null);
+    } catch {}
+  }
+
+  _clearRateLimitState() {
+    if (!this._stateManager) return;
+    try {
+      const state = this._stateManager.getState();
+      state.rate_limit_state = null;
+      if (this._stateManager.getStatus() === "rate_limited") {
+        this._stateManager.transitionTo("weaving");
+      }
+    } catch {}
+  }
+
+  _haltForRateLimit(error) {
+    const classification = error.rateLimitClassification;
+    if (!classification) return false;
+    try {
+      this._sessionManager?.postProgress(
+        `⏸️ ${classification.message}${classification.action?.link ? ` — ${classification.action.link}` : ""}`,
+        "warn"
+      );
+    } catch {}
+    this._persistRateLimitState();
+    if (classification.retryAfterMs && classification.retryAfterMs > 0) {
+      setTimeout(() => {
+        if (!this._cancelled && !this._closed) {
+          this._clearRateLimitState();
+          this._notifyUpdate();
+        }
+      }, classification.retryAfterMs);
+    }
+    return true;
+  }
+
   // Thin forwarders — bound to orchestrator instance so helpers can access this.* services.
   _modelList() { return modelsHelpers._modelList.call(this); }
    _getHighestTierModel() { return modelsHelpers._getHighestTierModel.call(this); }
    _getOrchestratorModel() { return modelsHelpers._getOrchestratorModel.call(this); }
    _getAllowedFallbackModel() { return modelsHelpers._getAllowedFallbackModel.call(this); }
-  _getParticipantModel(participant, fallbackOnError = false) { return modelsHelpers._getParticipantModel.call(this, participant, fallbackOnError); }
-  async _promptOrchestrator(system, model, message, type, round) { return modelsHelpers._promptOrchestrator.call(this, system, model, message, type, round); }
-  async initialize() { return initHelpers.initialize.call(this); }
-  async runMeeting() { return weavingHelpers.runMeeting.call(this); }
-  async extendMeeting(newPrompt, additionalRounds) { return weavingHelpers.extendMeeting.call(this, newPrompt, additionalRounds); }
-  async resumeMeeting() { return weavingHelpers.resumeMeeting.call(this); }
-  async _runWeavingLoop() { return weavingHelpers._runWeavingLoop.call(this); }
-  _tokenBudgetExceeded() { return weavingHelpers._tokenBudgetExceeded.call(this); }
-  _raceWithGuardTimer(promise, timeoutMs, label) { return weavingHelpers._raceWithGuardTimer.call(this, promise, timeoutMs, label); }
-  async runRound() { return roundHelpers.runRound.call(this); }
-  async _continueInterruptedRound() { return roundHelpers._continueInterruptedRound.call(this); }
-  async _finalizeRound(round) { return roundHelpers._finalizeRound.call(this, round); }
-  _isPersistenceError(err) { return roundHelpers._isPersistenceError.call(this, err); }
-  async _persistState() { return roundHelpers._persistState.call(this); }
-  _getMergedStats() { return roundHelpers._getMergedStats.call(this); }
-  _logError(context, error, phase) { return roundHelpers._logError.call(this, context, error, phase); }
-  _notifyUpdate() { return roundHelpers._notifyUpdate.call(this); }
-  async _synthesize() { return synthesisHelpers._synthesize.call(this); }
-  async finishSynthesis(originalStatus) { return synthesisHelpers.finishSynthesis.call(this, originalStatus); }
-  _computeQualityTelemetry() { return synthesisHelpers._computeQualityTelemetry.call(this); }
-  _saveArtifact(artifact) { return synthesisHelpers._saveArtifact.call(this, artifact); }
-  _saveMeetingMetrics() { return synthesisHelpers._saveMeetingMetrics.call(this); }
+   _getParticipantModel(participant, fallbackOnError = false) { return modelsHelpers._getParticipantModel.call(this, participant, fallbackOnError); }
+   async _promptOrchestrator(system, model, message, type, round) { return modelsHelpers._promptOrchestrator.call(this, system, model, message, type, round); }
+   async initialize() { return initHelpers.initialize.call(this); }
+   async runMeeting() { return weavingHelpers.runMeeting.call(this); }
+   async extendMeeting(newPrompt, additionalRounds) { return weavingHelpers.extendMeeting.call(this, newPrompt, additionalRounds); }
+   async resumeMeeting() { return weavingHelpers.resumeMeeting.call(this); }
+   async _runWeavingLoop() { return weavingHelpers._runWeavingLoop.call(this); }
+   _tokenBudgetExceeded() { return weavingHelpers._tokenBudgetExceeded.call(this); }
+   _raceWithGuardTimer(promise, timeoutMs, label) { return weavingHelpers._raceWithGuardTimer.call(this, promise, timeoutMs, label); }
+   async runRound() { return roundHelpers.runRound.call(this); }
+   async _continueInterruptedRound() { return roundHelpers._continueInterruptedRound.call(this); }
+   async _finalizeRound(round) { return roundHelpers._finalizeRound.call(this, round); }
+   _isPersistenceError(err) { return roundHelpers._isPersistenceError.call(this, err); }
+   async _persistState() { return roundHelpers._persistState.call(this, err); }
+   _getMergedStats() { return roundHelpers._getMergedStats.call(this, err); }
+   _logError(context, error, phase) { return roundHelpers._logError.call(this, context, error, phase); }
+   _notifyUpdate() { return roundHelpers._notifyUpdate.call(this); }
+   async _synthesize() { return synthesisHelpers._synthesize.call(this); }
+   async finishSynthesis(originalStatus) { return synthesisHelpers.finishSynthesis.call(this, originalStatus); }
+   _computeQualityTelemetry() { return synthesisHelpers._computeQualityTelemetry.call(this); }
+   _saveArtifact(artifact) { return synthesisHelpers._saveArtifact.call(this, artifact); }
+   _saveMeetingMetrics() { return synthesisHelpers._saveMeetingMetrics.call(this, artifact); }
 }

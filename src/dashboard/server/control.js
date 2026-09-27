@@ -474,10 +474,28 @@ function validateParticipants(list) {
 
 const FEATURE_MODES = new Set(["disabled", "optional", "mandatory"]);
 
+// SKILL.state is an off/on toggle, not a 3-state mode: when on, every
+// non-pass turn ends with a dedicated loom_state_patch final pass (the
+// agent's last action). There is no "optional" timing — the executor always
+// runs the final pass, so the prompt wording is always REQUIRED when on.
+const SKILL_STATE_MODES = new Set(["on", "off"]);
+
 function normalizeFeatureMode(value, fallback = "optional") {
   if (value === true) return "optional";
   if (value === false) return "disabled";
   return typeof value === "string" && FEATURE_MODES.has(value) ? value : fallback;
+}
+
+function normalizeSkillStateMode(value, fallback = "on") {
+  if (value === true) return "on";
+  if (value === false) return "off";
+  if (typeof value !== "string") return fallback;
+  if (SKILL_STATE_MODES.has(value)) return value;
+  // Legacy 3-state values: both "mandatory" and "optional" meant the tool
+  // was enabled, and the executor ran the final pass in both cases.
+  if (value === "mandatory" || value === "optional") return "on";
+  if (value === "disabled") return "off";
+  return fallback;
 }
 
 function normalizeFeatures(raw = {}) {
@@ -487,7 +505,7 @@ function normalizeFeatures(raw = {}) {
   const onlineFallback = normalizeFeatureMode(legacyAgentTools);
   return {
     forums: normalizeFeatureMode(raw.forums),
-    skillState: normalizeFeatureMode(raw.skillState, "mandatory"),
+    skillState: normalizeSkillStateMode(raw.skillState, "on"),
     agentQueries: normalizeFeatureMode(raw.agentQueries),
     localSearch: normalizeFeatureMode(raw.localSearch, localFallback),
     onlineResearch: normalizeFeatureMode(raw.onlineResearch, onlineFallback),
@@ -501,6 +519,8 @@ function buildMeetingAgentTools(features, base = getConfig().agentTools) {
   const localSearchEnabled = features.localSearch !== "disabled";
   const onlineResearchEnabled = features.onlineResearch !== "disabled";
   const agentQueriesEnabled = features.agentQueries !== "disabled";
+  // Accept legacy "disabled" as off in case unnormalized features slip through.
+  const skillStateOn = features.skillState !== "off" && features.skillState !== "disabled";
   tools.enabled = true;
   tools.buildMode = false;
   tools.builtIn = {
@@ -522,7 +542,7 @@ function buildMeetingAgentTools(features, base = getConfig().agentTools) {
   tools.loom = {
     ...(tools.loom ?? {}),
     loom_forum: features.forums !== "disabled",
-    loom_state_patch: features.skillState !== "disabled",
+    loom_state_patch: skillStateOn,
     loom_query: agentQueriesEnabled,
     loom_vote: agentQueriesEnabled,
     loom_summon: agentQueriesEnabled,
@@ -531,12 +551,12 @@ function buildMeetingAgentTools(features, base = getConfig().agentTools) {
   };
   tools.mandatory = {
     forums: features.forums === "mandatory",
-    skillState: features.skillState === "mandatory",
+    skillState: skillStateOn,
     agentQueries: features.agentQueries === "mandatory",
     localSearch: features.localSearch === "mandatory",
     onlineResearch: features.onlineResearch === "mandatory",
   };
-  tools.patchRetry = features.skillState === "mandatory";
+  tools.patchRetry = skillStateOn;
   tools.parallelQueries = features.parallelQueries !== false;
   return tools;
 }

@@ -408,6 +408,9 @@ export class DashboardApi {
   exportJSON(...args) {
     return this._withRecovery(() => exportsHelpers.exportJSON.apply(this, args));
   }
+  exportTimeline(...args) {
+    return this._withRecovery(() => exportsHelpers.exportTimeline.apply(this, args));
+  }
 
   /**
    * Generates a streaming markdown export for large meetings.

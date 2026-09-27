@@ -11,9 +11,13 @@ import { persistentAtom } from "@nanostores/persistent";
  * dialogs, catalog/LLM snapshots) stays in useState and is refetched.
  */
 
-const FORM_VERSION = 5;
+const FORM_VERSION = 6;
 const KNOWN_TIERS = new Set(["junior", "mid", "senior", "principal", "civilian"]);
 const FEATURE_MODES = new Set(["disabled", "optional", "mandatory"]);
+// SKILL.state is an off/on toggle (not a 3-state mode): on = every non-pass
+// turn ends with the dedicated loom_state_patch final pass as the agent's
+// last action. Legacy "mandatory"/"optional" both mean on.
+const SKILL_STATE_MODES = new Set(["on", "off"]);
 const ORCHESTRATOR_MODES = {
   roles: new Set(["neutral_facilitator", "rigorous_auditor", "decision_focused", "custom"]),
   turnOrderPolicies: new Set(["balanced", "evidence_first", "anti_starvation"]),
@@ -32,7 +36,7 @@ const DEFAULT_ORCHESTRATOR = {
 };
 const DEFAULT_FEATURES = {
   forums: "optional",
-  skillState: "mandatory",
+  skillState: "on",
   agentQueries: "optional",
   localSearch: "optional",
   onlineResearch: "optional",
@@ -157,10 +161,19 @@ function sanitizeForm(raw) {
     if (value === false) return "disabled";
     return typeof value === "string" && FEATURE_MODES.has(value) ? value : fallback;
   };
+  const normalizeSkillState = (value, fallback) => {
+    if (value === true) return "on";
+    if (value === false) return "off";
+    if (typeof value === "string" && SKILL_STATE_MODES.has(value)) return value;
+    // Legacy 3-state values from FORM_VERSION <= 5.
+    if (value === "mandatory" || value === "optional") return "on";
+    if (value === "disabled") return "off";
+    return fallback;
+  };
   const legacyAgentTools = rawFeatures.agentTools;
   const features = {
     forums: normalizeMode(rawFeatures.forums, DEFAULT_FEATURES.forums),
-    skillState: normalizeMode(rawFeatures.skillState, DEFAULT_FEATURES.skillState),
+    skillState: normalizeSkillState(rawFeatures.skillState, DEFAULT_FEATURES.skillState),
     agentQueries: normalizeMode(rawFeatures.agentQueries, DEFAULT_FEATURES.agentQueries),
     localSearch: normalizeMode(rawFeatures.localSearch, normalizeMode(legacyAgentTools, DEFAULT_FEATURES.localSearch)),
     onlineResearch: normalizeMode(rawFeatures.onlineResearch, normalizeMode(legacyAgentTools, DEFAULT_FEATURES.onlineResearch)),

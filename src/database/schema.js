@@ -7,7 +7,7 @@
  * directly; older files run only the migrations they are missing.
  */
 
-export const LATEST_SCHEMA_VERSION = 10;
+export const LATEST_SCHEMA_VERSION = 11;
 
 /**
  * Ordered migrations. MIGRATIONS[n] upgrades a DB at user_version n to n+1.
@@ -163,6 +163,13 @@ export const MIGRATIONS = [
     );
     if (!artifactCols.has("orchestrator_config")) db.exec("ALTER TABLE artifacts ADD COLUMN orchestrator_config TEXT");
   },
+  // v10 → v11: rate limit state for free tier / Go subscription limits
+  (db) => {
+    const cols = new Set(
+      db.prepare("PRAGMA table_info(meetings)").all().map((c) => c.name),
+    );
+    if (!cols.has("rate_limit_state")) db.exec("ALTER TABLE meetings ADD COLUMN rate_limit_state TEXT");
+  },
 ];
 
 export function initSchema(db) {
@@ -178,7 +185,7 @@ export function initSchema(db) {
       id TEXT PRIMARY KEY,
       question TEXT NOT NULL,
       context TEXT,
-      status TEXT NOT NULL CHECK(status IN ('initializing','weaving','converged','timeout','cancelled','aborted','max_rounds_reached')),
+      status TEXT NOT NULL CHECK(status IN ('initializing','weaving','converged','timeout','cancelled','aborted','max_rounds_reached','rate_limited')),
       round INTEGER NOT NULL DEFAULT 0,
       fabric TEXT,
       max_rounds INTEGER NOT NULL,
@@ -199,9 +206,10 @@ export function initSchema(db) {
        persistence_degraded INTEGER NOT NULL DEFAULT 0,
        orchestrator_provider_id TEXT,
        orchestrator_model_id TEXT,
-       feature_toggles_json TEXT,
-       orchestrator_config_json TEXT,
-       created_at TEXT NOT NULL,
+      feature_toggles_json TEXT,
+      orchestrator_config_json TEXT,
+      rate_limit_state TEXT,
+      created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
 

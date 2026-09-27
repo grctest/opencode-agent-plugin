@@ -203,6 +203,14 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
     const cur = $setupForm.get();
     const s = meetingState;
     const pick = (obj) => (obj && typeof obj === "object" ? obj : {});
+    const rawFeatures = pick(s?.features);
+    // Migrate legacy 3-state skillState values (<= FORM v5) to the off/on toggle.
+    const skillStateRaw = rawFeatures.skillState;
+    const skillStateMigrated = skillStateRaw === "mandatory" || skillStateRaw === "optional" || skillStateRaw === true
+      ? "on"
+      : skillStateRaw === "disabled" || skillStateRaw === false
+        ? "off"
+        : skillStateRaw;
     patchForm({
       question: typeof s?.question === "string" ? s.question : "",
       context: typeof s?.context === "string" ? s.context : "",
@@ -226,7 +234,7 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
         model: p.provider_id && p.model_id ? `${p.provider_id}/${p.model_id}` : null,
         approved: true,
       })),
-      features: { ...cur.features, ...pick(s?.features) },
+      features: { ...cur.features, ...rawFeatures, ...(skillStateMigrated !== undefined ? { skillState: skillStateMigrated } : {}) },
       orchestrator: { ...cur.orchestrator, ...pick(s?.orchestrator) },
     });
   }, [readOnly, selectedMeeting, meetingState, storedRunParticipants]);
@@ -1006,10 +1014,9 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
             <div className="mb-1 text-sm font-medium">Agent capabilities</div>
              {[
                ["forums", "Forums", "Allow participants to create, read, and discuss forum topics. Mandatory requires one forum tool call per active turn."],
-               ["skillState", "SKILL.state / stance", "Let each agent carry a stance and bounded evidence into future turns. Mandatory requires one patch per non-pass turn."],
                 ["agentQueries", "Agent-to-agent queries", "Allow peer interaction tools: query, vote, summon, and request-next. Mandatory requires one eligible peer interaction when peers are available."],
-                ["localSearch", "Local search", "Allow read, glob, and grep for project files. Mandatory requires one local search call per active turn."],
-                ["onlineResearch", "Online research", "Allow websearch and webfetch. Mandatory requires one online research call per active turn."],
+               ["localSearch", "Local search", "Allow read, glob, and grep for project files. Mandatory requires one local search call per active turn."],
+               ["onlineResearch", "Online research", "Allow websearch and webfetch. Mandatory requires one online research call per active turn."],
              ].map(([key, label, description]) => (
                <div key={key} className="flex items-center justify-between gap-4 rounded-md px-2 py-1.5 hover:bg-muted/50">
                  <div className="min-w-0">
@@ -1019,6 +1026,13 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
                   <FeatureModeControl value={features[key] ?? "optional"} onChange={(value) => setFeature(key, value)} disabled={isFrozen || readOnly} />
                 </div>
               ))}
+              <div className="flex items-center justify-between gap-4 rounded-md px-2 py-1.5 hover:bg-muted/50">
+                <div className="min-w-0">
+                  <Label htmlFor="loom-feature-skillState" className="cursor-pointer">SKILL.state / stance</Label>
+                  <p className="text-xs text-muted-foreground">When on, each agent projects stance + evidence as their final action each non-pass turn via loom_state_patch. Off disables carried state.</p>
+                </div>
+                <Switch id="loom-feature-skillState" checked={(() => { const v = features.skillState; return v === "on" || v === "mandatory" || v === "optional" || v === true; })()} onCheckedChange={(value) => setFeature("skillState", value ? "on" : "off")} disabled={isFrozen || readOnly} aria-label="SKILL.state / stance" />
+              </div>
               <div className="flex items-center justify-between gap-4 rounded-md px-2 py-1.5 hover:bg-muted/50">
                 <div className="min-w-0">
                   <Label htmlFor="loom-feature-agentCommands" className="cursor-pointer">Bash commands</Label>
