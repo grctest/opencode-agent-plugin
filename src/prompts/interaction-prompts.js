@@ -21,7 +21,7 @@ export function buildQueryPrompt(sourceAgent, targetAgent, sourceContribution, q
   const roundContext = buildRoundContext(currentRound, maxRounds);
   const toolSection = buildEvidenceGuidance(meta.guidanceKind);
 
-  const recentMine = getRecentContributionsBlock(roundContributions, targetAgent.config.id);
+  const recentMine = getRecentContributionsBlock(roundContributions, targetAgent.config.id, { mineCount: 1, mineBudget: 800, othersCount: 4, othersBudget: 400 });
   const stateContext = buildTargetPositionContext(targetAgent, targetState);
   // reflection_guidance is consumed here (audit N2/P2-G): perspective-mode
   // targets answer through their persona's reflection lens. Other modes ignore it.
@@ -62,7 +62,7 @@ export function buildEvidencePrompt(sourceAgent, targetAgent, sourceContribution
   const roundContext = buildRoundContext(currentRound, maxRounds);
   const toolSection = buildEvidenceGuidance("evidence");
 
-  const recentMine = getRecentContributionsBlock(roundContributions, targetAgent.config.id);
+  const recentMine = getRecentContributionsBlock(roundContributions, targetAgent.config.id, { mineCount: 1, mineBudget: 800, othersCount: 4, othersBudget: 400 });
   const stateContext = buildTargetPositionContext(targetAgent, targetState);
 
   return `## Evidence Request — to ${sanitizeForDisplay(targetAgent.config.name)} (${targetAgent.config.tier}) from ${safeSourceName} (${sourceAgent.config.tier})
@@ -97,7 +97,7 @@ export function buildVotePrompt(sourceAgent, targetAgent, sourceContribution, qu
   );
 
   const stateContext = buildTargetPositionContext(targetAgent, targetState);
-  const recentMine = getRecentContributionsBlock(roundContributions, targetAgent.config.id);
+  const recentMine = getRecentContributionsBlock(roundContributions, targetAgent.config.id, { mineCount: 1, mineBudget: 800, othersCount: 4, othersBudget: 400 });
   const roundContext = buildRoundContext(currentRound, maxRounds);
   let sopOptions = "";
   let sopFallbackNote = "";

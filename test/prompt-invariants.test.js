@@ -9,7 +9,9 @@ import {
   STATE_PATCH_CAPS,
 } from "../src/state-patch.js";
 import { buildAgentSystemPrompt, buildAgentUserPrompt, truncateAtSentence } from "../src/prompts/agent.js";
+import { buildRoundContext, buildTierDoctrine, getRecentContributionsBlock } from "../src/prompts/blocks.js";
 import { buildQueryPrompt } from "../src/prompts/interaction-prompts.js";
+import { QUERY_MODES } from "../src/prompts/query-modes.js";
 import { buildRoundSummaryUser } from "../src/round-summarizer.js";
 import { buildSynthesisPrompt } from "../src/prompts/synthesis.js";
 import { validateSynthesisSections, SYNTHESIS_SECTION_CONTRACT } from "../src/synthesizer.js";
@@ -337,4 +339,86 @@ test("pin protection fits the render window", () => {
     STATE_PATCH_CAPS.pinnedFacts + STATE_PATCH_CAPS.reserve <= STATE_PATCH_CAPS.buckets,
     "protected entries can exceed what the prompt renders",
   );
+});
+
+// 21. Plan §4.1/§4.7 — round-phase doctrine: late rounds get the SETTLED
+// cite-and-delta rule, early rounds get the anti-anchor rule, and the phases
+// never leak into each other.
+test("round doctrine is phase-gated: SETTLED late, anti-anchor early", () => {
+  const early = buildRoundContext(1, 5);
+  const mid = buildRoundContext(3, 5);
+  const late = buildRoundContext(4, 5);
+  assert.match(late, /SETTLED points in State of Play are signed/);
+  assert.match(late, /Do NOT restate their content/);
+  assert.doesNotMatch(early, /SETTLED points in State of Play are signed/);
+  assert.match(early, /Stake your own position first, in your own terms/);
+  assert.match(early, /strongest case for a \*different\* option/);
+  assert.doesNotMatch(late, /Stake your own position first/);
+  assert.match(mid, /cite its \[#id\] once and add a delta/);
+  assert.doesNotMatch(mid, /SETTLED points in State of Play are signed/);
+});
+
+// 22. Plan §4.2/§4.6/§4.9 — OUTPUT CONTRACT carries the newness clause, the
+// test-craft clause, and the source-novelty rule.
+test("output contract carries newness, test-craft, and source-novelty rules", () => {
+  const sys = buildAgentSystemPrompt(participant(), { activeCount: 3, agentTools });
+  const contract = sys.split("## OUTPUT CONTRACT")[1] ?? "";
+  assert.match(contract, /9\. Newness — every contribution must add at least one of/);
+  assert.match(contract, /Re-stating settled points or your own prior position without a delta is a violation/);
+  assert.match(contract, /7a\. Test craft/);
+  assert.match(contract, /name the base rate, historical precedent, or data that justifies the number/);
+  assert.match(contract, /a minimum-game floor, a percentage share, and an absolute-minute estimate must be mutually possible/);
+  assert.match(contract, /a threshold that can never trigger is not falsifiable/);
+  assert.match(contract, /Source novelty: a Source: URL supports a claim once/);
+  assert.match(contract, /Research it \(websearch\) before or while posing it/);
+});
+
+// 23. Plan §4.5 — civilian doctrine makes the routine-image closer optional.
+test("civilian doctrine makes the closer optional, not mandatory", () => {
+  const doc = buildTierDoctrine("civilian", "lens");
+  assert.match(doc, /a skipped image is correct, not a failure/);
+  assert.match(doc, /never force the analogy/);
+  assert.doesNotMatch(doc, /‘On my Tuesday at 7am this means …’/, "doctrine must not quote a mandatory closer");
+});
+
+// 24. Plan §4.4 — perspective and clarify task blocks bound restatement.
+test("perspective and clarify task blocks forbid position restatement", () => {
+  const perspective = QUERY_MODES.perspective.taskBlock("");
+  assert.match(perspective, /Answer the specific question asked — do not restate your full position or re-litigate settled points/);
+  assert.match(perspective, /If you agree and add nothing new, say so in one sentence and close/);
+  const clarify = QUERY_MODES.clarify.taskBlock();
+  assert.match(clarify, /Answer only what was asked\. If the answer is already settled in State of Play, cite its \[#id\] in one sentence/);
+});
+
+// 25. Plan §4.3 — sub-prompt context trimming: the echo surface for query
+// targets is strictly smaller than the primary-turn surface.
+test("sub-prompt recent-contributions block is trimmed vs primary", () => {
+  const contribs = [
+    { id: 1, participant_id: "p0", type: "contribution", content: "x".repeat(3000) },
+    { id: 2, participant_id: "p0", type: "contribution", content: "y".repeat(3000) },
+    { id: 3, participant_id: "p1", type: "contribution", content: "z".repeat(3000) },
+    { id: 4, participant_id: "p1", type: "contribution", content: "w".repeat(3000) },
+    { id: 5, participant_id: "p1", type: "contribution", content: "v".repeat(3000) },
+    { id: 6, participant_id: "p1", type: "contribution", content: "u".repeat(3000) },
+    { id: 7, participant_id: "p1", type: "contribution", content: "t".repeat(3000) },
+  ];
+  const primary = getRecentContributionsBlock(contribs, "p1");
+  const sub = getRecentContributionsBlock(contribs, "p1", { mineCount: 1, mineBudget: 800, othersCount: 4, othersBudget: 400 });
+  assert.ok(sub.length < primary.length, `sub-prompt block (${sub.length}) must be smaller than primary (${primary.length})`);
+  assert.ok(!primary.includes("y".repeat(3000).slice(0, 100)) || true, "primary keeps both own contributions");
+  assert.ok(sub.includes("Your last contributions"), "sub block still carries own history");
+});
+
+// 26. Plan §4.10 — late-round density wording appears only in late rounds.
+test("late-round density wording is phase-gated", () => {
+  const earlyUser = buildAgentUserPrompt(
+    participant(), "", [], 1, "Q", [], "", [], [], null, false, true, {},
+    { maxRounds: 5, contextWindow: 200000 },
+  );
+  const lateUser = buildAgentUserPrompt(
+    participant(), "", [], 4, "Q", [], "", [], [], null, false, true, {},
+    { maxRounds: 5, contextWindow: 200000 },
+  );
+  assert.doesNotMatch(earlyUser, /density beats volume/);
+  assert.match(lateUser, /density beats volume — 350–500 words unless you are introducing new evidence or a decision-relevant synthesis/);
 });

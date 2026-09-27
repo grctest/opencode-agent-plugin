@@ -840,6 +840,20 @@ The **Evidence/Tool Signals** hint collects up to 4 evidence/query/tool-backed c
 
 Runs via the fast-path-routable `#promptOrchestrator` type `"summary"` (Section 21). Contributions are budgeted at 12k chars total (selected by evidence strength, emitted chronologically, each line capped at 1200 chars) with a `…[N further contribution(s) omitted]` marker when exceeded; the Agent States block is capped at 4k chars like the synthesis path's.
 
+### Orchestrator `customInstructions` — Density Template
+
+The orchestrator config's free-text `customInstructions` field (validated to 4000 chars, `src/orchestrator/models.js`) is the operator's lever for deliberation density. When it is **empty**, the clerk prompt automatically gains a default density tail (plan §4.8):
+
+> `In late rounds (3+), note contributions that re-state State of Play without new evidence, and state whether a decision rule (trigger + date + owner) exists for the final artifact.`
+
+When the operator supplies their own `customInstructions`, the default tail is replaced — operator text wins. Recommended template for density-sensitive meetings:
+
+```
+In rounds 3+, flag any contribution that restates settled points without new evidence.
+Require at least one new source or new argument per round.
+If the room has not committed to a decision rule (trigger + date + owner) by the final round, say so explicitly in the summary.
+```
+
 ### Degraded Digest Fallback
 
 If the LLM summary is empty after retries, the round gets a deterministic digest instead of failing the meeting: up to 8 substantive contribution lines plus a turn-request count, prefixed `(Degraded summary — LLM returned empty response)` and logged as `summary_degraded`.

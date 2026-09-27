@@ -205,7 +205,13 @@ export function getSummaryGuidance(config = {}) {
     balanced: "Be thorough but compact: preserve nuance, evidence, dissent, and unresolved tradeoffs.",
     exhaustive: "Be exhaustive: retain material details, competing positions, evidence, and open threads.",
   };
-  return styles[value.summaryStyle];
+  // Default density tail: the round clerk is the only participant that sees the
+  // whole round, so it carries the re-litigation + decision-rule observation
+  // duty when the operator hasn't supplied customInstructions (plan §4.8).
+  const densityTail = value.customInstructions
+    ? ""
+    : " In late rounds (3+), note contributions that re-state State of Play without new evidence, and state whether a decision rule (trigger + date + owner) exists for the final artifact.";
+  return styles[value.summaryStyle] + densityTail;
 }
 
 const SYNTHESIS_GUIDANCE_STYLES = {

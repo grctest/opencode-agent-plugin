@@ -4,12 +4,19 @@ import { escapeDelimiters, delimitContext } from "./delimiters.js";
 import { renderMyStateMarkdown } from "../state-patch.js";
 import { TOOL_LADDER_LINE, TOOL_FAILURE_LINE, CITATION_LINE } from "./constants.js";
 
-export function getRecentContributionsBlock(contributions, participantId) {
+export function getRecentContributionsBlock(contributions, participantId, opts = {}) {
   if (!contributions || contributions.length === 0) return "";
+  // Sub-prompts (query/evidence/vote/summon targets) get a trimmed echo surface:
+  // the target's own last two full contributions are the strongest restatement
+  // prime (audit: perspective answers that near-copy the target's previous turn).
+  const mineCount = opts.mineCount ?? 2;
+  const mineBudget = opts.mineBudget ?? 1200;
+  const othersCount = opts.othersCount ?? 6;
+  const othersBudget = opts.othersBudget ?? 600;
   const mine = contributions
     .filter((c) => c.participant_id === participantId && c.type !== "pass")
-    .slice(-2)
-    .map((c) => sanitizeForDisplay(c.content, 1200).slice(0, 1200));
+    .slice(-mineCount)
+    .map((c) => sanitizeForDisplay(c.content, mineBudget).slice(0, mineBudget));
   // The room, not just the mirror: a peer answering inline needs the
   // conversation to answer in context. Previously the two-round ≤12 window
   // collapsed to filter-to-self and the other fetched contributions were thrown
@@ -17,8 +24,8 @@ export function getRecentContributionsBlock(contributions, participantId) {
   // rows stay excluded as noise.
   const others = contributions
     .filter((c) => c.participant_id !== participantId && c.type !== "pass" && c.type !== "vote_response" && c.type !== "reflection")
-    .slice(-6)
-    .map((c) => `- "${sanitizeForDisplay(c.content, 600).replace(/\n/g, " ").slice(0, 600)}" [${c.participant_id}]`);
+    .slice(-othersCount)
+    .map((c) => `- "${sanitizeForDisplay(c.content, othersBudget).replace(/\n/g, " ").slice(0, othersBudget)}" [${c.participant_id}]`);
   const parts = [];
   if (mine.length > 0) parts.push(`Your last contributions:\n${mine.map((c) => `- "${c.slice(0, 600)}"`).join("\n")}`);
   if (others.length > 0) parts.push(`Recent from the room:\n${others.join("\n")}`);
@@ -182,11 +189,18 @@ export function buildRoundContext(currentRound, maxRounds) {
   }
   const progress = currentRound / maxRounds;
   if (progress <= 0.33) {
-    return `Early deliberation (round ${currentRound}/${maxRounds}) — DIVERGE. Surface assumptions, name hidden constraints, introduce distinct options. Don’t converge yet; explore the full spectrum. Thoroughness welcome.`;
+    return `Early deliberation (round ${currentRound}/${maxRounds}) — DIVERGE. Surface assumptions, name hidden constraints, introduce distinct options. Don’t converge yet; explore the full spectrum. Thoroughness welcome.
+- Stake your own position first, in your own terms — do not build on the first speaker’s frame or vocabulary. If you disagree with the emerging frame, say so and name the frame you’d use instead.
+- Before critiquing a front-runner, spend one passage on the strongest case for a *different* option than the current leader.`;
   } else if (progress <= 0.66) {
-    return `Mid deliberation (round ${currentRound}/${maxRounds}) — MAP & REFINE. Identify what’s settled vs contested, bundle related proposals, steelman opposing views, surface tradeoffs with numbers where possible. Name what would unlock next steps but don’t force consensus.`;
+    return `Mid deliberation (round ${currentRound}/${maxRounds}) — MAP & REFINE. Identify what’s settled vs contested, bundle related proposals, steelman opposing views, surface tradeoffs with numbers where possible. Name what would unlock next steps but don’t force consensus.
+- When you build on a settled point, cite its [#id] once and add a delta — don’t restate it.`;
   } else {
-    return `Late deliberation (round ${currentRound}/${maxRounds}) — CONSOLIDATE or LEAVE OPEN. Avoid re-litigating settled points without new evidence. It’s fine to leave dissent unresolved — map the remaining disagreement with evidence for/against each view. End with Position: [held|revised|expanded] because …`;
+    return `Late deliberation (round ${currentRound}/${maxRounds}) — CONSOLIDATE or LEAVE OPEN.
+- SETTLED points in State of Play are signed: reference them by [#id] in one clause, then move on. Do NOT restate their content — restatement is a contract violation, not thoroughness.
+- Your contribution must add one of: new evidence (Source/tool output), a new objection to a settled point, a refinement with numbers, or a decision-relevant synthesis of contested views.
+- It’s fine to leave dissent unresolved — map the remaining disagreement with evidence for/against each view.
+- End with Position: [held|revised|expanded] because …`;
   }
 }
 
@@ -196,7 +210,7 @@ export function buildTierDoctrine(tier, guidance) {
     mid: "Mid doctrine: make one tradeoff explicit (cost / time / risk / quality / dx). Translate a claim into a number or measurable check. If coding, show the verification step.",
     senior: "Senior doctrine: name the irreversible commitment and its mitigation/rollback. Cite one pattern or precedent you’ve seen. For code: name the files to touch, the regression risk, and the test that would catch it.",
     principal: "Principal doctrine: if at impasse, map the spectrum — 2-3 options + decision criterion (cost, risk, time, reversibility) and conditions under which each wins. It’s fine to leave open: state ‘Settled: … Contested: … Open: …’ Don’t force consensus.",
-    civilian: "Civilian doctrine: ground in lived routine. Test the proposal against a real Tuesday: time, money, safety, fatigue. ‘On my Tuesday at 7am this means …’ Bring the human cost that technical lenses miss.",
+    civilian: "Civilian doctrine: ground in lived routine. Test the proposal against a real Tuesday: time, money, safety, fatigue. Bring the human cost that technical lenses miss. If a concrete routine image fits, one closer sentence (“On my Tuesday this means …”) is welcome — a skipped image is correct, not a failure; never force the analogy.",
   };
   const doc = doctrineMap[tier] ?? "Contribute a falsifiable claim or question — avoid generalities; be thorough, use the context window.";
   const safe = escapeDelimiters(sanitizeForDisplay(guidance, 1500));

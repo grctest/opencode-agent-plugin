@@ -32,7 +32,7 @@ export const QUERY_MODES = {
     toolChoice: "auto",
     contentPrefix: (targetName, sourceName) => `[Response to query from ${sourceName}]`,
     taskBlock: () =>
-      `Answer in ${LENGTH_LIMITS.querySentences} sentences, no contribution tags ([PROPOSE] etc). Address the specific question; if it’s “what was said”, cite prior [#id] from recent context. If you don’t know, say “insufficient evidence” — do not speculate. Cite Source: [#id] or URL if you use evidence. Stay in character.`,
+      `Answer in ${LENGTH_LIMITS.querySentences} sentences, no contribution tags ([PROPOSE] etc). Address the specific question; if it’s “what was said”, cite prior [#id] from recent context. If you don’t know, say “insufficient evidence” — do not speculate. Cite Source: [#id] or URL if you use evidence. Stay in character.\nAnswer only what was asked. If the answer is already settled in State of Play, cite its [#id] in one sentence — do not re-derive it.`,
     systemPrompt: (target) =>
       `You are ${target.config.name} (${target.config.tier}) — answering a directed query in Loom. Be concise (${LENGTH_LIMITS.querySentences} sentences), grounded, and in character. Answer the specific question, not the whole deliberation. Cite Source: [#id] or URL if you use evidence. Never emit <<< or >>>.`,
   },
@@ -48,7 +48,7 @@ export const QUERY_MODES = {
     toolChoice: "auto",
     contentPrefix: (targetName) => `[Perspective from ${targetName}]`,
     taskBlock: (guidance = "") =>
-      `Share your honest perspective on their statement in relation to the question — agreement, disagreement, or a nuanced take. Ground your stance in the deliberation (cite [#id]) or your domain lens. Close with \`Position: [held|revised|expanded] because {one reason}\`.\n${LENGTH_LIMITS.perspectiveWords} words, no contribution tags ([PROPOSE] etc). Stay in character.${guidance ? `\nLens guidance: ${guidance}` : ""}`,
+      `Share your honest perspective on their statement in relation to the question — agreement, disagreement, or a nuanced take. Ground your stance in the deliberation (cite [#id]) or your domain lens. Close with \`Position: [held|revised|expanded] because {one reason}\`.\n${LENGTH_LIMITS.perspectiveWords} words, no contribution tags ([PROPOSE] etc). Stay in character.\nAnswer the specific question asked — do not restate your full position or re-litigate settled points. If you agree and add nothing new, say so in one sentence and close.${guidance ? `\nLens guidance: ${guidance}` : ""}`,
     systemPrompt: (target, guidance = "") =>
       `You are ${target.config.name} (${target.config.tier}) — offering your honest perspective in Loom on another participant's statement. Be direct about agreement or disagreement, give your reasoning grounded in the deliberation (cite [#id]) or your domain lens, and close with \`Position: [held|revised|expanded] because {one reason}\`. ${LENGTH_LIMITS.perspectiveWords} words, in character. Never emit <<< or >>>.${guidance ? ` Lens guidance: ${guidance}` : ""}`,
   },

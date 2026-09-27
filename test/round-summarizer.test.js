@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { StateManager } from "../src/services/state-manager.js";
-import { buildAgentStatesContext, summarizeRound } from "../src/round-summarizer.js";
+import { buildAgentStatesContext, buildRoundSummarySystem, summarizeRound } from "../src/round-summarizer.js";
 import { RoundService } from "../src/services/round-service.js";
 import { SynthesisCoordinator } from "../src/synthesis-coordinator.js";
 import { buildSynthesisPrompt } from "../src/prompts/synthesis.js";
@@ -135,6 +135,15 @@ test("round summary prompt receives current attributed states and evidence rules
   assert.match(prompt, /Agent States are remembered positions and standing context, not independent evidence/);
   assert.match(prompt, /do not add a separate Agent States bullet/);
   assert.doesNotMatch(prompt, /## Agent States \(carried\)/);
+});
+
+test("clerk guidance carries the density tail only when customInstructions is empty (plan §4.8)", () => {
+  const bare = buildRoundSummarySystem({ summaryStyle: "balanced", customInstructions: "" });
+  assert.match(bare, /In late rounds \(3\+\), note contributions that re-state State of Play without new evidence/);
+  assert.match(bare, /state whether a decision rule \(trigger \+ date \+ owner\) exists/);
+  const custom = buildRoundSummarySystem({ summaryStyle: "balanced", customInstructions: "Challenge weak evidence." });
+  assert.doesNotMatch(custom, /In late rounds \(3\+\), note contributions that re-state/);
+  assert.doesNotMatch(custom, /decision rule \(trigger \+ date \+ owner\) exists/);
 });
 
 test("round service snapshots state after prompt execution, not from the pre-round state", async () => {
