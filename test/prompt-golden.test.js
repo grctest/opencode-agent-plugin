@@ -60,7 +60,7 @@ const EXPECTED_SYS = {
   "Mode": "e2f67c7b37e3",
   "Research Tools — Tool Ladder": "df396c3296f3",
   "WHEN TO PASS": "20cc67420712",
-  "OUTPUT CONTRACT — read last, it governs; in conflict it wins": "3ecf32f58257",
+  "OUTPUT CONTRACT — read last, it governs; in conflict it wins": "790ee3e9e1e6",
 };
 
 const EXPECTED_USER = {
@@ -71,10 +71,10 @@ const EXPECTED_USER = {
   "Question": "801b74dda742",
   "Agreements": "b9bd9a58922f",
   "Last Round Summary": "718f0b0bc3f9",
-  "Your State — CARRIED FORWARD (everything below is the ONLY memory you have next turn; prose is discarded)": "a38ea027ed4d",
+  "Your State — CARRIED FORWARD (your private notes for your next turn; the room never sees this block — they only read your contribution prose)": "17d527b1ab23",
   "Other Participants — valid loom_query targets (use target = id exactly, not display name)": "4745981b61b7",
   "Live — Recent Contributions": "fce0b7f16023",
-  "Your Turn — Weighted Guidance": "c94fe8c83053",
+  "Your Turn — Weighted Guidance": "ceb4d3c17020",
 };
 
 test("golden system prompt sections are unchanged", () => {
@@ -91,5 +91,5 @@ test("golden prompts keep contract-last ordering", () => {
   const { sys, user } = fixture();
   const lastSysHeader = [...sys.matchAll(/^ *## (.+?) *$/gm)].pop()?.[1] ?? "";
   assert.ok(lastSysHeader.startsWith("OUTPUT CONTRACT"), `last system section is ${lastSysHeader}`);
-  assert.ok(user.trimEnd().endsWith("Nothing you write in prose carries forward on its own."), "user prompt must end on the patch line");
+  assert.ok(user.trimEnd().replace(/\}+$/, "").trimEnd().endsWith("is what the room and the end user read."), "user prompt must end on the contribution, not the patch line");
 });

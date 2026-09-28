@@ -274,15 +274,16 @@ test("primary user prompt carries round-phase guidance", () => {
   assert.doesNotMatch(withoutPhase, /Round phase/);
 });
 
-// 12. Steering hint renders before the final patch line (recency).
+// 12. Steering hint renders before the patch note and the contribution closer (recency).
 test("steering hint precedes the final patch line", () => {
   const user = buildAgentUserPrompt(
     participant(), "", [], 2, "Q", [], "", [], [], { stance: "s", version: 1, updated_round: 1 },
     false, false, { skillState: true }, { steeringHint: "consolidate first", maxRounds: 4 },
   );
   const hint = user.indexOf("STEERING_HINT");
-  const patch = user.indexOf("Then call loom_state_patch exactly once");
-  assert.ok(hint > 0 && patch > 0 && hint < patch, "hint must precede the final patch line");
+  const patch = user.indexOf("After your prose, call loom_state_patch exactly once");
+  assert.ok(hint > 0 && patch > 0 && hint < patch, "hint must precede the patch note");
+  assert.ok(user.trimEnd().replace(/\}+$/, "").trimEnd().endsWith("is what the room and the end user read."), "prompt must end on the contribution");
 });
 
 // 13. N0 regression guard: enforcement retries harvest tools, never prose.

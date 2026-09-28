@@ -285,7 +285,7 @@ ${statePatchMandatory ? "  (Passing is the one turn that does NOT require loom_s
   6. Voice — thorough and human-readable; dissent is welcome and not penalized.
   7. Collaboration (open-ended & programming): for debates, map spectrum and steelman counter-views before concluding; for code, read then propose diff (or write in BUILD), then handoff: **Handoff: @role — verify file=X covers case Y**.
   7a. Test craft — when you propose a test, threshold, or numeric bar: (a) Calibrate it — name the base rate, historical precedent, or data that justifies the number; if you don’t know, say so and propose the cheap test that would measure it. (b) Check internal consistency — a minimum-game floor, a percentage share, and an absolute-minute estimate must be mutually possible; if your floor makes your share unreachable (or trivial), fix one of the three. (c) Prefer a test whose every branch can actually fire — a threshold that can never trigger is not falsifiable, it’s decoration.
-${statePatchMandatory ? `  8. **REQUIRED — loom_state_patch, once, every non-pass turn** — call it exactly once, as your ABSOLUTELY LAST tool use this turn (after your contribution and after all peer answers are synthesized), so it is the most up to date it can be; a pass skips it and vice versa. Prose is discarded; only patched state carries forward — argument details in the tool description.
+${statePatchMandatory ? `  8. **loom_state_patch, once, every non-pass turn** — call it exactly once, as your ABSOLUTELY LAST tool use this turn (after your contribution and after all peer answers are synthesized), so it is the most up to date it can be; a pass skips it and vice versa. This tool maintains only your private notes for your next turn — your contribution prose is what the room and the end user read, and a patch never substitutes for it. Never write about patching in prose: no "Patched", "state", "stance", "bullets", or version numbers — write the deliberation itself (argument details in the tool description).
 ` : ""}  9. Newness — every contribution must add at least one of: (a) new evidence with Source: or tool output, (b) a new argument or objection, (c) a refinement that changes a number, threshold, or scope, (d) a synthesis that resolves or narrows a contested point. Re-stating settled points or your own prior position without a delta is a violation — cite [#id] and move on. In rounds 3+ this rule is strict; in rounds 1–2 thoroughness takes precedence.
   `;
 
@@ -364,7 +364,7 @@ ${stateOfPlayDelimited}
   // the prompt is strictly (P, Σ, O) when enabled.
   const showState = myState !== null && myState !== undefined;
   const myStateInner = showState ? renderMyStateMarkdown(myState) : "";
-  const myStateHeader = showState ? `## Your State — CARRIED FORWARD (everything below is the ONLY memory you have next turn; prose is discarded)
+  const myStateHeader = showState ? `## Your State — CARRIED FORWARD (your private notes for your next turn; the room never sees this block — they only read your contribution prose)
 
 ${delimitContext(sanitizeForDisplay(myStateInner, 12000), "MY_STATE")}
 ` : "";
@@ -431,7 +431,7 @@ _Use these ids verbatim for loom_query. Example: {target: "${exampleId}", questi
   // is always the final action — no "optional" timing variant, and no
   // dedicated follow-up call: the patch is one of this turn's own tool calls.
   const stateGuidance = showState
-    ? `- **Your State is yours to maintain** — project it with a single loom_state_patch call, made as your ABSOLUTELY LAST tool use this turn, after your prose and after all peer answers are synthesized (argument details live in the tool description). This is the only memory you carry: anything you do not patch is discarded before your next turn, so a turn that reasons well but patches nothing has wasted the work. Stale bullets you don't remove stay. Evidence (with Source/[#id]) survives eviction longer — re-assert anything still load-bearing each turn.
+    ? `- **Your State is your private notes to maintain** — project it with a single loom_state_patch call, made as your ABSOLUTELY LAST tool use this turn, after your prose and after all peer answers are synthesized (argument details live in the tool description). Only you see this block next turn; the room and the end user only ever read your contribution prose. If you reason well but patch nothing, your next turn starts without those notes — but the room still read your contribution.
 - **Live is current round only** — anything older you still need must already be in Your State; if it isn't, re-establish it from the digest (don't quote full old prose).
 `
     : "";
@@ -474,7 +474,7 @@ To challenge SoP: cite [#id] contradicting it + Source/tool output + falsifiable
 
 Rules: contract §1 (length) · §2 (citations) · §3 (boundaries) govern. Keep code diffs in \`\`\` file=src/... \`\`\` blocks (not counted); preserve code and numbers verbatim.
 ${steeringBlock}
-Make your contribution or pass.${showState ? `
+${showState ? `After your prose, call loom_state_patch exactly once as your ABSOLUTELY LAST tool use this turn (private notes for your next turn — never a substitute for prose).
 
-Then call loom_state_patch exactly once — your single state update, made as your ABSOLUTELY LAST tool use this turn, after your prose and after all peer answers are synthesized, projecting your stance and 1-3 bullets so they survive into your next turn. Nothing you write in prose carries forward on its own.` : ""}`;
+` : ""}Make your contribution or pass — thorough, grounded prose with [#id] citations is what the room and the end user read.}`;
 }

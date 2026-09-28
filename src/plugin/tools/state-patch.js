@@ -4,10 +4,10 @@ export function createStatePatchTool({ config, resolveMeeting, activeLooms }) {
   return {
     loom_state_patch: tool({
       description:
-        "Project what should survive to the next round. Call ONCE per turn with your stance " +
+        "Maintain your private notes for your next turn. Call ONCE per turn with your stance " +
         "and any new established/contested/open/facts/files bullets (1-3 each), plus exact-text " +
-        "`remove` entries for your own outdated bullets. Prose alone does not carry forward — " +
-        "only what you patch here appears in your future State. At least one field required.",
+        "`remove` entries for your own outdated bullets. Your contribution prose is what the room reads — " +
+        "this tool only updates your own notes. At least one field required.",
       args: {
         stance: tool.schema.string().min(1).max(400).optional()
           .describe("Where you stand now in one sentence (overwrites previous stance)"),
