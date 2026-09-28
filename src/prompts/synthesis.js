@@ -68,7 +68,7 @@ export function buildSynthesisPrompt(question, transcript, participants = [], ta
     : "";
   const modeNote = isCode
     ? `\n## Mode: Code-Analysis${buildNote}\nYou are synthesizing a code collaboration. Include concrete Proposed Fix diffs with file= paths. Novel synthesized fixes are allowed when marked “Proposed — synthesized from [#id]”. If live edits occurred, note file= and verification (tests). Thoroughness welcome — ${windowNote}.\n`
-    : `\n## Mode: Conversational (open-ended)\nDissent is fine — do not force a single Decision if deliberation left a spectrum. Prefer mapping positions with evidence. Thoroughness welcome — ${windowNote}.\n`;
+    : `\n## Mode: Conversational (open-ended)\nDissent is fine — do not force a single Decision if deliberation left a spectrum. Prefer mapping positions with evidence — map the spectrum AND commit to the rule that resolves it (Decision Rule below). Thoroughness welcome — ${windowNote}.\n`;
 
   const userContextSection = userContext
     ? `\n## Original User Context (from the person who asked)\n${delimitContext(escapeDelimiters(sanitizeForDisplay(userContext, 20000)), "USER_CONTEXT")}\n`
@@ -111,6 +111,14 @@ Human-first plain narrative (no citations). 2-4 sentences: what was asked, what 
 ## Decision
 If convergent: one-paragraph direct answer citing key [#id]s (grouped per block, no vec: leak). If divergent / open-ended: write “No single decision — spectrum below” then map options in a table | Option | Holder(s) | Evidence (30-35w + one grouped cite) | Tradeoff (30-35w) | — still cite [#id]s per option. Tables MUST include the GFM delimiter row as the second line (| --- | --- | --- | --- |) or they will not render. Preserve numbers verbatim. Dissent does not force a decision. Keep cells concise, not paragraphs.
 
+## Decision Rule
+Required when there is no single Decision above. State the rule that WILL resolve the spectrum — Trigger, Date, Owner, Default, Re-pricing. If a single Decision was reached above, write “None — decided above.”
+- **Trigger:** cite the LATEST consolidated thresholds with [#id] refs to the consolidating contribution. If the room resolved conflicting thresholds into a single gate or a tiered structure, record the resolved form — do NOT blend earlier proposals. If no consolidation happened, record the disagreement explicitly (“threshold contested: [#id] says X, [#id] says Y — unresolved”).
+- **Date:** the latest date by which the decision must be made.
+- **Owner:** a specific named participant from the Participants list who evaluates the trigger — or “unassigned — owner TBD”. “Proposed:” is not an owner.
+- **Default:** what happens if the trigger never fires.
+- **Re-pricing:** what new information changes the default before the trigger.
+
 ## Reasoning
 4-8 bullets or short paragraphs. Each bullet references who argued what and on what evidence. Show tradeoffs and synthesis between views. Group cites per block. DEDUPLICATE: do not repeat Decision table numbers verbatim; reference rows (“see Position B Evidence”) and explain divergence/synthesis. Preserve numbers verbatim only when new.
 
@@ -134,6 +142,14 @@ Human-first plain narrative (no citations). 2-4 sentences: what was asked, what 
 
 ## Decision
 If convergent: one-paragraph direct answer citing key [#id]s (grouped per block, never vec:). If divergent / open-ended: write “No single decision — spectrum below” then present a table | Position | Holder(s) | Evidence (30-35w max + one grouped cite) | Tradeoff (30-35w max) | — still cite [#id]s per row. Tables MUST include the GFM delimiter row as the second line (| --- | --- | --- | --- |) or they will not render. Preserve numbers verbatim. Do not force consensus; mapping the disagreement is a valid outcome. Keep cells concise.
+
+## Decision Rule
+Required when there is no single Decision above. State the rule that WILL resolve the spectrum — Trigger, Date, Owner, Default, Re-pricing. If a single Decision was reached above, write “None — decided above.”
+- **Trigger:** cite the LATEST consolidated thresholds with [#id] refs to the consolidating contribution. If the room resolved conflicting thresholds into a single gate or a tiered structure, record the resolved form — do NOT blend earlier proposals. If no consolidation happened, record the disagreement explicitly (“threshold contested: [#id] says X, [#id] says Y — unresolved”).
+- **Date:** the latest date by which the decision must be made.
+- **Owner:** a specific named participant from the Participants list who evaluates the trigger — or “unassigned — owner TBD”. “Proposed:” is not an owner.
+- **Default:** what happens if the trigger never fires.
+- **Re-pricing:** what new information changes the default before the trigger.
 
 ## Reasoning
 4-8 bullets or short paragraphs. Each bullet references who argued what and on what evidence. Show tradeoffs and how views synthesize or diverge. Group cites per block. DEDUPLICATE vs Decision: Decision maps positions, Reasoning explains why they emerged/diverged — do not copy-paste Evidence numbers thrice; reference Decision rows when possible.
@@ -166,7 +182,7 @@ ${opts.decisionPosture ? `\nOperator decision posture: ${getOrchestratorDecision
 ${groundingRule}2. **Attribution:** Every Dissenting View must name the holder by name + [#id] + one-line evidence. Unresolved Objections above are mandatory dissent — include them. Group cites per block.
 3. **No invention:** Do not invent numbers, dates, costs, tool results, or participant positions not in transcript/State-of-Play. If evidence conflicts, state both and set Confidence accordingly. For code, do not invent file contents not read via tool.
 4. **Resolved ≠ dissent:** Items in Resolved Concerns must NOT reappear as Dissenting Views.
-5. **Actionability:** Action Items are verbs with owners or “proposed owner: …” if unattributed.
+5. **Actionability:** Action Items are verbs with owners or “proposed owner: …” if unattributed. ‘Verify’ and ‘track’ are not action items unless they name what changes when they complete.
 6. **Open-ended discipline:** Do NOT force a single Decision if transcript shows spectrum. “No single decision — spectrum below” + table is correct. Mapping disagreement is a success.
 
 ${lengthSection}

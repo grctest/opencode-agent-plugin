@@ -297,13 +297,13 @@ export class MeetingOrchestrator {
    async _continueInterruptedRound() { return roundHelpers._continueInterruptedRound.call(this); }
    async _finalizeRound(round) { return roundHelpers._finalizeRound.call(this, round); }
    _isPersistenceError(err) { return roundHelpers._isPersistenceError.call(this, err); }
-   async _persistState() { return roundHelpers._persistState.call(this, err); }
-   _getMergedStats() { return roundHelpers._getMergedStats.call(this, err); }
-   _logError(context, error, phase) { return roundHelpers._logError.call(this, context, error, phase); }
+   async _persistState() { return roundHelpers._persistState.call(this); }
+   _getMergedStats() { return roundHelpers._getMergedStats.call(this); }
+   _logError(context, error) { return roundHelpers._logError.call(this, context, error); }
    _notifyUpdate() { return roundHelpers._notifyUpdate.call(this); }
    async _synthesize() { return synthesisHelpers._synthesize.call(this); }
    async finishSynthesis(originalStatus) { return synthesisHelpers.finishSynthesis.call(this, originalStatus); }
    _computeQualityTelemetry() { return synthesisHelpers._computeQualityTelemetry.call(this); }
    _saveArtifact(artifact) { return synthesisHelpers._saveArtifact.call(this, artifact); }
-   _saveMeetingMetrics() { return synthesisHelpers._saveMeetingMetrics.call(this, artifact); }
+   _saveMeetingMetrics() { return synthesisHelpers._saveMeetingMetrics.call(this); }
 }

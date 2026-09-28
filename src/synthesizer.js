@@ -61,13 +61,17 @@ export const SYNTHESIS_SECTION_CONTRACT = Object.freeze({
   always: ["Dissenting Views", "Open Questions"],
   // At least one of the group must be present.
   actionGroup: ["Action Items", "Proposed Fix"],
+  // Deferred decision (commit device): when no single Decision is reached, the
+  // Decision Rule section carries the resolution instead.
+  deferredGroup: ["Decision", "Decision Rule"],
 });
 
 /** Validates that all required sections exist — flexible for open-ended (Decision optional if Executive Summary present).
  * Core: Executive Summary + Reasoning + Confidence always required. Decision OR synthesis table satisfies decision requirement.
  * Action Items / Proposed Fix: at least one must be present. Dissenting Views and Open Questions remain required.
+ * Commit device: in decision_oriented style, a spectrum without a Decision must carry a Decision Rule instead.
  */
-export function validateSynthesisSections(text) {
+export function validateSynthesisSections(text, style = null) {
   const C = SYNTHESIS_SECTION_CONTRACT;
   const hasExecutive = (() => {
     const esc = "Executive Summary".replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -99,6 +103,26 @@ export function validateSynthesisSections(text) {
   }
   if (!C.actionGroup.some(s => hasSection(s))) {
     warnings.push(C.actionGroup[0]);
+  }
+  // Commit device: decision_oriented syntheses whose ## Decision section
+  // declares a spectrum ("No single decision — spectrum below", the exact
+  // phrase the synthesis prompt mandates) without a Decision Rule section must
+  // add one. Section-absence alone is not the trigger — the spectrum case
+  // still carries a ## Decision heading. Other styles (and style-less legacy
+  // callers) keep prior behavior.
+  if (style === "decision_oriented" && !hasSection(C.deferredGroup[1])) {
+    const lines = String(text).split("\n");
+    const start = lines.findIndex((l) => /^#{2,}\s*decision\s*$/i.test(l.trim()));
+    if (start >= 0) {
+      const body = [];
+      for (const l of lines.slice(start + 1)) {
+        if (/^#{2,}\s/.test(l.trim())) break;
+        body.push(l);
+      }
+      if (/no single decision\s*[—–-]\s*spectrum below/i.test(body.join("\n"))) {
+        warnings.push(C.deferredGroup[1]);
+      }
+    }
   }
   // If Executive Summary present but no Decision, don't warn — open-ended valid
   return warnings.filter(w => !(hasExecutive && w === C.decisionFallback));

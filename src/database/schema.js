@@ -7,7 +7,7 @@
  * directly; older files run only the migrations they are missing.
  */
 
-export const LATEST_SCHEMA_VERSION = 11;
+export const LATEST_SCHEMA_VERSION = 12;
 
 /**
  * Ordered migrations. MIGRATIONS[n] upgrades a DB at user_version n to n+1.
@@ -170,6 +170,14 @@ export const MIGRATIONS = [
     );
     if (!cols.has("rate_limit_state")) db.exec("ALTER TABLE meetings ADD COLUMN rate_limit_state TEXT");
   },
+  // v11 → v12: meeting-level settled registry (clerk-designated consensus
+  // items, retrospective P0-2). JSON array of { text, holders[], round }.
+  (db) => {
+    const cols = new Set(
+      db.prepare("PRAGMA table_info(meetings)").all().map((c) => c.name),
+    );
+    if (!cols.has("settled_items")) db.exec("ALTER TABLE meetings ADD COLUMN settled_items TEXT");
+  },
 ];
 
 export function initSchema(db) {
@@ -209,6 +217,7 @@ export function initSchema(db) {
       feature_toggles_json TEXT,
       orchestrator_config_json TEXT,
       rate_limit_state TEXT,
+      settled_items TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );

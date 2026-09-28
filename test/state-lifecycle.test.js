@@ -200,11 +200,11 @@ test("a same-round peer query receives the target's complete committed state", a
   }, { sessionID: "asker-session" });
   const payload = JSON.parse(result.output);
   assert.equal(payload.error, undefined);
-  // Peer prompts carry the one-line position contract, not the full Σⁱ block
-  // (audit B5): stance + top bullets present, full block absent.
-  assert.match(capturedPrompt, /Your position \(from your state v2\): "Responder private stance"/);
-  assert.match(capturedPrompt, /Responder established memory/);
+  // Sub-agent cut-back contract: one-line stance context only, never the full
+  // Σⁱ block or a patch directive (empty state is the round-1 normal case).
+  assert.match(capturedPrompt, /Your prior stance \(context only\): "Responder private stance"/);
   assert.doesNotMatch(capturedPrompt, /## Your State — CARRIED FORWARD/);
+  assert.doesNotMatch(capturedPrompt, /patch it this turn/);
 });
 
 test("a fresh perspective state replaces an older stance in subsequent context", () => {

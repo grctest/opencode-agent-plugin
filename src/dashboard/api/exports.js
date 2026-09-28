@@ -17,6 +17,10 @@ import { parseReflections, safeParseJson } from "../../utils/db-parsing.js";
  * - Supporting evaluation tables: turn_requests, agent_errors,
  *   orchestrator_messages, artifact, forum, tool_audit, state_patches,
  *   state_patch_summary.
+ * - agent_states: per-agent skill.state final projection (replayed from
+ *   patches) for evaluating whether SKILL.state tracked consensus.
+ * - settled_items: the meeting-level clerk-designated settled registry
+ *   (retrospective P0-2) for evaluating consensus tracking.
  */
 export function exportTimeline(meetingId) {
   const parse = (v, fallback = null) => safeParseJson(v, fallback);
@@ -122,6 +126,61 @@ export function exportTimeline(meetingId) {
     });
   } catch { forum = []; }
 
+  // Per-agent skill.state final projection (retrospective evaluation): replay
+  // each agent's state patches in version order to reconstruct the final Σⁱ —
+  // the applied_json column stores diffs, not full state, so the export derives
+  // the complete final state deterministically. Includes version + updated
+  // round/contribution for auditability.
+  const agentStates = (() => {
+    const byAgent = new Map();
+    for (const p of statePatches) {
+      if (!byAgent.has(p.participant_id)) byAgent.set(p.participant_id, []);
+      byAgent.get(p.participant_id).push(p);
+    }
+    const nameById = new Map(participants.map((p) => [p.id, p.name]));
+    const out = [];
+    for (const [pid, patches] of byAgent) {
+      patches.sort((a, b) => (a.version ?? 0) - (b.version ?? 0));
+      const state = { stance: "", established: [], contested: [], open: [], facts: [], files: [] };
+      let version = 0;
+      for (const p of patches) {
+        const patch = parse(p.patch_json, null) ?? {};
+        for (const r of (patch.remove ?? [])) {
+          const key = String(r).trim().toLowerCase();
+          for (const bucket of ["established", "contested", "open", "facts", "files"]) {
+            state[bucket] = state[bucket].filter((it) => String(it).trim().toLowerCase() !== key);
+          }
+          if (state.stance.trim().toLowerCase() === key) state.stance = "";
+        }
+        for (const bucket of ["established", "contested", "open", "facts", "files"]) {
+          for (const item of (patch[`${bucket}_add`] ?? [])) {
+            if (!state[bucket].includes(item)) state[bucket].push(item);
+          }
+        }
+        if (patch.stance !== undefined) state.stance = String(patch.stance).trim();
+        version = p.version ?? version;
+      }
+      out.push({
+        participant_id: pid,
+        name: nameById.get(pid) ?? pid,
+        state,
+        version,
+        updated_round: patches.length ? (patches[patches.length - 1].round ?? null) : null,
+        updated_contribution_id: patches.length ? (patches[patches.length - 1].contribution_id ?? null) : null,
+      });
+    }
+    return out;
+  })();
+
+  // Meeting-level settled registry (retrospective P0-2) — clerk-designated
+  // consensus items, for evaluating whether consensus was tracked.
+  let settledItems = [];
+  try {
+    const raw = this._db.prepare(`SELECT settled_items FROM meetings WHERE id = ?`).get(meetingId);
+    const parsed = parse(raw?.settled_items, []);
+    settledItems = Array.isArray(parsed) ? parsed : [];
+  } catch { settledItems = []; }
+
   const features = meeting?.features ?? parse(meetingRow?.feature_toggles_json, {});
   const orchestrator = meeting?.orchestrator ?? parse(meetingRow?.orchestrator_config_json, {});
 
@@ -216,6 +275,8 @@ export function exportTimeline(meetingId) {
     tool_audit: toolAudit,
     forum,
     participants: participants,
+    agent_states: agentStates,
+    settled_items: settledItems,
     total_contributions: totalCount,
     total_rounds: timeline.length,
   };

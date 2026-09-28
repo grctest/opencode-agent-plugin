@@ -6,7 +6,7 @@ const REQUEST_NEXT_RE = /^\[REQUEST_NEXT:[^\]]*\]\s*/gim;
 // Live prefixes emitted by loom_* tools (store as indented rows, but strip for SoP compactness)
 const LIVE_PREFIX_RES = [
   /^\[Response to query from .+?\]\s*/gim,
-  /^\[Evidence from .+? on .+?\]\s*/gim,
+  /^\[Evidence from .+?( on .+?)?\]\s*/gim,
   /^\[Critique from .+?\]\s*/gim,
   /^\[Risk analysis by .+?\]\s*/gim,
   /^\[Assumptions surfaced by .+?\]\s*/gim,
@@ -14,6 +14,7 @@ const LIVE_PREFIX_RES = [
   /^\[Summoned: .+?\] ?/gim,
   /^\[Vote from .+?\]\s*/gim,
   /^\[Reflection on .+?\]\s*/gim,
+  /^\[Perspective from .+?\]\s*/gim,
 ];
 
 function cleanContent(content) {
@@ -105,9 +106,10 @@ function classifyContribution(type, content, mode = "", hasToolBacking = true) {
     case "critique_response":
       return "disagreements";
     case "perspective_response":
-      // A perspective answer is the target's position, not a finding — filing it
-      // as a fact inflates Evidence with unattributed opinions (audit C5).
-      return "openQuestions";
+      // A perspective answer is the target's position, not a question — filing it
+      // as an open question inflates Open Questions with answered positions
+      // (retrospective P0-1). It is attributed context, so file as a fact.
+      return "keyFacts";
     case "query_response":
       if (mode === "risks" || mode === "assumptions" || mode === "alternatives") return "openQuestions";
       if (mode === "critique") return "disagreements";
@@ -177,16 +179,36 @@ export function mergeStateOfPlay(primary, fallback) {
     }
     return values.join("\n").trim();
   };
+  // Reads the raw "- " items of a section as complete multi-line strings. An
+  // item runs from its "- " line to the next "- " or "## " line — without this,
+  // multi-line items are truncated to their first line and perspective/evidence
+  // prefixes survive as standalone fragments (retrospective P0-1 safety net).
+  const readSectionItems = (markdown, name) => {
+    const lines = String(markdown).split("\n");
+    const start = lines.findIndex((line) => line.trim() === `## ${name}`);
+    if (start < 0) return [];
+    const items = [];
+    let current = null;
+    for (const line of lines.slice(start + 1)) {
+      if (line.startsWith("## ")) break;
+      if (line.trim().startsWith("- ")) {
+        if (current !== null) items.push(current);
+        current = line.trim().slice(2);
+      } else if (current !== null && line.trim()) {
+        current += `\n${line.trim()}`;
+      }
+    }
+    if (current !== null) items.push(current);
+    return items;
+  };
   const mergeList = (name, limit = 8) => {
     const values = [];
     const seen = new Set();
     for (const source of [primary, fallback]) {
-      for (const line of readSection(source, name).split("\n")) {
-        const value = line.trim();
-        if (!value.startsWith("- ")) continue;
+      for (const value of readSectionItems(source, name)) {
         // Strip the aggregation's " (N holders)" attribution suffix before keying,
         // or `foo` and `foo (2 holders)` never dedupe and both leak through (audit A6).
-        const key = value.slice(2).replace(/\s*\(\d+ holders\)\s*$/i, "").replace(/\s+/g, " ").toLowerCase();
+        const key = value.replace(/\s*\(\d+ holders\)\s*$/i, "").replace(/\s+/g, " ").toLowerCase();
         if (!key || seen.has(key)) continue;
         seen.add(key);
         values.push(value);
@@ -194,7 +216,7 @@ export function mergeStateOfPlay(primary, fallback) {
     }
     // Newest wins: primary is already rank-ordered and the fallback buckets are
     // chronological, so the tail — not the head — is the most recent (audit A6).
-    return values.slice(-limit).map((value) => value.slice(2));
+    return values.slice(-limit);
   };
   const question = readSection(primary, "Question") || readSection(fallback, "Question");
   const tags = readSection(primary, "Tags") || readSection(fallback, "Tags");

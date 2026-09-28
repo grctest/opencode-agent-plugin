@@ -236,6 +236,41 @@ export function setStateOfPlay(db, meetingId, stateOfPlay) {
     .run(stateOfPlay, isoNow(), meetingId);
 }
 
+/**
+ * Self-healing column guard (settled_items post-dates some deployed DBs:
+ * the v11→v12 migration covers pre-v12 DBs, but DBs created while the CREATE
+ * TABLE lacked the column were stamped v12 without it and would otherwise
+ * throw "no such column" forever). Cheap PRAGMA check; runs inside the
+ * caller's transaction without issue (SQLite DDL is transactional).
+ */
+function ensureSettledColumn(db) {
+  try {
+    const cols = new Set(
+      db.prepare("PRAGMA table_info(meetings)").all().map((c) => c.name),
+    );
+    if (!cols.has("settled_items")) db.exec("ALTER TABLE meetings ADD COLUMN settled_items TEXT");
+  } catch {}
+}
+
+export function getSettledItemsRaw(db, meetingId) {
+  try {
+    ensureSettledColumn(db);
+    const row = db
+      .prepare("SELECT settled_items FROM meetings WHERE id = ?")
+      .get(meetingId);
+    return row?.settled_items ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function setSettledItemsRaw(db, meetingId, settledItemsJson) {
+  ensureSettledColumn(db);
+  db
+    .prepare("UPDATE meetings SET settled_items = ?, updated_at = ? WHERE id = ?")
+    .run(settledItemsJson, isoNow(), meetingId);
+}
+
 export function setSemanticDegraded(db, meetingId, flag = true) {
   try {
     db
@@ -374,7 +409,7 @@ export function setSummoningParticipants(db, meetingId, participantIds) {
 export function getMeeting(db, meetingId) {
   const row = db
     .prepare(
-      `SELECT id, question, context, status, round, fabric, max_rounds, convergence, tags, parent_session_id, opencode_session_id, next_speaker_id, state_of_play, stats, embedding_model, embedding_dim, orchestrator_provider_id, orchestrator_model_id, feature_toggles_json, orchestrator_config_json, created_at
+      `SELECT id, question, context, status, round, fabric, max_rounds, convergence, tags, parent_session_id, opencode_session_id, next_speaker_id, state_of_play, stats, embedding_model, embedding_dim, orchestrator_provider_id, orchestrator_model_id, feature_toggles_json, orchestrator_config_json, settled_items, created_at
          FROM meetings WHERE id = ?`,
     )
     .get(meetingId);

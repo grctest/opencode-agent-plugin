@@ -42,6 +42,66 @@ export function createStatePatchTool({ config, resolveMeeting, activeLooms }) {
 
           // Resolve caller (same helper as query-evidence.js: resolveCaller)
           const { resolveCaller } = await import("./shared.js");
+          const sessionManager = engine.getSessionManager?.();
+          // Ephemeral sub-agent branch (loom_query/loom_vote targets): the
+          // target answers inside the asker's primary turn, so there is no
+          // activeTurn for it and resolveCaller would misattribute to the
+          // asker. The owner was recorded at runEphemeralPrompt time.
+          // Answer-first, patch-last is prompt-enforced; here we enforce
+          // own-state-only + at-most-once per ephemeral session.
+          let ephemeralOwnerId = null;
+          try { ephemeralOwnerId = sessionManager?.resolveEphemeralOwner?.(context.sessionID) ?? null; } catch {}
+          if (ephemeralOwnerId) {
+            if (sessionManager?.hasEphemeralPatchApplied?.(context.sessionID)) {
+              return { output: JSON.stringify({ error: "only one loom_state_patch call is allowed per query answer" }), metadata: { error: true, validationFailed: true }, title: "loom_state_patch error" };
+            }
+            const { StatePatchSchema } = await import("../../schemas.js");
+            const parsedEphemeral = StatePatchSchema.safeParse({
+              stance: args.stance, established_add: args.established_add ?? [],
+              contested_add: args.contested_add ?? [], open_add: args.open_add ?? [],
+              facts_add: args.facts_add ?? [], files_add: args.files_add ?? [],
+              remove: args.remove ?? [],
+            });
+            if (!parsedEphemeral.success)
+              return { output: JSON.stringify({ error: "invalid patch", issues: parsedEphemeral.error.issues.slice(0, 5) }), metadata: { error: true, validationFailed: true }, title: "loom_state_patch error" };
+            const { applyStatePatch } = await import("../../state-patch.js");
+            const prevEphemeral = sm.getParticipantState(ephemeralOwnerId);
+            const { next, applied, unmatched, evicted, overCap, skipped } = applyStatePatch(prevEphemeral, parsedEphemeral.data);
+            next.updated_round = sm.getCurrentRound?.() ?? 0;
+            try { sm.setParticipantState(ephemeralOwnerId, next); } catch {}
+            try { sm.markStateDirty?.(ephemeralOwnerId); } catch {}
+            try {
+              if (typeof db.setParticipantState === "function") db.setParticipantState(ephemeralOwnerId, next);
+            } catch {}
+            try {
+              if (typeof db.addStatePatch === "function") {
+                db.addStatePatch({
+                  participantId: ephemeralOwnerId,
+                  round: sm.getCurrentRound?.() ?? 0,
+                  contributionId: null,
+                  version: next.version,
+                  patchJson: args,
+                  appliedJson: { applied: true, version: next.version },
+                });
+              }
+            } catch {}
+            try {
+              const { auditLoomTool } = await import("./audit.js");
+              const ownerParticipant = sm.getParticipant?.(ephemeralOwnerId) ?? { config: { id: ephemeralOwnerId } };
+              auditLoomTool({ db, stateManager: sm, caller: ownerParticipant, meetingId: meetingInfo.meetingId,
+                tool: "loom_state_patch", input: args,
+                output: JSON.stringify({ applied: true, version: next.version, ephemeral: true }),
+                status: "completed", title: `loom_state_patch:v${next.version} (query answer)` });
+            } catch {}
+            try { sessionManager?.markEphemeralPatchApplied?.(context.sessionID); } catch {}
+            return {
+              output: JSON.stringify({ applied: true, version: next.version, added: applied.added,
+                removed: applied.removed, unmatched: unmatched.slice(0, 5), evicted, overCap, skipped,
+                note: "Patch applied to YOUR state. Your prose answer is still required — a patch never substitutes for it." }),
+              metadata: { applied: true, version: next.version, ephemeral: true },
+              title: `loom_state_patch:v${next.version} (query answer)`,
+            };
+          }
           const caller = resolveCaller(sm.getParticipants(), sm.getWeave?.() ?? [], context.sessionID);
            if (!caller?.config?.id)
              return { output: JSON.stringify({ error: "caller identity unavailable" }), metadata: { error: true }, title: "loom_state_patch error" };

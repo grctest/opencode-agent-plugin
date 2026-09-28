@@ -122,7 +122,7 @@ export class SynthesisCoordinator {
         throw new Error("Orchestrator synthesis returned empty response");
       }
 
-      const missing = validateSynthesisSections(text);
+      const missing = validateSynthesisSections(text, effectiveConfig?.synthesisStyle);
       if (missing.length === 0 || attempt === maxRetries) {
         return text;
       }
@@ -130,7 +130,10 @@ export class SynthesisCoordinator {
       const missingNote = missing.includes("Action Items")
         ? `${missing.join(", ")} (for code-analysis, Proposed Fix may satisfy Action Items)`
         : missing.join(", ");
-      const requiredNote = `${REQUIRED_SECTIONS.join(", ")} plus at least one of ${REQUIRED_ACTION_GROUP.join(" / ")}`;
+      // Commit device: when the draft maps a spectrum without a Decision, the
+      // retry must demand the Decision Rule — the static list alone would ask
+      // for the wrong thing.
+      const requiredNote = `${REQUIRED_SECTIONS.join(", ")} plus at least one of ${REQUIRED_ACTION_GROUP.join(" / ")}${missing.includes("Decision Rule") ? " plus Decision Rule (trigger + date + owner — required when the synthesis maps a spectrum without a single Decision)" : ""}`;
       additionalFeedback = `\n\nYour previous response was missing these required sections: ${missingNote}. Please include ALL of the following sections in your response: ${requiredNote}.`;
     }
   }
@@ -224,6 +227,7 @@ ${transcriptSnippet}
 If corrections are needed, output the FULL revised synthesis with ALL required sections in order:
 ## Executive Summary
 ## Decision
+## Decision Rule (required when the draft maps a spectrum without a single Decision)
 ## Reasoning
 ${text.toLowerCase().includes("proposed fix") || detectTaskMode(transcriptData?.question, transcriptData?.tags) === "code-analysis" ? "## Proposed Fix\n## Action Items\n" : "## Action Items\n"}## Dissenting Views
 ## Open Questions
@@ -237,7 +241,7 @@ ${draftForPrompt}`;
     // Track the best revision seen: a better-but-incomplete revision on the final
     // attempt must not be silently discarded in favour of the original (audit D2).
     let best = text;
-    let bestMissing = validateSynthesisSections(text).length;
+    let bestMissing = validateSynthesisSections(text, effectiveConfig?.synthesisStyle).length;
     let prevMissing = bestMissing;
     for (let attempt = 0; attempt < getMaxCritiqueRetries(); attempt++) {
       try {
@@ -260,7 +264,7 @@ ${draftForPrompt}`;
           return text;
         }
 
-        const missing = validateSynthesisSections(text2);
+        const missing = validateSynthesisSections(text2, effectiveConfig?.synthesisStyle);
         if (missing.length < bestMissing) {
           best = text2;
           bestMissing = missing.length;
@@ -277,7 +281,7 @@ ${draftForPrompt}`;
         const missingNote2 = missing.includes("Action Items")
           ? `${missing.join(", ")} (Proposed Fix may satisfy Action Items for code-analysis)`
           : missing.join(", ");
-        const feedback = `\n\nYour revised synthesis was missing these required sections: ${missingNote2}. Output the FULL revised synthesis with ALL sections: ${REQUIRED_SECTIONS.join(", ")} plus ${REQUIRED_ACTION_GROUP.join(" / ")}.`;
+        const feedback = `\n\nYour revised synthesis was missing these required sections: ${missingNote2}. Output the FULL revised synthesis with ALL sections: ${REQUIRED_SECTIONS.join(", ")} plus ${REQUIRED_ACTION_GROUP.join(" / ")}${missing.includes("Decision Rule") ? " plus Decision Rule (trigger + date + owner — required when the synthesis maps a spectrum without a single Decision)" : ""}.`;
         critiquePrompt = `${critiquePrompt}\n\nFeedback: ${feedback}`;
       } catch (err) {
         const info = extractErrorInfo(err);

@@ -191,6 +191,8 @@ export class MeetingDatabase {
   setFabric(fabric) { const r = meetingOps.setFabric(this.#db, this.#meetingId, fabric); this.#notify("meetings"); return r; }
   getStateOfPlay() { return meetingOps.getStateOfPlay(this.#db, this.#meetingId); }
   setStateOfPlay(stateOfPlay) { const r = meetingOps.setStateOfPlay(this.#db, this.#meetingId, stateOfPlay); this.#notify("meetings"); return r; }
+  getSettledItemsRaw() { return meetingOps.getSettledItemsRaw(this.#db, this.#meetingId); }
+  setSettledItemsRaw(json) { const r = meetingOps.setSettledItemsRaw(this.#db, this.#meetingId, json); this.#notify("meetings"); return r; }
   setSemanticDegraded(flag = true) { const r = meetingOps.setSemanticDegraded(this.#db, this.#meetingId, flag); this.#notify("meetings"); return r; }
   setPersistenceDegraded(flag = true) { const r = meetingOps.setPersistenceDegraded(this.#db, this.#meetingId, flag); this.#notify("meetings"); return r; }
   updateMeetingTags(meetingId, tags) { const r = meetingOps.updateMeetingTags(this.#db, meetingId, tags); this.#notify("meetings"); return r; }

@@ -15,8 +15,8 @@ const FORM_VERSION = 6;
 const KNOWN_TIERS = new Set(["junior", "mid", "senior", "principal", "civilian"]);
 const FEATURE_MODES = new Set(["disabled", "optional", "mandatory"]);
 // SKILL.state is an off/on toggle (not a 3-state mode): on = every non-pass
-// turn ends with the dedicated loom_state_patch final pass as the agent's
-// last action. Legacy "mandatory"/"optional" both mean on.
+// turn must end with loom_state_patch as the agent's absolutely-last inline
+// tool call (no dedicated follow-up call). Legacy "mandatory"/"optional" both mean on.
 const SKILL_STATE_MODES = new Set(["on", "off"]);
 const ORCHESTRATOR_MODES = {
   roles: new Set(["neutral_facilitator", "rigorous_auditor", "decision_focused", "custom"]),

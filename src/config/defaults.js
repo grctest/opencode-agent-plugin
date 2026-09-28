@@ -86,10 +86,11 @@ export const DEFAULT_CONFIG = {
     patchRetry: true,
     // Capability policy — single default shared with the Setup tab
     // (control.js SKILL_STATE_MODES). skillState:true means the SKILL.state
-    // toggle is on: every non-pass turn ends with the dedicated
-    // loom_state_patch final pass. The four salience surfaces in
-    // prompts/agent.js (contract item 8, tool-list line, guidance bullet,
-    // final line) all render REQUIRED whenever the tool is enabled.
+    // toggle is on: every non-pass turn must end with loom_state_patch as the
+    // agent's absolutely-last inline tool call (no dedicated follow-up call;
+    // a miss falls into the conditional mandatory retry). The four salience
+    // surfaces in prompts/agent.js (contract item 8, tool-list line, guidance
+    // bullet, final line) all render REQUIRED whenever the tool is enabled.
     mandatory: {
       forums: false,
       skillState: true,

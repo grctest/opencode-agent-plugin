@@ -203,12 +203,13 @@ ${roundContextLine}${rosterBlock}${sopExcerpt}
 ${formattedContributions}
 ${evidenceHint}${requestsBlock}${stateHint}
 
-## Output — 4-5 bullets, each 1-3 sentences (human-readable, then auditable):
+## Output — 5-6 bullets, each 1-3 sentences (human-readable, then auditable):
 
 - **Established:** What gained support this round, with holder [#id] and why it matters (1-2 sentences)
+- **Settled:** Items the room converged on this round that now have multi-holder agreement — each as a one-line claim with [#id] refs (e.g. "- Mercedes HPP best engine shop, McLaren best whole team on identical PU [#9][#12]"). These feed the meeting-level settled registry. If nothing newly converged, write "None this round".
 - **Contested:** What remains disputed — name holders and their distinct positions [#id]; map the spectrum, don’t collapse to “disagreement”
 - **Evidence:** Tool or vec-grounded evidence introduced (Source or [#id] with Strength: strong/weak/inconclusive); or “None — no new evidence this round” — never emit vec: / vec round traces, use State-of-Play or [#id]
-- **Open:** Unresolved questions and what would resolve them (missing evidence / decision needed)
+- **Open:** Unresolved questions and what would resolve them (missing evidence / decision needed). If an open question from a prior round is still open and has no new source attached, flag it “still un-researched”.
 ${isCodeRound ? `- **Code/Files:** Files touched or proposed (file=src/...), diffs status, and test/verification notes` : ""}
 
 Rules: Agent States are remembered positions and standing context, not independent evidence. Attribute them to the named holder. Use uncited state only as context; place it under Evidence only when an explicit Source: or [#id] resolves to a listed contribution or tool signal. Distinguish newly established support from claims already carried in state, and do not add a separate Agent States bullet. Cite [#id] once per bullet when attributing (grouped, not per clause). Keep Contested holders explicit. Evidence must distinguish “None” from “weak/inconclusive”. Never emit vec: / vec round traces — use [#id] or State-of-Play. Preserve numbers verbatim — do not round, estimate, or invent figures not in contributions. Concise but thorough.`

@@ -352,6 +352,21 @@ export class StateManager {
     return this.#state.state_of_play ?? "";
   }
 
+  /**
+   * Meeting-level settled registry (retrospective P0-2): clerk-designated
+   * consensus items. Held in memory; the orchestrator persists to the
+   * meetings.settled_items JSON column after each round. Each item:
+   * { text, holders: [names], round }.
+   */
+  getSettledItems() {
+    return Array.isArray(this.#state.settled_items) ? this.#state.settled_items : [];
+  }
+
+  setSettledItems(items) {
+    const clean = (items ?? []).filter((it) => it && typeof it.text === "string");
+    this.#state.settled_items = clean;
+  }
+
   // Contribution-mix steering for next round (audit 01 E3) — transient hint
   // consumed once by the next prompt phase, not persisted.
   getNextRoundSteering() {
@@ -517,7 +532,7 @@ export class StateManager {
     * Used by the orchestrator when resuming a persisted meeting.
     * Validates status to prevent terminal→weaving bypass; caller must use forceTransitionTo for extension.
     */
-  restore({ participants, question, context, fabric, max_rounds, tags, current_round, status, weave, next_contribution_id, state_of_play }) {
+  restore({ participants, question, context, fabric, max_rounds, tags, current_round, status, weave, next_contribution_id, state_of_play, settled_items }) {
     if (participants !== undefined) this.#state.participants = participants;
     if (question !== undefined) this.#state.question = question;
     if (context !== undefined) this.#state.context = context;
@@ -548,6 +563,7 @@ export class StateManager {
     if (weave !== undefined) this.#state.weave = weave;
     if (next_contribution_id !== undefined) this.#state.next_contribution_id = next_contribution_id;
     if (state_of_play !== undefined) this.#state.state_of_play = state_of_play;
+    if (settled_items !== undefined) this.#state.settled_items = settled_items;
   }
 
   setParticipantStatus(participantId, status) {

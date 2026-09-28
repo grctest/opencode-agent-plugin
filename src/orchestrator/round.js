@@ -1,6 +1,7 @@
 import { getConfig } from "../config.js";
 import { LoomError, extractErrorInfo } from "../logger.js";
 import { updateStateOfPlay, mergeStateOfPlay } from "../state-of-play.js";
+import { mergeSettledBullet } from "../lib/settled-registry.js";
 import { truncate } from "../shared.js";
 import { SUMMARY_TRUNCATE_LEN } from "./constants.js";
 import { isHardRateLimitError } from "../utils/retry.js";
@@ -134,11 +135,16 @@ export async function _finalizeRound(updatedRound) {
       const weave = this._stateManager.getWeave();
       const hasUncapturedContribution = weave.some((contribution) => {
         if (contribution.type === "pass") return false;
-        // vote_response is deliberately excluded from the SoP downstream
-        // (classifyContribution returns null for it — ballots are noise, the
-        // tally carries the result), so a vote must not force the legacy O(T)
-        // weave scan on its own (audit A7).
-        if (["query_response", "perspective_response", "critique_response", "evidence_response", "summoned_response"].includes(contribution.type)) return true;
+        // Peer-interaction responses (query/perspective/evidence/critique/summon)
+        // do NOT force the legacy O(T) weave scan: they are already visible to
+        // agents in the Live block (current-round contributions), and forcing
+        // the scan every round merges the legacy keyword classifier's garbage
+        // (contribution headings filed as agreements, perspective prefixes as
+        // open questions) into the canonical SoP (retrospective P0-1).
+        // vote_response stays excluded as before (audit A7) — ballots are
+        // noise, the tally carries the result.
+        // Only a PRIMARY contribution whose state patch genuinely failed to
+        // apply forces the legacy scan — that content is in no agent's state.
         return contribution.type === "contribution" && contribution.prompt_context?.state_patch_outcome !== "applied";
       });
       if (!stateCoverageComplete || hasUncapturedContribution || !newStateOfPlay) {
@@ -150,10 +156,34 @@ export async function _finalizeRound(updatedRound) {
         newStateOfPlay = mergeStateOfPlay(newStateOfPlay, weaveStateOfPlay);
       }
       this._stateManager.setStateOfPlay(newStateOfPlay);
-      // Atomic: 3 writes in one SAVEPOINT — all-or-nothing
+      // Settled registry (retrospective P0-2): merge the clerk's Settled bullet
+      // into the meeting-level list. The clerk detects paraphrased consensus
+      // semantically; exact-match state aggregation cannot (deliberation 2
+      // replay: five agents, five phrasings, zero exact matches).
+      // The registry is consensus-tracking, never load-bearing: any failure
+      // here degrades to "no settled update this round", never to a failed
+      // finalization (a "no such column" on a pre-migration DB once aborted
+      // a whole meeting — the write path self-heals, and this guard is the
+      // second layer).
+      let settledMerge = { items: [], changed: false };
+      try {
+        settledMerge = mergeSettledBullet(
+          this._stateManager.getSettledItems(),
+          updatedRound.summary,
+          updatedRound.number,
+        );
+        if (settledMerge.changed) {
+          this._stateManager.setSettledItems(settledMerge.items);
+        }
+      } catch (err) {
+        settledMerge = { items: [], changed: false };
+        try { this._logger.warn("settled_merge_degraded", `Settled registry merge failed for round ${updatedRound.number} — continuing without settled update`, extractErrorInfo(err)); } catch {}
+      }
+      // Atomic: 4 writes in one SAVEPOINT — all-or-nothing
       await this._database.transaction(() => {
         this._database.setRoundSummary(updatedRound.number, updatedRound.summary, this._options?.orchestratorConfig ?? null);
         this._database.setStateOfPlay(newStateOfPlay);
+        if (settledMerge.changed) this._database.setSettledItemsRaw(JSON.stringify(settledMerge.items));
       });
 
       const contribCount = updatedRound.contributions.length;

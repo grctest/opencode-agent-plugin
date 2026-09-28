@@ -5,11 +5,12 @@ import {
   aggregateStateOfPlay,
   applyStatePatch,
   emptyAgentState,
+  getSettledItems,
   renderMyStateMarkdown,
   STATE_PATCH_CAPS,
 } from "../src/state-patch.js";
 import { buildAgentSystemPrompt, buildAgentUserPrompt, truncateAtSentence } from "../src/prompts/agent.js";
-import { buildRoundContext, buildTierDoctrine, getRecentContributionsBlock } from "../src/prompts/blocks.js";
+import { buildRoundContext, buildSettledBlock, buildTierDoctrine, getRecentContributionsBlock } from "../src/prompts/blocks.js";
 import { buildQueryPrompt } from "../src/prompts/interaction-prompts.js";
 import { QUERY_MODES } from "../src/prompts/query-modes.js";
 import { buildRoundSummaryUser } from "../src/round-summarizer.js";
@@ -162,7 +163,8 @@ test("peer prompt contains the question once, not duplicated across blocks", () 
   assert.ok(prompt.includes(note));
 });
 
-// 8. B5 — peer prompt uses the one-line position, not the full state block.
+// 8. Sub-agent cut-back contract — peer prompt carries a one-line stance,
+// never the full state block or a patch directive (empty state is round-1 normal).
 test("peer prompt prefers the position line over the full state block", () => {
   const caller = { config: { id: "asker", name: "Asker", tier: "mid" } };
   const target = { config: { id: "t", name: "Target", tier: "mid" }, status: "listening" };
@@ -177,8 +179,9 @@ test("peer prompt prefers the position line over the full state block", () => {
     updated_round: 1,
   };
   const prompt = buildQueryPrompt(caller, target, "note", "Q?", [], 1, 3, "", "clarify", state);
-  assert.match(prompt, /Your position \(from your state v2\): "Target stance here"/);
+  assert.match(prompt, /Your prior stance \(context only\): "Target stance here"/);
   assert.doesNotMatch(prompt, /## Your State — CARRIED FORWARD/);
+  assert.doesNotMatch(prompt, /patch it this turn/);
 });
 
 // 9. C1 — round-summary prompt is budgeted.
@@ -306,7 +309,9 @@ test("objections resolve on citation and stale on mere overlap", () => {
   assert.equal(overlapOnly[0].stale, true);
 });
 
-// 19. C5 — code decisions classify to decisions; positions stay out of facts.
+// 19. C5 — code decisions classify to decisions; alternatives stay out of facts.
+// (perspective_response now files as keyFacts per retrospective P0-1 — it is
+// attributed context, not a question.)
 test("code-span decisions and mode routing classify correctly", () => {
   const weave = [
     { id: 1, participant_id: "a", type: "contribution", content: "We should adopt the guard.\n```tsx file=src/app/layout.tsx\ncode\n```" },
@@ -317,7 +322,11 @@ test("code-span decisions and mode routing classify correctly", () => {
   assert.match(sop, /## Decisions & Proposals/);
   const facts = sop.split("## Key Facts")[1]?.split("## ")[0] ?? "";
   assert.ok(!facts.includes("queue instead of a lock"), "alternative misfiled as fact");
-  assert.ok(!facts.includes("I stand by short-lived tokens"), "position misfiled as fact");
+  // perspective_response is attributed context → keyFacts (P0-1), and it must
+  // NOT appear in Open Questions anymore.
+  const oq = sop.split("## Open Questions")[1]?.split("## ")[0] ?? "";
+  assert.ok(!oq.includes("I stand by short-lived tokens"), "perspective misfiled as open question");
+  assert.match(facts, /I stand by short-lived tokens/, "perspective filed as attributed fact");
 });
 
 // 20. X6 — persisted tool outputs are LOSSLESS (no truncation); shape preserved.
@@ -422,3 +431,167 @@ test("late-round density wording is phase-gated", () => {
   assert.doesNotMatch(earlyUser, /density beats volume/);
   assert.match(lateUser, /density beats volume — 350–500 words unless you are introducing new evidence or a decision-relevant synthesis/);
 });
+
+// 27. F-A — settled registry: only ≥2-holder established items surface.
+test("settled registry returns only consensus established items", () => {
+  const shared = "Retention beats ranking [#3]";
+  const mkState = (extra = []) => ({
+    stance: "s", established: [shared, ...extra], contested: [], open: [],
+    facts: [], files: [], version: 1, updated_round: 1, updated_contribution_id: 1,
+  });
+  const states = [
+    { id: "a", name: "A", tier: "mid", state: mkState() },
+    { id: "b", name: "B", tier: "mid", state: mkState(["Solo claim [#9]"]) },
+  ];
+  const settled = getSettledItems(states);
+  assert.equal(settled.length, 1);
+  assert.equal(settled[0].text, shared);
+  assert.deepEqual([...settled[0].holders].sort(), ["A", "B"]);
+  assert.deepEqual(getSettledItems([]), []);
+  assert.deepEqual(getSettledItems([{ id: "a", name: "A", tier: "mid", state: emptyAgentState() }]), []);
+  // Solo room (1 holder) can never settle.
+  assert.deepEqual(getSettledItems([states[0]]), []);
+});
+
+// 28. F-A — settled block: late renders the guard, early renders the watch pointer.
+test("settled block is phase-gated", () => {
+  const items = [{ text: "Retention beats ranking [#3]", holders: ["A", "B"] }];
+  const late = buildSettledBlock(items, true);
+  assert.match(late, /## Settled — signed, do not re-argue/);
+  assert.match(late, /Do NOT restate their content/);
+  assert.match(late, /LOOM_SETTLED_ITEMS/);
+  assert.match(late, /holders: A, B/);
+  const early = buildSettledBlock(items, false);
+  assert.match(early, /## Settled Watch/);
+  assert.doesNotMatch(early, /do not re-argue/);
+  assert.equal(buildSettledBlock([], true), "");
+  assert.equal(buildSettledBlock(null, false), "");
+});
+
+// 29. F-A — user prompt carries the settled block only late with consensus.
+test("user prompt renders settled registry late-only with consensus", () => {
+  const shared = "Retention beats ranking [#3]";
+  const mkState = (extra = []) => ({
+    stance: "s", established: [shared, ...extra], contested: [], open: [],
+    facts: [], files: [], version: 1, updated_round: 1, updated_contribution_id: 1,
+  });
+  const allStates = [
+    { id: "a", name: "A", tier: "mid", state: mkState() },
+    { id: "b", name: "B", tier: "mid", state: mkState(["Solo [#9]"]) },
+  ];
+  const lateUser = buildAgentUserPrompt(
+    participant(), "", [], 4, "Q", [], "", [], [], null, false, true, {},
+    { maxRounds: 5, contextWindow: 200000, allStates },
+  );
+  assert.match(lateUser, /## Settled — signed, do not re-argue/);
+  const midUser = buildAgentUserPrompt(
+    participant(), "", [], 2, "Q", [], "", [], [], null, false, true, {},
+    { maxRounds: 5, contextWindow: 200000, allStates },
+  );
+  assert.match(midUser, /## Settled Watch/);
+  assert.doesNotMatch(midUser, /do not re-argue/);
+  const noStates = buildAgentUserPrompt(
+    participant(), "", [], 4, "Q", [], "", [], [], null, false, true, {},
+    { maxRounds: 5, contextWindow: 200000 },
+  );
+  assert.doesNotMatch(noStates, /## Settled/);
+});
+
+// 30. F-E — validator demands a Decision Rule for decision_oriented spectra.
+test("validator requires Decision Rule for decision_oriented spectra", () => {
+  assert.deepEqual(SYNTHESIS_SECTION_CONTRACT.deferredGroup, ["Decision", "Decision Rule"]);
+  const head = "## Executive Summary\nExec.\n";
+  const tail = "## Reasoning\nWhy.\n## Action Items\n- Do x — owner: A — [#1]\n## Dissenting Views\nA: v — [#2]\n## Open Questions\n- Q?\n## Confidence\nMedium — solid.";
+  const spectrum = `${head}## Decision\nNo single decision — spectrum below:\n${tail}`;
+  assert.deepEqual(validateSynthesisSections(spectrum, "decision_oriented"), ["Decision Rule"]);
+  // No Decision section at all is a different defect class — the trigger is
+  // the declared spectrum, not section absence.
+  const bare = `${head}${tail}`;
+  assert.deepEqual(validateSynthesisSections(bare, "decision_oriented"), []);
+  const decided = `${head}## Decision\nSpain wins [#1].\n${tail}`;
+  assert.ok(!validateSynthesisSections(decided, "decision_oriented").includes("Decision Rule"));
+  const ruled = `${head}## Decision\nNo single decision — spectrum below:\n## Decision Rule\nTrigger x — Date y — Owner z — Default w.\n${tail}`;
+  assert.deepEqual(validateSynthesisSections(ruled, "decision_oriented"), []);
+  // Other styles and legacy style-less callers keep prior behavior.
+  assert.ok(!validateSynthesisSections(spectrum, "conversational").includes("Decision Rule"));
+  assert.ok(!validateSynthesisSections(spectrum).includes("Decision Rule"));
+});
+
+// 31. F-E — synthesis prompt carries the Decision Rule section and owned-action rule.
+test("synthesis prompt requires Decision Rule and owned action items", () => {
+  const prompt = buildSynthesisPrompt("Should we ship?", "transcript [#1]", [], [], "", [], "", {});
+  assert.match(prompt, /## Decision Rule/);
+  assert.match(prompt, /Trigger.*Date.*Owner.*Default/);
+  assert.match(prompt, /map the spectrum AND commit to the rule that resolves it/);
+  assert.match(prompt, /‘Verify’ and ‘track’ are not action items unless they name what changes when they complete/);
+});
+
+// 32. Retrospective P0-1 — SoP pollution fixes: multi-line merge, perspective
+// classifier, prefix stripping.
+test("SoP pollution fixes: merge, classifier, prefixes", () => {
+  // mergeStateOfPlay preserves full multi-line items (not first-line truncation).
+  const primary = "## Agreements\n- Real consensus item [#1]\n\n## Open Questions\n- Real question?\n";
+  const fallback = "## Agreements\n- [Perspective from Alice]\n\nFull perspective text here that must survive.\n\n## Open Questions\n- [Evidence from Bob]\n\nFinding text that must survive.\n";
+  const merged = mergeStateOfPlay(primary, fallback);
+  const agmts = merged.split("## Agreements")[1]?.split("## ")[0] ?? "";
+  assert.match(agmts, /Full perspective text here that must survive/, "multi-line item not truncated");
+  const oq = merged.split("## Open Questions")[1]?.split("## ")[0] ?? "";
+  assert.match(oq, /Finding text that must survive/, "evidence item not truncated to prefix");
+
+  // classifyContribution: perspective_response → keyFacts (not openQuestions).
+  const weave = [
+    { id: 1, participant_id: "a", type: "perspective_response", content: "[Perspective from Alice]\n\nMy stance is X." },
+  ];
+  const sop = updateStateOfPlay(weave, "Q", []);
+  const facts = sop.split("## Key Facts")[1]?.split("## ")[0] ?? "";
+  const oq2 = sop.split("## Open Questions")[1]?.split("## ")[0] ?? "";
+  assert.match(facts, /My stance is X/, "perspective filed as attributed fact");
+  assert.ok(!oq2.includes("My stance is X"), "perspective not filed as open question");
+
+  // cleanContent strips [Perspective from X] and [Evidence from X] prefixes.
+  const cleaned = cleanContentForTest("[Perspective from Alice]\n\nStance text");
+  assert.ok(!cleaned.includes("Perspective from Alice"), "perspective prefix stripped");
+  assert.match(cleaned, /Stance text/);
+  const cleanedEv = cleanContentForTest("[Evidence from Bob]\n\nFinding text");
+  assert.ok(!cleanedEv.includes("Evidence from Bob"), "evidence prefix stripped");
+  assert.match(cleanedEv, /Finding text/);
+});
+
+// 33. Retrospective P0-2 — clerk-designated registry renders in the prompt.
+test("clerk-designated settled registry renders in late prompts", () => {
+  const settled = [
+    { text: "Mercedes HPP best engine shop [#9]", holders: ["A", "B"], round: 2 },
+    { text: "McLaren best whole team [#12]", holders: ["A", "B"], round: 3 },
+  ];
+  const lateUser = buildAgentUserPrompt(
+    participant(), "", [], 4, "Q", [], "", [], [], null, false, true, {},
+    { maxRounds: 5, contextWindow: 200000, settledItems: settled },
+  );
+  assert.match(lateUser, /## Settled — signed, do not re-argue/);
+  assert.match(lateUser, /Mercedes HPP best engine shop/);
+  assert.match(lateUser, /McLaren best whole team/);
+  // Exact-match fallback still works when no clerk registry is passed.
+  const fallbackUser = buildAgentUserPrompt(
+    participant(), "", [], 4, "Q", [], "", [], [], null, false, true, {},
+    { maxRounds: 5, contextWindow: 200000 },
+  );
+  assert.doesNotMatch(fallbackUser, /## Settled — signed/);
+});
+
+// 34. P1-1/P2-1 — synthesis prompt demands latest consolidated thresholds
+// and a committed owner.
+test("synthesis prompt demands consolidated thresholds and committed owner", () => {
+  const prompt = buildSynthesisPrompt("Who wins 2030?", "transcript [#1]", [], [], "", [], "", {});
+  assert.match(prompt, /cite the LATEST consolidated thresholds/);
+  assert.match(prompt, /do NOT blend earlier proposals/);
+  assert.match(prompt, /record the disagreement explicitly/);
+  assert.match(prompt, /“Proposed:” is not an owner/);
+});
+
+// Local helper: cleanContent is not exported; test it indirectly via
+// updateStateOfPlay on a contribution whose content carries the prefixes.
+function cleanContentForTest(content) {
+  const weave = [{ id: 1, participant_id: "a", type: "contribution", content }];
+  const sop = updateStateOfPlay(weave, "Q", []);
+  return sop;
+}

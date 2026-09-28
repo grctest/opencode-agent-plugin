@@ -131,9 +131,14 @@ export async function promptChildSession(participant) {
      // (audit N7 — system prompt and tool map both said no, roster said yes).
      (!!(effectiveAgentTools?.enabled && effectiveAgentTools?.loom?.loom_query) && !(Number.isFinite(activeCountPS) && activeCountPS <= 1)),
      mandatoryCapabilities,
-     {
-       contextWindow: participantWindow,
-       maxRounds: (() => { try { return this._stateManager.getMaxRounds?.(); } catch { return undefined; } })(),
+      {
+        contextWindow: participantWindow,
+        maxRounds: (() => { try { return this._stateManager.getMaxRounds?.(); } catch { return undefined; } })(),
+        // Settled registry (F-A): all roster states for the exact-match
+        // fallback, plus the meeting-level clerk-designated registry
+        // (retrospective P0-2) which is the primary source.
+        allStates: (() => { try { return this._stateManager.getAllParticipantStates?.() ?? []; } catch { return []; } })(),
+        settledItems: (() => { try { return this._stateManager.getSettledItems?.() ?? []; } catch { return []; } })(),
        // Steering hint renders inside the builder, before the final patch line,
        // so recency keeps the mandatory call (audit P1-D). Empty = no block.
        steeringHint,

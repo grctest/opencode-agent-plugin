@@ -6,6 +6,17 @@ import { TERMINAL_STATUSES } from "./constants.js";
 
 const restorerLogger = new Logger();
 
+function parseSettledItems(raw) {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    const items = Array.isArray(parsed) ? parsed : [];
+    return items.filter((it) => it && typeof it.text === "string");
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Restores in-memory meeting state from the database.
  * Used when extending a previously completed meeting.
@@ -100,6 +111,7 @@ export function restoreStateFromDb({ db, stateManager, meetingId, options }) {
     // SQLite's autoincrement and state_patches.contribution_id dangles.
     next_contribution_id: Math.max(db.getMaxContributionId() ?? 0, ...contributions.map(c=>c.id ?? 0), 0),
     state_of_play: meeting.state_of_play ?? "",
+    settled_items: parseSettledItems(meeting.settled_items),
   });
   // Restore artifact if previously synthesized (otherwise extend loses deliverable)
   try {

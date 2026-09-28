@@ -24,6 +24,8 @@ export class SessionManager {
   #progressFailureCount = 0;
   #progressAlerted = false;
   #sessionMeetingMap = new Map();
+  #ephemeralOwnerMap = new Map();
+  #ephemeralPatchApplied = new Set();
   #orchestratorSessionId = null;
   #database = null;
   #tokenRecorder = null;
@@ -75,6 +77,24 @@ export class SessionManager {
    */
   resolveMeetingId(sessionId) {
     return this.#sessionMeetingMap.get(sessionId) ?? null;
+  }
+
+  /**
+   * Owner of an ephemeral sub-agent session (loom_query/loom_vote target).
+   * Lets loom_state_patch attribute the patch to the target instead of
+   * falling back to the asker via resolveCaller. Set on creation, cleared
+   * on session teardown. Summoned guests are never registered here.
+   */
+  resolveEphemeralOwner(sessionId) {
+    return this.#ephemeralOwnerMap.get(sessionId) ?? null;
+  }
+
+  markEphemeralPatchApplied(sessionId) {
+    this.#ephemeralPatchApplied.add(sessionId);
+  }
+
+  hasEphemeralPatchApplied(sessionId) {
+    return this.#ephemeralPatchApplied.has(sessionId);
   }
 
   /**
@@ -145,6 +165,13 @@ export class SessionManager {
     try {
       sessionId = await this.createEphemeralSession(participant);
       if (meetingId) this.registerSessionMeeting(sessionId, meetingId);
+      // Record the sub-agent owner so loom_state_patch can attribute an
+      // optional self-patch to the target. Ephemeral ids are random per
+      // call, so no cross-talk between parallel targets.
+      try {
+        const ownerId = participant?.config?.id ?? participant?.id ?? null;
+        if (sessionId && ownerId) this.#ephemeralOwnerMap.set(sessionId, ownerId);
+      } catch {}
       const { signal, abort, ...restOpts } = promptOpts;
       const effectiveSignal = signal ?? abort ?? null;
       if (effectiveSignal?.aborted) throw new DOMException("Aborted", "AbortError");
@@ -159,6 +186,8 @@ export class SessionManager {
     } finally {
       if (sessionId) {
         this.unregisterSession(sessionId);
+        try { this.#ephemeralOwnerMap.delete(sessionId); } catch {}
+        try { this.#ephemeralPatchApplied.delete(sessionId); } catch {}
         await this.deleteEphemeralSession(sessionId).catch(() => {});
       }
     }

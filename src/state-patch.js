@@ -241,7 +241,7 @@ export function renderMyStateMarkdown(state) {
  * Output markdown shape identical to formatStateOfPlay() for downstream consumers.
  * Falls back to "" when every state is empty (caller uses legacy updateStateOfPlay).
  */
-export function aggregateStateOfPlay(allStates, question, tags) {
+export function buildStateEntries(allStates) {
   const entries = (allStates ?? []).map((e, i) => {
     if (e && Array.isArray(e.established)) {
       return { index: i, id: e.id ?? `agent_${i}`, name: e.name ?? e.id ?? `agent_${i}`, tier: e.tier ?? "", state: e };
@@ -254,70 +254,87 @@ export function aggregateStateOfPlay(allStates, question, tags) {
       state: e?.state ?? emptyAgentState(),
     };
   }).filter((e) => e.state);
-  const nonEmpty = entries.filter((e) => {
+  return entries.filter((e) => {
     const s = e.state;
     return (s.stance && s.stance.trim()) || (s.established ?? []).length || (s.contested ?? []).length ||
       (s.open ?? []).length || (s.facts ?? []).length || (s.files ?? []).length;
   });
+}
+
+// bucket -> normalized key -> ranked slot. Ranking is consensus-first
+// (holders desc), then freshness (round desc, then contribution id desc);
+// lexicographic text is only the final deterministic tiebreak, never the
+// deciding signal (audit A2).
+export function rankStateSlots(entries, get, { minHolders = 1 } = {}) {
+  const map = new Map();
+  for (const e of entries ?? []) {
+    for (const item of get(e.state) ?? []) {
+      const k = key(item);
+      if (!k) continue;
+      if (!map.has(k)) map.set(k, { key: k, text: norm(item), holders: new Set(), holderIds: new Set(), recency: 0, updatedContributionId: 0, primaryId: e.id });
+      const slot = map.get(k);
+      slot.holders.add(e.name);
+      slot.holderIds.add(e.id);
+      slot.recency = Math.max(slot.recency, e.state.updated_round ?? 0);
+      slot.updatedContributionId = Math.max(slot.updatedContributionId, e.state.updated_contribution_id ?? 0);
+    }
+  }
+  return [...map.values()]
+    .filter((slot) => slot.holders.size >= minHolders)
+    .sort((a, b) => b.holders.size - a.holders.size || b.recency - a.recency ||
+      b.updatedContributionId - a.updatedContributionId || (a.text < b.text ? -1 : 1));
+}
+
+// Selection with representation guarantee: pass 1 covers every holder with
+// their highest-ranked item (multi-holder items cover several at once), pass 2
+// fills by rank subject to a per-holder cap — so no single agent can monopolise
+// a section when nothing is shared yet (audit A2).
+export function takeStateSlots(ranked, cap = STATE_PATCH_CAPS.buckets, perHolderCap = 3) {
+  const taken = [];
+  const used = new Set();
+  const covered = new Set();
+  const counts = new Map();
+  const take = (slot) => {
+    taken.push(slot);
+    used.add(slot.key);
+    for (const id of slot.holderIds) {
+      covered.add(id);
+      counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+  };
+  for (const slot of ranked) {
+    if (taken.length >= cap) break;
+    if ([...slot.holderIds].some((id) => !covered.has(id))) take(slot);
+  }
+  for (const slot of ranked) {
+    if (taken.length >= cap) break;
+    if (used.has(slot.key)) continue;
+    if ((counts.get(slot.primaryId) ?? 0) >= perHolderCap) continue;
+    take(slot);
+  }
+  return taken;
+}
+
+/**
+ * Settled registry (F-A): the consensus subset of per-agent `established`
+ * buckets — items held by ≥2 agents, ranked and capped exactly like the SoP
+ * Agreements section. Derived per turn from live state (never stored), so it
+ * cannot go stale. Returns [{ text, holders: [names] }].
+ */
+export function getSettledItems(allStates, { cap = STATE_PATCH_CAPS.buckets } = {}) {
+  const entries = buildStateEntries(allStates);
+  if (entries.length === 0) return [];
+  return takeStateSlots(rankStateSlots(entries, (s) => s.established, { minHolders: 2 }), cap)
+    .map((slot) => ({ text: slot.text, holders: [...slot.holders] }));
+}
+
+export function aggregateStateOfPlay(allStates, question, tags) {
+  const nonEmpty = buildStateEntries(allStates);
   if (nonEmpty.length === 0) return "";
 
   const slotText = (v) => v.holders.size > 1 ? `${v.text} (${v.holders.size} holders)` : v.text;
 
-  // bucket -> normalized key -> ranked slot. Ranking is consensus-first
-  // (holders desc), then freshness (round desc, then contribution id desc);
-  // lexicographic text is only the final deterministic tiebreak, never the
-  // deciding signal (audit A2).
-  const rankSlots = (get, { minHolders = 1 } = {}) => {
-    const map = new Map();
-    for (const e of nonEmpty) {
-      for (const item of get(e.state) ?? []) {
-        const k = key(item);
-        if (!k) continue;
-        if (!map.has(k)) map.set(k, { key: k, text: norm(item), holders: new Set(), holderIds: new Set(), recency: 0, updatedContributionId: 0, primaryId: e.id });
-        const slot = map.get(k);
-        slot.holders.add(e.name);
-        slot.holderIds.add(e.id);
-        slot.recency = Math.max(slot.recency, e.state.updated_round ?? 0);
-        slot.updatedContributionId = Math.max(slot.updatedContributionId, e.state.updated_contribution_id ?? 0);
-      }
-    }
-    return [...map.values()]
-      .filter((slot) => slot.holders.size >= minHolders)
-      .sort((a, b) => b.holders.size - a.holders.size || b.recency - a.recency ||
-        b.updatedContributionId - a.updatedContributionId || (a.text < b.text ? -1 : 1));
-  };
-
-  // Selection with representation guarantee: pass 1 covers every holder with
-  // their highest-ranked item (multi-holder items cover several at once), pass 2
-  // fills by rank subject to a per-holder cap — so no single agent can monopolise
-  // a section when nothing is shared yet (audit A2).
-  const takeSlots = (ranked, cap = STATE_PATCH_CAPS.buckets, perHolderCap = 3) => {
-    const taken = [];
-    const used = new Set();
-    const covered = new Set();
-    const counts = new Map();
-    const take = (slot) => {
-      taken.push(slot);
-      used.add(slot.key);
-      for (const id of slot.holderIds) {
-        covered.add(id);
-        counts.set(id, (counts.get(id) ?? 0) + 1);
-      }
-    };
-    for (const slot of ranked) {
-      if (taken.length >= cap) break;
-      if ([...slot.holderIds].some((id) => !covered.has(id))) take(slot);
-    }
-    for (const slot of ranked) {
-      if (taken.length >= cap) break;
-      if (used.has(slot.key)) continue;
-      if ((counts.get(slot.primaryId) ?? 0) >= perHolderCap) continue;
-      take(slot);
-    }
-    return taken;
-  };
-
-  const collect = (get, opts) => takeSlots(rankSlots(get, opts)).map(slotText);
+  const collect = (get, opts) => takeStateSlots(rankStateSlots(nonEmpty, get, opts)).map(slotText);
 
   const established = collect((s) => s.established);
   const contested = collect((s) => s.contested);
@@ -346,7 +363,7 @@ export function aggregateStateOfPlay(allStates, question, tags) {
       index: e.index,
     }))
     .sort((a, b) => b.recency - a.recency || a.index - b.index);
-  const factTaken = takeSlots(rankSlots((s) => s.facts));
+  const factTaken = takeStateSlots(rankStateSlots(nonEmpty, (s) => s.facts));
   const factKeep = Math.min(factTaken.length, Math.max(Math.min(EVIDENCE_MIN, factTaken.length), CAP - stanceTaken.length));
   const stanceKeep = Math.min(stanceTaken.length, CAP - factKeep);
   const keyFacts = [

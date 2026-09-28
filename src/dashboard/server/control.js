@@ -475,9 +475,10 @@ function validateParticipants(list) {
 const FEATURE_MODES = new Set(["disabled", "optional", "mandatory"]);
 
 // SKILL.state is an off/on toggle, not a 3-state mode: when on, every
-// non-pass turn ends with a dedicated loom_state_patch final pass (the
-// agent's last action). There is no "optional" timing — the executor always
-// runs the final pass, so the prompt wording is always REQUIRED when on.
+// non-pass turn must end with loom_state_patch as the agent's absolutely-last
+// inline tool call. There is no "optional" timing and no dedicated follow-up
+// call — a miss falls into the conditional mandatory retry, so the prompt
+// wording is always REQUIRED when on.
 const SKILL_STATE_MODES = new Set(["on", "off"]);
 
 function normalizeFeatureMode(value, fallback = "optional") {
@@ -492,7 +493,7 @@ function normalizeSkillStateMode(value, fallback = "on") {
   if (typeof value !== "string") return fallback;
   if (SKILL_STATE_MODES.has(value)) return value;
   // Legacy 3-state values: both "mandatory" and "optional" meant the tool
-  // was enabled, and the executor ran the final pass in both cases.
+  // was enabled, and the executor required the inline patch in both cases.
   if (value === "mandatory" || value === "optional") return "on";
   if (value === "disabled") return "off";
   return fallback;

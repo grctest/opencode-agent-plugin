@@ -19,9 +19,10 @@ export function buildToolsMap(config, { activeCount, omitStatePatch = false } = 
     if (loom.loom_summon) toolsMap.loom_summon = true;
     if (loom.loom_request_next && !isSolo) toolsMap.loom_request_next = true;
     if (loom.loom_pass) toolsMap.loom_pass = true;
-    // Single-attempt state patch: when omitted here (primary turn), the one
-    // and only loom_state_patch call happens in the final pass after queries
-    // and synthesis — never as a competing offer during the main turn.
+    // State patch is offered inline (omitStatePatch stays for callers that
+    // must not offer it, e.g. synthesis/recovery passes). The agent's
+    // absolutely-last tool use must be the patch; a miss falls into the
+    // conditional mandatory retry, exactly like any other mandatory tool.
     if (loom.loom_state_patch && !omitStatePatch) toolsMap.loom_state_patch = true;
     if (loom.loom_forum) {
       toolsMap.loom_forum_create_topic = true;
@@ -33,7 +34,7 @@ export function buildToolsMap(config, { activeCount, omitStatePatch = false } = 
   return toolsMap;
 }
 
-export function buildToolsMapWithoutLoom(config, { activeCount } = {}) {
+export function buildToolsMapWithoutLoom(config, { activeCount, includeStatePatch = false } = {}) {
   const agentToolsConfig = config.agentTools;
   const toolsMap = {};
   if (agentToolsConfig?.enabled) {
@@ -54,6 +55,11 @@ export function buildToolsMapWithoutLoom(config, { activeCount } = {}) {
       toolsMap.loom_forum_read_topic = true;
       toolsMap.loom_forum_add_comment = true;
     }
+    // State-patch retry: the patch is not a peer interaction, so the audit-B8
+    // rationale that keeps query/vote/summon out of this map does not apply.
+    // Included only when the caller explicitly asks (mandatory retry) — never
+    // for synthesis or recovery passes.
+    if (includeStatePatch && loom.loom_state_patch) toolsMap.loom_state_patch = true;
   }
   return toolsMap;
 }

@@ -62,6 +62,48 @@ export function buildAgentStateBlock(state) {
 }
 
 /**
+ * Sub-agent state line (cut-back contract for loom_query/loom_vote targets).
+ * Read-only context, never a directive: the target answers from the question +
+ * room lines; patching is optional and happens via the loom_state_patch tool
+ * (offered in the ephemeral tool map), never by writing "State patched" in prose.
+ * Empty state is the normal round-1 case — it must not hijack the task.
+ */
+export function buildSubAgentStateLine(targetAgent, targetState) {
+  const stance = typeof targetState?.stance === "string" && targetState.stance.trim()
+    ? targetState.stance.trim()
+    : (typeof targetAgent?.state_stance === "string" && targetAgent.state_stance.trim()
+      ? targetAgent.state_stance.trim()
+      : (typeof targetAgent?.reflection === "string" ? targetAgent.reflection.trim() : ""));
+  if (!stance) return "No prior state — answer from the question + room lines below.";
+  return `Your prior stance (context only): "${sanitizeForDisplay(stance.slice(0, 240))}"`;
+}
+
+/**
+ * Accurate tool guidance for ephemeral sub-agents. Mirrors the actual tool map
+ * offered in query-evidence.js (websearch/webfetch/read + loom_state_patch),
+ * unlike buildEvidenceGuidance which advertises primary-turn loom_* tools the
+ * sub-agent does not have. Answer-first, patch-last ordering included.
+ */
+export function buildSubAgentToolGuidance(kind = "query") {
+  const base = kind === "evidence"
+    ? `You MUST use at least one research tool (websearch, webfetch, or read). No speculation.
+
+Report: Finding (1 sentence) + Source (URL or [#id]) + Strength: strong | weak | inconclusive.
+If inconclusive: state why — "0 hits" vs "contradictory sources" — and what would resolve it.`
+    : `You may use websearch, webfetch, or read to verify before answering. Prefer citing prior [#id] if the answer is "what was said", websearch if it's a current fact. Cite Source: [#id] or URL if you use one.
+If a tool returns error or 0 hits, write "evidence unavailable — searched X" and answer with an experience-qualified claim.`;
+  return `
+## Tools Available To You (sub-agent scope)
+
+${base}
+
+- After drafting your full answer, you MAY call loom_state_patch at most once to record anything worth carrying into your own future state (stance + 1-3 bullets). Optional — skip it if nothing new.
+- You do NOT have loom_query, loom_vote, loom_summon, loom_forum, loom_request_next, or loom_pass. Do not attempt them and do not mention them.
+- Your prose IS the contribution. Never write "State patched" or "Contribution delivered" in place of the answer — a patch never substitutes for prose.
+- ${CITATION_LINE}`;
+}
+
+/**
  * Peer-facing position context (audit B5): prefer the one-line position
  * (stance + top bullets) over the full Σⁱ block. The full block (≈11 kB worst
  * case) is the wrong trade inside a 60 s peer sub-prompt; the one-liner is the
@@ -202,6 +244,27 @@ export function buildRoundContext(currentRound, maxRounds) {
 - It’s fine to leave dissent unresolved — map the remaining disagreement with evidence for/against each view.
 - End with Position: [held|revised|expanded] because …`;
   }
+}
+
+/**
+ * Settled-registry block (F-A): renders consensus items (≥2 holders) as a
+ * cite-and-delta guard. Late rounds get the hard block; earlier rounds get a
+ * one-line pointer at most. Item text is model prose — delimited as DATA, with
+ * the instruction line outside the delimiters (contract §3).
+ */
+export function buildSettledBlock(items, late = false) {
+  const list = Array.isArray(items) ? items : [];
+  if (list.length === 0) return "";
+  if (!late) {
+    return `## Settled Watch\n\n${list.length} point(s) already have ≥2 holders in State of Play (see Agreements) — cite by [#id], don't restate.\n`;
+  }
+  const lines = list.map((it) => {
+    const text = sanitizeForDisplay(String(it?.text ?? ""), 500).replace(/\n/g, " ").trim() || "(empty)";
+    const holders = Array.isArray(it?.holders) ? it.holders.filter(Boolean).slice(0, 3) : [];
+    const extra = Array.isArray(it?.holders) && it.holders.length > 3 ? ` (+${it.holders.length - 3} more)` : "";
+    return `- ${text}${holders.length > 0 ? ` — holders: ${holders.join(", ")}${extra}` : ""}`;
+  });
+  return `## Settled — signed, do not re-argue\n\nReference these by [#id] in one clause, then move on. Do NOT restate their content — restatement is a contract violation, not thoroughness. Challenge only with new evidence.\n\n${delimitContext(lines.join("\n"), "SETTLED_ITEMS")}\n`;
 }
 
 export function buildTierDoctrine(tier, guidance) {

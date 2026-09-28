@@ -2,7 +2,7 @@ import { tool } from "@opencode-ai/plugin";
 import { MeetingDatabase } from "../../database.js";
 import { buildQueryPrompt, buildEvidencePrompt } from "../../prompts/interaction-prompts.js";
 import { truncateAtSentence } from "../../prompts/agent.js";
-import { QUERY_MODES, QUERY_MODE_NAMES, researchTools } from "../../prompts/query-modes.js";
+import { QUERY_MODES, QUERY_MODE_NAMES, researchTools, subAgentTools } from "../../prompts/query-modes.js";
 import { extractAgentResponse, mapToolResults } from "../../shared.js";
 import { degrade } from "../../utils/degrade.js";
 import { Logger } from "../../logger.js";
@@ -203,15 +203,18 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
                const perspectiveGuidance = mode === "perspective" && typeof target?.config?.reflection_guidance === "string"
                  ? target.config.reflection_guidance.trim().slice(0, 400) : "";
                const systemPrompt = meta.systemPrompt(target, perspectiveGuidance);
-               const res = await sessionManager.runEphemeralPrompt(target, {
-                 system: systemPrompt,
-                 model,
-                 parts: [{ type: "text", text: prompt }],
-                 tools: researchTools(),
-                 timeoutMs: meta.timeoutMs,
-                 signal: context.abort,
-                 abort: context.abort,
-               }, meetingInfo.meetingId);
+                const res = await sessionManager.runEphemeralPrompt(target, {
+                  system: systemPrompt,
+                  model,
+                  parts: [{ type: "text", text: prompt }],
+                  // Sub-agent scope: research tools + own-state patch only.
+                  // No nested loom_query/loom_vote/loom_summon/loom_forum —
+                  // enforced by omission from this map.
+                  tools: subAgentTools(),
+                  timeoutMs: meta.timeoutMs,
+                  signal: context.abort,
+                  abort: context.abort,
+                }, meetingInfo.meetingId);
                if (!res || !res.ok) return { target, mode, kind: "error", error: res?.error?.message ?? "prompt failed" };
                const { text, toolResults } = extractAgentResponse(res.data);
                // Sentence-boundary truncation with ellipsis, not a mid-word UTF-16

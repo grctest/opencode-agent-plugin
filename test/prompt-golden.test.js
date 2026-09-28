@@ -58,9 +58,9 @@ const EXPECTED_SYS = {
   "Craft (positive anti-patterns)": "48d74bb60ea6",
   "Tier Doctrine": "367eda2be27c",
   "Mode": "e2f67c7b37e3",
-  "Research Tools — Tool Ladder": "679da1a9a915",
-  "WHEN TO PASS": "1904d4e9e776",
-  "OUTPUT CONTRACT — read last, it governs; in conflict it wins": "1966332f4f1d",
+  "Research Tools — Tool Ladder": "df396c3296f3",
+  "WHEN TO PASS": "20cc67420712",
+  "OUTPUT CONTRACT — read last, it governs; in conflict it wins": "3ecf32f58257",
 };
 
 const EXPECTED_USER = {
@@ -74,7 +74,7 @@ const EXPECTED_USER = {
   "Your State — CARRIED FORWARD (everything below is the ONLY memory you have next turn; prose is discarded)": "a38ea027ed4d",
   "Other Participants — valid loom_query targets (use target = id exactly, not display name)": "4745981b61b7",
   "Live — Recent Contributions": "fce0b7f16023",
-  "Your Turn — Weighted Guidance": "63cd88324999",
+  "Your Turn — Weighted Guidance": "c94fe8c83053",
 };
 
 test("golden system prompt sections are unchanged", () => {

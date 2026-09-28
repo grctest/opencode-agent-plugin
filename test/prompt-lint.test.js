@@ -59,8 +59,8 @@ test("tool budget is worded as guidance, not a hard cap", () => {
 });
 
 // 3. Tools described == tools offered, across config combos. The comparison
-// targets the PRIMARY turn's map: loom_state_patch is omitted there (its single
-// attempt is the dedicated final pass), so it must not be advertised either.
+// targets the PRIMARY turn's map: loom_state_patch is offered inline there
+// (the agent's absolutely-last tool use), so it must be advertised too.
 function availableSet(sys) {
   const m = sys.match(/Available: ([^\n]+)/);
   assert.ok(m, "Available line missing");
@@ -70,7 +70,7 @@ function availableSet(sys) {
 }
 function offeredSet(agentTools, activeCount) {
   return new Set(
-    Object.keys(buildToolsMap({ agentTools }, { activeCount, omitStatePatch: true }))
+    Object.keys(buildToolsMap({ agentTools }, { activeCount }))
       .map((n) => (n.startsWith("loom_forum_") ? "loom_forum" : n)),
   );
 }
@@ -88,16 +88,19 @@ for (const [label, mutate, activeCount] of [
   });
 }
 
-// 3a. Single-attempt patch design: the primary map omits loom_state_patch, and
-// the final pass map contains ONLY loom_state_patch (one attempt, last action).
-test("state patch is offered once, in the final pass only", () => {
+// 3a. Inline-first patch design: the primary map offers loom_state_patch (the
+// agent's absolutely-last tool use), and there is no dedicated per-turn patch
+// call — a miss falls into the conditional mandatory retry like any other
+// mandatory capability.
+test("state patch is offered inline in the primary turn", () => {
   const at = cloneTools();
-  const primary = buildToolsMap({ agentTools: at }, { activeCount: 5, omitStatePatch: true });
-  assert.ok(!("loom_state_patch" in primary), "primary turn must not offer loom_state_patch");
-  const finalPass = { loom_state_patch: true };
-  assert.deepEqual(Object.keys(finalPass), ["loom_state_patch"]);
-  assert.match(buildAgentSystemPrompt(participant(), { activeCount: 5, agentTools: at }), /loom_state_patch/);
-  assert.doesNotMatch(buildAgentSystemPrompt(participant(), { activeCount: 5, agentTools: at }).match(/Available: ([^\n]+)/)?.[1] ?? "", /loom_state_patch/);
+  const primary = buildToolsMap({ agentTools: at }, { activeCount: 5 });
+  assert.ok("loom_state_patch" in primary, "primary turn must offer loom_state_patch inline");
+  const sys = buildAgentSystemPrompt(participant(), { activeCount: 5, agentTools: at });
+  assert.match(sys, /loom_state_patch/);
+  assert.match(sys.match(/Available: ([^\n]+)/)?.[1] ?? "", /loom_state_patch/);
+  assert.match(sys, /ABSOLUTELY LAST tool use/);
+  assert.doesNotMatch(sys, /do not call it during your main turn/);
 });
 
 // 3b. Forum descriptions vanish with the flag (not just the tool list).
@@ -278,7 +281,7 @@ test("steering hint precedes the final patch line", () => {
     false, false, { skillState: true }, { steeringHint: "consolidate first", maxRounds: 4 },
   );
   const hint = user.indexOf("STEERING_HINT");
-  const patch = user.indexOf("Then call loom_state_patch once");
+  const patch = user.indexOf("Then call loom_state_patch exactly once");
   assert.ok(hint > 0 && patch > 0 && hint < patch, "hint must precede the final patch line");
 });
 
@@ -290,10 +293,26 @@ test("mandatory retry never overwrites the contribution", () => {
   assert.match(src, /synthesis_too_short/);
 });
 
-// 14. Pass/patch exclusivity is stated where the model decides.
-test("pass/patch exclusivity is stated in contract and tool", () => {
+// 13b. No dedicated per-turn patch call: the patch is offered inline and a
+// miss falls into the conditional mandatory retry, like any other mandatory
+// capability. A second unconditional LLM call per turn must never return.
+test("no dedicated per-turn state-patch LLM call exists", () => {
+  const src = readFileSync(join(SRC, "round-executor", "agent", "execute-turn.js"), "utf-8");
+  assert.doesNotMatch(src, /omitStatePatch: true/);
+  assert.doesNotMatch(src, /patchToolsMap = \{ loom_state_patch: true \}/);
+  assert.doesNotMatch(src, /state_patch_final/);
+  assert.doesNotMatch(src, /one and only loom_state_patch call for this turn/);
+  // The miss joins the mandatory list instead.
+  assert.match(src, /State: call loom_state_patch once, as your final action/);
+  // The retry map offers the patch tool for the miss case.
+  const toolsSrc = readFileSync(join(SRC, "round-executor", "tools.js"), "utf-8");
+  assert.match(toolsSrc, /includeStatePatch/);
+});
+
+// 14. Pass needs no patch — stated where the model decides.
+test("pass needs no patch is stated in contract and tool", () => {
   const sys = buildAgentSystemPrompt(participant(), { activeCount: 5, agentTools: cloneTools() });
-  assert.match(sys, /mutually exclusive in one turn/);
+  assert.match(sys, /A pass needs no state patch/);
   const passSrc = readFileSync(join(SRC, "plugin", "tools", "pass.js"), "utf-8");
   assert.match(passSrc, /mutually exclusive/);
 });

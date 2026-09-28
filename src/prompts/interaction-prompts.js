@@ -1,10 +1,13 @@
 import { sanitizeForDisplay } from "../utils/sanitize.js";
 import { TIER_ORDER, LENGTH_LIMITS } from "./constants.js";
 import { QUERY_MODES } from "./query-modes.js";
-import { getRecentContributionsBlock, buildEvidenceGuidance, buildSeniorityContext, buildRoundContext, buildTargetPositionContext } from "./blocks.js";
+import { getRecentContributionsBlock, buildSubAgentStateLine, buildSubAgentToolGuidance, buildRoundContext, buildTargetPositionContext } from "./blocks.js";
 import { delimitContext } from "./delimiters.js";
 
 /** Builds a prompt for a queried agent to respond to a direct question from another agent.
+ * Cut-back sub-agent contract: question + minimal room (3 lines) + optional
+ * 1-line stance + task + accurate tool guidance. No SoP, seniority, round
+ * doctrine, or state-patch directives — those belong to primary turns only.
  * mode: one of QUERY_MODES keys (clarify | perspective | evidence | critique | risks | assumptions | alternatives). */
 export function buildQueryPrompt(sourceAgent, targetAgent, sourceContribution, question, roundContributions, currentRound, maxRounds, stateOfPlay = "", mode = "clarify", targetState = null) {
   const meta = QUERY_MODES[mode] ?? QUERY_MODES.clarify;
@@ -12,23 +15,15 @@ export function buildQueryPrompt(sourceAgent, targetAgent, sourceContribution, q
   const safeQuestion = sanitizeForDisplay(question);
   const safeContribution = sanitizeForDisplay(sourceContribution);
 
-  const seniorityContext = buildSeniorityContext(
-    targetAgent.config.name, targetAgent.config.tier,
-    sourceAgent.config.name, sourceAgent.config.tier,
-    TIER_ORDER[targetAgent.config.tier] ?? 1,
-    TIER_ORDER[sourceAgent.config.tier] ?? 1,
-  );
-  const roundContext = buildRoundContext(currentRound, maxRounds);
-  const toolSection = buildEvidenceGuidance(meta.guidanceKind);
+  const toolSection = buildSubAgentToolGuidance(meta.guidanceKind);
 
-  const recentMine = getRecentContributionsBlock(roundContributions, targetAgent.config.id, { mineCount: 1, mineBudget: 800, othersCount: 4, othersBudget: 400 });
-  const stateContext = buildTargetPositionContext(targetAgent, targetState);
+  const recentMine = getRecentContributionsBlock(roundContributions, targetAgent.config.id, { mineCount: 0, mineBudget: 0, othersCount: 3, othersBudget: 300 });
+  const stateLine = buildSubAgentStateLine(targetAgent, targetState);
   // reflection_guidance is consumed here (audit N2/P2-G): perspective-mode
   // targets answer through their persona's reflection lens. Other modes ignore it.
   const reflectionGuidance = mode === "perspective" && typeof targetAgent?.config?.reflection_guidance === "string" && targetAgent.config.reflection_guidance.trim()
     ? sanitizeForDisplay(targetAgent.config.reflection_guidance.trim().slice(0, 400))
     : "";
-  const sopSnippet = stateOfPlay ? `State of Play — Open Questions (what answer would unblock):\n${sanitizeForDisplay(stateOfPlay, 600)}\n\n` : "";
 
   const header = `## ${mode === "clarify" ? "Direct Query" : `${mode.charAt(0).toUpperCase() + mode.slice(1)} Request`} — to ${sanitizeForDisplay(targetAgent.config.name)} (${targetAgent.config.tier}) from ${safeSourceName} (${sourceAgent.config.tier})
 
@@ -36,8 +31,7 @@ ${delimitContext(safeContribution, "PEER_CONTRIBUTION")}
 
 ${delimitContext(safeQuestion, "PEER_QUESTION")}
 
-${sopSnippet}${recentMine ? recentMine + "\n\n" : ""}${stateContext ? stateContext + "\n\n" : ""}Seniority: ${seniorityContext}
-Round: ${roundContext}
+${recentMine ? recentMine + "\n\n" : ""}${stateLine}
 
 ## Task
 ${meta.taskBlock(reflectionGuidance)}
@@ -47,23 +41,18 @@ ${toolSection}`;
 
 /**
  * Builds a prompt for an evidence request — the target MUST use tools to find evidence.
+ * Cut-back sub-agent contract (same as buildQueryPrompt): no SoP, seniority,
+ * round doctrine, or state directives.
  */
 export function buildEvidencePrompt(sourceAgent, targetAgent, sourceContribution, question, roundContributions, currentRound, maxRounds, targetState = null) {
   const safeSourceName = sanitizeForDisplay(sourceAgent.config.name);
   const safeQuestion = sanitizeForDisplay(question);
   const safeContribution = sanitizeForDisplay(sourceContribution);
 
-  const seniorityContext = buildSeniorityContext(
-    targetAgent.config.name, targetAgent.config.tier,
-    sourceAgent.config.name, sourceAgent.config.tier,
-    TIER_ORDER[targetAgent.config.tier] ?? 1,
-    TIER_ORDER[sourceAgent.config.tier] ?? 1,
-  );
-  const roundContext = buildRoundContext(currentRound, maxRounds);
-  const toolSection = buildEvidenceGuidance("evidence");
+  const toolSection = buildSubAgentToolGuidance("evidence");
 
-  const recentMine = getRecentContributionsBlock(roundContributions, targetAgent.config.id, { mineCount: 1, mineBudget: 800, othersCount: 4, othersBudget: 400 });
-  const stateContext = buildTargetPositionContext(targetAgent, targetState);
+  const recentMine = getRecentContributionsBlock(roundContributions, targetAgent.config.id, { mineCount: 0, mineBudget: 0, othersCount: 3, othersBudget: 300 });
+  const stateLine = buildSubAgentStateLine(targetAgent, targetState);
 
   return `## Evidence Request — to ${sanitizeForDisplay(targetAgent.config.name)} (${targetAgent.config.tier}) from ${safeSourceName} (${sourceAgent.config.tier})
 
@@ -71,8 +60,7 @@ ${delimitContext(safeContribution, "PEER_CONTRIBUTION")}
 
 ${delimitContext(safeQuestion, "EVIDENCE_QUESTION")}
 
-${recentMine ? recentMine + "\n\n" : ""}${stateContext ? stateContext + "\n\n" : ""}Seniority: ${seniorityContext}
-Round: ${roundContext}
+${recentMine ? recentMine + "\n\n" : ""}${stateLine}
 
 ## Task
 Provide grounded evidence (${LENGTH_LIMITS.evidenceWords} words). No contribution tags.
@@ -96,8 +84,8 @@ export function buildVotePrompt(sourceAgent, targetAgent, sourceContribution, qu
     500
   );
 
-  const stateContext = buildTargetPositionContext(targetAgent, targetState);
-  const recentMine = getRecentContributionsBlock(roundContributions, targetAgent.config.id, { mineCount: 1, mineBudget: 800, othersCount: 4, othersBudget: 400 });
+  const stateLine = buildSubAgentStateLine(targetAgent, targetState);
+  const recentMine = getRecentContributionsBlock(roundContributions, targetAgent.config.id, { mineCount: 0, mineBudget: 0, othersCount: 3, othersBudget: 300 });
   const roundContext = buildRoundContext(currentRound, maxRounds);
   let sopOptions = "";
   let sopFallbackNote = "";
@@ -118,7 +106,7 @@ ${delimitContext(sourceSnippet.slice(0, 400), "SOURCE_PROPOSAL")}
 
 ${delimitContext(safeQuestion, "VOTE_QUESTION")}
 
-${sopSnippet}${recentMine ? recentMine + "\n" : ""}${stateContext ? stateContext + "\n" : ""}Round: ${roundContext}
+${sopSnippet}${recentMine ? recentMine + "\n" : ""}${stateLine ? stateLine + "\n" : ""}Round: ${roundContext}
 
 ## Task — Cast Your Vote
 
