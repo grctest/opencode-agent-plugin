@@ -115,6 +115,7 @@ export class SynthesisCoordinator {
       }, { maxAttempts: 3, baseDelayMs: 200, maxDelayMs: 2000, retryable: isRetryableError });
       const llmMs = Date.now() - llmStart;
       incrementKeyedCounter("llm_calls_by_type", "synthesis");
+      try { this.#sessionManager.recordCall?.("synthesis"); } catch {}
       recordLatency("synthesis_ms", llmMs);
 
       const text = result.text;
@@ -257,6 +258,8 @@ ${draftForPrompt}`;
            this.#sessionManager.recordTokens?.(r.tokens);
           return r;
         }, { maxAttempts: 3, baseDelayMs: 200, maxDelayMs: 2000, retryable: isRetryableError });
+        try { this.#sessionManager.recordCall?.("synthesis"); } catch {}
+        incrementKeyedCounter("llm_calls_by_type", "synthesis");
         const text2 = result.text;
         if (!text2 || !text2.trim()) return best;
 

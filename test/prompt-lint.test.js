@@ -90,8 +90,8 @@ for (const [label, mutate, activeCount] of [
 
 // 3a. Inline-first patch design: the primary map offers loom_state_patch (the
 // agent's absolutely-last tool use), and there is no dedicated per-turn patch
-// call — a miss falls into the conditional mandatory retry like any other
-// mandatory capability.
+// call and no enforcement retry — a miss is logged and the turn stands;
+// prompt emphasis is the only enforcement.
 test("state patch is offered inline in the primary turn", () => {
   const at = cloneTools();
   const primary = buildToolsMap({ agentTools: at }, { activeCount: 5 });
@@ -286,28 +286,36 @@ test("steering hint precedes the final patch line", () => {
   assert.ok(user.trimEnd().replace(/\}+$/, "").trimEnd().endsWith("is what the room and the end user read."), "prompt must end on the contribution");
 });
 
-// 13. N0 regression guard: enforcement retries harvest tools, never prose.
-test("mandatory retry never overwrites the contribution", () => {
+// 13. No enforcement retry: unmet mandatory capabilities are logged, never
+// re-prompted. A second contract.prompt call solely to enforce a tool use
+// must never return (deliberations stay fast; a miss is the agent's choice).
+test("no mandatory enforcement call exists", () => {
   const src = readFileSync(join(SRC, "round-executor", "agent", "execute-turn.js"), "utf-8");
-  assert.doesNotMatch(src, /finalText = retryResponse\.text/);
-  assert.match(src, /mandatory_retry_text_ignored/);
+  assert.doesNotMatch(src, /mandatoryInstruction/);
+  assert.doesNotMatch(src, /mandatory_capability_retry/);
+  assert.doesNotMatch(src, /mandatory_retry_text_ignored/);
+  assert.match(src, /mandatory_capability_missed/);
+  // Synthesis-displacement guards stay: a short synthesis must never replace
+  // the primary contribution.
   assert.match(src, /synthesis_too_short/);
+  assert.match(src, /synthesis_empty/);
 });
 
-// 13b. No dedicated per-turn patch call: the patch is offered inline and a
-// miss falls into the conditional mandatory retry, like any other mandatory
-// capability. A second unconditional LLM call per turn must never return.
+// 13b. No dedicated per-turn patch call and no enforcement retry: the patch
+// is offered inline and a miss is logged, like any other mandatory
+// capability. A second LLM call per turn must never return.
 test("no dedicated per-turn state-patch LLM call exists", () => {
   const src = readFileSync(join(SRC, "round-executor", "agent", "execute-turn.js"), "utf-8");
   assert.doesNotMatch(src, /omitStatePatch: true/);
   assert.doesNotMatch(src, /patchToolsMap = \{ loom_state_patch: true \}/);
   assert.doesNotMatch(src, /state_patch_final/);
   assert.doesNotMatch(src, /one and only loom_state_patch call for this turn/);
-  // The miss joins the mandatory list instead.
+  // The miss joins the miss list for logging instead of a retry.
   assert.match(src, /State: call loom_state_patch once, as your final action/);
-  // The retry map offers the patch tool for the miss case.
+  assert.match(src, /mandatory_capability_missed/);
+  // No enforcement map offers the patch tool for a miss case.
   const toolsSrc = readFileSync(join(SRC, "round-executor", "tools.js"), "utf-8");
-  assert.match(toolsSrc, /includeStatePatch/);
+  assert.doesNotMatch(toolsSrc, /includeStatePatch/);
 });
 
 // 14. Pass needs no patch — stated where the model decides.

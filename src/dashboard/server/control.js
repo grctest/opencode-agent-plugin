@@ -475,10 +475,10 @@ function validateParticipants(list) {
 const FEATURE_MODES = new Set(["disabled", "optional", "mandatory"]);
 
 // SKILL.state is an off/on toggle, not a 3-state mode: when on, every
-// non-pass turn must end with loom_state_patch as the agent's absolutely-last
-// inline tool call. There is no "optional" timing and no dedicated follow-up
-// call — a miss falls into the conditional mandatory retry, so the prompt
-// wording is always REQUIRED when on.
+// non-pass turn ends with loom_state_patch as the agent's absolutely-last
+// inline tool call. Prompt emphasis is the only enforcement — a miss is
+// logged and the turn stands, so the prompt wording is always REQUIRED
+// when on.
 const SKILL_STATE_MODES = new Set(["on", "off"]);
 
 function normalizeFeatureMode(value, fallback = "optional") {
@@ -557,7 +557,6 @@ function buildMeetingAgentTools(features, base = getConfig().agentTools) {
     localSearch: features.localSearch === "mandatory",
     onlineResearch: features.onlineResearch === "mandatory",
   };
-  tools.patchRetry = skillStateOn;
   tools.parallelQueries = features.parallelQueries !== false;
   return tools;
 }

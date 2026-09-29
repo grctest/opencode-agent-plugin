@@ -255,7 +255,7 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
                 const cfg = config.get();
                 const warnings = config.getWarnings();
                 const source = config.getSource();
-                result.config = { values: cfg, warnings, source, dormantNote: "maxTurnRequestsPerRound/maxTurnRequestWords/turnRequestThresholds.autoGrant/agentTools.loom.loom_evidence/agentTools.loom.loom_type removed — ordering is planTurnOrder, primary turns are untyped, loom_query mode evidence covers evidence" };
+                result.config = { values: cfg, warnings, source, dormantNote: "maxTurnRequestsPerRound/maxTurnRequestWords/turnRequestThresholds.autoGrant/agentTools.loom.loom_evidence/agentTools.loom.loom_type/agentTools.patchRetry removed — ordering is planTurnOrder, primary turns are untyped, loom_query mode evidence covers evidence, no enforcement follow-up call exists" };
               } catch {}
             }
             return JSON.stringify(result, null, 2);

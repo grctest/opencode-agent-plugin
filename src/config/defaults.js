@@ -83,13 +83,12 @@ export const DEFAULT_CONFIG = {
       loom_state_patch: true,
     },
     sameTurnSynthesis: true,
-    patchRetry: true,
     // Capability policy — single default shared with the Setup tab
     // (control.js SKILL_STATE_MODES). skillState:true means the SKILL.state
-    // toggle is on: every non-pass turn must end with loom_state_patch as the
-    // agent's absolutely-last inline tool call (no dedicated follow-up call;
-    // a miss falls into the conditional mandatory retry). The four salience
-    // surfaces in prompts/agent.js (contract item 8, tool-list line, guidance
+    // toggle is on: every non-pass turn ends with loom_state_patch as the
+    // agent's absolutely-last inline tool call. Prompt emphasis is the only
+    // enforcement — a miss is logged and the turn stands (no follow-up call).
+    // The salience surfaces in prompts/agent.js (contract item 8, guidance
     // bullet, final line) all render REQUIRED whenever the tool is enabled.
     mandatory: {
       forums: false,
@@ -152,7 +151,6 @@ export const NESTED_SCHEMA = {
   'agentTools.loom.loom_forum': { type: 'boolean' },
   'agentTools.loom.loom_state_patch': { type: 'boolean' },
   'agentTools.sameTurnSynthesis': { type: 'boolean' },
-  'agentTools.patchRetry': { type: 'boolean' },
   'agentTools.mandatory.forums': { type: 'boolean' },
   'agentTools.mandatory.skillState': { type: 'boolean' },
   'agentTools.mandatory.agentQueries': { type: 'boolean' },
@@ -177,4 +175,5 @@ export const DEPRECATED_KEYS = {
   'agentTools.loom.loom_evidence': 'merged into loom_query with mode evidence — use loom_query with mode evidence instead',
   'agentTools.loom.loom_type': 'removed — primary agent turns are no longer typed, following agents interpret content directly',
   'agentTools.loom.loom_vector_search': 'removed — use loom_forum or loom_query for prior context; fabric RAG deleted',
+  'agentTools.patchRetry': 'removed — no enforcement follow-up call exists; mandatory flags drive prompt emphasis only, a miss is logged and the turn stands',
 };

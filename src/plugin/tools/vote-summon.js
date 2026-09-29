@@ -206,6 +206,7 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
                 signal: context.abort,
                 abort: context.abort,
               }, meetingInfo.meetingId);
+              try { engine.getRoundExecutor?.()?.recordSubAgentCall?.(1); } catch {}
                if (!res.ok) throw res.error;
                              const { text } = extractAgentResponse(res.data);
                if (!text || text.trim().length < 5) {
@@ -388,6 +389,7 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
             signal: context.abort,
             abort: context.abort,
           }, meetingInfo.meetingId);
+          try { engine.getRoundExecutor?.()?.recordSubAgentCall?.(1); } catch {}
            if (!res.ok) return { output: JSON.stringify({ error: res.error?.message ?? "summon prompt failed" }), metadata: { error: true }, title: "loom_summon error" };
                      const { text, toolResults } = extractAgentResponse(res.data);
           const content = (text ?? "").slice(0,1200);

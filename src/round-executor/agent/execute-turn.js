@@ -74,10 +74,10 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
     const effectiveAgentTools = this.getEffectiveAgentTools?.() ?? this._options?.agentTools ?? this._tools ?? config.agentTools;
     const effectiveConfig = { ...config, agentTools: effectiveAgentTools };
     // loom_state_patch IS offered inline in the primary turn: the agent's
-    // absolutely-last tool use must be the patch (see OUTPUT CONTRACT), so it
+    // absolutely-last tool use is the patch (see OUTPUT CONTRACT), so it
     // is maximally up to date. No dedicated per-turn LLM call exists for
-    // patching — a missed patch falls into the conditional mandatory retry
-    // below, exactly like any other mandatory capability.
+    // patching and no enforcement retry follows — a miss is logged and the
+    // turn stands.
     const toolsMap = buildToolsMap(effectiveConfig, { activeCount: activeCountExec });
     const agentToolsConfig = effectiveAgentTools;
 
@@ -173,6 +173,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
         this._logger.info("synthesis_prompt", `Same-turn synthesis for ${participant.config.name} with ${loomSynthesisCalls.length} loom result(s)`, { tools: loomSynthesisCalls.map(t=>t.tool) });
         const synthStart = Date.now();
         synthRan = true;
+        this._callStats.agent_prompts++;
         const result2 = await this._sessionManager.getContract().prompt({
           sessionId: ephemeralSessionId,
           system: promptContext.system_prompt,
@@ -233,10 +234,10 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
     }
 
     // SKILL.state: loom_state_patch is offered inline in the primary turn
-    // (see toolsMap above) and must be the agent's absolutely-last tool use,
-    // so it is maximally up to date. A missed patch falls into the
-    // mandatory-capability retry below, exactly like any other mandatory
-    // capability — there is no dedicated per-turn patch call.
+    // (see toolsMap above) as the agent's absolutely-last tool use. Prompt
+    // emphasis is the only enforcement: a miss is logged below and the turn
+    // still succeeds (prose is preserved) — there is deliberately no
+    // follow-up LLM call, so deliberations stay fast.
     const patchEnabled = !!agentToolsConfig?.enabled && !!agentToolsConfig?.loom?.loom_state_patch;
     const mandatoryCapabilities = agentToolsConfig?.mandatory ?? {};
     let statePatchVersion = (() => {
@@ -245,79 +246,31 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
     })();
     const hasSuccessfulTool = (toolName) => (finalToolResults ?? []).some((t) => t.tool === toolName && t.status !== "error" && t.output != null);
     const hasSuccessfulOneOf = (toolNames) => toolNames.some((toolName) => hasSuccessfulTool(toolName));
+    // Miss visibility without a follow-up call: unmet mandatory capabilities
+    // are logged so skips stay visible in logs; the turn is never re-prompted.
     const missingMandatory = [];
     if (mandatoryCapabilities.forums && !hasSuccessfulOneOf(["loom_forum_create_topic", "loom_forum_list_topics", "loom_forum_read_topic", "loom_forum_add_comment"])) missingMandatory.push("Forums: call loom_forum_list_topics, loom_forum_read_topic, loom_forum_create_topic, or loom_forum_add_comment");
-    // SKILL.state patch-miss joins the mandatory retry like any other
-    // mandatory capability: no applied patch this turn means the retry asks
-    // for exactly one loom_state_patch call. Pass turns are exempt (below).
+    // A missing SKILL.state patch joins the miss list like any other
+    // mandatory capability. Pass turns are exempt (below).
     const patchApplied = (finalToolResults ?? []).some((t) => t.tool === "loom_state_patch" && t.metadata?.applied === true);
     if (patchEnabled && !loomPassCall && !patchApplied) missingMandatory.push("State: call loom_state_patch once, as your final action — project stance + 1-3 bullets so they survive into your next turn");
     if (mandatoryCapabilities.agentQueries && Number.isFinite(activeCountExec) && activeCountExec > 1 && !hasSuccessfulOneOf(["loom_query", "loom_vote", "loom_summon", "loom_request_next"])) missingMandatory.push("Agent-to-agent: call loom_query, loom_vote, loom_summon, or loom_request_next with an eligible peer");
     if (mandatoryCapabilities.localSearch && !hasSuccessfulOneOf(["read", "glob", "grep"])) missingMandatory.push("Local search: call read, glob, or grep");
     if (mandatoryCapabilities.onlineResearch && !hasSuccessfulOneOf(["websearch", "webfetch"])) missingMandatory.push("Online research: call websearch or webfetch");
     if (!loomPassCall && missingMandatory.length > 0) {
-      if (timeoutMs !== 0) {
-        try {
-          const mandatoryInstruction = `This turn has unmet mandatory capabilities: ${missingMandatory.join("; ")}. Complete every applicable requirement now, using the exact tool names and valid targets. Do not repeat the prose — make ONLY the required tool call(s). Your earlier contribution is already recorded; no replacement prose is needed.`;
-          this._logger.info("mandatory_capability_retry", `Requesting mandatory capability retry for ${participant.config.name}`, { participant: participant.config.id, round: currentRound, missing: missingMandatory });
-          // Loom-free map: this retry satisfies a capability, it must not open a
-          // new peer interaction with no synthesis pass to fold it in (audit B8).
-          // loom_request_next (fire-and-forget, no peer answers) and the forum
-          // tools stay available. loom_state_patch IS available here: a missed
-          // inline patch is retried exactly like any other missed mandatory
-          // capability — there is no separate per-turn patch call.
-          // loom_query/vote/summon stay off: their answers would arrive with
-          // no synthesis pass to fold them in.
-          // Same-session follow-up: user prompt already in history (audit B2).
-          const mandatoryToolsMap = buildToolsMapWithoutLoom(effectiveConfig, { activeCount: activeCountExec, includeStatePatch: true });
-          const resultM = await this._sessionManager.getContract().prompt({
-            sessionId: ephemeralSessionId,
-            system: promptContext.system_prompt,
-            model,
-            parts: [
-              ...(result1?.data?.parts ?? []).filter((p) => p.type === "text" && p.text).slice(-1).map((p) => ({ type: "text", text: p.text })),
-              { type: "text", text: mandatoryInstruction },
-            ],
-            tools: mandatoryToolsMap,
-            toolChoice: Object.keys(mandatoryToolsMap).length > 0 ? "auto" : undefined,
-            timeoutMs,
-            signal: abortController.signal,
-          });
-          if (resultM.ok) {
-            this._recordTokens(resultM);
-            const retryResponse = extractAgentResponse(resultM.data);
-            const effectiveM = truncateToolResults(retryResponse.toolResults ?? [], agentToolsConfig);
-            if (effectiveM.length > 0) finalToolResults = truncateToolResults([...finalToolResults, ...effectiveM], agentToolsConfig);
-            // Enforcement retries harvest tool calls only: the retry instruction
-            // tells the model not to repeat the prose, so its text must never
-            // displace the primary contribution (audit N0 — a compliant model
-            // returns a one-line filler that would silently replace full prose).
-            if (retryResponse.text && retryResponse.text.trim().length > 0) {
-              try {
-                this._logger.debug("mandatory_retry_text_ignored", `Ignoring ${retryResponse.text.trim().length}-char prose from mandatory retry for ${participant.config.name} — primary contribution preserved`, { participant: participant.config.id, round: currentRound });
-              } catch {}
-            }
-          } else {
-            this._logger.warn("mandatory_capability_retry_failed", `Mandatory capability retry failed for ${participant.config.name}: ${resultM.error?.message ?? "unknown"}`, { participant: participant.config.id, round: currentRound, missing: missingMandatory });
-          }
-        } catch (e) {
-          this._logger.warn("mandatory_capability_retry_error", `Mandatory capability retry error for ${participant.config.name}: ${e?.message ?? e}`, { participant: participant.config.id, round: currentRound, missing: missingMandatory });
-        }
-      }
+      this._logger.info("mandatory_capability_missed", `Unmet mandatory capabilities for ${participant.config.name} — turn stands as-is, no follow-up call`, { participant: participant.config.id, round: currentRound, missing: missingMandatory });
     }
 
-    // No dedicated per-turn patch call: the patch is offered inline in the
-    // primary turn (and in the mandatory retry above on a miss), exactly like
-    // any other mandatory capability. A missed patch leaves state at its prior
-    // version and the turn still succeeds (prose is preserved).
+    // No dedicated per-turn patch call and no enforcement retry: the patch is
+    // offered inline in the primary turn. A missed patch leaves state at its
+    // prior version and the turn still succeeds (prose is preserved).
 
     // Per-turn patch outcome (§5.10 observability, made legible). "No patch"
     // has several distinct causes that a single counter collapses. Recording
     // the cause lets the dashboard explain coverage without anyone reading
     // logs. Ordered by specificity.
-    // Refresh the applied version from the FINAL tool results: the mandatory
-    // retry above may have applied the patch after the pre-retry computation.
-    // Without this refresh a retry-applied patch misrecords as "unverified".
+    // Refresh the applied version from the FINAL tool results (single pass —
+    // no follow-up call can land a patch after this point).
     const retryHit = (finalToolResults ?? []).find((t) => t.tool === "loom_state_patch" && t.metadata?.applied === true);
     if (retryHit) statePatchVersion = retryHit.metadata?.version ?? statePatchVersion;
     const patchAttempted = (finalToolResults ?? []).some((t) => t.tool === "loom_state_patch");

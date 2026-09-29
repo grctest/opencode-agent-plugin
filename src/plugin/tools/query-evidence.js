@@ -202,8 +202,8 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
                // Persona reflection lens for perspective answers (audit N2/P2-G).
                const perspectiveGuidance = mode === "perspective" && typeof target?.config?.reflection_guidance === "string"
                  ? target.config.reflection_guidance.trim().slice(0, 400) : "";
-               const systemPrompt = meta.systemPrompt(target, perspectiveGuidance);
-                const res = await sessionManager.runEphemeralPrompt(target, {
+                const systemPrompt = meta.systemPrompt(target, perspectiveGuidance);
+                 const res = await sessionManager.runEphemeralPrompt(target, {
                   system: systemPrompt,
                   model,
                   parts: [{ type: "text", text: prompt }],
@@ -215,7 +215,8 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
                   signal: context.abort,
                   abort: context.abort,
                 }, meetingInfo.meetingId);
-               if (!res || !res.ok) return { target, mode, kind: "error", error: res?.error?.message ?? "prompt failed" };
+                try { engine.getRoundExecutor?.()?.recordSubAgentCall?.(1); } catch {}
+                if (!res || !res.ok) return { target, mode, kind: "error", error: res?.error?.message ?? "prompt failed" };
                const { text, toolResults } = extractAgentResponse(res.data);
                // Sentence-boundary truncation with ellipsis, not a mid-word UTF-16
                // slice that can cut mid-sentence or mid-surrogate-pair (audit B7).
@@ -288,9 +289,9 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
                    target.reflectionHistory.push({ round: currentRound, text: trimmed, at: Date.now() });
                    if (target.reflectionHistory.length > 5) target.reflectionHistory.shift();
                    db.setParticipantReflection(target.config.id, trimmed);
-                   // SKILL.state single-source-of-truth (§5.7): mark dirty so the
-                   // responder's next mandatory loom_state_patch picks the position
-                   // up as stance (one-turn lag max, no extra LLM call).
+                    // SKILL.state single-source-of-truth (§5.7): mark dirty so the
+                    // responder's next loom_state_patch picks the position
+                    // up as stance (one-turn lag max, no extra LLM call).
                    try { stateManager.markStateDirty?.(target.config.id); } catch {}
                  } catch {}
                }

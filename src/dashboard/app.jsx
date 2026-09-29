@@ -279,7 +279,7 @@ export function App() {
   const meetings = useMeetingsList();
   const { resetKey } = useSSEReset(selectedMeeting);
   const embeddingStatus = useEmbeddingStatus();
-  const { state, participants, contributions, turnRequests, orchestratorMessages, roundSummaries, agentErrors, artifact, forumTopics, statePatchSummary, error } = useMeetingApi(selectedMeeting, resetKey, meetings, setSelectedMeeting);
+  const { state, participants, contributions, turnRequests, orchestratorMessages, roundSummaries, agentErrors, artifact, forumTopics, error } = useMeetingApi(selectedMeeting, resetKey, meetings, setSelectedMeeting);
    const { rateLimit, dismiss: dismissRateLimit } = useRateLimit();
    useEffect(() => {
      if (state?.rate_limit_state) {
@@ -436,14 +436,12 @@ export function App() {
                     <OverviewTab
                       state={state}
                       contributions={contributions}
-                      turnRequests={turnRequests}
                       participants={participants}
                       agentErrors={agentErrors}
                       orchestratorMessages={orchestratorMessages}
                       participantName={participantName}
                       totalRounds={totalRounds}
                       activeRound={activeRound}
-                      statePatchSummary={statePatchSummary}
                     />
                   )}
                 </ErrorBoundary>

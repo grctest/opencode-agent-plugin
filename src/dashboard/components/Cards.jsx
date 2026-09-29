@@ -26,7 +26,7 @@ export function renderMarkdown(content) {
   // Repair LLM pipe-tables missing the GFM delimiter row (| --- | … |) —
   // without it marked emits raw pipe text instead of a <table>.
   const raw = marked.parse(normalizePipeTables(content), { async: false });
-  const sanitized = DOMPurify.sanitize(raw, { FORBID_TAGS: ["svg", "math", "style", "script", "iframe", "object", "embed", "form", "input", "link", "img", "meta", "video", "base", "audio", "template"], FORBID_ATTR: ["style"] });
+  const sanitized = DOMPurify.sanitize(raw, { FORBID_TAGS: ["a", "svg", "math", "style", "script", "iframe", "object", "embed", "form", "input", "link", "img", "meta", "video", "base", "audio", "template"], FORBID_ATTR: ["style"] });
   mdCache.set(content, sanitized);
   while (mdCache.size > MD_CACHE_MAX) {
     const firstKey = mdCache.keys().next().value;

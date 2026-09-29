@@ -49,7 +49,7 @@ export class RoundExecutor {
     this._failureCounts = new Map();
     this._modelFailureTimes = new Map();
     this._logger = new Logger();
-    this._callStats = { agent_prompts: 0, reflection_calls: 0, input_tokens: 0, output_tokens: 0 };
+    this._callStats = { agent_prompts: 0, reflection_calls: 0, sub_agent_calls: 0, input_tokens: 0, output_tokens: 0 };
     const cbConfig = getConfig().circuitBreaker;
     this._circuitBreaker = new CircuitBreaker({
       failureThreshold: cbConfig.failureThreshold,
@@ -77,6 +77,14 @@ export class RoundExecutor {
 
   getCallStats() {
     return { ...this._callStats };
+  }
+
+  recordAgentPrompt(n = 1) {
+    this._callStats.agent_prompts += n;
+  }
+
+  recordSubAgentCall(n = 1) {
+    this._callStats.sub_agent_calls += n;
   }
 
   getEffectiveAgentTools() {

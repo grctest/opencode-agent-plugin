@@ -95,12 +95,12 @@ export function buildAgentSystemPrompt(participant, { activeCount, agentTools, c
    const agentToolsConfig = getEffectiveAgentTools(agentTools) ?? {};
    const mandatoryCapabilities = agentToolsConfig?.mandatory ?? {};
    const statePatchEnabled = !!(agentToolsConfig?.enabled && agentToolsConfig?.loom?.loom_state_patch);
-   // SKILL.state is an off/on toggle: when the tool is enabled the patch is
-   // always the turn's final action (inline in the primary turn, enforced by
-   // contract item 8 + the conditional mandatory retry). mandatory.skillState
-   // is kept as the wire flag for "on" (server maps features.skillState ===
-   // "on" to true); a legacy false with the tool enabled still gets the
-   // REQUIRED wording because the retry covers a miss regardless.
+    // SKILL.state is an off/on toggle: when the tool is enabled the patch is
+    // always the turn's final action (inline in the primary turn, emphasized
+    // by contract item 8). mandatory.skillState
+    // is kept as the wire flag for "on" (server maps features.skillState ===
+    // "on" to true); a legacy false with the tool enabled still gets the
+    // REQUIRED wording because prompt emphasis is the only enforcement.
    const statePatchMandatory = statePatchEnabled;
    const forumMandatory = !!(agentToolsConfig?.enabled && agentToolsConfig?.loom?.loom_forum && mandatoryCapabilities.forums);
     const queryMandatory = !!(agentToolsConfig?.enabled && agentToolsConfig?.loom?.loom_query && mandatoryCapabilities.agentQueries);
@@ -144,9 +144,10 @@ ${isBuildModeGlobal
         if (loom.loom_request_next && !isSolo) tools.push('loom_request_next');
         if (loom.loom_pass) tools.push('loom_pass');
         // loom_state_patch IS offered inline in the primary turn: the agent's
-        // absolutely-last tool use must be the patch (see OUTPUT CONTRACT),
+        // absolutely-last tool use is the patch (see OUTPUT CONTRACT),
         // so it is maximally up to date. No dedicated per-turn patch call
-        // exists — a miss falls into the conditional mandatory retry.
+        // exists and no enforcement retry follows — a miss is logged and
+        // the turn stands.
         if (loom.loom_state_patch) tools.push('loom_state_patch');
         if (loom.loom_forum) {
           tools.push('loom_forum_create_topic', 'loom_forum_list_topics', 'loom_forum_read_topic', 'loom_forum_add_comment');

@@ -29,6 +29,7 @@ export class SessionManager {
   #orchestratorSessionId = null;
   #database = null;
   #tokenRecorder = null;
+  #callRecorder = null;
 
   constructor(client, directory, parentSessionId, logger = null) {
     this.#client = client;
@@ -54,8 +55,18 @@ export class SessionManager {
     this.#tokenRecorder = typeof recorder === "function" ? recorder : null;
   }
 
+  setCallRecorder(recorder) {
+    this.#callRecorder = typeof recorder === "function" ? recorder : null;
+  }
+
   recordTokens(tokens) {
     if (tokens) this.#tokenRecorder?.(tokens);
+  }
+
+  recordCall(type) {
+    if (type) {
+      try { this.#callRecorder?.(type); } catch {}
+    }
   }
 
   getParentSessionId() {

@@ -83,7 +83,9 @@ export async function _synthesize() {
       };
     }
 
-    this._callStats.synthesis++;
+    // Synthesis LLM calls are recorded per-call via SessionManager call
+    // recorder (draft + critique passes in SynthesisCoordinator), not as a
+    // flat +1 here — a single synthesis runs 2+ prompts.
     await this._persistState();
 
     // Append partial-deliberation footnote if agents failed before completing all rounds

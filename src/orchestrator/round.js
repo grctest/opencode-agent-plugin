@@ -339,7 +339,19 @@ export async function _persistState() {
 
 export function _getMergedStats() {
     const roundStats = this._roundExecutor?.getCallStats() ?? {};
-    return { ...this._callStats, ...roundStats };
+    const out = { ...this._callStats };
+    for (const [key, value] of Object.entries(roundStats)) {
+      if (key === "input_tokens" || key === "output_tokens") {
+        // Sum tokens across orchestrator (incl. sub-agent + synthesis via
+        // token recorder) and agent turns — spread would drop one side.
+        out[key] = (Number(out[key]) || 0) + (Number(value) || 0);
+      } else if (typeof out[key] === "number" && typeof value === "number") {
+        out[key] = out[key] + value;
+      } else {
+        out[key] = value;
+      }
+    }
+    return out;
   }
 
 export function _logError(context, error) {

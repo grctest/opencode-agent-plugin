@@ -27,6 +27,10 @@ import { extractErrorInfo } from "../logger.js";
       this._sessionManager = new SessionManager(this._client, this._directory, this._parentSessionId, this._logger);
        this._sessionManager.setDatabase(db);
        this._sessionManager.setTokenRecorder((tokens) => this.recordTokens(tokens));
+       this._sessionManager.setCallRecorder((type) => {
+         if (!type) return;
+         this._callStats[type] = (this._callStats[type] ?? 0) + 1;
+       });
        this._synthesisCoordinator = new SynthesisCoordinator(this._sessionManager, this._options.orchestratorConfig);
 
       // Ensure the meeting row exists BEFORE indexing personas.

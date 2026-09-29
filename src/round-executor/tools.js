@@ -21,8 +21,8 @@ export function buildToolsMap(config, { activeCount, omitStatePatch = false } = 
     if (loom.loom_pass) toolsMap.loom_pass = true;
     // State patch is offered inline (omitStatePatch stays for callers that
     // must not offer it, e.g. synthesis/recovery passes). The agent's
-    // absolutely-last tool use must be the patch; a miss falls into the
-    // conditional mandatory retry, exactly like any other mandatory tool.
+    // absolutely-last tool use is the patch; a miss is logged and the turn
+    // stands — prompt emphasis is the only enforcement.
     if (loom.loom_state_patch && !omitStatePatch) toolsMap.loom_state_patch = true;
     if (loom.loom_forum) {
       toolsMap.loom_forum_create_topic = true;
@@ -34,7 +34,7 @@ export function buildToolsMap(config, { activeCount, omitStatePatch = false } = 
   return toolsMap;
 }
 
-export function buildToolsMapWithoutLoom(config, { activeCount, includeStatePatch = false } = {}) {
+export function buildToolsMapWithoutLoom(config, { activeCount } = {}) {
   const agentToolsConfig = config.agentTools;
   const toolsMap = {};
   if (agentToolsConfig?.enabled) {
@@ -55,11 +55,11 @@ export function buildToolsMapWithoutLoom(config, { activeCount, includeStatePatc
       toolsMap.loom_forum_read_topic = true;
       toolsMap.loom_forum_add_comment = true;
     }
-    // State-patch retry: the patch is not a peer interaction, so the audit-B8
-    // rationale that keeps query/vote/summon out of this map does not apply.
-    // Included only when the caller explicitly asks (mandatory retry) — never
-    // for synthesis or recovery passes.
-    if (includeStatePatch && loom.loom_state_patch) toolsMap.loom_state_patch = true;
+    // loom_query/vote/summon stay out of this map: synthesis and recovery
+    // passes must not open a new peer interaction with no further pass to
+    // fold the answers in (audit B8). loom_request_next (fire-and-forget)
+    // and the forum tools stay available. loom_state_patch stays out too:
+    // a synthesis/recovery pass must never rewrite the agent's notes.
   }
   return toolsMap;
 }

@@ -267,6 +267,7 @@ export async function promptChildSession(participant) {
     this._logger.info("synthesis_recovery", `Attempting synthesis recovery for ${participant.config.name} with ${existing.length} existing loom result(s)`, { batchId: participant.currentBatchId, existingCount: existing.length, remainingMs: synthRemaining });
      let result2;
     try {
+      try { this._callStats.agent_prompts++; } catch {}
       result2 = await this._sessionManager.getContract().prompt({
         sessionId: ephemeralSessionId,
         system: promptContext.system_prompt,
@@ -289,6 +290,7 @@ export async function promptChildSession(participant) {
         this._logger.warn("synthesis_recovery_failed", `Synthesis recovery prompt failed for ${participant.config.name}: ${result2.error?.message ?? "unknown"}`);
         return null;
       }
+      try { this._recordTokens?.(result2); } catch {}
       // Reuse already-imported helpers (avoid dynamic import overhead in recovery path)
       const ear = extractAgentResponse;
       const mtr = mapToolResults;
