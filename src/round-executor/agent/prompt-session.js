@@ -8,6 +8,7 @@ import { selectFallbackModel } from "../../services/model-service.js";
 import { incrementKeyedCounter, recordLatency } from "../../metrics.js";
 import { extractErrorInfo } from "../../logger.js";
 import { buildToolsMap, buildToolsMapWithoutLoom } from "../tools.js";
+import { buildEvidenceCache } from "../../evidence-cache.js";
 
 
 export async function promptChildSession(participant) {
@@ -87,6 +88,19 @@ export async function promptChildSession(participant) {
       .slice(0, 12);
   } catch {}
 
+  // Shared evidence cache (P5): read the meeting's tool_audit log once per turn
+  // and build the (normalized query → result digest) cache the agent sees as the
+  // *Prior Searches* block. Read-side only — tool_audit is written by the tool
+  // hooks; this never writes. Empty on round 1 (nothing searched yet) or when the
+  // DB is unavailable, so flag-off prompts stay byte-identical.
+  let evidenceCache = [];
+  try {
+    const dbForCache = this._db ?? this._stateManager?.getDatabase?.() ?? null;
+    if (dbForCache && typeof dbForCache.getToolAudits === "function") {
+      evidenceCache = buildEvidenceCache(dbForCache.getToolAudits() ?? []);
+    }
+  } catch { evidenceCache = []; }
+
   const activeCountPS = (() => { try { return this._stateManager.getActiveParticipants().length; } catch { return undefined; }})();
   // Assigned-model context window for the prompt's window claim (audit 3.4).
   // Unknown models yield null and builders keep their default text unchanged.
@@ -144,15 +158,16 @@ export async function promptChildSession(participant) {
        steeringHint,
        // Previous round's clerk summary (rounds ≥2 only) — already paid for,
        // already high quality; routed to agents instead of only the dashboard.
-       lastRoundSummary: (() => {
-         try {
-           if (currentRound <= 1) return "";
-           const rounds = this._stateManager.getRounds?.() ?? [];
-           const prev = rounds.filter((r) => r.number === currentRound - 1).pop() ?? [...rounds].pop();
-           return String(prev?.summary ?? "").trim();
-         } catch { return ""; }
-       })(),
-     },
+        lastRoundSummary: (() => {
+          try {
+            if (currentRound <= 1) return "";
+            const rounds = this._stateManager.getRounds?.() ?? [];
+            const prev = rounds.filter((r) => r.number === currentRound - 1).pop() ?? [...rounds].pop();
+            return String(prev?.summary ?? "").trim();
+          } catch { return ""; }
+        })(),
+        evidenceCache,
+      },
    );
   const userPrompt = userPromptBase;
 

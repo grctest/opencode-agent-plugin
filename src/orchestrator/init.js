@@ -33,11 +33,9 @@ import { extractErrorInfo } from "../logger.js";
        });
        this._synthesisCoordinator = new SynthesisCoordinator(this._sessionManager, this._options.orchestratorConfig);
 
-      // Ensure the meeting row exists BEFORE indexing personas.
-      // The persona_embeddings table has a FK to meetings(id), so the meeting
-      // must be inserted first.  Use upsertMeeting (UPDATE when already present
-      // from the dashboard composition phase) to avoid cascade-deleting the
-      // persona embeddings that were just stored.
+      // Ensure the meeting row exists before any state is recorded against it.
+      // Use upsertMeeting (UPDATE when already present from the dashboard
+      // composition phase) to avoid cascade-deleting meeting-scoped rows.
       if (this._resume) {
         const restored = restoreStateFromDb({
           db,
@@ -81,63 +79,14 @@ import { extractErrorInfo } from "../logger.js";
         this._logger.warn("embedder_init_failed", `Failed to initialize embedding model: ${err.message}`, extractErrorInfo(err));
       }
 
-      // Index personas into the meeting database for vector similarity search.
-      // Skip if already indexed for this meeting (per-meeting scoping).
-      const { isEmbedderInitialized, getEmbeddingDim } = await import("../services/embedding-service.js");
-      if (isEmbedderInitialized()) {
-        try {
-          this._personaIndex = new PersonaIndex(db);
-          const activeModel = this._options.embedding_model ?? getConfig().embeddingModel ?? null;
-          let activeDim = null;
-          try { activeDim = getEmbeddingDim(); } catch {}
-          const needsIndex = async () => {
-            if (db.countPersonaEmbeddings() === 0) return "empty";
-            // Reuse only when the stamped geometry matches the active model:
-            // after an embedding-model upgrade, old vectors target reflections
-            // wrongly (or the dim table is empty → silent keyword fallback).
-            let stamped = null;
-            let stampedDim = null;
-            try {
-              const m = db.getMeeting();
-              stamped = m?.embedding_model ?? null;
-              stampedDim = m?.embedding_dim ?? null;
-            } catch {}
-            const norm = (v) => v ?? null;
-            if (norm(stamped) !== norm(activeModel) || Number(norm(stampedDim)) !== Number(norm(activeDim))) {
-              return "model_mismatch";
-            }
-            return null;
-          };
-          const reason = await needsIndex();
-          if (reason) {
-            if (reason === "model_mismatch") {
-              this._logger.info("persona_embeddings_stale", "Stored persona vectors were built with a different embedding model — reindexing");
-              try { db.clearPersonaEmbeddings(); } catch {}
-            }
-            const personas = getPersonas();
-            await this._personaIndex.indexAll(personas);
-            try { db.setEmbeddingModel(activeModel, activeDim); } catch {}
-            if (db.countPersonaEmbeddings() > 0) {
-              try { db.setSemanticDegraded(false); } catch {}
-            }
-          } else {
-            this._logger.info("personas_already_indexed", "Persona embeddings already present for this meeting");
-          }
-        } catch (err) {
-          this._logger.warn("persona_index_failed", "Failed to index personas for vector search", extractErrorInfo(err));
-        }
-
-        // Load persona embeddings onto participant objects for reflection targeting
-        try {
-          const participants = this._stateManager.getParticipants();
-          const names = participants.map((p) => p.config.name);
-          const embeddingMap = db.getPersonaEmbeddingsByNames(names);
-          for (const p of participants) {
-            this._stateManager.setParticipantEmbedding(p.config.id, embeddingMap.get(p.config.name) ?? null);
-          }
-        } catch (err) {
-          this._logger.warn("embedding_load_failed", "Failed to load embeddings onto participants", extractErrorInfo(err));
-        }
+      // Index personas into the process-scoped in-memory store for similarity
+      // search. Skipped internally when the model and catalog are unchanged.
+      try {
+        const personaIndex = new PersonaIndex();
+        const personas = getPersonas();
+        await personaIndex.indexAll(personas);
+      } catch (err) {
+        this._logger.warn("persona_index_failed", "Failed to index personas for similarity search", extractErrorInfo(err));
       }
 
       // Transition first, then persist — the DB must never lag the in-memory status

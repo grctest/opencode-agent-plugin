@@ -175,7 +175,7 @@ export class SynthesisCoordinator {
         const fileMentions = [];
         for (const r of earlier) {
           for (const c of (r.contributions || [])) {
-             if (c.type === "challenge" || c.type === "dissent" || c.type === "critique_response" || c.type === "perspective_response" || /\b(challenge|dissent|disagree|concern|oppose|dispute|contradict|risk|flaw|weakness)\b/i.test(String(c.content ?? ""))) contested.push(c);
+             if (c.type === "critique_response" || c.type === "perspective_response") contested.push(c);
             if (/(?:file\s*=\s*[^\s]+\.\w+|src\/[^\s]+\.\w+|\b\w+\.(?:tsx|ts|js|jsx)\b|```)/i.test(String(c.content))) fileMentions.push(c);
           }
         }
@@ -209,17 +209,15 @@ export class SynthesisCoordinator {
     // No style-framing sentence here: the 8-point checklist below is the
     // substantive instruction, and re-asserting the framing would compete with
     // it for attention (audit O11). The effective style already governs the draft.
-    let critiquePrompt = `You are a synthesis auditor reviewing your own synthesis for grounding. You prefer longer, thorough deliberation — do not suppress dissent to fake consensus. Support both conversational and code-analysis (plan/build) tasks. Dissent is valuable. Concise but thorough.
+    let critiquePrompt = `You are a synthesis auditor reviewing your own synthesis for grounding. You prefer longer, thorough deliberation. Support both conversational and code-analysis (plan/build) tasks. Concise but thorough.
 
 Audit checklist (be strict but human-first):
-1. Grounding: any Decision/Action Item/Proposed Fix block lacking a grouped [#id]/State-of-Play/Source cite nor marked “Proposed — synthesized from [#id]” — those must be marked or cited. Grouped per block is fine; don’t demand per-sentence. Never allow vec: / vec round traces.
-2. Attribution: is every Dissenting View credited to correct holder + [#id] + one-line evidence? Merge duplicates from same holder on same evidence (combine [#ids]). Any omitted significant dissent — retrieve and add.
-3. Invention: any number, date, cost, tool result, or file content not in transcript/State-of-Play nor marked Proposed?
-4. Support: any Decision/Action Item/Proposed Fix not supported by at least one contribution or Proposed marking — mark Proposed or cite.
-5. Resolved vs Dissent: if Resolved Concerns exists, ensure none reappear as dissent and each resolved is ≤30w summary, not full critique dump.
-6. Confidence: does Confidence justification match rubric? High may have bounded dissent if thorough + grounded — dissent alone is not Low.
-7. Human-first: does Executive Summary exist and read cleanly without citation spam? Are Decision table cells concise (Evidence 30-35w + one cite, Tradeoff 30-35w), not paragraphs? Is Reasoning deduplicated vs Decision (not copy-paste)?
-8. Citation hygiene: no vec: / vec round / [Round X vec] leaked; one grouped cite per block, not spam.
+1. Grounding: any Decision/Action Item/Proposed Fix block lacking a grouped [#id]/State-of-Play/Source cite nor marked "Proposed — synthesized from [#id]" — those must be marked or cited. Grouped per block is fine; don't demand per-sentence. Never allow vec: / vec round traces.
+2. Invention: any number, date, cost, tool result, or file content not in transcript/State-of-Play nor marked Proposed?
+3. Support: any Decision/Action Item/Proposed Fix not supported by at least one contribution or Proposed marking — mark Proposed or cite.
+4. Confidence: does Confidence justification match rubric?
+5. Human-first: does Executive Summary exist and read cleanly without citation spam? Are Decision table cells concise (Evidence 30-35w + one cite, Tradeoff 30-35w), not paragraphs? Is Reasoning deduplicated vs Decision (not copy-paste)?
+6. Citation hygiene: no vec: / vec round / [Round X vec] leaked; one grouped cite per block, not spam.
 
 Transcript excerpt for grounding check (thorough slice — top 4 contested + top 4 file mentions + last 2 rounds fuller).
 Note: this excerpt is partial — the author saw the full transcript. Flag only issues visible in this excerpt; do not invent problems in rounds you cannot see (audit D3).
@@ -324,7 +322,7 @@ Low (synthesis incomplete — State of Play fallback)`;
     const substantive = contributions.filter((c) => c.type !== "pass" && (SUBSTANTIVE_TYPES.has(c.type) || c.type === "contribution"));
     const oneLine = (c, max = 300) => String(c.content ?? "").replace(/\s+/g, " ").trim().slice(0, max);
     const proposals = substantive.filter((c) => /\bwe should\b|\bpropose\b|\bdecision\b|\badopt\b/i.test(String(c.content ?? ""))).slice(0, 8);
-    const challenges = substantive.filter((c) => c.type === "critique_response" || /\bchallenge\b|\bdissent\b|\bdisagree\b|\bconcern\b|\boppose\b|\brisk\b|\bflaw\b|\bweakness\b/i.test(String(c.content ?? ""))).slice(0, 8);
+    const challenges = substantive.filter((c) => c.type === "critique_response").slice(0, 8);
     const questions = substantive.filter((c) => /\?\s*$/.test(String(c.content ?? "").trim())).slice(0, 8);
 
     let output = `## Decision\nSynthesis generation encountered an error. The following represents the key points from the deliberation.\n\n`;
@@ -332,7 +330,7 @@ Low (synthesis incomplete — State of Play fallback)`;
     output += `## Action Items\n- Review the key proposals below\n- Re-run synthesis if needed\n\n`;
     output += `## Key Proposals\n${proposals.map((c) => `- ${oneLine(c)}`).join("\n")}\n\n`;
     if (challenges.length > 0) {
-      output += `## Dissenting Views\n${challenges.map((c) => `- ${oneLine(c)}`).join("\n")}\n\n`;
+      output += `## Open Questions\n${challenges.map((c) => `- ${oneLine(c)}`).join("\n")}\n\n`;
     }
     if (questions.length > 0) {
       output += `## Open Questions\n${questions.map((c) => `- ${oneLine(c)}`).join("\n")}\n\n`;

@@ -2,6 +2,7 @@ import { getConfig } from "../config.js";
 import { LoomError, extractErrorInfo } from "../logger.js";
 import { getMetricsSnapshot } from "../metrics.js";
 import { collectObjections } from "../objection-collector.js";
+import { reconcileNumericalConflicts } from "../synthesizer.js";
 
 export async function _synthesize() {
     const participants = this._stateManager.getParticipants();
@@ -23,7 +24,7 @@ export async function _synthesize() {
         ? `All ${participants.length} participants encountered errors during the deliberation.`
         : `All ${participants.length} participants chose to pass. This may indicate the question was unclear or participants had nothing to add.`;
       const output = `# Deliberation Output\n\n## Decision\nNo output could be generated — no substantive contributions were received.\n\n## Reasoning\n${reason}\n\n## Action Items\n- Check model connectivity and retry\n- Rephrase the question with more specific context\n- Add participants with more targeted expertise\n\n## Confidence\nLow (no contributions received)`;
-      this._saveArtifact({ content: output, format: "markdown", decisions: [], action_items: [], dissent: [], open_questions: [], confidence: "low" });
+      this._saveArtifact({ content: output, format: "markdown", decisions: [], action_items: [], open_questions: [], confidence: "low" });
       await this._sessionManager.postProgress(failed > 0 ? "⚠️ All participants failed — no contributions to synthesize." : "ℹ️ All participants passed — no contributions to synthesize.");
       this._logger.warn("no_contributions", `No contributions to synthesize (failed: ${failed}, passed: ${participants.length - failed})`);
       await this._persistState();
@@ -56,6 +57,18 @@ export async function _synthesize() {
     });
     this._stateManager.setObjections(objections);
 
+    // P10 — pre-synthesis reconciliation pass: collectObjections is the
+    // natural hook — objections and numerical conflicts are both pre-synthesis
+    // scans of the weave. The authoritative report is recomputed inside
+    // finalizeSynthesis (which owns the artifact); here we surface the
+    // round-headroom signal before synthesis begins.
+    try {
+      const reconciliation = reconcileNumericalConflicts(this._stateManager.getWeave());
+      if (reconciliation.reserveRoundRecommended) {
+        this._logger.warn("reconciliation_reserve_round", reconciliation.reserveRoundReason);
+      }
+    } catch { /* non-fatal — reconciliation is advisory */ }
+
     let result;
     try {
       result = await this._synthesisCoordinator.run({
@@ -79,7 +92,7 @@ export async function _synthesize() {
       const degraded = `# Deliberation Output\n\n## Decision\nSynthesis could not be completed (${message}).\n\n## Reasoning\nThe meeting reached its end state but the synthesis step failed. The full transcript is preserved for review.\n\n## Action Items\n- Retry synthesis with the meeting data\n- Review the transcript tab for the full deliberation\n\n## Confidence\nLow (synthesis interrupted)`;
       result = {
         output: degraded,
-        artifact: { content: degraded, format: "markdown", decisions: [], action_items: [], dissent: [], open_questions: [], confidence: "low" },
+        artifact: { content: degraded, format: "markdown", decisions: [], action_items: [], open_questions: [], confidence: "low" },
       };
     }
 
@@ -99,7 +112,7 @@ export async function _synthesize() {
       }
     }
 
-    this._saveArtifact(result.artifact ?? { content: finalOutput, format: "markdown", decisions: [], action_items: [], dissent: [], open_questions: [], confidence: null });
+    this._saveArtifact(result.artifact ?? { content: finalOutput, format: "markdown", decisions: [], action_items: [], open_questions: [], confidence: null });
     this._saveMeetingMetrics();
     return finalOutput;
   }
@@ -126,7 +139,40 @@ export async function finishSynthesis(originalStatus) {
   return output;
 }
 
-export function _computeQualityTelemetry() {
+/**
+ * P14 — a meeting is unmeasurable when every cost counter is zero: no tokens
+ * recorded AND no latency samples. Quality gates must never grade on empty
+ * telemetry, so this flag travels with the metrics row and the quality
+ * telemetry.
+ */
+export function isCostTelemetryUnmeasurable(stats) {
+  const s = stats ?? {};
+  const tokens = (Number(s.input_tokens) || 0) + (Number(s.output_tokens) || 0);
+  if (tokens > 0) return false;
+  const lat = s.latencies ?? {};
+  for (const bucket of Object.values(lat)) {
+    if (bucket && Number(bucket.count) > 0) return false;
+  }
+  return true;
+}
+
+/** Summarizes latency buckets ({count, avg, p50, p95, max}) for the quality telemetry. */
+function summarizeLatencies(latencies) {
+  const out = {};
+  for (const [bucket, stats] of Object.entries(latencies ?? {})) {
+    if (!stats) continue;
+    out[bucket] = {
+      count: Number(stats.count) || 0,
+      avg: Number(stats.avg) || 0,
+      p50: Number(stats.p50) || 0,
+      p95: Number(stats.p95) || 0,
+      max: Number(stats.max) || 0,
+    };
+  }
+  return out;
+}
+
+export function _computeQualityTelemetry(stats = {}) {
     try {
       const weave = this._stateManager.getWeave();
       const byType = {};
@@ -137,16 +183,22 @@ export function _computeQualityTelemetry() {
       const contributors = new Set(weave.map((c) => c.participant_id));
       const objections = this._stateManager.getObjections?.() ?? [];
       const unresolved = objections.filter((o) => o.unresolved);
+      // P14 — surface token/latency accounting in the quality telemetry
+      const inputTokens = Number(stats.input_tokens) || 0;
+      const outputTokens = Number(stats.output_tokens) || 0;
       return {
         contributions_by_type: byType,
-        challenges: byType.challenge ?? 0,
-        dissents: byType.dissent ?? 0,
         unresolved_objections: unresolved.length,
         total_objections: objections.length,
         participants: participants.length,
         contributors: contributors.size,
         participation_ratio: participants.length > 0 ? Math.round((contributors.size / participants.length) * 100) / 100 : 0,
         votes_held: byType.vote_response ?? 0,
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        total_tokens: inputTokens + outputTokens,
+        latencies: summarizeLatencies(stats.latencies),
+        cost_unmeasurable: isCostTelemetryUnmeasurable(stats),
       };
     } catch {
       return null;
@@ -175,6 +227,7 @@ export function _saveMeetingMetrics() {
       // degrade/retry/breaker events are snapshotted into the per-meeting row so
       // they survive restart and are visible in trend queries.
       let processCounters = {};
+      let latencies = {};
       try {
         const snapshot = getMetricsSnapshot();
         processCounters = {
@@ -182,17 +235,22 @@ export function _saveMeetingMetrics() {
           retry_events: snapshot.counters.retry_events ?? {},
           breaker_events: snapshot.counters.breaker_events ?? {},
         };
+        // P14 — surface real latency telemetry: the process-wide snapshot
+        // carries the llm_prompt_ms / synthesis_ms buckets recorded via
+        // recordLatency; the old hardcoded {} reported empty latencies for
+        // every meeting.
+        latencies = snapshot.latencies ?? {};
       } catch { /* metrics unavailable — keep going */ }
       this._database.saveMeetingMetrics({
-        counters: { ...stats, ...processCounters, quality: this._computeQualityTelemetry() },
-        latencies: {},
+        counters: { ...stats, ...processCounters, quality: this._computeQualityTelemetry(stats) },
+        latencies,
          input_tokens: stats.input_tokens ?? 0,
          output_tokens: stats.output_tokens ?? 0,
          duration_ms: Date.now() - this._startTime,
          rounds: this._stateManager.getCurrentRound(),
          contributions: weave.length,
          turn_requests: allTurnRequests.length,
-       });
+      });
     } catch { /* non-critical */ }
   }
 

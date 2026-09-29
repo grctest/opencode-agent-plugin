@@ -15,10 +15,8 @@ const TIER_COLORS = {
 
 const TYPE_COLORS = {
   propose: "loom-badge-propose",
-  challenge: "loom-badge-challenge",
   refine: "loom-badge-refine",
   support: "loom-badge-support",
-  dissent: "loom-badge-dissent",
   synthesize: "loom-badge-synthesize",
   question: "loom-badge-question",
   turn_request: "loom-badge-turn-request",

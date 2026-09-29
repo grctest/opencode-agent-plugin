@@ -95,7 +95,7 @@ export function getStateWithStats() {
 export function getArtifact() {
     const row = this._db
       .prepare(
-        `SELECT content, decisions, action_items, dissent, open_questions, confidence, refusals, orchestrator_config, created_at
+        `SELECT content, decisions, action_items, open_questions, confidence, refusals, orchestrator_config, created_at
          FROM artifacts LIMIT 1`,
       )
       .get();
@@ -113,7 +113,6 @@ export function getArtifact() {
       content: row.content,
       decisions: parse(row.decisions),
       action_items: parse(row.action_items),
-      dissent: parse(row.dissent),
       refusals: parse(row.refusals),
       open_questions: parse(row.open_questions),
       confidence: row.confidence,

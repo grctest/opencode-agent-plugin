@@ -32,24 +32,6 @@ export function markMaintained(db) {
   } catch { /* best effort */ }
 }
 
-export function initPersonaVectorTable(db, dim = 384) {
-  const safeDim = Number(dim);
-  if (!Number.isFinite(safeDim) || safeDim < 64 || safeDim > 2048 || Math.floor(safeDim) !== safeDim) {
-    dbLogger.warn("persona_vec_table_invalid_dim", `Invalid persona embedding dimension ${dim}`, { dim });
-    return;
-  }
-  try {
-    db.exec(`
-        CREATE VIRTUAL TABLE IF NOT EXISTS vec_persona_embeddings_${safeDim} USING vec0(
-          embedding float[${safeDim}],
-          tier text
-        )
-      `);
-  } catch (err) {
-    dbLogger.warn("persona_vec_table_init_failed", "Could not create persona vector table — sqlite-vec may not be loaded", extractErrorInfo(err));
-  }
-}
-
 export function checkIntegrity(db) {
   try {
     const rows = db.prepare("PRAGMA integrity_check").all();
@@ -87,10 +69,6 @@ export function cleanupOldErrors(db) {
   } catch (err) {
     dbLogger.warn("old_errors_cleanup_failed", "Failed to clean up old error rows", extractErrorInfo(err));
   }
-}
-
-export function cleanupOldVectors(db) {
-  // Fabric vector cleanup removed with VectorIndex — persona vectors are small and per-meeting; no pruning needed.
 }
 
 /**

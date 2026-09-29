@@ -142,14 +142,13 @@ test("JSONC config parsing handles comments and trailing commas", () => {
   assert.equal(parsed.loom.defaultMaxRounds, 4);
 });
 
-test("untyped dissent is included in the objection inventory", () => {
+test("untyped dissent is not included in the objection inventory (P17: critique_response only)", () => {
   const participants = [{ config: { id: "a", name: "A" } }];
   const objections = collectObjections({
     participants,
     rounds: [{ number: 1, contributions: [{ id: 1, participant_id: "a", type: "contribution", content: "I disagree because the rollback path is unsafe." }] }],
   });
-  assert.equal(objections.length, 1);
-  assert.equal(objections[0].unresolved, true);
+  assert.equal(objections.length, 0);
 });
 
 test("safe defaults are finite and shell-free", () => {

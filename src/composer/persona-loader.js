@@ -2,7 +2,6 @@ import { readFileSync, existsSync, readdirSync, watch, statSync } from "node:fs"
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Logger, extractErrorInfo } from "../logger.js";
-import { PersonaIndex } from "../services/persona-index.js";
 import { getConfig } from "../config.js";
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_QUANT } from "../services/model-manager.js";
 import { resolveOpencodeConfigDir } from "../paths.js";

@@ -448,7 +448,6 @@ export function exportJSON(meetingId) {
         content: artifact.content,
         decisions: artifact.decisions,
         actionItems: artifact.action_items,
-        dissent: artifact.dissent,
         openQuestions: artifact.open_questions,
         confidence: artifact.confidence,
         createdAt: artifact.created_at,

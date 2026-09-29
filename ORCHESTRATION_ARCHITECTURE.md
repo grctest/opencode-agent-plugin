@@ -99,17 +99,15 @@ Composition is deterministic content-similarity; no `seed` parameter exists — 
 
 There is **no LLM domain detection** — the now-removed `domain` pipeline was replaced by embedding-based selection.
 
-1. All personas are loaded from JSON files (`personas/<tier>/*.json`, or legacy `<tier>.json` arrays) and embedded into the meeting database via `PersonaIndex.indexAll()` (tables `persona_embeddings` + `vec_persona_embeddings_${dim}`, FK to `meetings(id)`, `CHECK(tier IN …)` + `UNIQUE(meeting_id,name)`).
-2. For each role tier in the role list, `PersonaIndex.search(question, tier, 5)` returns the 5 most similar personas for that tier (vector `vec_persona_embeddings_${dim} MATCH` filtered by tier, with fallback keyword scoring when vector unavailable); the first persona not already used is selected. Cache key is `model|quant|persona|tier|dim|fingerprint` (model-aware, `TUNING.EMBEDDING_CACHE_MAX` LRU).
+1. All personas are loaded from JSON files (`personas/<tier>/*.json`, or legacy `<tier>.json` arrays) and embedded into a process-scoped in-memory store via `PersonaIndex.indexAll()` (no database tables; a store-level fingerprint skips re-indexing when the model and catalog are unchanged).
+2. For each role tier in the role list, `PersonaIndex.search(question, tier, 5)` returns the 5 most similar personas for that tier (brute-force cosine over the in-memory store, filtered by tier, with fallback keyword scoring when embeddings are unavailable); the first persona not already used is selected. Cache key is `model|quant|persona|tier|dim|fingerprint` (model-aware, `TUNING.EMBEDDING_CACHE_MAX` LRU).
 3. Selection is deterministic given the same question and persona index.
 4. Meeting-level `tags` are derived from the selected participants' most common tags (top 3).
 5. Estimated rounds: `base` high=4/medium=3/low=2 clamped to `±1` around `getConfig().defaultMaxRounds` (default 4) — `estimated = clamp(base, cfg-1, cfg+1)` (fresh DB: `participants.tags`/`expertise` persisted).
 
 If the embedding service is unavailable, composition falls back to keyword-based `composeRoomByKeyword` (token overlap + `maxCosineDistance` relevance floor `minScore = max(1, floor(2*(1-maxDistance+0.15)))`), not an empty room; civilian generalist fills gaps.
 
-**Custom rooms:** Approving an edited participant list in the Setup tab skips composition entirely. Each participant requires `name`, `persona`, `agenda`, `tier` (an `id` is derived; `tags`/`expertise` default to `["general"]`).
-
-**Prioritization for a meeting row:** the meeting row is inserted into the database *before* composition so the FK constraint on `persona_embeddings(meeting_id)` is satisfied.
+**Custom rooms:** Approving an edited participant list in the Setup tab skips composition entirely. Each participant requires `name`, `persona`, `agenda`, `tier` (an `id` is derived; `tags`/`expertise` default to `["general"]`). Persona similarity needs no database access, so composition imposes no ordering constraint on the meeting-row insert.
 
 ### Persona Loading
 
@@ -1196,14 +1194,13 @@ A kill between the terminal-status write and the artifact write leaves a termina
 
 Loom uses local embeddings for **persona selection only**. It does not auto-retrieve prior transcript chunks into agent prompts and does not maintain a fabric-RAG index. Prior contributions remain durable in SQLite, while each agent carries a bounded `Σⁱ` state and receives the shared state of play plus current-round live contributions.
 
-### Stored Tables
+### In-memory store
 
-| Table | Purpose |
+| Structure | Purpose |
 |-------|---------|
-| `persona_embeddings` | Meeting-scoped persona text (`persona_name`, tier, tags, embedding text) |
-| `vec_persona_embeddings_${dim}` | Optional sqlite-vec index used for tier-filtered persona similarity |
+| process-scoped `Map` in `PersonaIndex` | Persona vectors (`personaName`, tier, tags, embedding text) keyed `tier\|name`, ~280KB for the full catalog |
 
-The vector table is created lazily with a validated embedding dimension. If sqlite-vec or the model is unavailable, `semantic_degraded` is surfaced and composition falls back to keyword/tag matching.
+The store is filled lazily with a validated embedding dimension and a store-level fingerprint (model + catalog content), so repeat meetings skip inference entirely. If the model is unavailable, composition falls back to keyword/tag matching. (Historical note: these vectors used to live in `persona_embeddings` + sqlite-vec `vec_persona_embeddings_${dim}` tables per meeting DB; that backing was removed — old DBs may still contain the orphaned tables, which nothing reads.)
 
 ### Embedding Service
 
@@ -1211,15 +1208,14 @@ The local ONNX embedder uses `onnxruntime-node` and `@huggingface/tokenizers`. T
 
 ### Composition Flow
 
-1. The meeting row is created first so persona embeddings satisfy their meeting foreign key.
-2. `PersonaIndex.indexAll()` embeds each persona's description, agenda, tags, and expertise with bounded concurrency.
-3. For each requested tier, `PersonaIndex.search()` performs a tier-filtered similarity lookup and returns ranked candidates.
-4. The composer selects the first unused candidate; if embeddings are unavailable, the keyword/tag composer selects a bounded room instead.
-5. The dashboard requires explicit persona and model approval before any meeting starts.
+1. `PersonaIndex.indexAll()` embeds each persona's description, agenda, tags, and expertise with bounded concurrency into the in-memory store.
+2. For each requested tier, `PersonaIndex.search()` performs a tier-filtered in-memory similarity lookup and returns ranked candidates.
+3. The composer selects the first unused candidate; if embeddings are unavailable, the keyword/tag composer selects a bounded room instead.
+4. The dashboard requires explicit persona and model approval before any meeting starts.
 
 ### Degraded Mode
 
-Embedding initialization and indexing are best-effort. A missing native dependency, invalid model file, unavailable sqlite-vec extension, or provider failure must not prevent a meeting from starting. The meeting records the degradation and continues with deterministic keyword composition. Agent prompts never depend on a successful embedding call.
+Embedding initialization and indexing are best-effort. A missing native dependency, invalid model file, or provider failure must not prevent a meeting from starting. The meeting continues with deterministic keyword composition. Agent prompts never depend on a successful embedding call.
 
 ---
 
@@ -1613,7 +1609,7 @@ Loaded from `.loomrc.json` (project or `<opencode-config-dir>/.loomrc.json`), or
 
 `TUNING` (current constants, `src/config/defaults.js:1`): `MAX_ITERATIONS 100` (weaving loop guard), `WATCHDOG_TICK_MS 30000`, `RING_BUFFER_SIZE 500`, `SKIP_PASSED_*` (3,10,2), `EXTENSION_EXTRA_ROUNDS_FALLBACK 4`, `MAX_CRITIQUE_RETRIES 3`, `SYSTEM_PROMPT_CACHE_MAX 50`, `EMBEDDING_CACHE_MAX 512`, `LATENCY_SAMPLE_LIMIT 100`, `DASHBOARD_IDLE_TIMEOUT_MS 60000`, `MAX_DB_CACHE_SIZE 10`, `VOTE_TIMEOUT_MS 60000`/`SUMMON_TIMEOUT_MS 90000`, and bounded state/transcript budgets. There is no fabric-RAG tuning or vector search tool in the current agent context path.
 
-DB fresh `meetings`/`participants`/`persona_embeddings` enforce `CHECK` + `UNIQUE` + `FK` at `initSchema()`; ordered migrations bring existing databases to schema version 7.
+DB fresh `meetings`/`participants` enforce `CHECK` + `UNIQUE` + `FK` at `initSchema()`; ordered migrations bring existing databases to schema version 7. (Pre-existing DBs may still contain the removed `persona_embeddings`/vec tables; nothing reads them.)
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|

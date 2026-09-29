@@ -44,7 +44,7 @@ export const DEFAULT_CONFIG = {
   stallTimeoutMs: 600000,
   maxTotalTokens: 500000,
   dashboard: { host: "127.0.0.1" },
-  composition: { maxCosineDistance: 0.85 },
+  composition: { maxCosineDistance: 0.85, topNPerTier: 3 },
   modelDiversity: true,
   tuning: JSON.parse(JSON.stringify(TUNING)),
   circuitBreaker: {
@@ -131,6 +131,7 @@ export const CONFIG_SCHEMA = {
 export const NESTED_SCHEMA = {
   'dashboard.host': { type: 'string' },
   'composition.maxCosineDistance': { type: 'number', min: 0.1, max: 1.9 },
+  'composition.topNPerTier': { type: 'number', min: 1, max: 10 },
   'circuitBreaker.failureThreshold': { type: 'number', min: 1, max: 10 },
   'circuitBreaker.resetTimeoutMs': { type: 'number', min: 10000, max: 3600000 },
   'agentTools.enabled': { type: 'boolean' },

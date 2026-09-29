@@ -29,7 +29,6 @@ import { RoundExecutor } from "./round-executor.js";
 import { StallWatchdog } from "./services/stall-watchdog.js";
 import { RoundInitializer } from "./services/round-initializer.js";
 import { MeetingExtender } from "./services/meeting-extender.js";
-import { PersonaIndex } from "./services/persona-index.js";
 import { getPersonas } from "./composer.js";
 import * as weavingHelpers from "./orchestrator/weaving.js";
 import * as roundHelpers from "./orchestrator/round.js";
@@ -62,7 +61,6 @@ export class MeetingOrchestrator {
   _orchestratorMessages = [];
   _resume = false;
   _callStats = { orchestrator: 0, summary: 0, synthesis: 0, input_tokens: 0, output_tokens: 0 };
-  _personaIndex = null;
   _availableModels = [];
   _maxTotalTokens = 0;
   _rateLimitError = null;
@@ -303,7 +301,7 @@ export class MeetingOrchestrator {
    _notifyUpdate() { return roundHelpers._notifyUpdate.call(this); }
    async _synthesize() { return synthesisHelpers._synthesize.call(this); }
    async finishSynthesis(originalStatus) { return synthesisHelpers.finishSynthesis.call(this, originalStatus); }
-   _computeQualityTelemetry() { return synthesisHelpers._computeQualityTelemetry.call(this); }
+    _computeQualityTelemetry(stats) { return synthesisHelpers._computeQualityTelemetry.call(this, stats); }
    _saveArtifact(artifact) { return synthesisHelpers._saveArtifact.call(this, artifact); }
    _saveMeetingMetrics() { return synthesisHelpers._saveMeetingMetrics.call(this); }
 }

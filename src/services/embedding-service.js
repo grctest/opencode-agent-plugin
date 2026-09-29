@@ -176,7 +176,8 @@ export async function disposeEmbedder() {
     disposeCachedDeps();
   } catch {}
   try {
-    const { clearEmbeddingCache } = await import("./persona-index.js");
+    const { clearEmbeddingCache, clearPersonaStore } = await import("./persona-index.js");
     if (typeof clearEmbeddingCache === "function") clearEmbeddingCache();
+    if (typeof clearPersonaStore === "function") clearPersonaStore();
   } catch {}
 }

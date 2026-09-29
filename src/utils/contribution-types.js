@@ -16,7 +16,7 @@ export const CONTRIBUTION_TYPE = {
 };
 
 // Legacy types from older meetings — treat as contribution for summary/SoP
-const LEGACY_SUBSTANTIVE = new Set(["propose", "challenge", "refine", "support", "dissent", "synthesize", "question"]);
+const LEGACY_SUBSTANTIVE = new Set(["propose", "refine", "support", "synthesize", "question"]);
 
 // Types that carry substantive deliberation positions (for summaries)
 // vote_tally removed — outcome lives in invoker's prose, not a separate row

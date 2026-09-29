@@ -317,7 +317,6 @@ export function initSchema(db) {
       content TEXT NOT NULL,
       decisions TEXT,
       action_items TEXT,
-      dissent TEXT,
       open_questions TEXT,
       confidence TEXT,
       refusals TEXT,
@@ -352,18 +351,6 @@ export function initSchema(db) {
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_meeting_metrics_created ON meeting_metrics(created_at);
-
-    CREATE TABLE IF NOT EXISTS persona_embeddings (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
-      persona_name TEXT NOT NULL,
-      tier TEXT NOT NULL CHECK(tier IN ('junior','mid','senior','principal','civilian')),
-      tags TEXT NOT NULL,
-      embedding_text TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_persona_embeddings_meeting ON persona_embeddings(meeting_id);
-    CREATE INDEX IF NOT EXISTS idx_persona_embeddings_tier ON persona_embeddings(meeting_id, tier);
 
     CREATE TABLE IF NOT EXISTS forum_topics (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

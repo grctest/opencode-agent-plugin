@@ -3,11 +3,10 @@ import { dirname } from "node:path";
 import { Logger, extractErrorInfo } from "./logger.js";
 import { initSchema, runMigrations } from "./database/schema.js";
 import { resolveLoomBaseDir, getMeetingDbPath } from "./paths.js";
-import { ensureDb, getDatabaseClass, isoNow, resolveVecPath, safeParseJsonArray, isDrvFsPath, withReadonlyDb } from "./database/connection.js";
-import { maintenanceDue, markMaintained, checkIntegrity, cleanupOldErrors, cleanupOldVectors, checkpointWal, vacuumIfNeeded } from "./database/maintenance.js";
+import { ensureDb, getDatabaseClass, isoNow, safeParseJsonArray, isDrvFsPath, withReadonlyDb } from "./database/connection.js";
+import { maintenanceDue, markMaintained, checkIntegrity, cleanupOldErrors, checkpointWal, vacuumIfNeeded } from "./database/maintenance.js";
 import * as meetingOps from "./database/meeting-operations.js";
 import * as contribOps from "./database/contribution-operations.js";
-import * as vectorOps from "./database/vector-operations.js";
 import * as forumOps from "./database/forum-operations.js";
 import * as toolAuditOps from "./database/tool-audit-operations.js";
 import * as statePatchOps from "./database/state-patch-operations.js";
@@ -130,18 +129,6 @@ export class MeetingDatabase {
           try { if (existsSync(`${dbPath}${suffix}`)) chmodSync(`${dbPath}${suffix}`, 0o600); } catch {}
         }
       }
-      const vecPath = resolveVecPath();
-      if (vecPath && existsSync(vecPath)) {
-        try {
-          this.#db.loadExtension(vecPath);
-        } catch (err) {
-          dbLogger.warn("sqlite_vec_load_error", "Failed to load sqlite-vec extension", extractErrorInfo(err));
-        }
-      } else {
-        if (!vecPath) {
-          dbLogger.warn("sqlite_vec_not_found", "sqlite-vec extension not found — vector search degraded to keyword fallback", { searched: 'no candidate found', candidates: 'sqlite-vec-*' });
-        }
-      }
       initSchema(this.#db);
       runMigrations(this.#db, { logger: dbLogger });
     } catch (err) {
@@ -154,7 +141,6 @@ export class MeetingDatabase {
       : false;
     if (shouldMaintain) {
       cleanupOldErrors(this.#db);
-      cleanupOldVectors(this.#db);
       if (existedBefore) {
         checkIntegrity(this.#db);
         checkpointWal(this.#db);
@@ -193,7 +179,6 @@ export class MeetingDatabase {
   setStateOfPlay(stateOfPlay) { const r = meetingOps.setStateOfPlay(this.#db, this.#meetingId, stateOfPlay); this.#notify("meetings"); return r; }
   getSettledItemsRaw() { return meetingOps.getSettledItemsRaw(this.#db, this.#meetingId); }
   setSettledItemsRaw(json) { const r = meetingOps.setSettledItemsRaw(this.#db, this.#meetingId, json); this.#notify("meetings"); return r; }
-  setSemanticDegraded(flag = true) { const r = meetingOps.setSemanticDegraded(this.#db, this.#meetingId, flag); this.#notify("meetings"); return r; }
   setPersistenceDegraded(flag = true) { const r = meetingOps.setPersistenceDegraded(this.#db, this.#meetingId, flag); this.#notify("meetings"); return r; }
   updateMeetingTags(meetingId, tags) { const r = meetingOps.updateMeetingTags(this.#db, meetingId, tags); this.#notify("meetings"); return r; }
   addOrchestratorMessage(msgType, role, content, round = null) { const r = meetingOps.addOrchestratorMessage(this.#db, this.#meetingId, msgType, role, content, round); this.#notify("orchestrator_messages"); return r; }
@@ -211,7 +196,6 @@ export class MeetingDatabase {
   getMeeting() { return meetingOps.getMeeting(this.#db, this.#meetingId); }
   setNextSpeaker(nextSpeakerId) { const r = meetingOps.setNextSpeaker(this.#db, this.#meetingId, nextSpeakerId); this.#notify("meetings"); return r; }
   setStats(statsJson) { const r = meetingOps.setStats(this.#db, this.#meetingId, statsJson); this.#notify("meetings"); return r; }
-  setEmbeddingModel(model, dim) { const r = meetingOps.setEmbeddingModel(this.#db, this.#meetingId, model, dim); this.#notify("meetings"); return r; }
   setRateLimitState(rateLimitJson) {
     const r = meetingOps.setRateLimitState(this.#db, this.#meetingId, rateLimitJson);
     this.#notify("meetings");
@@ -244,14 +228,6 @@ export class MeetingDatabase {
   getParticipantModel(participantId) { return contribOps.getParticipantModel(this.#db, this.#meetingId, participantId); }
   saveMeetingMetrics(metrics) { const r = contribOps.saveMeetingMetrics(this.#db, this.#meetingId, metrics); this.#notify("meeting_metrics"); return r; }
   getRecentMeetingMetrics(limit = 20) { return contribOps.getRecentMeetingMetrics(this.#db, limit); }
-
-  storePersonaEmbedding(personaName, tier, tags, embeddingText, embedding, dim = 384) { return vectorOps.storePersonaEmbedding(this.#db, this.#meetingId, personaName, tier, tags, embeddingText, embedding, dim); }
-  searchPersonaEmbeddings(queryEmbedding, tier, topK = 5, dim = 384) { return vectorOps.searchPersonaEmbeddings(this.#db, this.#meetingId, queryEmbedding, tier, topK, dim); }
-  countPersonaEmbeddings() { return vectorOps.countPersonaEmbeddings(this.#db, this.#meetingId); }
-  countPersonaVecEmbeddings(dim = 384) { return vectorOps.countPersonaVecEmbeddings(this.#db, this.#meetingId, dim); }
-  clearPersonaEmbeddings() { return vectorOps.clearPersonaEmbeddings(this.#db, this.#meetingId); }
-  getPersonaEmbeddingByName(personaName, dim = 384) { return vectorOps.getPersonaEmbeddingByName(this.#db, this.#meetingId, personaName, dim); }
-  getPersonaEmbeddingsByNames(personaNames, dim = 384) { return vectorOps.getPersonaEmbeddingsByNames(this.#db, this.#meetingId, personaNames, dim); }
 
   createForumTopic({ title, body, tags, authorId }) {
     const r = forumOps.createTopic(this.#db, this.#meetingId, { title, body, tags, authorId });

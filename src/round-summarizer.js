@@ -111,6 +111,22 @@ export function filterRoundSummaryContributions(contributions = []) {
   });
 }
 
+const PEER_CITATION_RE = /\[#\d+\]/;
+
+/**
+ * P7 — Citation engagement check: returns plain (non-response) contributions
+ * that contain no peer [#id] citation. Response types (query/evidence/critique/
+ * perspective/summoned) are excluded — they are inherently peer-engaged by
+ * construction. Passes and vote responses are excluded as non-substantive.
+ */
+export function findUncitedPlainContributions(contributions = []) {
+  return contributions.filter((c) => {
+    if (c.type === "pass" || c.type === "vote_response") return false;
+    if (c.type !== "contribution" && !["propose", "refine", "support", "synthesize", "question"].includes(c.type)) return false;
+    return !PEER_CITATION_RE.test(String(c.content ?? ""));
+  });
+}
+
 export function buildRoundSummaryUser(round, state, participantStates = [], orchestratorConfig = {}, opts = {}) {
   const contribCount = round.contributions.length;
   const summaryContributions = filterRoundSummaryContributions(round.contributions);
@@ -189,6 +205,12 @@ export function buildRoundSummaryUser(round, state, participantStates = [], orch
   const requestsBlock = turnRequests.length > 0
     ? `\n## Turn Requests (for next round)\n${turnRequests.slice(0, 8).map((r) => `- ${sanitizeForDisplay(String(r.participant_id ?? "?"), 60)} P${Number(r.priority) || "?"}: ${sanitizeForDisplay(String(r.reason ?? ""), 120)}`).join("\n")}\n`
     : "";
+  // P7 — Citation engagement: report plain contributions that have no peer
+  // [#id] citation so the clerk can flag isolated contributions.
+  const uncitedPlains = findUncitedPlainContributions(round.contributions);
+  const uncitedBlock = uncitedPlains.length > 0
+    ? `\n## Peer-Uncited Plain Contributions (P7 — no [#id] engagement)\n${uncitedPlains.map((c) => `- [#${c.id}] ${sanitizeForDisplay(String(c.participant_id ?? "?"), 60)}: ${sanitizeForDisplay(truncate(String(c.content ?? ""), 200), 200)}`).join("\n")}\n\n_These contributions engage no peer via [#id]. Note them in the summary so the room can address the isolation._\n`
+    : "";
 
   // Detect mode for summary shape
   const isCodeRound = formattedContributions.includes("file=") || formattedContributions.includes("```") || (state.tags || []).some(t => /engineering|code|programming/i.test(t));
@@ -201,7 +223,7 @@ ${state.question || "(no question provided)"}
 ${roundContextLine}${rosterBlock}${sopExcerpt}
 ## Round ${round.number || "?"} Contributions
 ${formattedContributions}
-${evidenceHint}${requestsBlock}${stateHint}
+${uncitedBlock}${evidenceHint}${requestsBlock}${stateHint}
 
 ## Output — 5-6 bullets, each 1-3 sentences (human-readable, then auditable):
 

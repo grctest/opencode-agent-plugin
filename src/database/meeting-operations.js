@@ -6,13 +6,6 @@ import { indexMeeting as _indexMeeting } from "./session-index.js";
 const dbLogger = new Logger();
 
 export function initializeMeeting(db, meetingId, input, opts = {}) {
-  try {
-    const embCount = db.prepare(`SELECT COUNT(*) as c FROM persona_embeddings WHERE meeting_id = ?`).get(meetingId)?.c ?? 0;
-    if (embCount > 0) {
-      dbLogger.warn("initialize_after_embeddings", "initializeMeeting called after persona embeddings indexed — use upsertMeeting to avoid CASCADE wipe", { meetingId, embCount });
-      return upsertMeeting(db, meetingId, input);
-    }
-  } catch {}
   const now = isoNow();
   const insertMeeting = db.prepare(
     `INSERT INTO meetings (id, question, context, status, round, fabric, max_rounds, convergence, tags, parent_session_id, opencode_session_id, embedding_model, embedding_dim, orchestrator_provider_id, orchestrator_model_id, feature_toggles_json, orchestrator_config_json, created_at, updated_at)
@@ -271,16 +264,6 @@ export function setSettledItemsRaw(db, meetingId, settledItemsJson) {
     .run(settledItemsJson, isoNow(), meetingId);
 }
 
-export function setSemanticDegraded(db, meetingId, flag = true) {
-  try {
-    db
-      .prepare("UPDATE meetings SET semantic_degraded = ?, updated_at = ? WHERE id = ?")
-      .run(flag ? 1 : 0, isoNow(), meetingId);
-  } catch (err) {
-    dbLogger.error("degradation_flag_failed", "Could not persist semantic_degraded flag", extractErrorInfo(err));
-  }
-}
-
 export function setPersistenceDegraded(db, meetingId, flag = true) {
   try {
     db
@@ -426,12 +409,6 @@ export function setStats(db, meetingId, statsJson) {
   db
     .prepare("UPDATE meetings SET stats = ? WHERE id = ?")
     .run(statsJson ?? null, meetingId);
-}
-
-export function setEmbeddingModel(db, meetingId, model, dim) {
-  db
-    .prepare("UPDATE meetings SET embedding_model = ?, embedding_dim = ? WHERE id = ?")
-    .run(model ?? null, dim ?? null, meetingId);
 }
 
 export function setRateLimitState(db, meetingId, rateLimitJson) {

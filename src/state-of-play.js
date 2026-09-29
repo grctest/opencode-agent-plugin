@@ -131,8 +131,6 @@ function classifyContribution(type, content, mode = "", hasToolBacking = true) {
     case "propose":
     case "refine":
     case "support":
-    case "challenge":
-    case "dissent":
     case "question":
       return classifyByKeywords(content);
     case "reflection":
@@ -157,7 +155,7 @@ function classifyByKeywords(content) {
   if (isProposal && hasCodeRef) return "decisions";
   if (/\bwe should\b/.test(lower) || /\bdecision\b/.test(lower)) return "decisions";
   if (/\bagree\b/.test(lower) || /\bconsensus\b/.test(lower)) return "agreements";
-  if (/\bdisagree\b/.test(lower) || /\bconcern\b/.test(lower)) return "disagreements";
+  if (/\bdisagree\b/.test(lower)) return "disagreements";
   if (/\?\s*$/.test(withoutUrls.trim()) || /\?\s+[A-Z]/.test(withoutUrls)) return "openQuestions";
   return "keyFacts";
 }
@@ -377,7 +375,7 @@ export function formatFinalRoundTranscript(data, participants) {
   for (let i = 0; i < digestRounds.length; i++) {
     const r = digestRounds[i];
     const summary = (r.summary || (r.contributions[0]?.content ?? "")).slice(0, 400).replace(/\n/g, " ");
-    const contested = (r.contributions.find((c) => c.type === "critique_response" || c.type === "perspective_response" || c.type === "challenge" || c.type === "dissent" || /\b(challenge|dissent|disagree|concern|oppose|dispute|contradict|risk|flaw|weakness)\b/i.test(String(c.content ?? "")))?.content ?? "").slice(0, 400).replace(/\n/g, " ");
+    const contested = (r.contributions.find((c) => c.type === "critique_response" || c.type === "perspective_response")?.content ?? "").slice(0, 400).replace(/\n/g, " ");
     // Include top file mention for code rounds
     const fileMention = (r.contributions.find((c) => /file=|src\/.*\.\w+|```/.test(String(c.content)))?.content ?? "").slice(0, 300).replace(/\n/g, " ");
     const block = [`### Round ${r.number} (digest)`];

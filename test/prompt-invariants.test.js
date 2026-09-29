@@ -15,7 +15,7 @@ import { buildQueryPrompt } from "../src/prompts/interaction-prompts.js";
 import { QUERY_MODES } from "../src/prompts/query-modes.js";
 import { buildRoundSummaryUser } from "../src/round-summarizer.js";
 import { buildSynthesisPrompt } from "../src/prompts/synthesis.js";
-import { validateSynthesisSections, SYNTHESIS_SECTION_CONTRACT } from "../src/synthesizer.js";
+import { checkCitationSupport, finalizeSynthesis, validateSynthesisSections, SYNTHESIS_SECTION_CONTRACT } from "../src/synthesizer.js";
 import { collectObjections } from "../src/objection-collector.js";
 import { buildToolsMapWithoutLoom } from "../src/round-executor/tools.js";
 import { boundToolCallsForStorage } from "../src/database/contribution-operations.js";
@@ -213,7 +213,7 @@ test("synthesis prompt and section contract agree", () => {
     SYNTHESIS_SECTION_CONTRACT.actionGroup.some((s) => prompt.includes(`## ${s}`)),
     "prompt missing action group section",
   );
-  assert.deepEqual(validateSynthesisSections("nothing here").sort(), ["Action Items", "Confidence", "Decision", "Dissenting Views", "Open Questions", "Reasoning"].sort());
+  assert.deepEqual(validateSynthesisSections("nothing here").sort(), ["Action Items", "Confidence", "Decision", "Open Questions", "Reasoning"].sort());
 });
 
 // 12. B1 — one length rule (contract consumes LENGTH_LIMITS), no stale rule.
@@ -287,26 +287,17 @@ test("ungrounded evidence is not filed as fact", () => {
   assert.ok(!facts.includes("X cures Y"), "unbacked evidence leaked into Key Facts");
 });
 
-// 18. D12 — objections resolve on cite, go stale on keyword overlap only.
-test("objections resolve on citation and stale on mere overlap", () => {
+// 18. D12 — objections are critique_response type only (keyword detection removed in P17).
+test("objections collect only critique_response type", () => {
   const participants = [{ config: { id: "a", name: "A" } }, { config: { id: "b", name: "B" } }];
   const rounds = [
-    { number: 1, contributions: [{ id: 11, participant_id: "a", type: "contribution", content: "I disagree because the rollback path is unsafe and untested." }] },
+    { number: 1, contributions: [{ id: 11, participant_id: "a", type: "critique_response", content: "I disagree because the rollback path is unsafe and untested." }] },
     { number: 2, contributions: [{ id: 12, participant_id: "b", type: "contribution", content: "On the rollback approach: [#11] shows the failure mode, so we added a staged rollout with automated revert." }] },
   ];
   const cited = collectObjections({ rounds, participants });
+  assert.equal(cited.length, 1);
   assert.equal(cited[0].unresolved, false);
   assert.ok(!cited[0].stale, "cited resolution mislabelled stale");
-
-  const overlapOnly = collectObjections({
-    rounds: [
-      { number: 1, contributions: [{ id: 11, participant_id: "a", type: "contribution", content: "I disagree because the rollback path is unsafe and untested." }] },
-      { number: 2, contributions: [{ id: 13, participant_id: "b", type: "contribution", content: "The rollback plan looks fine to me overall." }] },
-    ],
-    participants,
-  });
-  assert.equal(overlapOnly[0].unresolved, false);
-  assert.equal(overlapOnly[0].stale, true);
 });
 
 // 19. C5 — code decisions classify to decisions; alternatives stay out of facts.
@@ -521,7 +512,7 @@ test("validator requires Decision Rule for decision_oriented spectra", () => {
 test("synthesis prompt requires Decision Rule and owned action items", () => {
   const prompt = buildSynthesisPrompt("Should we ship?", "transcript [#1]", [], [], "", [], "", {});
   assert.match(prompt, /## Decision Rule/);
-  assert.match(prompt, /Trigger.*Date.*Owner.*Default/);
+  assert.match(prompt, /Trigger, Order, Owner, Date, Default/);
   assert.match(prompt, /map the spectrum AND commit to the rule that resolves it/);
   assert.match(prompt, /‘Verify’ and ‘track’ are not action items unless they name what changes when they complete/);
 });
@@ -585,7 +576,7 @@ test("synthesis prompt demands consolidated thresholds and committed owner", () 
   assert.match(prompt, /cite the LATEST consolidated thresholds/);
   assert.match(prompt, /do NOT blend earlier proposals/);
   assert.match(prompt, /record the disagreement explicitly/);
-  assert.match(prompt, /“Proposed:” is not an owner/);
+  assert.match(prompt, /"Proposed:" is not an owner/);
 });
 
 // Local helper: cleanContent is not exported; test it indirectly via
@@ -595,3 +586,69 @@ function cleanContentForTest(content) {
   const sop = updateStateOfPlay(weave, "Q", []);
   return sop;
 }
+
+// 35. P11 — citation support: [#id] must resolve to a contribution whose
+// content shares a significant keyword with the citing sentence.
+test("citation support check flags mismatched citations", () => {
+  const weave = [
+    { id: 1, participant_id: "a", type: "contribution", content: "The rollback path is unsafe and untested in production." },
+    { id: 2, participant_id: "b", type: "contribution", content: "Quantum entanglement enables faster-than-light communication." },
+  ];
+  // "rollback" (len > 4, not a stopword) overlaps → supported.
+  assert.deepEqual(checkCitationSupport("We should adopt the rollback strategy [#1].", weave), []);
+  // Citing the quantum contribution for a rollback claim → unsupported.
+  const unsupported = checkCitationSupport("We should adopt the rollback strategy [#2].", weave);
+  assert.equal(unsupported.length, 1);
+  assert.equal(unsupported[0].id, "2");
+  assert.match(unsupported[0].sentence, /rollback/);
+  // Unresolved ids are out of scope — sectionHasValidCite flags those.
+  assert.deepEqual(checkCitationSupport("Anything at all [#99].", weave), []);
+});
+
+// 36. P11 — finalizeSynthesis appends a warning section when citations lack support.
+test("finalizeSynthesis warns on unsupported citations", () => {
+  const transcriptData = {
+    question: "Q",
+    rounds: [{ number: 1, contributions: [{ id: 7, participant_id: "a", type: "contribution", content: "Quantum entanglement enables faster-than-light communication." }] }],
+  };
+  const participants = [{ config: { id: "a", name: "A", tier: "senior" }, status: "listening" }];
+  const text = [
+    "## Executive Summary",
+    "We should adopt the rollback strategy [#7].",
+    "",
+    "## Reasoning",
+    "Because rollback.",
+    "",
+    "## Action Items",
+    "- Do x — owner: A — [#7]",
+    "",
+    "## Open Questions",
+    "- Q?",
+    "",
+    "## Confidence",
+    "Medium.",
+  ].join("\n");
+  const { output } = finalizeSynthesis(text, transcriptData, participants, []);
+  assert.match(output, /## Citation Warnings/);
+  assert.match(output, /\[#7\]/);
+  // A supported citation (every citing sentence shares "entanglement")
+  // produces no warning section.
+  const supportedText = [
+    "## Executive Summary",
+    "We should adopt the entanglement strategy [#7].",
+    "",
+    "## Reasoning",
+    "Because entanglement.",
+    "",
+    "## Action Items",
+    "- Study entanglement — owner: A — [#7]",
+    "",
+    "## Open Questions",
+    "- Q?",
+    "",
+    "## Confidence",
+    "Medium.",
+  ].join("\n");
+  const clean = finalizeSynthesis(supportedText, transcriptData, participants, []);
+  assert.doesNotMatch(clean.output, /## Citation Warnings/);
+});

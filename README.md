@@ -101,7 +101,7 @@ Models are stored under `OPENCODE_CONFIG_DIR` when set, otherwise globally at:
 
 ### How Embedding Models Are Used
 
-**Room composition** — At meeting creation, every persona's text (`persona`, `agenda`, `tags`, `expertise`) is embedded into the meeting database. Your question is embedded too, and compared against each persona by cosine similarity: for each role slot, the most similar not-yet-used persona in that tier is picked (`PersonaIndex.search`). A finance question gets finance experts; an engineering question gets engineers. The dashboard Setup tab shows the suggestion for approval before anything runs.
+**Room composition** — At meeting creation, every persona's text (`persona`, `agenda`, `tags`, `expertise`) is embedded into a process-scoped in-memory store (no database tables). Your question is embedded too, and compared against each persona by cosine similarity: for each role slot, the most similar not-yet-used persona in that tier is picked (`PersonaIndex.search`). A finance question gets finance experts; an engineering question gets engineers. The dashboard Setup tab shows the suggestion for approval before anything runs.
 
 The embedding model is initialized at plugin startup (`ensureEmbedderInitialized` in `src/index.js:65`, async with 5s race) and separately in the dashboard (`initEmbeddingModel` in `src/dashboard/server/helpers.js:17` with build default). Both use real embeddings; if unavailable, room composition degrades via keyword fallback with warnings.
 
@@ -170,7 +170,7 @@ The Loom ships with 89 personas organized into five tiers (including `civilian` 
 | **Total** | **89** |
 <!-- CENSUS-END -->
 
-When you ask a question, the Loom uses **embedding similarity** (not LLM domain detection) to select personas — the question is embedded and the most similar personas per tier are chosen via `PersonaIndex.search` (cosine similarity against `persona_embeddings`). For example, a finance question gets finance experts; an engineering question gets engineers.
+When you ask a question, the Loom uses **embedding similarity** (not LLM domain detection) to select personas — the question is embedded and the most similar personas per tier are chosen via `PersonaIndex.search` (cosine similarity against the in-memory persona store). For example, a finance question gets finance experts; an engineering question gets engineers.
 
 | Question Type | Tags Matched |
 |---------------|------------------|

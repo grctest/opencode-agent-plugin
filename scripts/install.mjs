@@ -254,17 +254,17 @@ try {
   // bundled plugin file (plugins/loom.js → plugins/deps/node_modules/).
   const runtimeDepsDir = join(opencodeDir, "plugins", "deps");
   console.log("");
-  logInfo("Installing runtime deps (onnxruntime-node, @huggingface/tokenizers, sqlite-vec)...");
+  logInfo("Installing runtime deps (onnxruntime-node, @huggingface/tokenizers)...");
   // Platform guard (audit 08 SC5): verify npm is resolvable before shelling out
   // so the failure message is actionable instead of a raw ENOENT.
   const npmBin = process.platform === "win32" ? "npm.cmd" : "npm";
   const npmCheck = spawnSync(npmBin, ["--version"], { stdio: "pipe", shell: process.platform === "win32" });
   if (npmCheck.error || npmCheck.status !== 0) {
     logWarn("npm not found on PATH — skipping runtime dependency installation.");
-    logInfo(`Install them manually: npm install --prefix "${runtimeDepsDir}" onnxruntime-node@1.30.0 @huggingface/tokenizers@0.2.0 sqlite-vec@0.1.9`);
+    logInfo(`Install them manually: npm install --prefix "${runtimeDepsDir}" onnxruntime-node@1.30.0 @huggingface/tokenizers@0.2.0`);
   } else {
     try {
-      execFileSync(npmBin, ["install", "--prefix", runtimeDepsDir, "onnxruntime-node@1.30.0", "@huggingface/tokenizers@0.2.0", "sqlite-vec@0.1.9"], {
+      execFileSync(npmBin, ["install", "--prefix", runtimeDepsDir, "onnxruntime-node@1.30.0", "@huggingface/tokenizers@0.2.0"], {
         cwd: PROJECT_ROOT,
         stdio: "inherit",
         timeout: 300000
@@ -272,7 +272,7 @@ try {
       logInfo("Runtime deps installed successfully.");
     } catch (err) {
       logWarn(`Could not install runtime deps: ${err.message}`);
-      logInfo(`Run: npm install --prefix "${runtimeDepsDir}" onnxruntime-node@1.30.0 @huggingface/tokenizers@0.2.0 sqlite-vec@0.1.9`);
+      logInfo(`Run: npm install --prefix "${runtimeDepsDir}" onnxruntime-node@1.30.0 @huggingface/tokenizers@0.2.0`);
     }
   }
 } catch (err) {

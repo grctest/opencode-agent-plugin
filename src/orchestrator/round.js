@@ -255,12 +255,8 @@ export async function _finalizeRound(updatedRound) {
         return false;
       }
 
-      const isChallengeLikeContent = (c) => {
-        if (c.type === "challenge" || c.type === "dissent" || c.type === "critique_response") return true;
-        return /\b(challenge|dissent|disagree|concern|oppose|dispute|contradict|risk|flaw|weakness)\b/i.test(String(c.content ?? ""));
-      };
-      const challengeLikeCount = updatedRound.contributions.filter(isChallengeLikeContent).length;
-      if (challengeLikeCount >= 3) {
+      const critiqueCount = updatedRound.contributions.filter((c) => c.type === "critique_response").length;
+      if (critiqueCount >= 3) {
         const hasSynthesis = updatedRound.contributions.some(c => c.type === "synthesize");
         if (!hasSynthesis) {
           this._stateManager.setNextRoundSteering(

@@ -280,7 +280,7 @@ export function buildFlatItems(groupedContributions, opts) {
         // (query_response / evidence_response etc) for the invoked agents.
         if (round === activeRound && isWeaving) {
           for (const c of agentContribs) {
-            if ((c.type === "challenge" || c.type === "dissent") && !reflectionsByTarget.has(c.id)) {
+            if (c.type === "critique_response" && !reflectionsByTarget.has(c.id)) {
               for (const p of reflectingParticipants) {
                 if (p.id !== c.participant_id) {
                   segItems.push({ type: "thinking_reflection", triggerContributionId: c.id, triggerType: c.type, triggerAgentName: participantName(c.participant_id), reflectorName: p.name, round });

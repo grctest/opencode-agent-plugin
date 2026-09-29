@@ -231,9 +231,10 @@ export function buildRoundContext(currentRound, maxRounds) {
   }
   const progress = currentRound / maxRounds;
   if (progress <= 0.33) {
-    return `Early deliberation (round ${currentRound}/${maxRounds}) — DIVERGE. Surface assumptions, name hidden constraints, introduce distinct options. Don’t converge yet; explore the full spectrum. Thoroughness welcome.
-- Stake your own position first, in your own terms — do not build on the first speaker’s frame or vocabulary. If you disagree with the emerging frame, say so and name the frame you’d use instead.
-- Before critiquing a front-runner, spend one passage on the strongest case for a *different* option than the current leader.`;
+    return `Early deliberation (round ${currentRound}/${maxRounds}) — DIVERGE. Surface assumptions, name hidden constraints, introduce distinct options. Don't converge yet; explore the full spectrum. Thoroughness welcome.
+- Stake your own position first, in your own terms — do not build on the first speaker's frame or vocabulary. If you disagree with the emerging frame, say so and name the frame you'd use instead.
+- Before critiquing a front-runner, spend one passage on the strongest case for a *different* option than the current leader.
+- Frozen terms: the question's load-bearing terms (event set, scoring body, season shape, roster date, key definitions) are frozen before round 1. If you use a term that differs from the frozen definition, flag the divergence in one clause — definition-adjacent disputes are clerk-flagged, not debated.`;
   } else if (progress <= 0.66) {
     return `Mid deliberation (round ${currentRound}/${maxRounds}) — MAP & REFINE. Identify what’s settled vs contested, bundle related proposals, steelman opposing views, surface tradeoffs with numbers where possible. Name what would unlock next steps but don’t force consensus.
 - When you build on a settled point, cite its [#id] once and add a delta — don’t restate it.`;

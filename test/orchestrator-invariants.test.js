@@ -169,7 +169,7 @@ test("synthesis participants and dissent carry no tier", () => {
   );
   assert.doesNotMatch(prompt, /\(principal\)/);
   assert.doesNotMatch(prompt, /\{Holder\}.*\{tier\}/);
-  assert.match(prompt, /\*\*\{Holder\}\*\*:/);
+  assert.doesNotMatch(prompt, /Dissenting Views/);
 });
 
 // Step 5 — clerk context: round position, tier-free roster, SoP excerpt, requests.

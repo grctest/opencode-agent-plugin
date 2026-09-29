@@ -12,7 +12,6 @@
  */
 import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync, openSync, closeSync, fsyncSync, renameSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { MeetingOrchestrator } from "../../orchestrator.js";
 import { normalizeOrchestratorConfig, validateOrchestratorConfig } from "../../orchestrator/models.js";
 import { composeRoomWithSimilarity } from "../../composer.js";
@@ -212,40 +211,17 @@ export function handleListPersonas() {
   return Response.json({ tiers });
 }
 
-// --- Room preview (real embedding path via a throwaway DB) ---
+// --- Room preview (in-memory persona index, no database) ---
 
 /**
- * Compose a preview room using the same embedding-based PersonaIndex path as a
- * real run. PersonaIndex needs a meeting DB (FK on persona_embeddings), so the
- * preview runs against a throwaway DB in the OS temp dir that is closed,
- * unindexed, and deleted afterwards — it never appears in the meetings list
- * or session index. Falls back to keyword composition when anything fails
- * (including an unavailable embedder, handled inside composeRoomWithSimilarity).
+ * Compose a preview room using the same PersonaIndex path as a real run.
+ * Persona vectors live in process memory, so the preview needs no database
+ * at all — it never appears in the meetings list or session index. Falls
+ * back to keyword composition when anything fails (including an unavailable
+ * embedder, handled inside composeRoomWithSimilarity).
  */
 async function composePreviewRoom(question, context = "") {
-  const tempId = crypto.randomUUID();
-  const tempPath = join(tmpdir(), `loom-preview-${tempId}.db`);
-  let db = null;
-  try {
-    db = await MeetingDatabase.create(tempPath, tempId);
-    db.initializeMeeting({
-      question,
-      context: "",
-      maxRounds: 3,
-      tags: [],
-      parentSessionId: "preview",
-      opencodeSessionId: "preview",
-      embedding_model: null,
-      embedding_dim: null,
-      participants: [],
-    }, { skipIndex: true });
-    return await composeRoomWithSimilarity(question, db, context);
-  } finally {
-    try { db?.close(); } catch {}
-    for (const suffix of ["", "-wal", "-shm", "-journal"]) {
-      try { if (existsSync(tempPath + suffix)) unlinkSync(tempPath + suffix); } catch {}
-    }
-  }
+  return composeRoomWithSimilarity(question, context);
 }
 
 export async function handleRoomPreview(req) {
@@ -266,9 +242,9 @@ export async function handleRoomPreview(req) {
   try {
     room = await composePreviewRoom(question, String(body?.context ?? ""));
   } catch (err) {
-    logger.warn("dashboard_preview_fallback", "Throwaway-DB preview failed — falling back to keyword composition", extractErrorInfo(err));
+      logger.warn("dashboard_preview_fallback", "Room preview failed — falling back to keyword composition", extractErrorInfo(err));
     try {
-      room = await composeRoomWithSimilarity(question, null, String(body?.context ?? ""));
+      room = await composeRoomWithSimilarity(question, String(body?.context ?? ""), { keywordOnly: true });
     } catch (err2) {
       const info = extractErrorInfo(err2);
       return Response.json({

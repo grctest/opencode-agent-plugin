@@ -611,15 +611,6 @@ export class StateManager {
     }
   }
 
-  setParticipantEmbedding(participantId, embedding) {
-    const p = this.getParticipant(participantId);
-    if (p) {
-      p.embedding = embedding;
-    } else {
-      this.#logger.warn("participant_not_found", `setParticipantEmbedding: unknown participant "${participantId}"`);
-    }
-  }
-
   buildSharedState() {
     // Summary-only state inclusion (plan §5.7): counts + versions, not full bullets,
     // to avoid inflating the structuredClone per-round cost. Full states persist via DB.

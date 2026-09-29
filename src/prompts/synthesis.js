@@ -88,7 +88,6 @@ export function buildSynthesisPrompt(question, transcript, participants = [], ta
 - Reasoning: ${L.synthesisReasoning} words — 4-8 bullets, who argued what + evidence + tradeoff, group cites; deduplicate vs Decision table (map vs narrative)
 - Proposed Fix: ${L.synthesisProposedFix} words — Files: \`path\` + diffs \`\`\`tsx file=src/...\`\`\` + why, mark Proposed if synthesized, note live edits vs proposals, include tests
 - Action Items: ${L.synthesisActionItems} words — verbs with owners or “proposed: X → handoff to @role” + block cites; distribute owners, max 2 per holder (may be “None — see Proposed Fix”)
-- Dissenting Views: ${L.synthesisDissent} words — each holder + [#id] + one-line evidence; merge duplicates from same holder on same evidence; high dissent fine
 - Open Questions: ${L.synthesisOpenQuestions} words — why remains + suggested probe
 - Confidence: ${L.synthesisConfidence} words — one word + rubric justification (High may have dissent if bounded and grounded)
 Total 1600-3500 words welcome; concise but thorough — preserve numbers/code verbatim, no invented figures.\n`
@@ -97,7 +96,6 @@ Total 1600-3500 words welcome; concise but thorough — preserve numbers/code ve
 - Decision / Synthesis: ${L.synthesisDecision} words — one paragraph OR spectrum table if no consensus; group citations per block; table cells concise (Evidence 30-35w + one grouped cite, Tradeoff 30-35w)
 - Reasoning: ${L.synthesisReasoning} words — 4-8 bullets, each who argued what + evidence + tradeoff, group cites; DEDUPLICATE vs Decision — Decision maps positions, Reasoning explains why they emerged/diverged, do not copy-paste numbers verbatim thrice
 - Action Items: ${L.synthesisActionItems} words — verbs with owners or “proposed: X → handoff to @role” + block cites; distribute owners (max 2 per holder unless justified)
-- Dissenting Views: ${L.synthesisDissent} words — each holder + [#id] + one-line evidence; merge duplicate dissents from same holder on same evidence into one entry with combined [#ids]
 - Open Questions: ${L.synthesisOpenQuestions} words — why remains + suggested probe/next step
 - Confidence: ${L.synthesisConfidence} words — one word + rubric justification
 Total 1500-3500 words welcome; concise but thorough — preserve numbers verbatim, no invented figures.\n`;
@@ -112,10 +110,14 @@ Human-first plain narrative (no citations). 2-4 sentences: what was asked, what 
 If convergent: one-paragraph direct answer citing key [#id]s (grouped per block, no vec: leak). If divergent / open-ended: write “No single decision — spectrum below” then map options in a table | Option | Holder(s) | Evidence (30-35w + one grouped cite) | Tradeoff (30-35w) | — still cite [#id]s per option. Tables MUST include the GFM delimiter row as the second line (| --- | --- | --- | --- |) or they will not render. Preserve numbers verbatim. Dissent does not force a decision. Keep cells concise, not paragraphs.
 
 ## Decision Rule
-Required when there is no single Decision above. State the rule that WILL resolve the spectrum — Trigger, Date, Owner, Default, Re-pricing. If a single Decision was reached above, write “None — decided above.”
-- **Trigger:** cite the LATEST consolidated thresholds with [#id] refs to the consolidating contribution. If the room resolved conflicting thresholds into a single gate or a tiered structure, record the resolved form — do NOT blend earlier proposals. If no consolidation happened, record the disagreement explicitly (“threshold contested: [#id] says X, [#id] says Y — unresolved”).
-- **Date:** the latest date by which the decision must be made.
-- **Owner:** a specific named participant from the Participants list who evaluates the trigger — or “unassigned — owner TBD”. “Proposed:” is not an owner.
+Required when there is no single Decision above. State the rule that WILL resolve the spectrum — Trigger, Order, Owner, Date, Default, Re-pricing. If a single Decision was reached above, write "None — decided above."
+
+**Ladder atomicity:** Trigger, order, owner, full date, and re-pricing conditions form ONE atomic object — the vote that adopts a ladder assigns all five or adopts nothing. Never record a partial ladder (a trigger with no owner, or an owner with no date, is not a rule).
+
+- **Trigger:** cite the LATEST consolidated thresholds with [#id] refs to the consolidating contribution. If the room resolved conflicting thresholds into a single gate or a tiered structure, record the resolved form — do NOT blend earlier proposals. If no consolidation happened, record the disagreement explicitly ("threshold contested: [#id] says X, [#id] says Y — unresolved").
+- **Order:** the sequence of steps or checks in the ladder, in the order they fire.
+- **Owner:** a specific named participant from the Participants list who evaluates the trigger — or "unassigned — owner TBD". "Proposed:" is not an owner.
+- **Date:** the full date (year included) by which the decision must be made.
 - **Default:** what happens if the trigger never fires.
 - **Re-pricing:** what new information changes the default before the trigger.
 
@@ -129,10 +131,6 @@ Files involved + diffs with \`\`\`tsx file=src/...\`\`\` blocks. Mark any novel 
 - {verb} {what} — owner: {name or “proposed: X → handoff to @role”} — block cite [#id]
 (Empty → “None — see Proposed Fix.”) Distribute owners; max 2 per holder.
 
-## Dissenting Views
-Each dissent on its own line: **{Holder}**: {view} — [#id] + one-line evidence summary (30w). Merge duplicates from same holder on same evidence into one entry with combined [#ids]. If none, “None — all converged.”
-Unresolved Objections above must appear here. High dissent is fine — map it, don’t suppress.
-
 ## Open Questions
 - {question that remains} — why it remains (missing evidence / unresolved tradeoff) — how to resolve`
     : `## Required Sections — output these exact headings in this order, even if empty (write “None” where appropriate)
@@ -144,10 +142,14 @@ Human-first plain narrative (no citations). 2-4 sentences: what was asked, what 
 If convergent: one-paragraph direct answer citing key [#id]s (grouped per block, never vec:). If divergent / open-ended: write “No single decision — spectrum below” then present a table | Position | Holder(s) | Evidence (30-35w max + one grouped cite) | Tradeoff (30-35w max) | — still cite [#id]s per row. Tables MUST include the GFM delimiter row as the second line (| --- | --- | --- | --- |) or they will not render. Preserve numbers verbatim. Do not force consensus; mapping the disagreement is a valid outcome. Keep cells concise.
 
 ## Decision Rule
-Required when there is no single Decision above. State the rule that WILL resolve the spectrum — Trigger, Date, Owner, Default, Re-pricing. If a single Decision was reached above, write “None — decided above.”
-- **Trigger:** cite the LATEST consolidated thresholds with [#id] refs to the consolidating contribution. If the room resolved conflicting thresholds into a single gate or a tiered structure, record the resolved form — do NOT blend earlier proposals. If no consolidation happened, record the disagreement explicitly (“threshold contested: [#id] says X, [#id] says Y — unresolved”).
-- **Date:** the latest date by which the decision must be made.
-- **Owner:** a specific named participant from the Participants list who evaluates the trigger — or “unassigned — owner TBD”. “Proposed:” is not an owner.
+Required when there is no single Decision above. State the rule that WILL resolve the spectrum — Trigger, Order, Owner, Date, Default, Re-pricing. If a single Decision was reached above, write "None — decided above."
+
+**Ladder atomicity:** Trigger, order, owner, full date, and re-pricing conditions form ONE atomic object — the vote that adopts a ladder assigns all five or adopts nothing. Never record a partial ladder (a trigger with no owner, or an owner with no date, is not a rule).
+
+- **Trigger:** cite the LATEST consolidated thresholds with [#id] refs to the consolidating contribution. If the room resolved conflicting thresholds into a single gate or a tiered structure, record the resolved form — do NOT blend earlier proposals. If no consolidation happened, record the disagreement explicitly ("threshold contested: [#id] says X, [#id] says Y — unresolved").
+- **Order:** the sequence of steps or checks in the ladder, in the order they fire.
+- **Owner:** a specific named participant from the Participants list who evaluates the trigger — or "unassigned — owner TBD". "Proposed:" is not an owner.
+- **Date:** the full date (year included) by which the decision must be made.
 - **Default:** what happens if the trigger never fires.
 - **Re-pricing:** what new information changes the default before the trigger.
 
@@ -157,11 +159,6 @@ Required when there is no single Decision above. State the rule that WILL resolv
 ## Action Items
 - {verb} {what} — owner: {name or “proposed: X → handoff to @role”} — block cite [#id]
 (Empty → “None — deliberation surfaced no actionable consensus; see Open Questions for next step.”) Distribute owners; max 2 per holder unless justified.
-
-## Dissenting Views
-Each dissent on its own line: **{Holder}**: {view} — [#id] + one-line evidence summary (≤30w). Merge duplicate dissents from same holder on same evidence into one entry with combined [#ids].
-If none, write “None — all active participants converged or passed.”
-Unresolved Objections above must appear here. Multiple dissents are fine and do not preclude High confidence if each is well-bounded.
 
 ## Open Questions
 - {question that remains} — why it remains (missing evidence / unresolved tradeoff) — suggested next probe or experiment`;
@@ -179,11 +176,13 @@ ${participantsSection}
 
 You are not a participant. You are an auditor. Every claim you make must be traceable, but human readability comes first.
 ${opts.decisionPosture ? `\nOperator decision posture: ${getOrchestratorDecisionSentence({ decisionPosture: opts.decisionPosture }).replace(/^Decision posture: /, "").replace(/\.$/, "")}. This is emphasis only — it is outranked by every numbered rule below.\n` : ""}
-${groundingRule}2. **Attribution:** Every Dissenting View must name the holder by name + [#id] + one-line evidence. Unresolved Objections above are mandatory dissent — include them. Group cites per block.
-3. **No invention:** Do not invent numbers, dates, costs, tool results, or participant positions not in transcript/State-of-Play. If evidence conflicts, state both and set Confidence accordingly. For code, do not invent file contents not read via tool.
-4. **Resolved ≠ dissent:** Items in Resolved Concerns must NOT reappear as Dissenting Views.
-5. **Actionability:** Action Items are verbs with owners or “proposed owner: …” if unattributed. ‘Verify’ and ‘track’ are not action items unless they name what changes when they complete.
-6. **Open-ended discipline:** Do NOT force a single Decision if transcript shows spectrum. “No single decision — spectrum below” + table is correct. Mapping disagreement is a success.
+${groundingRule}2. **No invention:** Do not invent numbers, dates, costs, tool results, or participant positions not in transcript/State-of-Play. If evidence conflicts, state both and set Confidence accordingly. For code, do not invent file contents not read via tool.
+3. **Actionability:** Action Items are verbs with owners or “proposed owner: …” if unattributed. ‘Verify’ and ‘track’ are not action items unless they name what changes when they complete.
+4. **Open-ended discipline:** Do NOT force a single Decision if transcript shows spectrum. “No single decision — spectrum below” + table is correct. Mapping disagreement is a success.
+5. **Versioned base tables:** When a recurring number set (leaderboard, standings, win totals) is published as a versioned base table (e.g. “leaderboard v1” with season length, per-team/driver wins, sources, as-of round), later contributions cite that version or publish the next version with a diff line. Cite only the LATEST version — never mix figures from different versions. If versions conflict, state both and set Confidence accordingly.
+6. **Ratchet votes:** A ballot is never final against new evidence. If later contributions supersede a voted question — new data, a corrected figure, a changed premise — record the vote as re-opened and state which evidence re-opened it. When new evidence has emerged since the last ballot, the final round closes with a confirmation ballot on the superseded question; record its outcome, not just the original tally.
+7. **No naked numbers:** Before finishing, scan your draft for every percentage and rate. Each must carry (n, window, source) — sample size, the time/scope window it covers, and where it came from ([#id], State-of-Play, or Source:). A rate with n<10 may illustrate but never licenses a conclusion — label it "n=X, illustrative only" or strike it. A number you cannot attribute to the transcript/State-of-Play is removed or explicitly flagged as unverified; never let a bare "%" or "X per season" stand on its own.
+8. **Calibration sheet for gate ladders:** When you record a Decision Rule with trigger thresholds, each trigger must ship with its calibration — the base rate, historical precedent, or data that justifies the number, or the cheap test that would measure it. If the room never calibrated a trigger, record it as "uncalibrated — needs base rate" rather than presenting it as a working gate; a threshold justified two rounds after authorship is not calibrated.
 
 ${lengthSection}
 ${requiredSections}
@@ -191,19 +190,17 @@ ${requiredSections}
 ## Confidence
 One word: High | Medium | Low — then 1-2 sentence justification referencing the rubric:
 
-- High = thorough exploration (≥60% participation or rich evidence) AND claims grounded in [#id]/State-of-Play or marked Proposed; dissent may be High if each view is well-bounded with evidence
+- High = thorough exploration (≥60% participation or rich evidence) AND claims grounded in [#id]/State-of-Play or marked Proposed
 - Medium = solid participation but some gaps (missing evidence, thin tool grounding, or unresolved key tradeoff)
 - Low = thin participation, many failures/passes, or key claims ungrounded / invented
 
-Dissent alone does NOT cap confidence. Cite which condition you met.
+**Split name vs number:** when the decision rests on a numeric estimate, state confidence separately for the NAME (the qualitative conclusion) and the NUMBER (the quantitative estimate) — e.g. "Name: High; Number: Medium". When the numeric band straddles the decision threshold, degrade to threshold analysis (state the band and what evidence would move it) instead of publishing a point estimate.
 
 ## Negative Example (do NOT do this)
 ## Executive Summary
 We should migrate to JWT because everyone agreed.  ← BAD: no nuance, forces consensus
 ## Decision
 We should migrate to JWT because everyone agreed.  ← BAD: no citations, vague consensus claim
-## Dissenting Views
-None  ← BAD when transcript has dissent
 ${isCode ? "\n## Negative Example (code) — do NOT do this\n## Proposed Fix\nFix hydration by editing layout.tsx.  ← BAD: no file=, no ``` block, no Proposed marking\n" : ""}
 
 ## Good Fragment (abstract, domain-free)

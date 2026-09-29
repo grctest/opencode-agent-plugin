@@ -58,9 +58,9 @@ const EXPECTED_SYS = {
   "Craft (positive anti-patterns)": "48d74bb60ea6",
   "Tier Doctrine": "367eda2be27c",
   "Mode": "e2f67c7b37e3",
-  "Research Tools — Tool Ladder": "df396c3296f3",
+  "Research Tools — Tool Ladder": "ede28bc2a52c",
   "WHEN TO PASS": "20cc67420712",
-  "OUTPUT CONTRACT — read last, it governs; in conflict it wins": "790ee3e9e1e6",
+  "OUTPUT CONTRACT — read last, it governs; in conflict it wins": "af0f38a73638",
 };
 
 const EXPECTED_USER = {

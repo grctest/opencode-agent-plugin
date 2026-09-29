@@ -6,13 +6,12 @@ const dbLogger = new Logger();
 export function saveArtifact(db, meetingId, artifact) {
   db
     .prepare(
-      `INSERT INTO artifacts (meeting_id, content, decisions, action_items, dissent, open_questions, confidence, refusals, orchestrator_config, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO artifacts (meeting_id, content, decisions, action_items, open_questions, confidence, refusals, orchestrator_config, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(meeting_id) DO UPDATE SET
            content = excluded.content,
            decisions = excluded.decisions,
            action_items = excluded.action_items,
-           dissent = excluded.dissent,
            open_questions = excluded.open_questions,
            confidence = excluded.confidence,
            refusals = excluded.refusals,
@@ -24,7 +23,6 @@ export function saveArtifact(db, meetingId, artifact) {
       artifact.content,
       artifact.decisions ? JSON.stringify(artifact.decisions) : null,
       artifact.action_items ? JSON.stringify(artifact.action_items) : null,
-      artifact.dissent ? JSON.stringify(artifact.dissent) : null,
       artifact.open_questions ? JSON.stringify(artifact.open_questions) : null,
       artifact.confidence ?? null,
       artifact.refusals ? JSON.stringify(artifact.refusals) : null,
@@ -36,7 +34,7 @@ export function saveArtifact(db, meetingId, artifact) {
 export function getArtifact(db, meetingId) {
   const row = db
     .prepare(
-      `SELECT content, decisions, action_items, dissent, open_questions, confidence, refusals, orchestrator_config, created_at
+      `SELECT content, decisions, action_items, open_questions, confidence, refusals, orchestrator_config, created_at
          FROM artifacts WHERE meeting_id = ?`,
     )
     .get(meetingId);
@@ -63,7 +61,6 @@ export function getArtifact(db, meetingId) {
     content: row.content,
     decisions: parse(row.decisions),
     action_items: parse(row.action_items),
-    dissent: parse(row.dissent),
     open_questions: parse(row.open_questions),
     refusals: parse(row.refusals),
     confidence: row.confidence,

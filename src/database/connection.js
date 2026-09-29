@@ -1,84 +1,6 @@
 import { existsSync, copyFileSync, mkdirSync, unlinkSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createRequire } from "node:module";
-import { resolveOpencodeConfigDir } from "../paths.js";
-
-const VEC_CANDIDATE_PKGS = [
-  'sqlite-vec-linux-x64',
-  'sqlite-vec-linux-arm64',
-  'sqlite-vec-darwin-arm64',
-  'sqlite-vec-darwin-x64',
-  'sqlite-vec-win32-x64',
-];
-const VEC_EXTS = ['vec0.so', 'vec0.dylib', 'vec0.node'];
-let cachedVecPath = null;
-let vecPathResolved = false;
-
-export function invalidateVecPathCache() {
-  vecPathResolved = false;
-  cachedVecPath = null;
-}
-
-let _vecPathCacheTime = 0;
-const VEC_CACHE_TTL_MS = 60_000;
-
-export function resolveVecPath() {
-  if (vecPathResolved) {
-    const now = Date.now();
-    const stale = now - _vecPathCacheTime > VEC_CACHE_TTL_MS;
-    if (cachedVecPath && existsSync(cachedVecPath)) return cachedVecPath;
-    if (cachedVecPath && !existsSync(cachedVecPath)) {
-      vecPathResolved = false;
-      cachedVecPath = null;
-    } else if (vecPathResolved && !stale) {
-      return cachedVecPath;
-    } else if (stale) {
-      // TTL expired — re-scan even on cached miss
-      vecPathResolved = false;
-      cachedVecPath = null;
-    }
-  }
-  vecPathResolved = true;
-  _vecPathCacheTime = Date.now();
-  const baseDir = (import.meta.dir ?? import.meta.dirname ?? '.');
-  const roots = [
-    join(baseDir, 'deps', 'node_modules'),
-    join(baseDir, '../deps', 'node_modules'),
-    join(baseDir, 'node_modules'),
-    join(baseDir, '../node_modules'),
-    join(baseDir, '../../node_modules'),
-  ];
-  try {
-    const configDir = resolveOpencodeConfigDir();
-    roots.push(join(configDir, 'plugins', 'deps', 'node_modules'));
-    roots.push(join(configDir, 'loom', 'deps', 'node_modules'));
-  } catch {}
-  for (const root of roots) {
-    for (const pkg of VEC_CANDIDATE_PKGS) {
-      for (const ext of VEC_EXTS) {
-        const p = join(root, pkg, ext);
-        if (existsSync(p)) {
-          cachedVecPath = p;
-          return cachedVecPath;
-        }
-      }
-    }
-  }
-  try {
-    const req = createRequire(import.meta.url);
-    const pkgPath = req.resolve('sqlite-vec-linux-x64/package.json');
-    const dir = dirname(pkgPath);
-    for (const ext of VEC_EXTS) {
-      const p = join(dir, ext);
-      if (existsSync(p)) {
-        cachedVecPath = p;
-        return cachedVecPath;
-      }
-    }
-  } catch {}
-  return null;
-}
 
 let DatabaseClass = null;
 let dbReady = null;
@@ -335,5 +257,3 @@ export function repairDatabase(dbPath) {
     try { writer?.close(); } catch {}
   }
 }
-
-export { VEC_CANDIDATE_PKGS };

@@ -51,8 +51,8 @@ export const Loom = async (input) => {
 
   // Initialize the real embedding model in the plugin process so
   // room composition (PersonaIndex) uses real embeddings rather than
-  // placeholder noise. Fabric vector search removed (P1) — only persona
-  // embeddings remain. Failures are non-fatal: composition degrades to
+  // placeholder noise. Persona vectors live in process memory (no DB
+  // tables). Failures are non-fatal: composition degrades to
   // keyword/tag fallback.
   const startupValues = config.get();
   const resolvedModel = startupValues.embeddingModel ?? DEFAULT_EMBEDDING_MODEL;
