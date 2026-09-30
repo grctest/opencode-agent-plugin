@@ -67,7 +67,7 @@ export class SynthesisCoordinator {
     return buildOrchestratorSynthesisSystem(config);
   }
 
-  async run({ transcriptData, participants, objections, model, onStart, onComplete, stateOfPlay = "", userContext = "" }) {
+  async run({ transcriptData, participants, model, onStart, onComplete, stateOfPlay = "", userContext = "" }) {
     if (!model?.providerID || !model?.modelID) {
       throw new LoomError("No orchestrator model available for final synthesis", { phase: "synthesis", recoverable: false });
     }
@@ -86,7 +86,7 @@ export class SynthesisCoordinator {
         ...this.#orchestratorConfig,
         synthesisStyle: getEffectiveSynthesisStyle(this.#orchestratorConfig, transcriptData.question, transcriptData.tags),
       };
-      artifactText = await this.#promptWithRetry(synthSessionId, transcriptData, transcript, model, participants, stateOfPlay, objections, userContext, effectiveConfig);
+      artifactText = await this.#promptWithRetry(synthSessionId, transcriptData, transcript, model, participants, stateOfPlay, userContext, effectiveConfig);
       artifactText = await this.#critique(synthSessionId, artifactText, transcript, transcriptData, model, participants, effectiveConfig);
     } catch (err) {
       const info = extractErrorInfo(err);
@@ -98,7 +98,7 @@ export class SynthesisCoordinator {
       }
     }
 
-    const result = finalizeSynthesis(artifactText, transcriptData, participants, objections);
+    const result = finalizeSynthesis(artifactText, transcriptData, participants);
 
     await this.#sessionManager.postProgress("✅ Synthesis complete");
 
@@ -106,7 +106,7 @@ export class SynthesisCoordinator {
     return result;
   }
 
-  async #promptWithRetry(sessionId, transcriptData, transcript, model, allParticipants, stateOfPlay = "", objections = [], userContext = "", effectiveConfig = this.#orchestratorConfig) {
+  async #promptWithRetry(sessionId, transcriptData, transcript, model, allParticipants, stateOfPlay = "", userContext = "", effectiveConfig = this.#orchestratorConfig) {
     let additionalFeedback = "";
     const rawMaxRetries = getConfig().synthesisMaxRetries;
     const maxRetries = Number.isFinite(rawMaxRetries) ? rawMaxRetries : 1;
@@ -117,7 +117,7 @@ export class SynthesisCoordinator {
       // than only in the round clerk's summary.
       const engagement = computeEngagementLedger(transcriptData);
       const userPrompt =
-        buildSynthesisPrompt(transcriptData.question, transcript, allParticipants, transcriptData.tags ?? [], stateOfPlay, objections, userContext, { buildMode: transcriptData.buildMode, decisionPosture: effectiveConfig?.decisionPosture, engagement }) +
+        buildSynthesisPrompt(transcriptData.question, transcript, allParticipants, transcriptData.tags ?? [], stateOfPlay, userContext, { buildMode: transcriptData.buildMode, decisionPosture: effectiveConfig?.decisionPosture, engagement }) +
         additionalFeedback;
 
       const llmStart = Date.now();
@@ -130,7 +130,6 @@ export class SynthesisCoordinator {
           timeoutMs: getConfig().synthesisTimeoutMs,
         });
          if (!r.ok) throw r.error;
-         this.#sessionManager.recordTokens?.(r.tokens);
          return r;
       }, { maxAttempts: 3, baseDelayMs: 200, maxDelayMs: 2000, retryable: isRetryableError });
       const llmMs = Date.now() - llmStart;
@@ -273,7 +272,6 @@ ${draftForPrompt}`;
             timeoutMs: getConfig().synthesisTimeoutMs,
           });
            if (!r.ok) throw r.error;
-           this.#sessionManager.recordTokens?.(r.tokens);
           return r;
         }, { maxAttempts: 3, baseDelayMs: 200, maxDelayMs: 2000, retryable: isRetryableError });
         try { this.#sessionManager.recordCall?.("synthesis"); } catch {}
@@ -335,9 +333,8 @@ Low (synthesis incomplete — State of Play fallback)`;
 
     // Primary turns are untyped "contribution" — legacy propose/refine/challenge
     // filters match zero rows on any modern meeting, rendering an empty artifact
-    // (audit D6). Filter on the live substantive set and classify by keywords,
-    // mirroring collectObjections, with per-bullet bounds so one long
-    // contribution cannot produce a multi-kB "fallback".
+    // (audit D6). Filter on the live substantive set, with per-bullet bounds so
+    // one long contribution cannot produce a multi-kB "fallback".
     const contributions = transcriptData.rounds.flatMap((r) => r.contributions);
     const substantive = contributions.filter((c) => c.type !== "pass" && (SUBSTANTIVE_TYPES.has(c.type) || c.type === "contribution"));
     const oneLine = (c, max = 300) => String(c.content ?? "").replace(/\s+/g, " ").trim().slice(0, max);

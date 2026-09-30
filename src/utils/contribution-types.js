@@ -78,16 +78,16 @@ export const DECISION_SHAPED_TYPES = new Set(["vote_response"]);
  * @param {Array<{type: string, round?: number|null}>} weave
  * @param {Array<{round?: number|null, unresolved?: boolean}>} [objections]
  */
-export function computeMechanismMix(weave, objections = []) {
+export function computeMechanismMix(weave) {
   const byRound = new Map();
   const bucket = (round) => {
     const key = round ?? 0;
     if (!byRound.has(key)) {
-      byRound.set(key, { round: key, argument_shaped: 0, decision_shaped: 0, other: 0, objections: 0, unresolved_objections: 0 });
+      byRound.set(key, { round: key, argument_shaped: 0, decision_shaped: 0, other: 0 });
     }
     return byRound.get(key);
   };
-  const totals = { argument_shaped: 0, decision_shaped: 0, other: 0, objections: 0, unresolved_objections: 0 };
+  const totals = { argument_shaped: 0, decision_shaped: 0, other: 0 };
   for (const c of weave ?? []) {
     const row = bucket(c.round);
     if (DECISION_SHAPED_TYPES.has(c.type)) {
@@ -99,15 +99,6 @@ export function computeMechanismMix(weave, objections = []) {
     } else {
       row.other++;
       totals.other++;
-    }
-  }
-  for (const o of objections ?? []) {
-    const row = bucket(o.round);
-    row.objections++;
-    totals.objections++;
-    if (o.unresolved) {
-      row.unresolved_objections++;
-      totals.unresolved_objections++;
     }
   }
   const decided = totals.argument_shaped + totals.decision_shaped;

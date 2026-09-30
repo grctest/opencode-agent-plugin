@@ -31,6 +31,8 @@ export class RoundExecutor {
   _circuitBreaker;
   _tools;
   _availableModels;
+  /** Set by the orchestrator; called when the agent turn drops blocks to fit context. */
+  _onPromptTrimmed;
 
   constructor({ db, stateManager, options, sessionManager, promptParent, getParticipantModel, logError, tools = null, availableModels = [], directory = null }) {
     this._db = db;
@@ -43,10 +45,11 @@ export class RoundExecutor {
     this._tools = tools;
     this._availableModels = availableModels;
     this._directory = directory;
+    this._onPromptTrimmed = null;
     this._failureCounts = new Map();
     this._modelFailureTimes = new Map();
     this._logger = new Logger();
-    this._callStats = { agent_prompts: 0, reflection_calls: 0, sub_agent_calls: 0, input_tokens: 0, output_tokens: 0 };
+    this._callStats = { agent_prompts: 0, reflection_calls: 0, sub_agent_calls: 0 };
     const cbConfig = getConfig().circuitBreaker;
     this._circuitBreaker = new CircuitBreaker({
       failureThreshold: cbConfig.failureThreshold,
@@ -76,12 +79,25 @@ export class RoundExecutor {
     return { ...this._callStats };
   }
 
+  /**
+   * Signal that an agent-side counter moved. The orchestrator owns the single
+   * `meetings.stats` row and debounces the write, so the hot-path sites
+   * (`this._callStats.agent_prompts++` inside the turn helpers) call this
+   * instead of writing directly — that is what makes the dashboard's
+   * "LLM Calls" stat move DURING a round rather than only at its end.
+   */
+  _notifyCallStats() {
+    try { this._options?.onCallStats?.(); } catch {}
+  }
+
   recordAgentPrompt(n = 1) {
     this._callStats.agent_prompts += n;
+    this._notifyCallStats();
   }
 
   recordSubAgentCall(n = 1) {
     this._callStats.sub_agent_calls += n;
+    this._notifyCallStats();
   }
 
   getEffectiveAgentTools() {
@@ -148,13 +164,6 @@ export class RoundExecutor {
 
   _recordModelSuccess(model) {
     this._circuitBreaker.recordSuccess(model);
-  }
-
-  _recordTokens(result) {
-    const tokens = result?.data?.tokens;
-    if (!tokens) return;
-    this._callStats.input_tokens += tokens.input ?? 0;
-    this._callStats.output_tokens += tokens.output ?? 0;
   }
 
   /**

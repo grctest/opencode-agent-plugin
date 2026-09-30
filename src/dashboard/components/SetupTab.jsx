@@ -14,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Switch } from "./ui/switch.tsx";
 import { Skeleton } from "./ui/skeleton.tsx";
 import { Alert, AlertTitle, AlertDescription } from "./ui/alert.tsx";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip.tsx";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "./ui/collapsible.tsx";
 import { Spinner } from "./ui/spinner.tsx";
 import { PersonaPickerDialog } from "./PersonaPickerDialog.jsx";
@@ -67,6 +68,40 @@ function ModelRow({ index, style, ariaAttributes, items, disabled, onToggle }) {
         </label>
       </div>
     </div>
+  );
+}
+
+const EMBEDDING_DOWNLOAD_HINT = "npm run model:download";
+
+/**
+ * Auto-select composes the room by embedding the question and matching it
+ * against embedded personas, so it needs a working embedding model. When none
+ * is provided the button is disabled and explains how to fix it — manual seat
+ * adding keeps working, so the deliberation itself is never blocked.
+ *
+ * A disabled <button> sets pointer-events: none, so the tooltip trigger wraps
+ * the button in a span instead of being the button itself.
+ */
+function AutoSelectButton({ busy, disabled, embedderReady, locked, onClick, title }) {
+  const hintEmbedder = !embedderReady && !locked;
+  const button = (
+    <Button size="sm" onClick={onClick} disabled={disabled || !embedderReady} title={hintEmbedder ? undefined : title}>
+      {busy === "preview" && <Spinner className="mr-2" />}
+      {busy === "preview" ? "Composing…" : "Auto-select"}
+    </Button>
+  );
+
+  if (!hintEmbedder) return button;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className="inline-flex" />}>{button}</TooltipTrigger>
+      <TooltipContent>
+        Provide an embedding model to enable this feature — run{" "}
+        <code className="bg-muted px-1 py-0.5 rounded text-xs">{EMBEDDING_DOWNLOAD_HINT}</code>. You can still
+        add personas manually.
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -134,7 +169,7 @@ function getOrchestratorBehaviorDescription(key, value) {
   return getOrchestratorBehaviorOption(key, value)?.description;
 }
 
-export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingParticipants }) {
+export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingParticipants, embeddingStatus }) {
   // Draft form state lives in a persistent per-session nanostore, so tab
   // switches (which unmount this component) and page refreshes never lose it.
   // Transient UI (catalog, llm, busy, errors, dialogs, jobs) stays in useState.
@@ -404,9 +439,13 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
   }, [llm, suggestedByTier, enabledKeys]);
 
   const canAutoSelect = question.trim().length >= 3 && busy !== "preview" && enabledKeys.size > 0;
+  // Auto-select needs a working embedding model to match personas to the
+  // question. Without one the button is disabled (with a hint tooltip) but
+  // manual seat adding stays available, so a deliberation can still be built.
+  const embedderReady = embeddingStatus?.state === "ready" && !!embeddingStatus?.model;
 
   const doPreview = async () => {
-    if (!canAutoSelect) return;
+    if (!canAutoSelect || !embedderReady) return;
     setError(null);
     setGuidance(null);
     setBusy("preview");
@@ -885,21 +924,22 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
               <CardTitle>3. Personas</CardTitle>
               <CardDescription>
                 {seats.length === 0
-                  ? "Auto-select a suggested room, or add personas manually — at least 2 seats to start."
+                  ? embedderReady
+                    ? "Auto-select a suggested room, or add personas manually — at least 2 seats to start."
+                    : "Add personas manually — at least 2 seats to start. Auto-select needs an embedding model."
                   : `${seats.length} seat${seats.length === 1 ? "" : "s"} in the room — swap or remove to adjust.`}
               </CardDescription>
             </div>
             <div className="ml-auto flex flex-wrap items-center gap-2">
               {seats.length === 0 && (
-                <Button
-                  size="sm"
-                  onClick={doPreview}
+                <AutoSelectButton
+                  busy={busy}
+                  embedderReady={embedderReady}
+                  locked={isFrozen || readOnly}
                   disabled={!canAutoSelect || !filterOk || isFrozen || readOnly}
                   title={isFrozen ? "Locked while a deliberation is running" : readOnly ? "Locked — this deliberation's configuration is read-only" : !filterOk ? "Enable at least one model in step 2 first" : canAutoSelect ? "Compose a suggested room from your question" : "Enter a question of at least 3 characters first"}
-                >
-                  {busy === "preview" && <Spinner className="mr-2" />}
-                  {busy === "preview" ? "Composing…" : "Auto-select"}
-                </Button>
+                  onClick={doPreview}
+                />
               )}
               <Button
                 variant="outline"
@@ -939,7 +979,9 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
             )}
             {seats.length === 0 && !preview && busy !== "preview" && (
               <p className="text-sm text-muted-foreground">
-                No seats yet — auto-select a room based on your question, or add personas one by one.
+                {embedderReady
+                  ? "No seats yet — auto-select a room based on your question, or add personas one by one."
+                  : "No seats yet — add personas one by one (auto-select needs an embedding model)."}
               </p>
             )}
             {busy === "preview" && seats.length === 0 && (

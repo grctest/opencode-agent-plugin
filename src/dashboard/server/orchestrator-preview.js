@@ -15,7 +15,7 @@ import { sanitizeForDisplay } from "../../utils/sanitize.js";
 
 const MAX_PREVIEW_PARTICIPANTS = 7;
 const MAX_PREVIEW_TEXT = 6000;
-const KNOWN_TIERS = new Set(["junior", "mid", "senior", "principal", "civilian"]);
+const KNOWN_TIERS = new Set(["junior", "mid", "senior", "principal", "civilian", "nonhuman"]);
 
 function previewText(value, maxLength) {
   return sanitizeForDisplay(String(value ?? ""), maxLength).trim();
@@ -108,7 +108,6 @@ export function buildOrchestratorPromptPreview(input = {}) {
   const sampleState = { question, tags: [] };
   const transcriptData = { question, tags: [], rounds: [{ number: 1, contributions }] };
   const sampleStateOfPlay = `Established: ${sampleParticipants[0].name} proposed an incremental response. Contested: ${sampleParticipants[1].name} requested rollback evidence.`;
-  const objections = [{ participant_id: sampleParticipants[1].id, content: "Rollback evidence is missing.", unresolved: true }];
   // Mirror the runtime composition exactly: _promptOrchestrator injects only the
   // in-scope options, and role/posture/custom are out of scope for summaries —
   // so the previewed system is the clerk instruction alone (audit O3/Step 2).
@@ -124,7 +123,6 @@ export function buildOrchestratorPromptPreview(input = {}) {
     promptParticipants(sampleParticipants),
     [],
     sampleStateOfPlay,
-    objections,
     context,
     { decisionPosture: config.decisionPosture },
   );
@@ -178,7 +176,7 @@ export function buildOrchestratorPromptPreview(input = {}) {
     },
     finalSynthesis: {
       title: "Final synthesis",
-      appliesTo: "Called once with the final transcript, State of Play, objections, and user context.",
+      appliesTo: "Called once with the final transcript, State of Play, and user context.",
       system: previewExcerpt(synthesisSystem),
       user: previewExcerpt(synthesisUser),
       impacts: [
@@ -231,13 +229,13 @@ export function buildOrchestratorPromptPreview(input = {}) {
       { field: "Question", source: usedSetupQuestion ? "Current Step 1 draft" : "Synthetic fallback" },
       { field: "Context", source: usedSetupContext ? "Current Step 1 draft" : "Not provided" },
       { field: "Participant names", source: usedSetupParticipants ? "Current Step 3 seats" : "Synthetic fallback" },
-      { field: "Contributions, states, objections, and State of Play", source: "Short synthetic fixture" },
+      { field: "Contributions, participant states, and State of Play", source: "Short synthetic fixture" },
     ],
     boundaryNote: "Internal LOOM data-boundary markers identify escaped deliberation data. They are context for the model, not instructions to follow.",
     notes: [
       "This preview uses a short synthetic deliberation and does not call a model.",
       `The round-summary excerpt uses the configured question${context ? " and context" : ""}.`,
-      "Actual runtime text changes with real contributions, agent states, objections, degradation, and round number.",
+      "Actual runtime text changes with real contributions, agent states, degradation, and round number.",
     ],
   };
 }

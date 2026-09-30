@@ -201,7 +201,6 @@ test("final synthesis uses the orchestrator model and behavior profile", async (
         },
       };
     },
-    recordTokens() {},
   };
   const coordinator = new SynthesisCoordinator(sessionManager, {
     role: "adversarial_reviewer",
@@ -233,10 +232,10 @@ test("final synthesis uses the orchestrator model and behavior profile", async (
   }
   assert.match(result.output, /## Executive Summary/);
   // Posture renders in the user-prompt doctrine beside the numbered rules.
-  const user = buildSynthesisPrompt("Q", "t", [], [], "", [], "", { decisionPosture: "action_oriented" });
+  const user = buildSynthesisPrompt("Q", "t", [], [], "",  "", { decisionPosture: "action_oriented" });
   assert.match(user, /Operator decision posture:.*prioritize concrete next actions/);
   assert.match(user, /outranked by every numbered rule below/);
-  const userDefault = buildSynthesisPrompt("Q", "t", [], [], "", [], "", {});
+  const userDefault = buildSynthesisPrompt("Q", "t", [], [], "",  "", {});
   assert.doesNotMatch(userDefault, /Operator decision posture/);
 });
 

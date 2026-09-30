@@ -9,8 +9,16 @@ function supplementMissingSections(text, missingSections) {
   return `${text}\n\n${note}`;
 }
 
-/** Derives a confidence level — dissent is valuable, not penalized; thoroughness matters. */
-export function deriveConfidence(weave, dissentCount, totalParticipants = 0, activeParticipants = 0) {
+/**
+ * Derives a confidence level.
+ *
+ * Dissent is valuable and is NOT penalized: there is deliberately no dissent
+ * term here. It used to be gated on a regex-derived unresolved-objection count,
+ * and that keyword detection is gone — the orchestrator decides what live
+ * dissent exists and writes it into the artifact. Grounding, participation and
+ * thoroughness are the signals, and all three are countable from the weave.
+ */
+export function deriveConfidence(weave, totalParticipants = 0, activeParticipants = 0) {
   const totalContribs = weave.length;
   if (totalContribs === 0) return "low";
 
@@ -22,10 +30,10 @@ export function deriveConfidence(weave, dissentCount, totalParticipants = 0, act
   const participationRate = totalParticipants > 0 ? activeParticipants / totalParticipants : 1;
   const challengeRatio = weave.filter((c) => c.type === "critique_response").length / Math.max(totalContribs, 1);
 
-  // High: thorough + grounded, even with dissent if well-bounded
+  // High: thorough + grounded.
   if (hasGroundedClaim && participationRate >= 0.6 && totalContribs >= 4) {
-    // Allow dissent to remain high if exploration was thorough
-    if (dissentCount <= 2 || (dissentCount > 2 && challengeRatio < 0.5)) return "high";
+    // A challenge-heavy meeting is exploration, not weakness.
+    if (challengeRatio < 0.5) return "high";
   }
   if (hasGroundedClaim && participationRate >= 0.4 && totalContribs >= 2) return "medium";
   // Still medium if exploration thorough but many passes
@@ -235,9 +243,9 @@ export function deriveConfidenceNumber(weave) {
  * number (quantitative estimate). When the layers agree the single overall
  * level stands; when they diverge the artifact carries both.
  */
-export function deriveSplitConfidence(weave, dissentCount, totalParticipants = 0, activeParticipants = 0) {
+export function deriveSplitConfidence(weave, totalParticipants = 0, activeParticipants = 0) {
   return {
-    confidence_name: deriveConfidence(weave, dissentCount, totalParticipants, activeParticipants),
+    confidence_name: deriveConfidence(weave, totalParticipants, activeParticipants),
     confidence_number: deriveConfidenceNumber(weave),
   };
 }
@@ -653,8 +661,6 @@ function normalizeVecTraces(text) {
     .replace(/\[Round\s+\d+\s+vec[^\]]*\]/gi, "State-of-Play");
 }
 
-/** Summarizes a long objection to one line — preserves holder + core claim, caps to 200 chars. */
-
 // P11 — function words excluded from citation keyword-overlap matching.
 const CITATION_STOPWORDS = new Set(
   "the a an is are was were be been being have has had do does did will would could should may might must shall can need dare ought used to of in for on with at by from as into through during before after above below between under again further then once here there when where why how all each every both few more most other some such no nor not only own same so than too very just and but if or because until while that those am it its i me my we our you your he him his she her they them their what which who whom".split(" ")
@@ -739,8 +745,8 @@ export function resolveDetectorPolicy(overrides) {
   };
 }
 
-/** Post-processes raw synthesis text into the final artifact: objections, missing-section notes, confidence, structured fields. */
-export function finalizeSynthesis(artifactText, transcriptData, participants, objections, opts = {}) {
+/** Post-processes raw synthesis text into the final artifact: missing-section notes, confidence, structured fields. */
+export function finalizeSynthesis(artifactText, transcriptData, participants, opts = {}) {
   const policy = resolveDetectorPolicy(opts.detectors);
   // A section is written only when its flag is on AND dry-run is off.
   const shipNeedsVerification = policy.needsVerification && !policy.dryRun;
@@ -752,7 +758,6 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, ob
   };
   // Normalize vec traces in the draft before any validation — auto-fix per user Q4
   artifactText = normalizeVecTraces(artifactText);
-  const unresolvedObjections = (objections ?? []).filter((o) => o.unresolved);
   const weave = transcriptData.rounds.flatMap((r) => r.contributions);
   const refusals = weave.filter((c) => c.type === "refuse");
   const refusalsText = refusals.map((r) => {
@@ -877,7 +882,7 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, ob
 
   const parsedConfidence = parseConfidence(finalOutput);
   const activeParticipants = participants.filter((p) => p.status !== "failed").length;
-  const heuristicConfidence = deriveConfidence(weave, unresolvedObjections.length, participants.length, activeParticipants);
+  const heuristicConfidence = deriveConfidence(weave, participants.length, activeParticipants);
   // The model's word is prose; the derived check — which inspects actual
   // grounding — is authoritative. Downgrade on >1 level disagreement, and
   // record both so the dashboard can show the gap (audit D7/5.2).
@@ -894,7 +899,7 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, ob
   // `confidence` a computed roll-up of the two. A column that reads "high"
   // while the artifact's own prose says Number: Low is a machine-readable
   // contradiction (deliberation 1355a723).
-  const { confidence_name, confidence_number } = deriveSplitConfidence(weave, unresolvedObjections.length, participants.length, activeParticipants);
+  const { confidence_name, confidence_number } = deriveSplitConfidence(weave, participants.length, activeParticipants);
   const proseSplit = parseSplitConfidence(finalOutput);
   const splitName = proseSplit.name ?? confidence_name;
   const splitNumber = proseSplit.number ?? confidence_number;

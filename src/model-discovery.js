@@ -79,7 +79,7 @@ export function assignModelsByTier(available, sessionModel, roles) {
   if (available.length === 0) return [];
 
   const sorted = sortModelsByQuality(available);
-  const priorityOrder = ["principal", "senior", "mid", "civilian", "junior"];
+  const priorityOrder = ["principal", "senior", "mid", "nonhuman", "civilian", "junior"];
   const sortedRoles = [...roles].sort(
     (a, b) => priorityOrder.indexOf(a) - priorityOrder.indexOf(b),
   );
@@ -144,7 +144,9 @@ export function createModelPlan(available, roles, sessionModel) {
     const uniqueTiers = new Set((roles ?? defaultRoles).map((r) => r));
     if (getConfig().modelDiversity !== false && available.length > uniqueTiers.size) {
       const sorted = sortModelsByQuality(available);
-      const tierOrder = { principal: 0, senior: 1, mid: 2, civilian: 2, junior: 3 };
+      // nonhuman is a pool, not a band: it has no seniority, so it shares the
+      // mid slot rather than sorting last (where it would draw the weakest model).
+      const tierOrder = { principal: 0, senior: 1, mid: 2, nonhuman: 2, civilian: 2, junior: 3 };
       participants = [...participants].sort((a, b) => (tierOrder[a.tier] ?? 9) - (tierOrder[b.tier] ?? 9));
       const used = new Set();
       for (let i = 0; i < participants.length; i++) {
@@ -160,7 +162,10 @@ export function createModelPlan(available, roles, sessionModel) {
     }
   } catch {}
   // Orchestrator is highest-tier model (matches getHighestTierModel), not mid
-  const tierOrder = { principal: 0, senior: 1, mid: 2, civilian: 2, junior: 3 };
+  // The orchestrator is the highest-authority seat. A nonhuman tier is not one
+  // (it is a lens, not a rank), so it sits with mid in this order and only wins
+  // the orchestrator seat when no human tier holds one.
+  const tierOrder = { principal: 0, senior: 1, mid: 2, nonhuman: 2, civilian: 2, junior: 3 };
   const sortedByTier = [...participants].sort((a, b) => (tierOrder[a.tier] ?? 9) - (tierOrder[b.tier] ?? 9));
   const orchestrator = sortedByTier[0] ?? participants[0];
   return { orchestrator, participants, available };

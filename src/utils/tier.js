@@ -42,10 +42,12 @@ export function getRightsForTier(tier) {
       return { ...BASE_RIGHTS };
     case "mid":
     case "civilian":
-      return { ...BASE_RIGHTS, call_vote: true };
     case "senior":
-      return { ...BASE_RIGHTS, call_vote: true };
     case "principal":
+    // A non-human seat holds a vote like any other. The tier is a label for
+    // how a persona was selected, not a measure of authority, and giving it
+    // call_vote would make a bat's dissent procedurally weaker than a CFO's.
+    case "nonhuman":
       return { ...BASE_RIGHTS, call_vote: true };
     default:
       return { ...BASE_RIGHTS };

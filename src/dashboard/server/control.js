@@ -35,7 +35,7 @@ import { clearGlobalUnhealthy, clearAllGlobalUnhealthy } from "../../services/gl
 import { clearGlobalUnhealthyKey, clearAllGlobalUnhealthyKeys } from "../../utils/retry.js";
 
 const logger = new Logger();
-const ALLOWED_TIERS = new Set(["junior", "mid", "senior", "principal", "civilian"]);
+const ALLOWED_TIERS = new Set(["junior", "mid", "senior", "principal", "civilian", "nonhuman"]);
 
 // Injected by the plugin host (src/plugin/return.js loom_viz execute).
 const runtime = {

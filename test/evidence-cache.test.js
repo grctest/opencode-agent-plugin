@@ -130,7 +130,7 @@ test("system prompt tool ladder carries cite-or-supersede rule", () => {
 
 // P3 — synthesis prompt carries the naked-numbers check and calibration-sheet rules.
 test("synthesis prompt carries no-naked-numbers and calibration-sheet rules", () => {
-  const prompt = buildSynthesisPrompt("Q?", "transcript [#1]", [], [], "", [], "", {});
+  const prompt = buildSynthesisPrompt("Q?", "transcript [#1]", [], [], "",  "", {});
   assert.match(prompt, /7\. \*\*No naked numbers:\*\*/);
   assert.match(prompt, /scan your draft for every percentage and rate/);
   assert.match(prompt, /n<10 may illustrate but never licenses a conclusion/);

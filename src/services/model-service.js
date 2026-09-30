@@ -185,7 +185,7 @@ function getModelDiversity(available, participants, tierMap, overrideMap, enable
   const diversityMap = new Map();
   if (!enabled) return diversityMap;
 
-  const tierOrder = ["principal", "senior", "mid", "civilian", "junior"];
+  const tierOrder = ["principal", "senior", "mid", "nonhuman", "civilian", "junior"];
   const uniqueTiers = [...new Set(participants.map((p) => p.tier))];
 
   // Need more models than tiers for diversity to make sense
@@ -246,7 +246,9 @@ function getModelDiversity(available, participants, tierMap, overrideMap, enable
  * @returns {{providerID:string, modelID:string}|null}
  */
 export function getHighestTierModel(participants) {
-  for (const tier of ["principal", "senior", "mid", "civilian", "junior"]) {
+  // nonhuman is included so a room whose only high-authority seat is a
+  // non-human persona still resolves an orchestrator model.
+  for (const tier of ["principal", "senior", "mid", "nonhuman", "civilian", "junior"]) {
     const p = participants.find((pp) => pp.tier === tier && pp.model?.providerID && pp.model.modelID);
     if (p) return { providerID: p.model.providerID, modelID: p.model.modelID };
   }

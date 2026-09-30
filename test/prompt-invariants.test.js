@@ -16,7 +16,6 @@ import { QUERY_MODES } from "../src/prompts/query-modes.js";
 import { buildRoundSummaryUser } from "../src/round-summarizer.js";
 import { buildSynthesisPrompt } from "../src/prompts/synthesis.js";
 import { checkCitationSupport, finalizeSynthesis, validateSynthesisSections, SYNTHESIS_SECTION_CONTRACT } from "../src/synthesizer.js";
-import { collectObjections } from "../src/objection-collector.js";
 import { buildToolsMapWithoutLoom } from "../src/round-executor/tools.js";
 import { boundToolCallsForStorage } from "../src/database/contribution-operations.js";
 import { sanitizeForDisplay } from "../src/utils/sanitize.js";
@@ -205,7 +204,7 @@ test("round summary prompt stays within budget", () => {
 
 // 10. D10 — repair feedback and prompt enumerate the same contract sections.
 test("synthesis prompt and section contract agree", () => {
-  const prompt = buildSynthesisPrompt("Q", "transcript", [], [], "## Question\nQ", [], "");
+  const prompt = buildSynthesisPrompt("Q", "transcript", [], [], "## Question\nQ", "");
   for (const section of [...SYNTHESIS_SECTION_CONTRACT.core, ...SYNTHESIS_SECTION_CONTRACT.always]) {
     assert.ok(prompt.includes(`## ${section}`), `prompt missing ## ${section}`);
   }
@@ -285,19 +284,6 @@ test("ungrounded evidence is not filed as fact", () => {
   assert.ok(open.includes("X cures Y"), "unbacked evidence missing from Open Questions");
   assert.ok(facts.includes("Source: https://e"), "backed evidence missing from Key Facts");
   assert.ok(!facts.includes("X cures Y"), "unbacked evidence leaked into Key Facts");
-});
-
-// 18. D12 — objections are critique_response type only (keyword detection removed in P17).
-test("objections collect only critique_response type", () => {
-  const participants = [{ config: { id: "a", name: "A" } }, { config: { id: "b", name: "B" } }];
-  const rounds = [
-    { number: 1, contributions: [{ id: 11, participant_id: "a", type: "critique_response", content: "I disagree because the rollback path is unsafe and untested." }] },
-    { number: 2, contributions: [{ id: 12, participant_id: "b", type: "contribution", content: "On the rollback approach: [#11] shows the failure mode, so we added a staged rollout with automated revert." }] },
-  ];
-  const cited = collectObjections({ rounds, participants });
-  assert.equal(cited.length, 1);
-  assert.equal(cited[0].unresolved, false);
-  assert.ok(!cited[0].stale, "cited resolution mislabelled stale");
 });
 
 // 19. C5 — mode routing classifies correctly from STRUCTURED signals only.
@@ -518,7 +504,7 @@ test("validator requires Decision Rule for decision_oriented spectra", () => {
 
 // 31. F-E — synthesis prompt carries the Decision Rule section and owned-action rule.
 test("synthesis prompt requires Decision Rule and owned action items", () => {
-  const prompt = buildSynthesisPrompt("Should we ship?", "transcript [#1]", [], [], "", [], "", {});
+  const prompt = buildSynthesisPrompt("Should we ship?", "transcript [#1]", [], [], "",  "", {});
   assert.match(prompt, /## Decision Rule/);
   assert.match(prompt, /Trigger, Order, Owner, Date, Default/);
   assert.match(prompt, /map the spectrum AND commit to the rule that resolves it/);
@@ -580,7 +566,7 @@ test("clerk-designated settled registry renders in late prompts", () => {
 // 34. P1-1/P2-1 — synthesis prompt demands latest consolidated thresholds
 // and a committed owner.
 test("synthesis prompt demands consolidated thresholds and committed owner", () => {
-  const prompt = buildSynthesisPrompt("Who wins 2030?", "transcript [#1]", [], [], "", [], "", {});
+  const prompt = buildSynthesisPrompt("Who wins 2030?", "transcript [#1]", [], [], "",  "", {});
   assert.match(prompt, /cite the LATEST consolidated thresholds/);
   assert.match(prompt, /do NOT blend earlier proposals/);
   assert.match(prompt, /record the disagreement explicitly/);
@@ -650,12 +636,12 @@ test("finalizeSynthesis warns on unsupported citations", () => {
     "Medium.",
   ].join("\n");
   const enabled = { detectors: { citationWarnings: true, needsVerification: true, dryRun: false } };
-  const { output, artifact } = finalizeSynthesis(text, transcriptData, participants, [], enabled);
+  const { output, artifact } = finalizeSynthesis(text, transcriptData, participants, enabled);
   assert.match(output, /## Citation Warnings/);
   assert.match(output, /\[#7\]/);
   assert.equal(artifact.detector_report.citationWarnings.shipped, true);
   // N3 — the same text, flags off: the candidate is counted, not rendered.
-  const { output: gated, artifact: gatedArtifact } = finalizeSynthesis(text, transcriptData, participants, []);
+  const { output: gated, artifact: gatedArtifact } = finalizeSynthesis(text, transcriptData, participants);
   assert.doesNotMatch(gated, /## Citation Warnings/);
   assert.equal(gatedArtifact.detector_report.citationWarnings.candidates, 2);
   assert.equal(gatedArtifact.detector_report.citationWarnings.shipped, false);
@@ -677,6 +663,6 @@ test("finalizeSynthesis warns on unsupported citations", () => {
     "## Confidence",
     "Medium.",
   ].join("\n");
-  const clean = finalizeSynthesis(supportedText, transcriptData, participants, [], enabled);
+  const clean = finalizeSynthesis(supportedText, transcriptData, participants, enabled);
   assert.doesNotMatch(clean.output, /## Citation Warnings/);
 });

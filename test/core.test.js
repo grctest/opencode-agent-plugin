@@ -9,7 +9,6 @@ import { buildFlatItems } from "../src/dashboard/utils/timeline.js";
 import { SessionContract } from "../src/session-contract.js";
 import { StateManager } from "../src/services/state-manager.js";
 import { parseJsonContent } from "../scripts/utils.mjs";
-import { collectObjections } from "../src/objection-collector.js";
 import { ModelManager } from "../src/services/model-manager.js";
 import { deepMerge } from "../src/config/utils.js";
 import { resolveLoomBaseDir, resolveOpencodeConfigDir } from "../src/paths.js";
@@ -146,15 +145,6 @@ test("state manager prevents duplicate patches and pass collisions", () => {
 test("JSONC config parsing handles comments and trailing commas", () => {
   const parsed = parseJsonContent(`{"loom":{"defaultMaxRounds":4}, // comment\n}`);
   assert.equal(parsed.loom.defaultMaxRounds, 4);
-});
-
-test("untyped dissent is not included in the objection inventory (P17: critique_response only)", () => {
-  const participants = [{ config: { id: "a", name: "A" } }];
-  const objections = collectObjections({
-    participants,
-    rounds: [{ number: 1, contributions: [{ id: 1, participant_id: "a", type: "contribution", content: "I disagree because the rollback path is unsafe." }] }],
-  });
-  assert.equal(objections.length, 0);
 });
 
 test("safe defaults are finite and shell-free", () => {

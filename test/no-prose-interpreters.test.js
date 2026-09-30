@@ -137,7 +137,7 @@ test("the artifact carries no retraction markers or fields", () => {
     "## Open Questions", "- none", "",
     "## Confidence", "Medium.",
   ].join("\n");
-  const { artifact, output } = finalizeSynthesis(text, transcriptData, participants, []);
+  const { artifact, output } = finalizeSynthesis(text, transcriptData, participants);
   assert.ok(!("retractions" in artifact), "artifact still exposes a retractions field");
   assert.ok(!("retracted_figures" in artifact), "artifact still exposes a retracted_figures field");
   assert.doesNotMatch(output, /⚠ retracted/);

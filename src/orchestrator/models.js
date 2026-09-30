@@ -292,6 +292,7 @@ export async function _promptOrchestrator(system, model, message, type = "orches
       : model;
 
     this._callStats[type] = (this._callStats[type] ?? 0) + 1;
+    this._scheduleStatsFlush?.();
     if (this._orchestratorMessages.length >= MAX_ORCHESTRATOR_MESSAGES) {
       this._orchestratorMessages.shift();
     }
@@ -307,13 +308,9 @@ export async function _promptOrchestrator(system, model, message, type = "orches
     // persistent session would otherwise accumulate every round's prompt and
     // reply (O(R²) growth, 93% self-anchoring by round 10 — audit O10). The
     // turn planner keeps the persistent session by design.
-    const { text: response, tokens } = type === "summary" && typeof this._sessionManager.promptOrchestratorEphemeral === "function"
+    const { text: response } = type === "summary" && typeof this._sessionManager.promptOrchestratorEphemeral === "function"
       ? await this._sessionManager.promptOrchestratorEphemeral(orchestratorSystem, useModel, message, timeoutMs)
       : await this._sessionManager.promptOrchestrator(orchestratorSystem, useModel, message, timeoutMs);
-    if (tokens) {
-      this._callStats.input_tokens += tokens.input ?? 0;
-      this._callStats.output_tokens += tokens.output ?? 0;
-    }
     const safeResponse = (response ?? "").toString();
     if (!safeResponse.trim()) {
       this._logger.warn("orchestrator_empty_response", `Orchestrator returned empty text for type=${type} round=${round}`, { type, round });

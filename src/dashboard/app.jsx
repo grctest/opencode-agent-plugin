@@ -427,6 +427,7 @@ export function App() {
                     onStarted={(id) => { setSelectedMeeting(id); setActiveTab("timeline"); }}
                     meetingState={state}
                     meetingParticipants={participants}
+                    embeddingStatus={embeddingStatus}
                   />
                 </ErrorBoundary>
               </TabsContent>

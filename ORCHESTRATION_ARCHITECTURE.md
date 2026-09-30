@@ -1,6 +1,6 @@
 # The Loom Orchestration Architecture
 
-**Schema version:** `PRAGMA user_version = 13` (`LATEST_SCHEMA_VERSION` in `src/database/schema.js`) — `meetings.status ∈ {initializing,weaving,converged,timeout,cancelled,aborted,max_rounds_reached}` — fresh DBs enforce `CHECK(status IN …)` + `CHECK(tier IN …)` + foreign keys. v5→v6 adds the SKILL.state layer: `participants.state_json` (JSON `AgentState`) + append-only `state_patches` audit table (see §12). v6→v7 persists the complete persona behavior contract; v9→v10 stamps the effective orchestrator config; v11→v12 adds the meeting-level settled registry; **v12→v13 lands the confidence split and drops the orphaned `artifacts.dissent` column**. Rule: any change to the DDL ships with `LATEST_SCHEMA_VERSION += 1` *and* a matching `MIGRATIONS[]` entry in the same change, so two structurally different databases can never claim one version number (N2). Static schema and bundle checks cover the current version; live Bun/opencode integration remains environment-dependent.
+**Schema version:** `PRAGMA user_version = 14` (`LATEST_SCHEMA_VERSION` in `src/database/schema.js`) — `meetings.status ∈ {initializing,weaving,converged,timeout,cancelled,aborted,max_rounds_reached}` — fresh DBs enforce `CHECK(status IN …)` + `CHECK(tier IN …)` + foreign keys. v5→v6 adds the SKILL.state layer: `participants.state_json` (JSON `AgentState`) + append-only `state_patches` audit table (see §12). v6→v7 persists the complete persona behavior contract; v9→v10 stamps the effective orchestrator config; v11→v12 adds the meeting-level settled registry; **v12→v13 lands the confidence split and drops the orphaned `artifacts.dissent` column**; **v13→v14 widens `participants.tier` to admit the `nonhuman` tier**. Rule: any change to the DDL ships with `LATEST_SCHEMA_VERSION += 1` *and* a matching `MIGRATIONS[]` entry in the same change, so two structurally different databases can never claim one version number (N2). Static schema and bundle checks cover the current version; live Bun/opencode integration remains environment-dependent.
 
 A complete technical reference for how the Loom multi-agent deliberation system works, from user input to final output. Every LLM prompt, every data structure, every decision point. Written for someone who cannot read the source code.
 
@@ -63,7 +63,7 @@ When a user approves and starts a deliberation from the dashboard Setup tab, thi
 4. **Round summarization** — After all agents speak, an LLM clerk summary is generated every round (Established / Contested / Evidence / Open bullets), degrading to a deterministic digest when the LLM returns empty (Section 13).
 5. **State of play update** — The state of play is aggregated entirely from each agent's bounded `Σⁱ` state. If patch coverage is incomplete, a **type-driven** full-weave digest is merged in as a fallback; it files only peer responses and file references, and never guesses a primary turn's bucket from its prose.
 6. **Turn order planning** — `planTurnOrder()` produces the next round's ordered participant list from `loom_request_next` requests (Section 9).
-7. **Termination** — Deterministic: (a) all participants have called `loom_pass` or failed after the configured minimum rounds, (b) the round limit reached, or (c) stall detection or token budget fires. There is no meeting-level wall-clock timeout — per-agent provider timeouts (`agentTimeoutMs`) bound each LLM call, and the stall watchdog bounds inactivity.
+7. **Termination** — Deterministic: (a) all participants have called `loom_pass` or failed after the configured minimum rounds, (b) the round limit reached, or (c) stall detection fires. There is no meeting-level wall-clock timeout — per-agent provider timeouts (`agentTimeoutMs`) bound each LLM call, and the stall watchdog bounds inactivity.
 8. **Synthesis** — One agent (typically the principal) synthesizes all contributions into a structured artifact with Decision, Reasoning, Action Items, Dissenting Views, Open Questions, and Confidence, then self-critiques it.
 9. **Output** — The run executes as a detached background job (HTTP returns immediately); progress streams via the dashboard Timeline tab and the final synthesis lands in the Output tab plus a full markdown report saved to `.opencode/loom/meetings/<meetingId>.md`. Nothing is returned to chat — the dashboard is the sole control plane, started with `/loom_viz`.
 
@@ -103,6 +103,36 @@ There is **no LLM domain detection** — the now-removed `domain` pipeline was r
 2. For each role tier in the role list, `PersonaIndex.search(question, tier, 5)` returns the 5 most similar personas for that tier (brute-force cosine over the in-memory store, filtered by tier, with fallback keyword scoring when embeddings are unavailable); the first persona not already used is selected. Cache key is `model|quant|persona|tier|dim|fingerprint` (model-aware, `TUNING.EMBEDDING_CACHE_MAX` LRU).
 3. Selection is deterministic given the same question and persona index.
 3a. **Relative cut, then a cross-tier floor (N11).** The top-`composition.topNPerTier` of each tier survive by rank regardless of absolute similarity — the old absolute floor admitted 181/181 personas and never bound. But a relative cut alone still returns three candidates per tier however far away they are, which is how a mechanical keyboard enthusiast ranked #2 for a car-manufacturer question. So: if the best in-tier candidate is further than `composition.maxTierDistance` (L2; default 1.25), the tier has nothing on-topic to say, and the seat goes to the best candidate in *any* tier (`rankCrossTierCandidates`) instead of to the least-off-topic persona in the nominal one. On a quantitative question a near-tie is broken toward a quantitative persona — a tie-break, not a question-type classifier. The keyword fallback path has the same rule with a score of 0 standing in for a past-the-floor distance. Every crossing is logged as `compose_cross_tier_floor` with both distances.
+
+3a-i. **The keyword scorer is length-normalised and stopword-filtered.** `scorePersonaForQuestion` counts a question-token hit in
+the persona prose at double weight (the signal that distinguishes a persona whose *description* matches from one whose *tags* do).
+That made raw score partly a proxy for how much a persona had been written, which is harmless while every persona is roughly the
+same size and actively wrong once a tier holds 77 long-written non-humans searched for every seat: on the keyword path prose volume
+alone beat topical relevance, and a database-migration question seated three non-humans out of three. Two corrections, both in
+`scorePersonaForQuestion`:
+
+- **Stopwords are dropped before scoring** (`QUESTION_STOPWORDS`). Function words carry no topical signal but match persona prose
+  constantly — "and" hits "repetition and memory", and "can"/"how"/"why" appear in most agendas — so every matched stopword was a
+  small bonus proportional to prose length. Filtering them is what makes a surviving hit mean something.
+- **Prose hits are divided by a gentle linear function of text length** (`score / (1 + max(0, len - 220) / 220)`). This removes the
+  reward for writing more while leaving an unusually apt match intact; dividing by raw length would over-correct and flatten
+  genuine signal.
+
+Both are needed: the stopword filter alone still lets a long persona win on real-but-generic nouns, and the divisor alone still
+credits "and". Together they restore topical relevance on the keyword path without touching the vector path, which has no such
+bias.
+3b. **The `nonhuman` pool is merged per-seat, and the relative cut runs per pool (not over the union).** The `nonhuman` tier is not a
+sixth seniority band and holds no seat of its own — see §3c. For each seat the composer searches the seat's tier *and* `nonhuman`,
+then ranks the survivors together. The crucial detail is that `selectTopNPerTier` is applied to **each pool separately** before the
+union is ranked. Cutting the merged list instead is a silent regression: non-human personas are written to sit adjacent to
+everything (a reef, a river, a market, the genome), so they cluster at the top of any merged ranking, and a single merged top-3
+lets them evict the in-tier specialists the cut exists to preserve — undoing the P15 invariant that a seated persona is in the
+top-N of its own tier. Per-pool cutting keeps both guarantees at once: a human persona is only ever displaced by a better human
+persona of its own tier, and a non-human persona still has to beat that tier's survivors on distance to take the seat.
+`mergeSeatCandidates` is the single implementation point and the single place the rule lives; the keyword path (`composeRoomByKeyword`)
+applies the identical per-pool cut so the two paths cannot diverge. Every non-human seat is logged as `compose_nonhuman_seat` with
+the persona, the distance, and `via: "pool_rank" | "cross_tier_floor"` — the second meaning no human in the nominal tier had
+anything on-topic to say either.
 4. Meeting-level `tags` are derived from the selected participants' most common tags (top 3).
 5. Estimated rounds: `base` high=4/medium=3/low=2 clamped to `±1` around `getConfig().defaultMaxRounds` (default 4) — `estimated = clamp(base, cfg-1, cfg+1)` (fresh DB: `participants.tags`/`expertise` persisted).
 
@@ -110,9 +140,48 @@ If the embedding service is unavailable, composition falls back to keyword-based
 
 **Custom rooms:** Approving an edited participant list in the Setup tab skips composition entirely. Each participant requires `name`, `persona`, `agenda`, `tier` (an `id` is derived; `tags`/`expertise` default to `["general"]`). Persona similarity needs no database access, so composition imposes no ordering constraint on the meeting-row insert.
 
+### 3c. The `nonhuman` Tier: Sentience as a Lens
+
+Five tiers describe persona purpose and voice, and a sixth exists to hold personas
+that are **not people**. `personas/nonhuman/*.json` ships 77 sentient non-humans —
+animal minds with alien senses, the hadal deep, intelligence in another medium,
+collective minds, folkloric beings, planetary-scale systems, and personified
+abstractions. None of them is a human job role: a CISO here would duplicate a
+principal persona, and `test/nonhuman-tier.test.js` fails on any persona named
+after an office.
+
+Three properties make the tier work, none of which come for free from "it's just
+another tier":
+
+1. **It is a pool, not a seat** (§3b). Adding the tier to `VALID_TIERS` without
+   merging it into selection would be dead weight: seats are drawn from fixed role
+   chains (`generateRolesFromComplexity`), so a tier absent from them would only
+   ever appear through the cross-tier floor — which fires *after* the relevance
+   floor, i.e. exactly when a tier has nothing on-topic to say. The pool merge is
+   what makes the tier reachable for the reason anyone would want it.
+2. **A non-human seat is a peer, not a curiosity.** `getRightsForTier("nonhuman")`
+   returns `call_vote: true`. Granting a lesser right would make a whale's dissent
+   procedurally weaker than a CFO's, which is precisely the failure the tier
+   exists to prevent.
+3. **The authoring law inverts.** For a human persona the rule is *the lens is not
+   a body*; for a non-human being whose senses are not ours it becomes positive:
+   **a being's senses become the evidence it demands, not the actions it takes.**
+   The bat does not echolocate (an agent has no ears) — it asks what would have to
+   bounce back for the shape of the problem to be knowable, and rejects any answer
+   that only reads fine. `lintEmbodiment` would reject "I echolocate" in an
+   instruction field, and the rewrite is not a concession: a genuinely alien sense
+   is an unimpeachable reason to distrust the room's default epistemics.
+
+Selection is unchanged for questions with no non-human neighbour — the pool is
+merged, ranked, and loses. `test/nonhuman-tier.test.js` asserts both halves: the
+tier is reachable and seats, and it cannot crowd specialists off purely human
+questions.
+
 ### Persona Loading
 
 Personas live under `<plugin>/personas/<tier>/*.json` (tier directories), with fallback to legacy `<tier>.json` arrays. User-authored personas in `~/.config/opencode/loom/personas/<tier>/` are merged in (user personas take precedence, loaded after the bundled ones; duplicates by name are dropped). Persona files are cached for 60 seconds. Each persona is validated: `name` present, `persona` >50 chars, `agenda` >20 chars, and `tags` present (legacy `domain`/`domains` fields are normalized to `tags`). Each persona has `name`, `persona` (description), `agenda`, `tags`, optional `expertise`, `known_biases`, `communication_style`, `preferred_contribution_types`, `anti_patterns`, `tier_guidance`, and `reflection_guidance`.
+
+The six tiers are `junior`, `mid`, `senior`, `principal`, `civilian` (all human) and `nonhuman` (see §3c) — 349 bundled personas in total. `VALID_TIERS` (`composer/persona-loader.js`), `ALLOWED_TIERS` (`dashboard/server/control.js`), `KNOWN_TIERS` (`stores/setupForm.js`, `dashboard/server/orchestrator-preview.js`), `validTier` (`dashboard/components/Badges.jsx`) and the `participants.tier` CHECK all carry the same six, and `test/nonhuman-tier.test.js` asserts every one of them — a tier valid in the loader but not in the dashboard persists a participant that cannot be read back.
 
 ### Step 3: Model Assignment
 
@@ -146,6 +215,8 @@ Four tiers describe persona purpose and voice; they grant no decision advantage:
 | principal | 10 | contribute, request_turn, call_vote |
 
 Turn-request priority is uniform (1–10) across tiers by design: tiers are setup-phase labels differentiating persona purpose, and seniority plays no part in turn-order decisions — the planner weighs the stated reason and evidence instead (`getPriorityCap` returns the uniform cap for every tier). `civilian` shares mid rights via `utils/tier.js`. The rights flags are vestigial metadata — actual tool availability is governed by the `agentTools` config (Section 20), not tier rights.
+
+A sixth tier, `nonhuman`, holds personas that are not people and carries the same rights (§3c). It is a **candidate pool rather than a seniority band**: it appears in no role chain, is never reserved, and wins a seat only on distance. Model assignment ranks it after `mid` in `assignModelsByTier`'s `priorityOrder` so a seated non-human agent is not handed the weakest model in the room.
 
 **Behavioral guidance is defined in each persona's `tier_guidance` field** (the old static `getPromptForTier` tier strings still exist but are deprecated fallbacks). Each persona file is self-contained and user-editable:
 
@@ -594,9 +665,9 @@ loom_pass({ reason: "covered by #3" })
 |-----------|--------------|
 | All participants have called `loom_pass` or failed (`activeCount === 0`) | natural end — highest priority |
 | `current_round >= max_rounds` | guaranteed termination |
-| Stall detection / token budget / user cancellation | extrinsic stops |
+| Stall detection / user cancellation | extrinsic stops |
 
-There is no meeting-level wall-clock timeout: a deliberation runs until it converges, hits the round cap, stalls, or exhausts the token budget. The stall watchdog, token budget, and user cancellation are the extrinsic stops and proceed to synthesis.
+There is no meeting-level wall-clock timeout: a deliberation runs until it converges, hits the round cap, or stalls. The stall watchdog and user cancellation are the extrinsic stops and proceed to synthesis.
 
 Terminal statuses: `converged`, `cancelled`, `timeout`, `max_rounds_reached`, `aborted`.
 
@@ -685,7 +756,7 @@ The meeting terminates when any of these hold after a round:
 | All participants have called `loom_pass` or failed (`activeCount === 0`) | natural end — highest priority |
 | `current_round >= max_rounds` | guaranteed termination |
 
-The `meetings.convergence` column persists only as a display label (set to `"agent_driven"`). Termination is deterministic (see table above). There is no meeting-level wall-clock timeout; the stall watchdog, token budget, and user cancellation are the extrinsic stops and proceed to synthesis.
+The `meetings.convergence` column persists only as a display label (set to `"agent_driven"`). Termination is deterministic (see table above). There is no meeting-level wall-clock timeout; the stall watchdog and user cancellation are the extrinsic stops and proceed to synthesis.
 
 Terminal statuses: `converged`, `cancelled`, `timeout`, `max_rounds_reached`, and `aborted`. The current round finalizer produces `max_rounds_reached` when the active round cap is exhausted and `aborted` for mixed pass/fail exhaustion or unrecoverable finalization errors.
 
@@ -1305,7 +1376,7 @@ When loom tools are enabled, the system prompt includes:
 | `enabled` | `true` | Master switch for all agent tools |
 | `builtIn.*` | (see above) | Enable built-in tools for agent turns |
 | `builtIn.bash.allowlist` | `["git","ls","wc","head","tail","grep","find"]` | Only these commands via bash |
-| `loom.*` | all `true` | Enable loom plugin tools (query/vote/summon/request_next/pass/state_patch) |
+| `loom.*` | all `true` | Enable loom plugin tools (query/vote/summon/request_next/pass/state_patch). `loom_summon` is additionally **capability-gated** on a loaded embedding model — see §20 Embedding model unavailable |
 | `maxToolCallsPerTurn` | `12` | Hard per-turn Loom tool-call limit enforced before execution. **`loom_state_patch` is exempt** (N7): the patch is the agent's memory for the next turn, and a limiter that can evict it discards the work the turn just did. The tool enforces its own at-most-once-per-turn rule, so the exemption cannot be spent on extra calls. A refusal at the cap is recorded as a `meeting_degraded_reasons` entry and an audit row with status `rejected` (N6) |
 | `maxToolOutputTokens` | `12000` | Warning threshold for stored tool-output volume; synthesis context remains bounded |
 
@@ -1316,7 +1387,7 @@ When loom tools are enabled, the system prompt includes:
 | Prompt injection via tool outputs | Tool outputs feed the final text only; content is sanitized + `delimitContext` fenced `PEER_CONTRIBUTIONS`/`STATE_OF_PLAY` in `buildSummonPrompt` |
 | Bash command execution | Disabled by default; when explicitly enabled, only allowlisted executables and conservative argument checks are accepted before execution. Shell composition, interpreters, `-exec`, and recursive flags are rejected. |
 | Filesystem exposure | `read` via opencode SDK sandbox; meeting IDs and dashboard asset paths are validated; model names reject traversal segments; files use restrictive permissions where supported |
-| Embedding model unavailable | Persona composition falls back to keyword/tag matching and records `semantic_degraded`; no prior-transcript retrieval is required |
+| Embedding model unavailable | Persona composition falls back to keyword/tag matching and records `semantic_degraded`; no prior-transcript retrieval is required. `loom_summon` is the exception — it picks the guest by semantic similarity over the persona index, so with no model there is nothing to rank the issue against and it would return an arbitrary guest. It hides instead of degrading: `src/services/embedding-gate.js` is consulted by all three enforcement layers (`buildToolsMap` drops it from the offer, `prompts/agent.js` drops it from the tool ladder / guidance / mandatory note / OUTPUT CONTRACT, `vote-summon.js` refuses a direct call with the fix), so config permission alone never surfaces a tool that cannot work. Meeting init already awaits embedder startup, so the gate reads a settled state rather than a race |
 | Loom tool side effects on retry | Inline peer contributions persisted via normalized question/batch idempotency keys; retried prompts reuse existing responses; abort re-checks in `query-evidence.js:102`/`vote-summon.js:142` |
 
 ---
@@ -1647,7 +1718,7 @@ DB fresh `meetings`/`participants` enforce `CHECK` + `UNIQUE` + `FK` at `initSch
 | `maxQueryTargetsPerTurn` | `3` | Maximum peer targets in one `loom_query` call |
 | `maxToolCallsPerTurn` | `12` | Maximum Loom interaction calls per turn; enforced before execution, **except `loom_state_patch`** (N7) |
 | `agentTools.maxToolOutputTokens` | `12,000` | Warning threshold for stored tool-output volume; synthesis context remains bounded |
-| `maxTotalTokens` | `500,000` | Default total token budget; set `0` only for an intentional unbounded run |
+| per-model input ceiling | model's `limit.context` | No meeting-wide token budget exists. Each call is sized against the window of the model it uses (32k–1M) via `utils/context-budget.js`; over-budget prompts are trimmed by block priority, then by a funnel backstop |
 | `maxSummonsPerAgent` | `1` | Summons per agent per round |
 | `circuitBreaker.failureThreshold` | `3` | Consecutive failures before a model is marked unhealthy |
 | `circuitBreaker.resetTimeoutMs` | 300,000 | Half-open test window for an unhealthy model |

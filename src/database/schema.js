@@ -12,11 +12,15 @@
  * same user_version. `runMigrations` enforces the length invariant, and
  * `schemaParityReport()` (exported for tests) checks that a fresh DB and a
  * migrated v12 DB agree on every table.
+ *
+ * `participants.tier` widens in v13→v14 through the documented SQLite table
+ * rebuild (foreign keys off, rebuild under a temp name, foreign_key_check
+ * before commit) because a CHECK constraint cannot be altered in place.
  */
 
 import { parseSplitConfidence } from "../utils/confidence.js";
 
-export const LATEST_SCHEMA_VERSION = 13;
+export const LATEST_SCHEMA_VERSION = 14;
 
 /**
  * Ordered migrations. MIGRATIONS[n] upgrades a DB at user_version n to n+1.
@@ -215,6 +219,77 @@ export const MIGRATIONS = [
       update.run(name ?? null, number ?? null, row.meeting_id);
     }
   },
+  // v13 → v14: widen `participants.tier` to admit the `nonhuman` tier, so a
+  // seat held by a non-human persona persists with the tier it was selected
+  // for instead of being coerced into a human one.
+  //
+  // SQLite cannot ALTER a CHECK, so this is the documented 12-step rebuild:
+  // foreign keys OFF, create the new shape under a temp name, copy, drop the
+  // old parent, rename into place, then foreign_key_check before COMMIT.
+  //
+  // The details that matter, because getting one wrong silently orphans rows:
+  //  - foreign_keys=OFF is what lets the parent be dropped without cascading
+  //    away the contributions/turn_requests/agent_errors that point at it.
+  //  - the new table is created under a TEMP name and renamed last, so the
+  //    rename rewrites no child REFERENCES clause (renaming a name children
+  //    already reference is what corrupts their FK targets).
+  //  - every index on the old table is dropped with it and must be recreated.
+  //  - foreign_key_check runs inside the migration: if the rebuild left a
+  //    dangling reference, the whole migration throws and the transaction
+  //    rolls back rather than committing a half-migrated database.
+  (db) => {
+    const row = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='participants'").get();
+    if (!row?.sql) return;
+    // Already admits nonhuman (fresh initSchema, or an interrupted-then-retried
+    // migration): the rebuild is idempotent and must be a no-op.
+    if (/nonhuman/.test(String(row.sql))) return;
+
+    const cols = db.prepare("PRAGMA table_info(participants)").all().map((c) => c.name);
+    const indexes = db
+      .prepare("SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name='participants' AND sql IS NOT NULL")
+      .all();
+
+    const widened = String(row.sql).replace(
+      /CHECK\s*\(\s*tier\s+IN\s*\(([^)]*)\)\s*\)/i,
+      (_m, tiers) => `CHECK(tier IN (${tiers.replace(/\s*,\s*$/, "")},'nonhuman'))`,
+    );
+    if (widened === String(row.sql)) return;
+
+    // column list, in declaration order, so the copy matches positionally.
+    const colList = cols.map((c) => `"${c}"`).join(", ");
+
+    // SQLite's documented rebuild order, and the order is load-bearing:
+    //  1. the NEW table is created under a TEMP name and the OLD one is dropped
+    //     only at the end. Renaming the old parent first would make SQLite
+    //     rewrite every child's REFERENCES clause to the temp name (modern
+    //     ALTER TABLE RENAME behaviour), leaving them pointing at a table that
+    //     no longer exists once the rename completes.
+    //  2. dropping the old parent is safe only because runMigrations() has
+    //     turned foreign_keys OFF for the run — with enforcement on, the drop
+    //     cascades and silently deletes every contribution, turn_request and
+    //     agent_error pointing at the participants.
+    //  3. the final rename retargets nothing, because nothing references the
+    //     temp name.
+    //  4. foreign_key_check runs before COMMIT, so a rebuild that left a
+    //     dangling reference throws and rolls the whole migration back rather
+    //     than committing a half-migrated database.
+    // This migration joins runMigrations()'s transaction; it never opens one.
+    db.exec(`CREATE TABLE participants_v14 ${widened.replace(/CREATE TABLE\s+(IF NOT EXISTS\s+)?participants\b/i, "").replace(/^\s*\(/, "(")}`);
+    db.exec(`INSERT INTO participants_v14 (${colList}) SELECT ${colList} FROM participants`);
+    db.exec("DROP TABLE participants");
+    db.exec("ALTER TABLE participants_v14 RENAME TO participants");
+    for (const idx of indexes) {
+      // Indexes die with the old table; the stored DDL already names the
+      // table, so it recreates verbatim.
+      db.exec(String(idx.sql));
+    }
+    const violations = db.prepare("PRAGMA foreign_key_check").all();
+    if (violations.length > 0) {
+      throw new Error(
+        `v13→v14 participants rebuild left ${violations.length} dangling foreign key(s): ${JSON.stringify(violations.slice(0, 3))}`,
+      );
+    }
+  },
 ];
 
 export function initSchema(db) {
@@ -265,7 +340,7 @@ export function initSchema(db) {
       name TEXT NOT NULL,
       persona TEXT NOT NULL,
       agenda TEXT NOT NULL,
-      tier TEXT NOT NULL CHECK(tier IN ('junior','mid','senior','principal','civilian')),
+      tier TEXT NOT NULL CHECK(tier IN ('junior','mid','senior','principal','civilian','nonhuman')),
       provider_id TEXT,
       model_id TEXT,
       session_id TEXT,
@@ -475,17 +550,30 @@ export function runMigrations(rawDb, opts = {}) {
 
   if (current === LATEST_SCHEMA_VERSION) return current;
 
-  rawDb.exec("BEGIN IMMEDIATE");
+  // Foreign keys OFF for the duration: at least one migration (v13→v14) must
+  // rebuild a parent table that four child tables reference, and dropping that
+  // parent with enforcement on cascades the child rows away. The pragma is a
+  // no-op inside a transaction, so it has to be set before BEGIN and restored
+  // after COMMIT/ROLLBACK. Every migration is expected to leave the schema
+  // consistent on its own; the rebuild additionally runs foreign_key_check to
+  // prove it rather than trusting this.
+  const fkWasOn = Number(rawDb.prepare("PRAGMA foreign_keys").get()?.foreign_keys ?? 0) === 1;
+  if (fkWasOn) rawDb.exec("PRAGMA foreign_keys=OFF");
   try {
-    for (let v = current; v < MIGRATIONS.length; v++) {
-      MIGRATIONS[v](rawDb);
-      if (log.info) log.info("db_migration_applied", `Applied database migration v${v} → v${v + 1}`);
+    rawDb.exec("BEGIN IMMEDIATE");
+    try {
+      for (let v = current; v < MIGRATIONS.length; v++) {
+        MIGRATIONS[v](rawDb);
+        if (log.info) log.info("db_migration_applied", `Applied database migration v${v} → v${v + 1}`);
+      }
+      rawDb.exec(`PRAGMA user_version = ${LATEST_SCHEMA_VERSION}`);
+      rawDb.exec("COMMIT");
+    } catch (err) {
+      try { rawDb.exec("ROLLBACK"); } catch {}
+      throw err;
     }
-    rawDb.exec(`PRAGMA user_version = ${LATEST_SCHEMA_VERSION}`);
-    rawDb.exec("COMMIT");
-  } catch (err) {
-    try { rawDb.exec("ROLLBACK"); } catch {}
-    throw err;
+  } finally {
+    if (fkWasOn) rawDb.exec("PRAGMA foreign_keys=ON");
   }
   return LATEST_SCHEMA_VERSION;
 }

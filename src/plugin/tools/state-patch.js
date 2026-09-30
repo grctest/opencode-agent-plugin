@@ -6,24 +6,28 @@ export function createStatePatchTool({ config, resolveMeeting, activeLooms }) {
     loom_state_patch: tool({
       description:
         "Maintain your private notes for your next turn. Call ONCE per turn with your stance " +
-        "and any new established/contested/open/facts/files bullets (1-3 each), plus exact-text " +
+        "and any new established/contested/open/facts/files bullets, plus exact-text " +
         "`remove` entries for your own outdated bullets. Your contribution prose is what the room reads — " +
-        "this tool only updates your own notes. At least one field required.",
+        "this tool only updates your own notes. At least one field required. " +
+        "Write as much as your reasoning needs: there is no length limit and nothing you send is " +
+        "refused for shape. Calling twice in one turn merges the two rather than failing.",
       args: {
-        stance: tool.schema.string().min(1).max(400).optional()
-          .describe("Where you stand now in one sentence (overwrites previous stance)"),
-        established_add: tool.schema.array(tool.schema.string().min(1).max(280)).max(3).optional()
-          .describe("Points you consider settled (up to 3, each ≤280 chars)"),
-        contested_add: tool.schema.array(tool.schema.string().min(1).max(280)).max(3).optional()
-          .describe("Points still disputed (up to 3)"),
-        open_add: tool.schema.array(tool.schema.string().min(1).max(280)).max(3).optional()
-          .describe("Unresolved questions (up to 3)"),
-        facts_add: tool.schema.array(tool.schema.string().min(1).max(280)).max(3).optional()
-          .describe("Tool-backed or cited facts with Source/[#id] (up to 3). These are evidence and survive FIFO eviction longer than other bullets, but only the newest few are protected — re-assert anything critical each turn you still rely on."),
-        files_add: tool.schema.array(tool.schema.string().min(1).max(160)).max(3).optional()
-          .describe("File paths touched (up to 3, e.g. src/auth/jwt.ts)"),
-        remove: tool.schema.array(tool.schema.string().min(1).max(280)).max(5).optional()
-          .describe("Text of YOUR outdated bullets to delete (up to 5). Matched case-insensitively after whitespace collapsing — copy the bullet text closely."),
+        // Intentionally permissive: a list field also accepts a bare string, and
+        // a nested object is flattened to its text. Nothing here can reject.
+        stance: tool.schema.union([tool.schema.string(), tool.schema.array(tool.schema.string())]).optional()
+          .describe("Where you stand now (overwrites previous stance)"),
+        established_add: tool.schema.union([tool.schema.array(tool.schema.string()), tool.schema.string()]).optional()
+          .describe("Points you consider settled"),
+        contested_add: tool.schema.union([tool.schema.array(tool.schema.string()), tool.schema.string()]).optional()
+          .describe("Points still disputed"),
+        open_add: tool.schema.union([tool.schema.array(tool.schema.string()), tool.schema.string()]).optional()
+          .describe("Unresolved questions"),
+        facts_add: tool.schema.union([tool.schema.array(tool.schema.string()), tool.schema.string()]).optional()
+          .describe("Tool-backed or cited facts with Source/[#id]. These are evidence and survive FIFO eviction longer than other bullets, but only the newest few are protected — re-assert anything critical each turn you still rely on."),
+        files_add: tool.schema.union([tool.schema.array(tool.schema.string()), tool.schema.string()]).optional()
+          .describe("File paths touched (e.g. src/auth/jwt.ts)"),
+        remove: tool.schema.union([tool.schema.array(tool.schema.string()), tool.schema.string()]).optional()
+          .describe("Text of YOUR outdated bullets to delete. Matched case-insensitively after whitespace collapsing — copy the bullet text closely."),
       },
        async execute(args, context) {
          if (!context?.sessionID)
@@ -56,25 +60,17 @@ export function createStatePatchTool({ config, resolveMeeting, activeLooms }) {
             // N6 — the audit row needs a participant id; the ephemeral owner is
             // the participant the patch would have belonged to.
             const ownerParticipant = sm.getParticipant?.(ephemeralOwnerId) ?? { config: { id: ephemeralOwnerId, name: ephemeralOwnerId } };
-            if (sessionManager?.hasEphemeralPatchApplied?.(context.sessionID)) {
-              return loomToolRefusal({ db, stateManager: sm, caller: ownerParticipant, meetingId: meetingInfo.meetingId, tool: "loom_state_patch", input: args,
-                error: "only one loom_state_patch call is allowed per query answer", reason: "state_patch_rejected",
-                metadata: { validationFailed: true }, title: "loom_state_patch error" });
-            }
             const { StatePatchSchema } = await import("../../schemas.js");
-            const parsedEphemeral = StatePatchSchema.safeParse({
-              stance: args.stance, established_add: args.established_add ?? [],
-              contested_add: args.contested_add ?? [], open_add: args.open_add ?? [],
-              facts_add: args.facts_add ?? [], files_add: args.files_add ?? [],
-              remove: args.remove ?? [],
-            });
-            if (!parsedEphemeral.success)
-              return loomToolRefusal({ db, stateManager: sm, caller: ownerParticipant, meetingId: meetingInfo.meetingId, tool: "loom_state_patch", input: args,
-                error: "invalid patch", extra: { issues: parsedEphemeral.error.issues.slice(0, 5) },
-                reason: "state_patch_rejected", metadata: { validationFailed: true }, title: "loom_state_patch error" });
-            const { applyStatePatch } = await import("../../state-patch.js");
+            const { coerceStatePatch, applyStatePatch } = await import("../../state-patch.js");
+            const parsedEphemeral = StatePatchSchema.safeParse(args);
+            const coerced = coerceStatePatch(parsedEphemeral.success ? parsedEphemeral.data : args);
             const prevEphemeral = sm.getParticipantState(ephemeralOwnerId);
-            const { next, applied, unmatched, evicted, overCap, skipped } = applyStatePatch(prevEphemeral, parsedEphemeral.data);
+            // A second patch for one query answer folds into the first: applyStatePatch
+            // merges into the live state, so a repeat call is additive rather than
+            // refused. It used to be rejected outright, costing the target its own
+            // reasoning over a formatting habit.
+            const { next, applied, unmatched, evicted, overCap, skipped } =
+              applyStatePatch(prevEphemeral, coerced.patch);
             next.updated_round = sm.getCurrentRound?.() ?? 0;
             try { sm.setParticipantState(ephemeralOwnerId, next); } catch {}
             try { sm.markStateDirty?.(ephemeralOwnerId); } catch {}
@@ -127,45 +123,111 @@ export function createStatePatchTool({ config, resolveMeeting, activeLooms }) {
            if (activeTurn?.participantId === caller.config.id && activeTurn.passRequested) {
              return refuse("state patch cannot follow loom_pass in the same turn", args, caller);
            }
-           if (activeTurn?.participantId === caller.config.id && activeTurn.patchApplied) {
-             return refuse("only one loom_state_patch call is allowed per turn", args, caller);
-           }
            if (!activeTurn || activeTurn.participantId !== caller.config.id) {
              return refuse("state patch requires the caller's active primary turn", args, caller);
            }
 
-           // Validate via Zod (same StatePatchSchema as §5.2).
-          // Unknown keys are rejected explicitly here: the parse object below
-          // is constructed with known keys only, so Zod .strict() would never
-          // see them (§9: unknown keys must reject, not silently drop).
-          const ALLOWED_PATCH_KEYS = new Set(["stance", "established_add", "contested_add", "open_add", "facts_add", "files_add", "remove"]);
-          const unknownKeys = Object.keys(args ?? {}).filter((k) => !ALLOWED_PATCH_KEYS.has(k));
-          if (unknownKeys.length > 0)
-            return refuse("invalid patch", args, caller, [{ message: `unknown keys: ${unknownKeys.slice(0, 5).join(", ")}` }]);
-          const { StatePatchSchema } = await import("../../schemas.js");
-          const parsed = StatePatchSchema.safeParse({
-            stance: args.stance, established_add: args.established_add ?? [],
-            contested_add: args.contested_add ?? [], open_add: args.open_add ?? [],
-            facts_add: args.facts_add ?? [], files_add: args.files_add ?? [],
-            remove: args.remove ?? [],
-          });
-          if (!parsed.success)
-            return refuse("invalid patch", args, caller, parsed.error.issues.slice(0, 5));
+           // Shape is never a rejection reason. coerceStatePatch normalizes
+           // whatever arrived — bare string where a list was expected, a nested
+           // object mirroring the `_add` suffix, more bullets than any cap, text
+           // longer than the old maxima, unknown keys — and applyStatePatch trims
+           // to STATE_PATCH_CAPS at storage time. What is left is only notes.
+           const { StatePatchSchema } = await import("../../schemas.js");
+           const { coerceStatePatch, applyStatePatch, mergeStatePatches } = await import("../../state-patch.js");
+           const parsed = StatePatchSchema.safeParse(args);
+           const coerced = coerceStatePatch(parsed.success ? parsed.data : args);
 
-          const { applyStatePatch } = await import("../../state-patch.js");
-          const prev = sm.getParticipantState(caller.config.id);
-          const { next, applied, unmatched, evicted, overCap, skipped } = applyStatePatch(prev, parsed.data);
-           next.updated_round = sm.getCurrentRound?.() ?? 0;
-
-           const pending = sm.queueTurnPatch?.(caller.config.id, {
-             participantId: caller.config.id,
-             state: next,
-             input: args,
-             output: { applied: true, version: next.version, added: applied.added, removed: applied.removed, evicted, overCap, skipped },
-           }) === true;
-           if (!pending) {
-             return refuse("could not queue state patch for this turn", args, caller);
+           if (coerced.empty) {
+             // Nothing readable arrived. That is a no-op, not a failure: report
+             // success so a patch can never be the reason a turn dies.
+             try {
+               const { auditLoomTool } = await import("./audit.js");
+               auditLoomTool({ db, stateManager: sm, caller, meetingId: meetingInfo.meetingId,
+                 tool: "loom_state_patch", input: args,
+                 output: JSON.stringify({ applied: false, reason: "no readable fields", notes: coerced.notes }),
+                 status: "completed", title: "loom_state_patch:no-op" });
+             } catch {}
+             return {
+               output: JSON.stringify({ applied: false, notes: coerced.notes,
+                 note: "No readable fields arrived, so nothing changed. Send `stance` or at least one bullet." }),
+               metadata: { applied: false, noop: true },
+               title: "loom_state_patch:no-op",
+             };
            }
+
+           // A second patch in the same turn merges with the first rather than
+           // being refused: the pending patch already holds the earlier call, so
+           // fold them and re-queue. Two calls is a habit, not a rule violation.
+           const pendingState = sm.getActiveTurn?.()?.pendingPatch?.state;
+           if (pendingState) {
+             const merged = mergeStatePatches(
+               {
+                 stance: pendingState.stance,
+                 established_add: pendingState.established,
+                 contested_add: pendingState.contested,
+                 open_add: pendingState.open,
+                 facts_add: pendingState.facts,
+                 files_add: pendingState.files,
+               },
+               coerced.patch);
+             const { next, applied: appliedM, evicted: evictedM, overCap: overCapM, skipped: skippedM } =
+               applyStatePatch(sm.getParticipantState(caller.config.id), merged);
+             next.updated_round = sm.getCurrentRound?.() ?? 0;
+             const requeued = sm.queueTurnPatch?.(caller.config.id, {
+               participantId: caller.config.id,
+               state: next,
+               input: args,
+               output: { applied: true, version: next.version, added: appliedM.added, removed: appliedM.removed, evicted: evictedM, overCap: overCapM, skipped: skippedM, merged: true },
+             }, { force: true }) === true;             try {
+               const { auditLoomTool } = await import("./audit.js");
+               auditLoomTool({ db, stateManager: sm, caller, meetingId: meetingInfo.meetingId,
+                 tool: "loom_state_patch", input: args,
+                 output: JSON.stringify({ applied: requeued, version: next.version, merged: true, notes: coerced.notes }),
+                 status: "completed", title: `loom_state_patch:v${next.version} (merged)` });
+             } catch {}
+             return {
+               output: JSON.stringify({ applied: requeued, version: next.version, merged: true,
+                 added: appliedM.added, notes: coerced.notes,
+                 note: "Merged with the patch you already sent this turn. Your prose contribution is still required." }),
+               metadata: { applied: requeued, version: next.version, merged: true },
+               title: `loom_state_patch:v${next.version} (merged)`,
+             };
+           }
+
+           const prev = sm.getParticipantState(caller.config.id);
+           const { next, applied, unmatched, evicted, overCap, skipped } = applyStatePatch(prev, coerced.patch);
+            next.updated_round = sm.getCurrentRound?.() ?? 0;
+
+            const pending = sm.queueTurnPatch?.(caller.config.id, {
+              participantId: caller.config.id,
+              state: next,
+              input: args,
+              output: { applied: true, version: next.version, added: applied.added, removed: applied.removed, evicted, overCap, skipped },
+            }) === true;
+            if (!pending) {
+              // Queueing failed for an infrastructure reason, not a caller error.
+              // Fall back to applying in place so the agent's reasoning survives
+              // even when the atomic-commit path is unavailable.
+              try { sm.setParticipantState(caller.config.id, next); } catch {}
+              try { sm.markStateDirty?.(caller.config.id); } catch {}
+              try {
+                if (typeof db.setParticipantState === "function") db.setParticipantState(caller.config.id, next);
+              } catch {}
+              try {
+                const { auditLoomTool } = await import("./audit.js");
+                auditLoomTool({ db, stateManager: sm, caller, meetingId: meetingInfo.meetingId,
+                  tool: "loom_state_patch", input: args,
+                  output: JSON.stringify({ applied: true, version: next.version, pending: false, dequeued: true, notes: coerced.notes }),
+                  status: "completed", title: `loom_state_patch:v${next.version} (applied direct)` });
+              } catch {}
+              return {
+                output: JSON.stringify({ applied: true, version: next.version, pending: false,
+                  added: applied.added, removed: applied.removed, evicted, overCap, skipped, notes: coerced.notes,
+                  note: "Applied to YOUR state immediately (atomic commit unavailable this turn). Your prose contribution is still required." }),
+                metadata: { applied: true, version: next.version, pending: false, persisted: true },
+                title: `loom_state_patch:v${next.version} (applied direct)`,
+              };
+            }
            const persisted = true;
            sm.markTurnPatchApplied?.();
            try {

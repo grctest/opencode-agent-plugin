@@ -135,6 +135,59 @@ export function isHardRateLimitError(err) {
   return classification !== null && (classification.type === "free_tier_limit" || classification.type === "account_rate_limit");
 }
 
+/**
+ * Classify the two input-rejection shapes that are NOT rate limits.
+ *
+ * Both are refusals of the request, not transient failures, so both are
+ * non-retryable: retrying an identical prompt against a hard limit wastes the
+ * attempt and can wedge a round. They are kept out of classifyRateLimitError
+ * because that function's contract is "is this a throttle, and should we back
+ * off" — a caller that backs off on these waits for nothing.
+ *
+ * - `token_budget_exhausted`: the provider's own credit/quota for tokens is
+ *   gone. Arrives as a 400 or an unrecognised 429 today, i.e. previously
+ *   mislabelled as a transient rate limit (retried) or dropped entirely.
+ * - `context_overflow`: the prompt exceeded the model's input window. This is
+ *   the backstop for any payload the per-model guard in utils/context-budget.js
+ *   failed to catch, and the signal that the estimate was too generous.
+ */
+export function classifyInputRejectionError(err) {
+  if (!err) return null;
+  const statusCode = err.status ?? err.statusCode ?? err.providerData?.statusCode ?? null;
+  const responseBody = err.providerData?.responseBody ?? err.responseBody ?? "";
+  const message = err.message ?? "";
+  const bodyStr = typeof responseBody === "string" ? responseBody : JSON.stringify(responseBody ?? "");
+  const haystack = `${message} ${bodyStr}`;
+
+  // Context overflow first: a provider may report it as 400, or as a 429 on
+  // shared capacity, and the remedy (shorten the prompt) differs from backing off.
+  if (/context[\s_-]*length|context[\s_-]*(?:window|size)[\s_-]*(?:exceeded|exceeds|too|limit)|maximum context|input[\s_-]*(?:too large|length)|too many tokens|prompt[\s_-]*(?:is[\s_-]*)?(?:too long|too large|exceeds|exceeded)|reduce the length of the messages|reduce your prompt|input length and `max_tokens`|string too long|request too large|payload too large|entity too large/i.test(haystack)) {
+    return {
+      type: "context_overflow",
+      message: message || "Prompt exceeded the model's input context window.",
+      statusCode,
+    };
+  }
+
+  // Provider-side token budget/credit exhaustion. Deliberately does not match a
+  // bare "usage limit": account_rate_limit already owns that on a 429, and this
+  // branch is reached for the non-429 shapes that were previously unclassified.
+  if (/insufficient[\s_-]*(?:quota|credit|balance|tokens?|funds)|quota[\s_-]*(?:exceeded|exhausted)|out of credit|credit balance is too low|billing[\s_-]*hard limit|exceeded your current quota|token[\s_-]*(?:budget|quota|limit)[\s_-]*(?:exceeded|exhausted)|payment required|purchase more tokens|add (?:credits|funds)|exceeded your token balance/i.test(haystack)) {
+    return {
+      type: "token_budget_exhausted",
+      message: message || "Provider rejected the request: token budget exhausted.",
+      statusCode,
+    };
+  }
+
+  return null;
+}
+
+/** True for the input rejections that must never be retried as-is. */
+export function isInputRejectionError(err) {
+  return classifyInputRejectionError(err) !== null;
+}
+
 export function isRetryableError(err) {
   if (!err) return false;
 
@@ -176,6 +229,13 @@ export function isRetryableError(err) {
   }
 
   if (isHardRateLimitError(err)) {
+    return false;
+  }
+
+  // Context overflow and provider token-budget exhaustion are refusals of this
+  // request, not throttles: the same prompt will be refused again. Non-retryable,
+  // and classified elsewhere so the turn can degrade rather than die opaquely.
+  if (isInputRejectionError(err)) {
     return false;
   }
 

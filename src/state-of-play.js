@@ -1,5 +1,6 @@
 import { Logger, extractErrorInfo } from "./logger.js";
 import { isPassContribution } from "./utils/contribution-types.js";
+import { STATE_PATCH_CAPS } from "./state-patch.js";
 
 const TAG_STRIP_RE = /^\[(?:PROPOSE|CHALLENGE|REFINE|SUPPORT|DISSENT|SYNTHESIZE|QUESTION|REFUSE)\]\s*/i;
 const REQUEST_NEXT_RE = /^\[REQUEST_NEXT:[^\]]*\]\s*/gim;
@@ -319,8 +320,8 @@ export function formatFinalRoundTranscript(data, participants) {
     const blocks = states.map((p) => {
       const name = p.config?.name ?? p.config?.id ?? "unknown";
       const tier = p.config?.tier ?? "";
-      const stance = String(p.state_stance ?? "").slice(0, 400).replace(/\n/g, " ");
-      const bullets = (p.state_bullets ?? []).slice(0, 4).map((b) => String(b).slice(0, 280).replace(/\n/g, " "));
+      const stance = String(p.state_stance ?? "").slice(0, STATE_PATCH_CAPS.stanceMax).replace(/\n/g, " ");
+      const bullets = (p.state_bullets ?? []).slice(0, 4).map((b) => String(b).slice(0, STATE_PATCH_CAPS.bulletMax).replace(/\n/g, " "));
       return `**${name} (${tier})${p.state_version ? ` v${p.state_version}` : ""}**: ${stance || "(no stance)"}${bullets.length > 0 ? ` — ${bullets.join(" | ")}` : ""}`;
     });
     const out = ["### Agent States (final)", "_Positions only — cite weave [#id] for every contested claim; bullets without a [#id] trail are unattributed positions, not findings._"];

@@ -1,6 +1,7 @@
 import { extractText } from "./shared.js";
 import { extractErrorInfo } from "./logger.js";
-import { withRetry, isRetryableError, isHardRateLimitError, classifyRateLimitError } from "./utils/retry.js";
+import { withRetry, isRetryableError, isHardRateLimitError, classifyRateLimitError, classifyInputRejectionError } from "./utils/retry.js";
+import { trimPayloadToBudget } from "./utils/context-budget.js";
 import { getConfig } from "./config.js";
 
 /**
@@ -15,16 +16,29 @@ export class SessionContract {
   #client;
   #directory;
   #logger;
+  #resolveContextLimit;
+  /** Set by onPromptTrimmed; called with (charsTrimmed, model) so a trim is observable. */
+  onPromptTrimmed = null;
+  /** Set by the orchestrator; called with (classification, model) on context/token rejection. */
+  onInputRejected = null;
 
   /**
    * @param {import("./opencode.js").Client} client Raw opencode SDK client.
    * @param {string} directory Working directory for the SDK calls.
    * @param {import("./logger.js").Logger} [logger] Logger used for throttled delete warnings.
+   * @param {{ resolveContextLimit?: (model: any) => number|null }} [opts]
+   *   resolveContextLimit returns the input context window (tokens) for the
+   *   model this call is about to use, or null when unknown (no guard). This is
+   *   what makes the limit per-model: windows range from 32k to 1M, so a single
+   *   global ceiling would be wrong for most calls.
    */
-  constructor(client, directory, logger = null) {
+  constructor(client, directory, logger = null, opts = {}) {
     this.#client = client;
     this.#directory = directory;
     this.#logger = logger;
+    this.#resolveContextLimit = typeof opts?.resolveContextLimit === "function"
+      ? opts.resolveContextLimit
+      : null;
   }
 
   /**
@@ -82,13 +96,34 @@ export class SessionContract {
         err.cause = "AbortSignal already aborted before prompt";
         throw err;
       }
+      // Per-model input ceiling. Every LLM call funnels through here, so this
+      // is the one place that guarantees no prompt exceeds the window of the
+      // model it is about to use. Callers that can trim by block priority
+      // (the agent turn) do so before calling; anything that arrives over
+      // budget here is cut as a backstop, and the trim is reported.
+      let outSystem = system;
+      let outParts = parts ?? [{ type: "text", text: "" }];
+      let outTools = tools ?? {};
+      if (this.#resolveContextLimit) {
+        const limit = this.#resolveContextLimit(model);
+        if (limit !== null && limit !== undefined) {
+          const available = [{ providerID: model?.providerID, modelID: model?.modelID, limit: { context: limit } }];
+          const trimmed = trimPayloadToBudget({ system: outSystem, parts: outParts, tools: outTools }, model, available);
+          if (trimmed) {
+            outSystem = trimmed.system;
+            outParts = trimmed.parts;
+            try { this.onPromptTrimmed?.(trimmed.trimmedChars, model); } catch { /* reporting must never break a prompt */ }
+          }
+        }
+      }
+
       const promptPromise = this.#client.session.prompt({
         path: { id: sessionId },
         body: {
-          system,
+          system: outSystem,
           model,
-          parts: parts ?? [{ type: "text", text: "" }],
-          tools: tools ?? {},
+          parts: outParts,
+          tools: outTools,
         },
         query: { directory: this.#directory },
       });
@@ -148,6 +183,7 @@ export class SessionContract {
         err.providerError = assistantError.name ?? null;
         err.providerData = d;
         err.rateLimitClassification = classifyRateLimitError(err);
+        err.inputRejectionClassification = classifyInputRejectionError(err);
         // Preserve partial response (may contain already-executed ToolParts)
         err.partialData = result.data ?? null;
         throw err;
@@ -163,6 +199,14 @@ export class SessionContract {
     } catch (error) {
       if (error && !error.rateLimitClassification) {
         error.rateLimitClassification = classifyRateLimitError(error);
+      }
+      if (error && !error.inputRejectionClassification) {
+        error.inputRejectionClassification = classifyInputRejectionError(error);
+      }
+      // An input rejection is the guard's last line of defence, so it is
+      // reported at the point it happens rather than only as a failed turn.
+      if (error?.inputRejectionClassification) {
+        try { this.onInputRejected?.(error.inputRejectionClassification, model); } catch { /* reporting must not mask the error */ }
       }
       // Audit-first: preserve whatever partial data the server returned so
       // already-executed tool calls are not silently lost on failure.

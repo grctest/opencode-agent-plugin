@@ -1,7 +1,7 @@
 import { getTierConfig } from "../shared.js";
 import { Logger } from "../logger.js";
 import { getConfig } from "../config.js";
-import { emptyAgentState } from "../state-patch.js";
+import { emptyAgentState, STATE_PATCH_CAPS } from "../state-patch.js";
 
 function deepFreeze(value) {
   if (value === null || typeof value !== "object" || Object.isFrozen(value)) return value;
@@ -103,8 +103,20 @@ export class StateManager {
     return this.#maxToolCallsInATurn;
   }
 
-  queueTurnPatch(participantId, patch) {
-    if (this.#activeTurn?.participantId !== participantId || this.#activeTurn.patchApplied || this.#activeTurn.pendingPatch) return false;
+  /**
+   * Queue this turn's state patch for atomic commit with the contribution.
+   * `opts.force` replaces an already-queued patch instead of refusing — a
+   * second loom_state_patch in one turn is a formatting habit, and the caller
+   * merges the two before calling, so refusing would only lose reasoning.
+   */
+  queueTurnPatch(participantId, patch, opts = {}) {
+    if (this.#activeTurn?.participantId !== participantId) return false;
+    if (opts?.force === true) {
+      this.#activeTurn.pendingPatch = structuredClone(patch);
+      this.#activeTurn.patchApplied = true;
+      return true;
+    }
+    if (this.#activeTurn.patchApplied || this.#activeTurn.pendingPatch) return false;
     this.#activeTurn.pendingPatch = structuredClone(patch);
     return true;
   }
@@ -144,7 +156,7 @@ export class StateManager {
         try {
           const p = this.getParticipant(id);
           const fresh = typeof p?.reflection === "string" ? p.reflection.trim() : "";
-          if (fresh) clone.stance = fresh.slice(0, 400);
+          if (fresh) clone.stance = fresh.slice(0, STATE_PATCH_CAPS.stanceMax);
         } catch {}
       }
       return clone;
@@ -155,7 +167,7 @@ export class StateManager {
       const p = this.getParticipant(id);
       if (p?.reflection && typeof p.reflection === "string" && p.reflection.trim()) {
         seed = {
-          stance: p.reflection.trim().slice(0, 400),
+          stance: p.reflection.trim().slice(0, STATE_PATCH_CAPS.stanceMax),
           established: [], contested: [], open: [], facts: [], files: [],
           version: 0, updated_round: this.#state.current_round ?? 0,
           updated_contribution_id: null, rebuilt: true,
@@ -530,14 +542,6 @@ export class StateManager {
 
   setArtifact(artifact) {
     this.#state.artifact = artifact;
-  }
-
-  setObjections(objections) {
-    this.#state.objections = objections;
-  }
-
-  getObjections() {
-    return this.#state.objections ?? [];
   }
 
   setTags(tags) {

@@ -20,15 +20,12 @@ export const TUNING = {
   FINAL_ROUND_PATCH_GRACE_MS: 45_000,
   FANOUT: { queryBatch: 5, voteBatch: 5, rpm: 100 },
   CONTENT_TRUNCATION: { question: 10000, result: 4000, content: 4000, summary: 800 },
-  TRANSCRIPT_BUDGET: { critiqueChunk: 8000, fullLimit: 24000 },
   STATE_OF_PLAY: { bucketCap: 8, truncation: 500, reflectionTruncation: 400 },
-  STATE_PATCH: {
-    buckets: 8, stanceMax: 400, bulletMax: 280, fileMax: 160,
-    addsPerCall: 3, removesPerCall: 5,
-  },
-  FABRIC_CHUNK_MAX_TOKENS: 768,
   VEC_SEARCH_TOPK: 15,
-  CONTEXT_CHAR_PER_TOKEN: 4,
+  // Context sizing moved to utils/context-budget.js, which resolves the limit
+  // per model (windows run 32k..1M) rather than from a single global constant.
+  // Its CHARS_PER_TOKEN/HEADROOM are the live knobs; keep this list to
+  // behavioural switches, not sizing arithmetic.
 };
 
 export const DEFAULT_CONFIG = {
@@ -46,7 +43,6 @@ export const DEFAULT_CONFIG = {
   retryMaxDelayMs: 8000,
   synthesisMaxRetries: 1,
   stallTimeoutMs: 600000,
-  maxTotalTokens: 500000,
   dashboard: { host: "127.0.0.1" },
   composition: {
     maxCosineDistance: 0.85,
@@ -151,7 +147,6 @@ export const CONFIG_SCHEMA = {
   retryBaseDelayMs: { type: 'number', min: 100, max: 30000 },
   retryMaxDelayMs: { type: 'number', min: 1000, max: 60000 },
   stallTimeoutMs: { type: 'number', min: 30000, max: 1800000 },
-  maxTotalTokens: { type: 'number', min: 0, max: 100000000 },
   maxSummonsPerRound: { type: 'number', min: 0, max: 5 },
   maxSummonsPerAgent: { type: 'number', min: 0, max: 3 },
   synthesisMaxRetries: { type: 'number', min: 0, max: 5 },

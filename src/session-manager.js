@@ -28,15 +28,18 @@ export class SessionManager {
   #ephemeralPatchApplied = new Set();
   #orchestratorSessionId = null;
   #database = null;
-  #tokenRecorder = null;
   #callRecorder = null;
 
-  constructor(client, directory, parentSessionId, logger = null) {
+  /**
+   * @param {{ resolveContextLimit?: (model: any) => number|null }} [opts] Forwarded to
+   *   SessionContract; supplies each call's model context window for the input guard.
+   */
+  constructor(client, directory, parentSessionId, logger = null, opts = {}) {
     this.#client = client;
     this.#directory = directory;
     this.#parentSessionId = parentSessionId;
     this.#logger = logger;
-    this.#contract = new SessionContract(client, directory, logger);
+    this.#contract = new SessionContract(client, directory, logger, opts);
   }
 
   setDatabase(database) {
@@ -51,16 +54,8 @@ export class SessionManager {
     return this.#contract;
   }
 
-  setTokenRecorder(recorder) {
-    this.#tokenRecorder = typeof recorder === "function" ? recorder : null;
-  }
-
   setCallRecorder(recorder) {
     this.#callRecorder = typeof recorder === "function" ? recorder : null;
-  }
-
-  recordTokens(tokens) {
-    if (tokens) this.#tokenRecorder?.(tokens);
   }
 
   recordCall(type) {
@@ -189,7 +184,6 @@ export class SessionManager {
       // SessionContract.prompt now handles signal/AbortError natively — no manual
       // addEventListener race needed. Pass signal straight through.
        const res = await this.getContract().prompt({ sessionId, signal: effectiveSignal, ...restOpts });
-       this.recordTokens(res.tokens);
        if (res?.error?.name === "AbortError") throw res.error;
       return res;
     } catch (err) {
@@ -232,7 +226,6 @@ export class SessionManager {
       maxDelayMs: getConfig().retryMaxDelayMs,
       retryable: (err) => isRetryableError(err) || isEmptyResponseError(err),
     });
-     this.recordTokens(result.tokens);
      return { text: result.text, tokens: result.tokens };
   }
 

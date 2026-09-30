@@ -1,4 +1,5 @@
 import { getConfig, resolveBuiltInTools, resolveLoomTools } from "../config.js";
+import { isSummonAvailable } from "../services/embedding-gate.js";
 
 export function buildToolsMap(config, { activeCount, omitStatePatch = false } = {}) {
   const agentToolsConfig = config.agentTools;
@@ -16,7 +17,10 @@ export function buildToolsMap(config, { activeCount, omitStatePatch = false } = 
     const isSolo = Number.isFinite(activeCount) && activeCount <= 1;
     if (loom.loom_query && !isSolo) toolsMap.loom_query = true;
     if (loom.loom_vote && !isSolo) toolsMap.loom_vote = true;
-    if (loom.loom_summon) toolsMap.loom_summon = true;
+    // Config grants permission; the embedder grants capability. Without a model
+    // there is no persona index to rank the issue against, so the tool is not
+    // offered at all rather than offered and refused.
+    if (loom.loom_summon && isSummonAvailable()) toolsMap.loom_summon = true;
     if (loom.loom_request_next && !isSolo) toolsMap.loom_request_next = true;
     if (loom.loom_pass) toolsMap.loom_pass = true;
     // State patch is offered inline (omitStatePatch stays for callers that

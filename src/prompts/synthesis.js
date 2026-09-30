@@ -23,7 +23,7 @@ export function detectTaskMode(question, tags = []) {
 }
 
 /** Builds a prompt for synthesizing the final deliberation artifact from all contributions. */
-export function buildSynthesisPrompt(question, transcript, participants = [], tags = [], stateOfPlay = "", objections = [], userContext = "", opts = {}) {
+export function buildSynthesisPrompt(question, transcript, participants = [], tags = [], stateOfPlay = "", userContext = "", opts = {}) {
   const mode = detectTaskMode(question, tags);
   const isCode = mode === "code-analysis";
   const windowNote = `${windowLabel(opts.contextWindow) ?? "200k"} window`;
@@ -45,20 +45,11 @@ export function buildSynthesisPrompt(question, transcript, participants = [], ta
     ? `\n## State of Play (Final — PRIMARY source)\n${escapeDelimiters(sanitizeForDisplay(stateOfPlay, 20000))}\n`
     : "";
 
-  const unresolvedObjections = (objections ?? []).filter((o) => o.unresolved);
-  // Stale (keyword-overlap, not re-raised) is neither live dissent nor genuinely
-  // resolved — keep it out of both buckets and render it distinctly (audit D12).
-  const staleObjections = (objections ?? []).filter((o) => !o.unresolved && o.stale);
-  const resolvedObjections = (objections ?? []).filter((o) => !o.unresolved && !o.stale);
-  const objectionsSection = unresolvedObjections.length > 0
-    ? `\n## Unresolved Dissent (map each in Dissenting Views with holder + [#id] — dissent is valuable, not a failure)\n${unresolvedObjections.map((o) => `- ${escapeDelimiters(sanitizeForDisplay(o.content, 600))} (holder: ${escapeDelimiters(sanitizeForDisplay(o.participant_id ?? "unknown", 80))})`).join("\n")}\n`
-    : "";
-  const resolvedSection = resolvedObjections.length > 0
-    ? `\n## Resolved Concerns (do NOT re-list as dissent)\n${resolvedObjections.map((o) => `- ${escapeDelimiters(sanitizeForDisplay(o.content, 600))} (resolved)`).join("\n")}\n`
-    : "";
-  const staleSection = staleObjections.length > 0
-    ? `\n## Stale Concerns (raised earlier, not re-raised — background context, NOT live dissent and NOT resolved)\n${staleObjections.map((o) => `- ${escapeDelimiters(sanitizeForDisplay(o.content, 600))} (stale)`).join("\n")}\n`
-    : "";
+  // Dissent tracking is the orchestrator's job, not a regex's. It reads the full
+  // transcript below and decides for itself what is live dissent, what was
+  // resolved, and what went stale — writing `## Dissenting Views` when there is
+  // live dissent to record. No keyword-derived inventory is injected here, and
+  // no dissent counter is published downstream.
 
   // Detect build vs plan for live-edit guidance: explicit flag wins (derived from
   // the effective tools the meeting ran with), tags only as legacy fallback (audit D5).
@@ -177,7 +168,7 @@ ${modeNote}
 ## Original Question
 ${safeQuestion}
 ${tagContext ? `\n## Tags (topic)\n${tagContext}\n` : ""}
-${userContextSection}${stateOfPlaySection}${objectionsSection}${resolvedSection}${staleSection}${engagementSection}
+${userContextSection}${stateOfPlaySection}${engagementSection}
 ## Deliberation Transcript (supporting detail — cite [#id] when using it)
 ${safeTranscript}
 ${participantsSection}

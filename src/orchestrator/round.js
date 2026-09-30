@@ -25,8 +25,6 @@ import { isHardRateLimitError } from "../utils/retry.js";
  * (no partial round — caller should run the normal loop).
  */
 export async function _continueInterruptedRound() {
-  if (this._tokenBudgetExceeded?.()) return null;
-
   const roundNum = this._stateManager.getCurrentRound();
   if (!Number.isFinite(roundNum) || roundNum <= 0) return null;
   const round = this._stateManager.getRounds().find((r) => r.number === roundNum) ?? null;
@@ -334,11 +332,7 @@ export function _getMergedStats() {
     const roundStats = this._roundExecutor?.getCallStats() ?? {};
     const out = { ...this._callStats };
     for (const [key, value] of Object.entries(roundStats)) {
-      if (key === "input_tokens" || key === "output_tokens") {
-        // Sum tokens across orchestrator (incl. sub-agent + synthesis via
-        // token recorder) and agent turns — spread would drop one side.
-        out[key] = (Number(out[key]) || 0) + (Number(value) || 0);
-      } else if (typeof out[key] === "number" && typeof value === "number") {
+      if (typeof out[key] === "number" && typeof value === "number") {
         out[key] = out[key] + value;
       } else {
         out[key] = value;

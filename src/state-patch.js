@@ -19,9 +19,14 @@ export const AGENT_STATE_SEED = {
 
 export const STATE_PATCH_CAPS = {
   buckets: 8,
-  stanceMax: 400,
-  bulletMax: 280,
-  fileMax: 160,
+  // Storage bounds, NOT admission bounds. applyStatePatch trims to these; it
+  // never rejects on them. A patch that arrives longer than the bound is kept
+  // (trimmed for the prompt render) instead of refused — the agent's reasoning
+  // is the input we want, and a hard max() here silently discarded 6 of 21
+  // patches in one meeting for being a few characters over.
+  stanceMax: 1200,
+  bulletMax: 800,
+  fileMax: 240,
   addsPerCall: 3,
   removesPerCall: 5,
   // Bounded pin tier. Evidence with Source:/[#id] is exempt from FIFO eviction
@@ -49,6 +54,137 @@ export function emptyAgentState() {
 
 const norm = (s) => String(s ?? "").trim().replace(/\s+/g, " ");
 const key = (s) => norm(s).toLowerCase();
+
+/** Bucket names that take a flat string[] in canonical form. */
+export const PATCH_LIST_KEYS = ["established_add", "contested_add", "open_add", "facts_add", "files_add", "remove"];
+export const PATCH_KEYS = ["stance", ...PATCH_LIST_KEYS];
+
+const MAX_COERCE_DEPTH = 8;
+
+/**
+ * Collect every string leaf under `value`, depth-first, preserving order.
+ *
+ * A small model asked for `established_add: string[]` will sometimes answer
+ * with the shape the key *looks* like — `established_add: { contested_add:
+ * { contested_add: { item: [...] } } }` — by mirroring the `_add` suffix into
+ * a nesting of its own. That is a shape question, not a reasoning question, so
+ * it must be normalized rather than refused. Measured: a recursive
+ * `{item:[...]}` nest cost 2 of 21 patches in one meeting.
+ *
+ * @param {unknown} value
+ * @param {string[]} out
+ * @param {number} depth
+ * @param {Set<object>} seen cycle guard (JSON input cannot cycle; JS callers can)
+ */
+function collectStrings(value, out, depth = 0, seen = new Set()) {
+  if (value == null) return;
+  if (typeof value === "string") {
+    const s = value.trim();
+    if (s) out.push(s);
+    return;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    out.push(String(value));
+    return;
+  }
+  if (depth >= MAX_COERCE_DEPTH) return;
+  if (Array.isArray(value)) {
+    for (const item of value) collectStrings(item, out, depth + 1, seen);
+    return;
+  }
+  if (typeof value === "object") {
+    if (seen.has(value)) return;
+    seen.add(value);
+    for (const k of Object.keys(value)) {
+      // A nested key that merely *names* another bucket carries no extra
+      // meaning — the leaf strings are the content. Skip `_add`-suffixed keys
+      // that hold nothing, keep everything else.
+      collectStrings(value[k], out, depth + 1, seen);
+    }
+  }
+}
+
+/**
+ * Coerce arbitrary tool input into the canonical patch shape. Total: it cannot
+ * throw, and it never rejects. Shape problems become notes, not errors.
+ *
+ * Handles, at minimum, every failure observed in production:
+ *   - string where a string[] was expected            → wrapped
+ *   - nested object where a string[] was expected     → string leaves collected
+ *   - more bullets than the (now advisory) per-call cap → all kept, FIFO caps them
+ *   - stance/bullet longer than any previous max()     → kept, trimmed on store
+ *   - unknown / misspelled keys                        → ignored, noted
+ *   - an entirely empty/unusable patch                 → empty:true (benign no-op)
+ *
+ * @param {unknown} input
+ * @returns {{ patch: {stance?: string, established_add: string[], contested_add: string[], open_add: string[], facts_add: string[], files_add: string[], remove: string[]}, notes: string[], empty: boolean, droppedKeys: string[] }}
+ */
+export function coerceStatePatch(input) {
+  const notes = [];
+  const droppedKeys = [];
+  const src = (input && typeof input === "object") ? input : {};
+  const out = {
+    established_add: [], contested_add: [], open_add: [],
+    facts_add: [], files_add: [], remove: [],
+  };
+
+  for (const k of Object.keys(src)) {
+    if (!PATCH_KEYS.includes(k)) droppedKeys.push(k);
+  }
+  if (droppedKeys.length) {
+    notes.push(`ignored unknown key(s): ${droppedKeys.slice(0, 5).join(", ")}`);
+  }
+
+  // stance: any scalar/collection that can yield one string.
+  if (src.stance !== undefined && src.stance !== null) {
+    const leaves = [];
+    collectStrings(src.stance, leaves);
+    if (leaves.length) {
+      out.stance = leaves.join(" ");
+      if (leaves.length > 1) notes.push("stance was not a single string — joined its parts");
+    } else {
+      notes.push("stance had no readable text — ignored");
+    }
+  }
+
+  for (const k of PATCH_LIST_KEYS) {
+    const raw = src[k];
+    if (raw === undefined || raw === null) continue;
+    if (typeof raw !== "string" && !Array.isArray(raw) && typeof raw !== "object") continue;
+    const items = [];
+    collectStrings(raw, items);
+    if (!Array.isArray(raw) && typeof raw === "string") {
+      notes.push(`${k} was a bare string — wrapped in a list`);
+    } else if (!Array.isArray(raw) && typeof raw === "object") {
+      notes.push(`${k} was an object, not a list — flattened to its text`);
+    }
+    // Advisory only: the per-call caps are NOT enforced. applyStatePatch dedups
+    // and FIFO-caps each bucket, so an over-long add list degrades by evicting
+    // its own oldest entry rather than failing the whole call.
+    out[k] = items;
+  }
+
+  const empty = out.stance === undefined && PATCH_LIST_KEYS.every((k) => out[k].length === 0);
+  if (empty && Object.keys(src).length > 0) {
+    notes.push("no readable fields in this patch");
+  }
+  return { patch: out, notes, empty, droppedKeys };
+}
+
+/**
+ * Merge a later patch into an already-queued one for the same turn. A second
+ * loom_state_patch in one turn is a formatting accident, not a rule violation,
+ * so it folds in rather than being refused.
+ */
+export function mergeStatePatches(earlier, later) {
+  const a = coerceStatePatch(earlier).patch;
+  const b = coerceStatePatch(later).patch;
+  const merged = { established_add: [], contested_add: [], open_add: [], facts_add: [], files_add: [], remove: [] };
+  for (const k of PATCH_LIST_KEYS) merged[k] = [...a[k], ...b[k]];
+  if (b.stance !== undefined) merged.stance = b.stance;
+  else if (a.stance !== undefined) merged.stance = a.stance;
+  return merged;
+}
 
 function normalizeFileSnippet(raw) {
   let s = norm(raw).toLowerCase().replace(/[,).\]]+$/, "");

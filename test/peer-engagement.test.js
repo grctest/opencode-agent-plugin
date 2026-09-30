@@ -51,7 +51,7 @@ test("the synthesis prompt names the uncited contributions", () => {
   const ledger = computeEngagementLedger({ rounds: [{ number: 1, contributions: WEAVE }] });
   assert.equal(ledger.peer_uncited, 1);
   assert.deepEqual(ledger.uncited_plain_ids, [2]);
-  const prompt = buildSynthesisPrompt("Q?", "transcript", [], [], "", [], "", { engagement: ledger });
+  const prompt = buildSynthesisPrompt("Q?", "transcript", [], [], "",  "", { engagement: ledger });
   assert.match(prompt, /## Engagement Ledger \(clerk check — P7\)/);
   assert.match(prompt, /\[#2\]/);
   assert.match(prompt, /1 of 3 plain contributions engage no peer/);
@@ -61,7 +61,7 @@ test("a clean room gets no ledger section", () => {
   const engaged = WEAVE.map((c) => (c.id === 2 ? { ...c, content: "Revised against the pinned convention [#1]." } : c));
   const ledger = computeEngagementLedger({ rounds: [{ number: 1, contributions: engaged }] });
   assert.equal(ledger.peer_uncited, 0);
-  const prompt = buildSynthesisPrompt("Q?", "transcript", [], [], "", [], "", { engagement: ledger });
+  const prompt = buildSynthesisPrompt("Q?", "transcript", [], [], "",  "", { engagement: ledger });
   assert.doesNotMatch(prompt, /Engagement Ledger/);
 });
 
@@ -79,7 +79,7 @@ test("the artifact carries the measured engagement ledger", () => {
     "## Open Questions", "- none", "",
     "## Confidence", "Medium.",
   ].join("\n");
-  const { artifact } = finalizeSynthesis(text, transcriptData, participants, []);
+  const { artifact } = finalizeSynthesis(text, transcriptData, participants);
   assert.equal(artifact.engagement.plain_contributions, 3);
   assert.equal(artifact.engagement.peer_uncited, 1);
   // #2, #3 and #4 are never cited in the artifact.

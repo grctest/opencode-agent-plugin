@@ -1,4 +1,5 @@
 import { getConfig } from "../config.js";
+import { resolveContextLimit } from "../utils/context-budget.js";
 import { MeetingDatabase } from "../database.js";
 import { SessionManager } from "../session-manager.js";
 import { SynthesisCoordinator } from "../synthesis-coordinator.js";
@@ -24,12 +25,22 @@ import { extractErrorInfo } from "../logger.js";
       this._database = db;
       this._persistenceService = new PersistenceService(db, this._meetingId);
 
-      this._sessionManager = new SessionManager(this._client, this._directory, this._parentSessionId, this._logger);
+      this._sessionManager = new SessionManager(this._client, this._directory, this._parentSessionId, this._logger, {
+        // Each call is sized against the window of the model it actually uses —
+        // these range from 32k to 1M, so there is no single correct ceiling.
+        resolveContextLimit: (model) => resolveContextLimit(model, this._availableModels),
+      });
        this._sessionManager.setDatabase(db);
-       this._sessionManager.setTokenRecorder((tokens) => this.recordTokens(tokens));
-       this._sessionManager.setCallRecorder((type) => {
+       this._sessionManager.getContract().onPromptTrimmed = (charsTrimmed, model) => {
+         this._recordPromptTrim(charsTrimmed, model);
+       };
+       this._sessionManager.getContract().onInputRejected = (classification, model) => {
+         this._recordInputRejection(classification, model);
+       };
+        this._sessionManager.setCallRecorder((type) => {
          if (!type) return;
          this._callStats[type] = (this._callStats[type] ?? 0) + 1;
+         this._scheduleStatsFlush?.();
        });
        this._synthesisCoordinator = new SynthesisCoordinator(this._sessionManager, this._options.orchestratorConfig);
 
@@ -99,6 +110,9 @@ import { extractErrorInfo } from "../logger.js";
         stateManager: this._stateManager,
         options: {
           onAgentComplete: this._options.onAgentComplete,
+          // Agent-side call counters (agent_prompts/sub_agent_calls/tokens) feed
+          // the same `meetings.stats` row; the orchestrator debounces the write.
+          onCallStats: () => this._scheduleStatsFlush(),
           onContribution: (...args) => {
             this._stallWatchdog.touch();
             this._options.onContribution?.(...args);
@@ -115,6 +129,7 @@ import { extractErrorInfo } from "../logger.js";
         availableModels: this._availableModels,
         directory: this._directory,
       });
+      this._roundExecutor._onPromptTrimmed = (charsTrimmed, model) => this._recordPromptTrim(charsTrimmed, model);
 
       this._roundService = new RoundService({ roundExecutor: this._roundExecutor, stateManager: this._stateManager });
 

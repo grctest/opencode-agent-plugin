@@ -1,4 +1,4 @@
-export const TIER_ORDER = ["principal", "senior", "mid", "civilian", "junior"];
+export const TIER_ORDER = ["principal", "senior", "mid", "nonhuman", "civilian", "junior"];
 
 export const TIER_META = {
   principal: {
@@ -28,8 +28,14 @@ export const TIER_META = {
   junior: {
     label: "Junior",
     badge: "bg-slate-500/15 text-slate-600 border-slate-500/30 dark:text-slate-300",
-    dot: "bg-slate-400",
+    dot: "bg-slate-500",
     blurb: "Fresh eyes — questions assumptions others take for granted",
+  },
+  nonhuman: {
+    label: "Non-Human",
+    badge: "bg-fuchsia-500/15 text-fuchsia-700 border-fuchsia-500/30 dark:text-fuchsia-300",
+    dot: "bg-fuchsia-500",
+    blurb: "No human senses — knows the room by a different set of evidence",
   },
 };
 

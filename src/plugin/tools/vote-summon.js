@@ -9,6 +9,7 @@ import { getConfig } from "../../config.js";
 import { resolveCaller, resolveModel, buildBatchId, normalizeQuestionForMatch } from "./shared.js";
 import { auditLoomTool } from "./audit.js";
 import { mapInBatches, batchDelayForRpm } from "../../utils/fanout.js";
+import { isSummonAvailable, SUMMON_UNAVAILABLE_REASON } from "../../services/embedding-gate.js";
 
 /**
  * N1 — the invoker is the sole, declared interpreter. Ballots come back
@@ -262,7 +263,16 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
        async execute(args, context) {
          const globalCfg = config.getValue("agentTools");
          if (!context?.sessionID) return { output: JSON.stringify({ error: "loom_summon: session context unavailable" }), metadata: { error: true }, title: "loom_summon error" };
-        try {
+         // Capability gate, ahead of every other check. Meeting init already
+         // awaited embedder startup, so this is a settled state, not a race —
+         // and an unresolvable meeting must not mask it, or the refusal would
+         // be reported as a retryable "queued" that never drains. Guest persona
+         // selection is semantic, so with no model there is no correct answer
+         // to give; failing loudly beats returning an arbitrary guest.
+         if (!isSummonAvailable()) {
+           return { output: JSON.stringify({ error: "loom_summon unavailable", reason: SUMMON_UNAVAILABLE_REASON }), metadata: { error: true, disabled: true }, title: "loom_summon unavailable" };
+         }
+         try {
           const meetingInfo = await resolveMeeting(context.sessionID);
           if (!meetingInfo) {
             const p = { queued: true, persona_name: args.persona_name, issue: args.issue, note: "Summon queued — meeting not resolved." };

@@ -46,6 +46,14 @@ import { findMeetingBySessionId } from "../database/lookup.js";
 import { ensureDb, repairDatabase, isReadonlyError } from "../database/connection.js";
 
 /**
+ * Queue depth for each SSE response stream. See the queuingStrategy on the
+ * /api/stream ReadableStream: a poll pass emits several events per tick, so a
+ * depth of 1 (the default) pushed everything past the first event into the
+ * backpressure queue.
+ */
+const SSE_HIGH_WATER_MARK = 64;
+
+/**
  * Best-effort startup repair: a force-closed server leaves WAL sidecars
  * requiring a writable checkpoint before any readonly open can read.
  * Checkpoint every meeting DB once at startup (bounded, failures ignored)
@@ -311,7 +319,15 @@ export function startDashboard(directory, port, runtimeOpts = null) {
                         convergence: state.convergence,
                         created_at: state.created_at,
                         participant_count: api.getParticipants().length,
-                      });
+          }, {
+            // The default CountQueuingStrategy gives a ReadableStream a
+            // highWaterMark of 1, so desiredSize drops to 0 after a single
+            // enqueue. A poll pass broadcasts several events back-to-back, so
+            // everything after the first was forced through the backpressure
+            // queue. Give the buffer real headroom for a normal burst; genuine
+            // stalls are still caught by the slow-consumer timeout in poll.js.
+            highWaterMark: SSE_HIGH_WATER_MARK,
+          });
                       console.warn(`[Loom dashboard] session index miss for ${sessionId} — served ${found.meetingId} via DB scan fallback`);
                     }
                   } catch {}

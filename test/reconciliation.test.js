@@ -177,7 +177,7 @@ test("finalizeSynthesis counts versioned conflicts but does not ship them by def
   ].join("\n");
   // Detectors ship OFF and dry (N3): the conflict is found and counted, but a
   // section that cannot state its precision does not reach the deliverable.
-  const { artifact, output } = finalizeSynthesis(text, transcriptData, participants, []);
+  const { artifact, output } = finalizeSynthesis(text, transcriptData, participants);
   assert.doesNotMatch(output, /## Needs Verification/);
   assert.equal(artifact.detector_report.needsVerification.shipped, false);
   assert.ok(artifact.detector_report.needsVerification.candidates >= 1, "candidates are still counted for the precision audit");
@@ -206,7 +206,7 @@ test("finalizeSynthesis ships Needs Verification once the flag is on and dry-run
     "## Open Questions", "- Which count is right?", "",
     "## Confidence", "Medium.",
   ].join("\n");
-  const { artifact, output } = finalizeSynthesis(text, transcriptData, participants, [], {
+  const { artifact, output } = finalizeSynthesis(text, transcriptData, participants, {
     detectors: { needsVerification: true, citationWarnings: true, dryRun: false },
   });
   assert.match(output, /## Needs Verification/);
@@ -235,7 +235,7 @@ test("the enabled flag still stays dry while dryRun is on", () => {
     "## Open Questions", "- Which count is right?", "",
     "## Confidence", "Medium.",
   ].join("\n");
-  const { artifact, output } = finalizeSynthesis(text, transcriptData, participants, [], {
+  const { artifact, output } = finalizeSynthesis(text, transcriptData, participants, {
     detectors: { needsVerification: true, dryRun: true },
   });
   assert.doesNotMatch(output, /## Needs Verification/);
@@ -256,7 +256,7 @@ test("finalizeSynthesis adds no reconciliation section when numbers agree", () =
     "", "## Open Questions", "- None.", "",
     "## Confidence", "Medium.",
   ].join("\n");
-  const { artifact, output } = finalizeSynthesis(text, transcriptData, participants, []);
+  const { artifact, output } = finalizeSynthesis(text, transcriptData, participants);
   assert.doesNotMatch(output, /numerical conflict\(s\)/);
   assert.equal(artifact.reconciliation.versionedCount, 0);
   assert.equal(artifact.reconciliation.reserveRoundRecommended, false);

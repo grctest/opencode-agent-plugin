@@ -12,11 +12,10 @@ import { getMeetingDbPath } from "./paths.js";
 import { MeetingDatabase } from "./database.js";
 import { SessionManager } from "./session-manager.js";
 import { Logger, LoomError, extractErrorInfo } from "./logger.js";
-import { getMetricsSnapshot } from "./metrics.js";
+import { getMetricsSnapshot, recordMeetingDegradedReason } from "./metrics.js";
 import { getHighestTierModel } from "./services/model-service.js";
 import { truncate } from "./shared.js";
 import { restoreStateFromDb } from "./meeting-restorer.js";
-import { collectObjections } from "./objection-collector.js";
 
 import { StateManager } from "./services/state-manager.js";
 import { PersistenceService } from "./services/persistence-service.js";
@@ -37,6 +36,13 @@ import * as modelsHelpers from "./orchestrator/models.js";
 import * as initHelpers from "./orchestrator/init.js";
 
 export { SUMMARY_TRUNCATE_LEN, MAX_ORCHESTRATOR_MESSAGES } from "./constants.js";
+
+/**
+ * Debounce for the mid-round `meetings.stats` flush that keeps the dashboard's
+ * "LLM Calls" counter live. A single agent turn fires several counter sites in
+ * quick succession; this collapses them into one row update.
+ */
+const STATS_FLUSH_DEBOUNCE_MS = 1000;
 
 export class MeetingOrchestrator {
   _meetingId;
@@ -60,11 +66,11 @@ export class MeetingOrchestrator {
   _logger = null;
   _orchestratorMessages = [];
   _resume = false;
-  _callStats = { orchestrator: 0, summary: 0, synthesis: 0, input_tokens: 0, output_tokens: 0 };
+  _callStats = { orchestrator: 0, summary: 0, synthesis: 0 };
   _availableModels = [];
-  _maxTotalTokens = 0;
   _rateLimitError = null;
   _rateLimitRetryAt = null;
+  _statsFlushTimer = null;
 
   constructor(options) {
     this._meetingId = options.meetingId ?? crypto.randomUUID();
@@ -73,7 +79,6 @@ export class MeetingOrchestrator {
     this._client = options.client;
     this._directory = options.directory;
     this._parentSessionId = options.parentSessionId;
-    this._maxTotalTokens = options.maxTotalTokens ?? getConfig().maxTotalTokens ?? 0;
     this._availableModels = options.availableModels ?? [];
 
     this._logger = new Logger().forMeeting(this._meetingId);
@@ -100,7 +105,6 @@ export class MeetingOrchestrator {
       current_speaker_idx: 0,
       status: "initializing",
       artifact: null,
-      objections: [],
       tags: options.tags ?? [],
       next_contribution_id: 0,
       state_of_play: "",
@@ -139,10 +143,78 @@ export class MeetingOrchestrator {
    * Reuses the participant's assigned (left-sidebar) model; falls back within the
    * enabled-model allowlist only. Plugin tools call engine.getParticipantModel.
    */
-  recordTokens(tokens) {
-    if (!tokens) return;
-    this._callStats.input_tokens += Number(tokens.input) || 0;
-    this._callStats.output_tokens += Number(tokens.output) || 0;
+
+  /**
+   * A prompt was trimmed to fit its model's input window (SessionContract backstop,
+   * or the agent turn's own block-aware trim). Recorded as a degradation so a
+   * silently-shortened context is visible rather than inferred from output.
+   */
+  _recordPromptTrim(charsTrimmed, model) {
+    try {
+      recordMeetingDegradedReason(this._meetingId, "prompt_trimmed_to_context");
+      this._callStats.prompt_trims = (this._callStats.prompt_trims ?? 0) + 1;
+      this._logger.info(
+        "prompt_trimmed_to_context",
+        `Trimmed ${charsTrimmed} chars to fit ${model?.providerID}/${model?.modelID}`,
+        { model: `${model?.providerID}/${model?.modelID}`, charsTrimmed }
+      );
+      this._scheduleStatsFlush?.();
+    } catch { /* telemetry must never break a prompt */ }
+  }
+
+  /**
+   * A provider refused a request for input reasons rather than throttling:
+   * `context_overflow` (the per-model guard under-shot) or
+   * `token_budget_exhausted` (the provider's own token credit is gone). Recorded
+   * as a degradation, not a halt — the meeting keeps deliberating and a different
+   * model may still serve the turn.
+   */
+  _recordInputRejection(classification, model) {
+    const type = classification?.type;
+    if (!type) return;
+    try {
+      recordMeetingDegradedReason(this._meetingId, `provider_${type}`);
+      this._logger.warn("provider_input_rejected", `Provider rejected request: ${type} (model ${model?.providerID}/${model?.modelID})`, {
+        model: `${model?.providerID}/${model?.modelID}`,
+        classification: type,
+      });
+    } catch { /* telemetry must never break a prompt */ }
+  }
+
+  /**
+   * Persist the merged call counters so the dashboard's "LLM Calls" stat
+   * tracks real call volume DURING a round.
+   *
+   * `_persistState()` is the only other writer of `meetings.stats`, and every
+   * one of its call sites sits at a round boundary (finalize/synthesis), so
+   * without this the stat sat frozen for an entire round. Each counter site
+   * calls this instead of writing directly; the timer debounces the burst of
+   * calls a single turn produces into one row update.
+   */
+  _scheduleStatsFlush() {
+    if (this._statsFlushTimer || !this._database) return;
+    const timer = setTimeout(() => {
+      this._statsFlushTimer = null;
+      // A later _persistState() writes the same merged counters transactionally
+      // with round/status/fabric; this only fills the gap between boundaries.
+      if (this._closed) return;
+      try {
+        this._database.setStats(JSON.stringify(this._getMergedStats()));
+      } catch (err) {
+        // Never let a best-effort stat flush disturb the deliberation.
+        this._logger.warn("stats_flush_failed", "Could not persist call stats mid-round", extractErrorInfo(err));
+      }
+    }, STATS_FLUSH_DEBOUNCE_MS);
+    if (timer.unref) timer.unref();
+    this._statsFlushTimer = timer;
+  }
+
+  _flushStatsNow() {
+    if (this._statsFlushTimer) { clearTimeout(this._statsFlushTimer); this._statsFlushTimer = null; }
+    if (!this._database || this._closed) return;
+    try {
+      this._database.setStats(JSON.stringify(this._getMergedStats()));
+    } catch {}
   }
 
   getParticipantModel(participant, fallbackOnError = false) {
@@ -175,6 +247,12 @@ export class MeetingOrchestrator {
     if (this._closed) return;
     this._closed = true;
     this._cancelled = true;
+    // Land any debounced mid-round stat write before the handle goes away, so
+    // the final LLM-call total is not lost by a pending timer.
+    if (this._statsFlushTimer) { clearTimeout(this._statsFlushTimer); this._statsFlushTimer = null; }
+    try {
+      if (this._database) this._database.setStats(JSON.stringify(this._getMergedStats()));
+    } catch {}
     // Abort in-flight LLM prompts by signalling cancellation to round executor if it exposes an abort
     try { this._roundExecutor?._abortInflight?.(); } catch {}
     try { this._stallWatchdog?.stop(); } catch {}
@@ -289,8 +367,7 @@ export class MeetingOrchestrator {
    async extendMeeting(newPrompt, additionalRounds) { return weavingHelpers.extendMeeting.call(this, newPrompt, additionalRounds); }
    async resumeMeeting() { return weavingHelpers.resumeMeeting.call(this); }
    async _runWeavingLoop() { return weavingHelpers._runWeavingLoop.call(this); }
-   _tokenBudgetExceeded() { return weavingHelpers._tokenBudgetExceeded.call(this); }
-   _raceWithGuardTimer(promise, timeoutMs, label) { return weavingHelpers._raceWithGuardTimer.call(this, promise, timeoutMs, label); }
+    _raceWithGuardTimer(promise, timeoutMs, label) { return weavingHelpers._raceWithGuardTimer.call(this, promise, timeoutMs, label); }
    async runRound() { return roundHelpers.runRound.call(this); }
    async _continueInterruptedRound() { return roundHelpers._continueInterruptedRound.call(this); }
    async _finalizeRound(round) { return roundHelpers._finalizeRound.call(this, round); }

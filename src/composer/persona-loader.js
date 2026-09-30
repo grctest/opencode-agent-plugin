@@ -29,7 +29,7 @@ function personasBasePath() {
 function userPersonasPath() {
   const configDir = process.env.LOOM_CONFIG_DIR || join(resolveOpencodeConfigDir(), "loom");
   const personasDir = join(configDir, "personas");
-  const tiers = ["junior", "mid", "senior", "principal", "civilian"];
+  const tiers = ["junior", "mid", "senior", "principal", "civilian", "nonhuman"];
   for (const tier of tiers) {
     if (existsSync(join(personasDir, tier))) {
       return personasDir;
@@ -66,7 +66,7 @@ export function loadDomainVocabulary() {
   return domainVocabCache;
 }
 
-const VALID_TIERS = new Set(["junior", "mid", "senior", "principal", "civilian"]);
+const VALID_TIERS = new Set(["junior", "mid", "senior", "principal", "civilian", "nonhuman"]);
 function validatePersona(persona) {
   const errors = [];
   if (!persona.name || typeof persona.name !== "string") errors.push("name required");
@@ -214,7 +214,7 @@ function normalizePersona(persona) {
 }
 
 function loadPersonasFromPath(base) {
-  const tiers = ["junior", "mid", "senior", "principal", "civilian"];
+  const tiers = ["junior", "mid", "senior", "principal", "civilian", "nonhuman"];
   const result = {};
   let totalLoaded = 0;
   let totalRejected = 0;

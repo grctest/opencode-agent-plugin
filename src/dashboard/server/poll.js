@@ -19,34 +19,96 @@ export function createPollSystem(directory) {
   const lastForumCommentId = new Map();
 
   const SLOW_CONSUMER_TIMEOUT_MS = 30000;
+  const PENDING_QUEUE_MAX = 100;
   const pendingQueues = new Map(); // meetingId -> Array<event>
   const pushUnsubscribes = new Map(); // meetingId -> unsubscribe fn
+
+  // Events whose payload is a complete snapshot of the resource they describe.
+  // A newer copy fully supersedes an older one, so a stalled client's backlog
+  // can collapse to one entry per type instead of growing without bound — and
+  // a stale `state` can never overwrite a newer one. Delta events
+  // (contributions, orchestrator_messages, turn_requests, agent_error, …) are
+  // NOT listed here: every row must be delivered, so they stay queued as-is.
+  const SNAPSHOT_EVENT_TYPES = new Set([
+    "state",
+    "participants",
+    "round_summaries",
+    "artifact",
+    "rate_limit",
+    "rate_limit_cleared",
+  ]);
+
+  const enqueuePending = (meetingId, event) => {
+    if (!pendingQueues.has(meetingId)) pendingQueues.set(meetingId, []);
+    const q = pendingQueues.get(meetingId);
+    if (SNAPSHOT_EVENT_TYPES.has(event.type)) {
+      // Replace the superseded snapshot in place, preserving queue order.
+      const existing = q.findIndex((e) => e.type === event.type);
+      if (existing !== -1) { q[existing] = event; return; }
+    }
+    if (q.length < PENDING_QUEUE_MAX) q.push(event);
+  };
+
+  /**
+   * Attempt delivery of everything queued for a meeting. Entries that no live
+   * client could accept are RETAINED for the next drain.
+   *
+   * A ReadableStream with the default CountQueuingStrategy has
+   * highWaterMark 1, so desiredSize is 0 after a single enqueue. Several
+   * broadcast() calls fire in one synchronous poll pass; the first fills the
+   * buffer and the rest queue. This drain runs in that same synchronous tick,
+   * before the consumer has pulled, so it must not discard what it could not
+   * deliver — doing so silently lost the `state` event, freezing the sidebar
+   * round/status and the Overview LLM-call counter until a page refresh.
+   */
+  const flushPending = (meetingId) => {
+    const queue = pendingQueues.get(meetingId);
+    if (!queue || queue.length === 0) return;
+    const clients = sseClients.get(meetingId);
+    if (!clients || clients.size === 0) return;
+    const undelivered = [];
+    for (const event of queue) {
+      let accepted = false;
+      for (const entry of clients) {
+        try {
+          if (entry.controller.desiredSize !== undefined && entry.controller.desiredSize <= 0) continue;
+          sendSSE(entry.controller, event);
+          accepted = true;
+          entry.slowSince = null;
+        } catch { clients.delete(entry); }
+      }
+      if (!accepted) undelivered.push(event);
+    }
+    queue.length = 0;
+    queue.push(...undelivered);
+    if (queue.length === 0) pendingQueues.delete(meetingId);
+  };
 
   const broadcast = (meetingId, event) => {
     const clients = sseClients.get(meetingId);
     if (!clients || clients.size === 0) return;
-    const queue = pendingQueues.get(meetingId);
-    if (queue && queue.length > 0) {
-      for (const q of queue) {
-        for (const entry of clients) {
-          try {
-            if (entry.controller.desiredSize !== undefined && entry.controller.desiredSize <= 0) continue;
-            sendSSE(entry.controller, q);
-          } catch { clients.delete(entry); }
-        }
-      }
-      queue.length = 0;
-    }
+    flushPending(meetingId);
     for (const entry of clients) {
       try {
         if (entry.controller.desiredSize !== undefined && entry.controller.desiredSize <= 0) {
+          // Track how long this client has been unable to accept, then queue
+          // the event so it is replayed once the socket drains.
+          //
+          // The previous shape was `if (!slowSince) slowSince = now; else if
+          // (too long) evict; else enqueue` — which meant the FIRST event to
+          // hit a full buffer only set the timestamp and fell through to
+          // `continue`, never queued. Since `state` is broadcast after
+          // contributions/messages have already filled the buffer, it was
+          // always that first event, so it was dropped and never replayed:
+          // the sidebar round/status and the Overview LLM-call counter froze
+          // until a page refresh. Eviction is now decided on its own, and
+          // every undelivered event is queued.
           if (!entry.slowSince) entry.slowSince = Date.now();
-          else if (Date.now() - entry.slowSince > SLOW_CONSUMER_TIMEOUT_MS) clients.delete(entry);
-          else {
-            if (!pendingQueues.has(meetingId)) pendingQueues.set(meetingId, []);
-            const q = pendingQueues.get(meetingId);
-            if (q.length < 100) q.push(event);
+          if (Date.now() - entry.slowSince > SLOW_CONSUMER_TIMEOUT_MS) {
+            clients.delete(entry);
+            continue;
           }
+          enqueuePending(meetingId, event);
           continue;
         }
         sendSSE(entry.controller, event);
@@ -163,21 +225,7 @@ export function createPollSystem(directory) {
         }
       } catch {}
       // Drain pending backpressure queue
-      const pendingQ = pendingQueues.get(meetingId);
-      if (pendingQ && pendingQ.length > 0 && clients.size > 0) {
-        for (let qi = pendingQ.length - 1; qi >= 0; qi--) {
-          const evt = pendingQ[qi];
-          let allDelivered = true;
-          for (const entry of clients) {
-            try {
-              if (entry.controller.desiredSize !== undefined && entry.controller.desiredSize <= 0) { allDelivered = false; continue; }
-              sendSSE(entry.controller, evt);
-            } catch { clients.delete(entry); }
-          }
-          if (allDelivered) pendingQ.splice(qi, 1);
-        }
-        if (pendingQ.length === 0) pendingQueues.delete(meetingId);
-      }
+      flushPending(meetingId);
     } catch {}
   };
 
@@ -383,24 +431,7 @@ export function createPollSystem(directory) {
         }
 
         // Drain any pending backpressure queue for this meeting
-        const pendingQ = pendingQueues.get(meetingId);
-        if (pendingQ && pendingQ.length > 0 && clients.size > 0) {
-          for (let qi = pendingQ.length - 1; qi >= 0; qi--) {
-            const evt = pendingQ[qi];
-            let allDelivered = true;
-            for (const entry of clients) {
-              try {
-                if (entry.controller.desiredSize !== undefined && entry.controller.desiredSize <= 0) {
-                  allDelivered = false;
-                  continue;
-                }
-                sendSSE(entry.controller, evt);
-              } catch { clients.delete(entry); }
-            }
-            if (allDelivered) pendingQ.splice(qi, 1);
-          }
-          if (pendingQ.length === 0) pendingQueues.delete(meetingId);
-        }
+        flushPending(meetingId);
       } catch (err) {
         console.error(`[Loom dashboard] Poll error for meeting ${meetingId}:`, err instanceof Error ? err.message : String(err));
         broadcast(meetingId, {

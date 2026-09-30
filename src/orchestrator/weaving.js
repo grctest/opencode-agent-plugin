@@ -118,13 +118,6 @@ export async function _runWeavingLoop() {
         break;
       }
 
-        if (this._tokenBudgetExceeded()) {
-          this._stateManager.transitionTo("timeout");
-          const spentBefore = (this._callStats.input_tokens ?? 0) + (this._callStats.output_tokens ?? 0);
-          try { await this._sessionManager.postProgress(`💰 Token budget reached (${spentBefore} ≥ ${this._maxTotalTokens}) — ending deliberation and generating output.`, "warn"); } catch {}
-          break;
-        }
-
         const rateLimitError = this._checkRateLimitError?.();
         if (rateLimitError) {
           const halted = await this._haltForRateLimit(rateLimitError);
@@ -136,26 +129,8 @@ export async function _runWeavingLoop() {
 
        continueWeaving = await this.runRound();
       this._notifyUpdate();
-      if (continueWeaving && this._tokenBudgetExceeded()) {
-        this._stateManager.transitionTo("timeout");
-        const spent = (this._callStats.input_tokens ?? 0) + (this._callStats.output_tokens ?? 0);
-        try { await this._sessionManager.postProgress(`💰 Token budget reached (${spent} ≥ ${this._maxTotalTokens}) — ending deliberation and generating output.`, "warn"); } catch {}
-        break;
-      }
       if (continueWeaving) await new Promise((r) => setImmediate(r));
     }
-  }
-
-  export function _tokenBudgetExceeded() {
-    if (!this._maxTotalTokens || this._maxTotalTokens <= 0) return false;
-    // Merge agent round stats (RoundExecutor tracks agent tokens separately)
-    let agentTokens = 0;
-    try {
-      const rs = this._roundExecutor?.getCallStats?.();
-      agentTokens = (rs?.input_tokens ?? 0) + (rs?.output_tokens ?? 0);
-    } catch {}
-    const spent = (this._callStats.input_tokens ?? 0) + (this._callStats.output_tokens ?? 0) + agentTokens;
-    return spent >= this._maxTotalTokens;
   }
 
 export function _raceWithGuardTimer(promise, timeoutMs, label) {

@@ -7,9 +7,12 @@ import { Textarea } from "./ui/textarea.tsx";
 import { Label } from "./ui/label.tsx";
 import { TriangleAlertIcon } from "lucide-react";
 
+// Counters written by the orchestrator (models.js/init.js) and the round
+// executor (execute-turn.js/prompt-session.js). `reflection_calls` was removed:
+// it is initialised in round-executor.js but never incremented, so it was a
+// permanently-zero term in this sum.
 const CALL_COUNTER_KEYS = [
   "agent_prompts",
-  "reflection_calls",
   "sub_agent_calls",
   "orchestrator",
   "moderation",

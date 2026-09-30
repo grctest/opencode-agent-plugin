@@ -106,7 +106,9 @@ const Sidebar = memo(function Sidebar({
 
   const highestTierModel = useMemo(() => {
     if (!participants || participants.length === 0) return null;
-    const tierOrder = ["principal", "senior", "mid", "junior"];
+    // nonhuman is a pool, not a band: a non-human seat can hold any model, and
+    // a room whose only senior is a whale should still report its model.
+    const tierOrder = ["principal", "senior", "mid", "nonhuman", "junior"];
     for (const tier of tierOrder) {
       const p = participants.find((pp) => pp.tier === tier && pp.model_id);
       if (p) return `${p.provider_id}/${p.model_id}`;

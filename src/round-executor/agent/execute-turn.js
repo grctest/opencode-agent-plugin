@@ -69,6 +69,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
 
   try {
     this._callStats.agent_prompts++;
+    this._notifyCallStats?.();
     const llmStart = Date.now();
     const activeCountExec = (() => { try { return this._stateManager.getActiveParticipants().length; } catch { return undefined; }})();
     const effectiveAgentTools = this.getEffectiveAgentTools?.() ?? this._options?.agentTools ?? this._tools ?? config.agentTools;
@@ -96,7 +97,6 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
     incrementKeyedCounter("llm_calls_by_type", "agent");
     recordLatency("llm_prompt_ms", llmMs);
 
-    this._recordTokens(result1);
 
     if (!result1.ok) throw result1.error;
 
@@ -174,6 +174,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
         const synthStart = Date.now();
         synthRan = true;
         this._callStats.agent_prompts++;
+        this._notifyCallStats?.();
         const result2 = await this._sessionManager.getContract().prompt({
           sessionId: ephemeralSessionId,
           system: promptContext.system_prompt,
@@ -193,7 +194,6 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
         const synthMs = Date.now() - synthStart;
         recordLatency("llm_synthesis_ms", synthMs);
         if (result2.ok) {
-          this._recordTokens(result2);
           const { text: agentText2, toolResults: toolResults2 } = extractAgentResponse(result2.data);
           if (toolResults2.length > 0) {
             const tools2 = toolResults2.map((t) => ({

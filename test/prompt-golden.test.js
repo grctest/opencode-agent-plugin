@@ -58,12 +58,19 @@ const EXPECTED_SYS = {
   "Craft (positive anti-patterns)": "48d74bb60ea6",
   "Tier Doctrine": "367eda2be27c",
   "Mode": "e2f67c7b37e3",
-  "Research Tools — Tool Ladder": "ede28bc2a52c",
+  // loom_summon is capability-gated: this fixture runs with no embedding model
+  // loaded (the default in a fresh checkout), so the tool ladder omits it from
+  // the available list, the guidance bullet, and the mandatory-peer-interaction
+  // note. The hash moves to reflect the tool being absent, not reworded.
+  "Research Tools — Tool Ladder": "e49787427f64",
   "WHEN TO PASS": "20cc67420712",
   // N7 — the OUTPUT CONTRACT changed: loom_state_patch is now exempt from the
   // per-turn tool cap, and the contract says so instead of telling agents to
   // "reserve tool budget" for a call the limiter can no longer evict.
-  "OUTPUT CONTRACT — read last, it governs; in conflict it wins": "d90f660b4223",
+  // The hash moved again because interaction item 4 now drops the
+  // "loom_summon brings guest expert" clause when the tool is gated off — the
+  // contract must not name a tool that was never offered.
+  "OUTPUT CONTRACT — read last, it governs; in conflict it wins": "a45cdb4ed7d7",
 };
 
 const EXPECTED_USER = {

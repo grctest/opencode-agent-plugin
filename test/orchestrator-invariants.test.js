@@ -112,9 +112,9 @@ test("turn-order context varies with turnOrderPolicy", () => {
 
 // Step 3 — posture in user doctrine; conversational rule covers files.
 test("posture sits beside the doctrine rules; conversational grounding covers files", () => {
-  const user = buildSynthesisPrompt("Q", "t", [], [], "", [], "", { decisionPosture: "consensus_seeking" });
+  const user = buildSynthesisPrompt("Q", "t", [], [], "",  "", { decisionPosture: "consensus_seeking" });
   assert.match(user, /Operator decision posture:.*defensible consensus/);
-  const conv = buildSynthesisPrompt("Should we adopt a four-day week?", "t", [], [], "", [], "", {});
+  const conv = buildSynthesisPrompt("Should we adopt a four-day week?", "t", [], [], "",  "", {});
   assert.match(conv, /Do not reference files, diffs, or code/);
 });
 
@@ -165,7 +165,7 @@ test("synthesis participants and dissent carry no tier", () => {
   const prompt = buildSynthesisPrompt(
     "Q", "t",
     [{ config: { id: "a", name: "Ada", tier: "principal" }, status: "listening", contributions_count: 2 }],
-    [], "", [], "", {},
+    [], "",  "", {},
   );
   assert.doesNotMatch(prompt, /\(principal\)/);
   assert.doesNotMatch(prompt, /\{Holder\}.*\{tier\}/);

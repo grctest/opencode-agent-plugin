@@ -9,6 +9,7 @@ import { incrementKeyedCounter, recordLatency } from "../../metrics.js";
 import { extractErrorInfo } from "../../logger.js";
 import { buildToolsMap, buildToolsMapWithoutLoom } from "../tools.js";
 import { buildEvidenceCache } from "../../evidence-cache.js";
+import { resolveContextLimit, budgetCharsFor, fitPromptToBudget } from "../../utils/context-budget.js";
 
 
 export async function promptChildSession(participant) {
@@ -88,6 +89,21 @@ export async function promptChildSession(participant) {
       .slice(0, 12);
   } catch {}
 
+  // Resolve the model this turn will actually use BEFORE assembling: the input
+  // guard below sizes the prompt against THIS model's window, not the requested
+  // one (a 32k fallback must not inherit a 1M window's budget).
+  let activeModel = model;
+  if (!this._circuitBreaker.isHealthy(model)) {
+    this._logger.warn("model_unhealthy", `${participant.config.name} — model ${this._modelKey(model)} unhealthy, attempting fallback`);
+    const fallback = selectFallbackModel(model, this._availableModels, this._circuitBreaker);
+    if (!fallback) {
+      const err = new Error("circuit breaker open, no fallback");
+      this._logError(`model ${this._modelKey(model)} unhealthy and no fallback available`, err);
+      return { result: null, error: err };
+    }
+    activeModel = fallback;
+  }
+
   // Shared evidence cache (P5): read the meeting's tool_audit log once per turn
   // and build the (normalized query → result digest) cache the agent sees as the
   // *Prior Searches* block. Read-side only — tool_audit is written by the tool
@@ -104,14 +120,10 @@ export async function promptChildSession(participant) {
   const activeCountPS = (() => { try { return this._stateManager.getActiveParticipants().length; } catch { return undefined; }})();
   // Assigned-model context window for the prompt's window claim (audit 3.4).
   // Unknown models yield null and builders keep their default text unchanged.
-  const participantWindow = (() => {
-    try {
-      const m = this._getParticipantModel?.(participant) ?? participant?.config?.model;
-      const entry = (this._availableModels ?? []).find((a) => a && a.providerID === m?.providerID && a.modelID === m?.modelID);
-      const ctx = entry?.limit?.context;
-      return Number.isFinite(ctx) && ctx > 0 ? ctx : null;
-    } catch { return null; }
-  })();
+  const participantWindow = resolveContextLimit(
+    this._getParticipantModel?.(participant) ?? participant?.config?.model,
+    this._availableModels,
+  );
   const systemPrompt = buildAgentSystemPrompt(participant, { activeCount: activeCountPS, agentTools: effectiveAgentTools, contextWindow: participantWindow });
   let steeringHint = "";
   let consumedHint = "";
@@ -128,15 +140,34 @@ export async function promptChildSession(participant) {
     // release lock after microtask so same-round second speaker can't re-consume same hint
     queueMicrotask(() => { this._hintLocked = false; });
   }
-  const userPromptBase = buildAgentUserPrompt(
+  // Block-aware fit (plan Part 2b): assemble, measure against THIS model's input
+  // window, and sacrifice the cheapest-to-lose blocks until it fits. The system
+  // prompt is untouched, so the task instruction, the state-patch contract and
+  // the tool rules survive every level of degradation.
+  let fitEvidence = evidenceCache;
+  let fitRecent = recentForPrompt;
+  let fitForum = forumTopicsForPrompt;
+  let fitSop = this._stateManager.getStateOfPlay();
+  // Previous round's clerk summary (rounds >=2 only) — already paid for, already
+  // high quality; routed to agents instead of only the dashboard.
+  let fitLastSummary = (() => {
+    try {
+      if (currentRound <= 1) return "";
+      const rounds = this._stateManager.getRounds?.() ?? [];
+      const prev = rounds.filter((r) => r.number === currentRound - 1).pop() ?? [...rounds].pop();
+      return String(prev?.summary ?? "").trim();
+    } catch { return ""; }
+  })();
+
+  const buildFitPrompt = () => buildAgentUserPrompt(
     participant,
-    this._stateManager.getStateOfPlay(),
-    recentForPrompt,
+    fitSop,
+    fitRecent,
     currentRound,
     this._stateManager.getQuestion(),
     this._stateManager.getTags(),
     this._stateManager.getContext?.() ?? "",
-    forumTopicsForPrompt,
+    fitForum,
     otherParticipantsForPrompt,
      myState,
      forumEnabled,
@@ -156,20 +187,51 @@ export async function promptChildSession(participant) {
        // Steering hint renders inside the builder, before the final patch line,
        // so recency keeps the mandatory call (audit P1-D). Empty = no block.
        steeringHint,
-       // Previous round's clerk summary (rounds ≥2 only) — already paid for,
-       // already high quality; routed to agents instead of only the dashboard.
-        lastRoundSummary: (() => {
-          try {
-            if (currentRound <= 1) return "";
-            const rounds = this._stateManager.getRounds?.() ?? [];
-            const prev = rounds.filter((r) => r.number === currentRound - 1).pop() ?? [...rounds].pop();
-            return String(prev?.summary ?? "").trim();
-          } catch { return ""; }
-        })(),
-        evidenceCache,
+        lastRoundSummary: fitLastSummary,
+        // Explicit key: the builder reads `evidenceCache`, and this is the
+        // trimmable copy the fit loop empties first.
+        evidenceCache: fitEvidence,
       },
    );
-  const userPrompt = userPromptBase;
+
+
+  // Sacrifice order. Each step is taken only if the prompt is still over budget.
+  const fitSteps = [
+    // 1. Prior-search evidence cache — retrieval is re-runnable; a peer can search again.
+    () => { fitEvidence = []; },
+    // 2. Older contributions in this round — the tail is what the live exchange needs.
+    () => { fitRecent = fitRecent.slice(-Math.max(4, Math.ceil(fitRecent.length / 2))); },
+    // 3. Previous round's summary — the shared SoP already carries the same ground.
+    () => { fitLastSummary = ""; },
+    // 4. Older forum topics — topic list is navigation aid, not evidence.
+    () => { fitForum = fitForum.slice(-Math.max(1, Math.ceil(fitForum.length / 2))); },
+    // 5. Oldest SoP entries — the digest is append-ordered, so the head is the
+    //    superseded part; drop it at a line boundary to keep entries whole.
+    () => {
+      const lines = String(fitSop ?? "").split("\n");
+      if (lines.length <= 4) { fitSop = ""; return; }
+      fitSop = lines.slice(Math.floor(lines.length / 2)).join("\n");
+    },
+  ];
+
+  const fitBudgetChars = budgetCharsFor(activeModel, this._availableModels);
+  const fitted = fitPromptToBudget({
+    assemble: buildFitPrompt,
+    budgetChars: fitBudgetChars,
+    overheadChars: systemPrompt.length,
+    steps: fitSteps,
+  });
+  const userPrompt = fitted.value;
+  if (fitted.stepsApplied > 0) {
+    this._logger.info("prompt_trimmed_to_context", `Dropped ${fitted.stepsApplied} prompt block tier(s) to fit ${fitBudgetChars} chars for ${activeModel?.providerID}/${activeModel?.modelID}`, {
+      participant: participant.config.id,
+      model: `${activeModel?.providerID}/${activeModel?.modelID}`,
+      tiersDropped: fitted.stepsApplied,
+      chars: userPrompt.length,
+      stillOverBudget: fitted.overBudget,
+    });
+    try { this._onPromptTrimmed?.(fitBudgetChars - (userPrompt.length + systemPrompt.length), activeModel); } catch {}
+  }
 
   const promptContext = {
     type: "agent_turn",
@@ -187,17 +249,6 @@ export async function promptChildSession(participant) {
     round: currentRound,
   };
 
-  let activeModel = model;
-  if (!this._circuitBreaker.isHealthy(model)) {
-    this._logger.warn("model_unhealthy", `${participant.config.name} — model ${this._modelKey(model)} unhealthy, attempting fallback`);
-    const fallback = selectFallbackModel(model, this._availableModels, this._circuitBreaker);
-    if (!fallback) {
-      const err = new Error("circuit breaker open, no fallback");
-      this._logError(`model ${this._modelKey(model)} unhealthy and no fallback available`, err);
-      return { result: null, error: err };
-    }
-    activeModel = fallback;
-  }
 
   const maxRetries = fallbackConfig.enabled ? fallbackConfig.maxRetriesPerModel : 0;
   const lastError = { value: null };
@@ -283,6 +334,7 @@ export async function promptChildSession(participant) {
      let result2;
     try {
       try { this._callStats.agent_prompts++; } catch {}
+      try { this._notifyCallStats?.(); } catch {}
       result2 = await this._sessionManager.getContract().prompt({
         sessionId: ephemeralSessionId,
         system: promptContext.system_prompt,
@@ -305,8 +357,7 @@ export async function promptChildSession(participant) {
         this._logger.warn("synthesis_recovery_failed", `Synthesis recovery prompt failed for ${participant.config.name}: ${result2.error?.message ?? "unknown"}`);
         return null;
       }
-      try { this._recordTokens?.(result2); } catch {}
-      // Reuse already-imported helpers (avoid dynamic import overhead in recovery path)
+          // Reuse already-imported helpers (avoid dynamic import overhead in recovery path)
       const ear = extractAgentResponse;
       const mtr = mapToolResults;
       const gpc = getPriorityCap;
@@ -533,6 +584,7 @@ export function recordFallbackFailure(participant, originalModel, fallbackModel,
     this._stateManager.getMeetingId(), participant.config.id, this._stateManager.getCurrentRound(),
     "model_fallback", `${fallbackMsg} — ${JSON.stringify(info)}`, 1,
   );
+
   this._logger.error("model_fallback_failed", `${participant.config.name} failed on all models`, {
     original: this._modelKey(originalModel),
     fallback: fallbackModel ? this._modelKey(fallbackModel) : null,

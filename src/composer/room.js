@@ -270,6 +270,61 @@ export function rankPersonasForQuestion(tierPool, questionText, tokens = null) {
     .sort((a, b) => b.score - a.score || a.persona.name.localeCompare(b.persona.name));
 }
 
+/**
+ * The non-human tier is not a seat: it is a POOL. Every seat also considers
+ * the `nonhuman` candidates and ranks the union, so a non-human persona wins
+ * a seat exactly when it is the nearest neighbour of the question — and loses
+ * every seat it is not. Reserving a seat for the tier would be the opposite
+ * of the design: a forced alien voice either repeats itself across rooms or
+ * arrives on questions it has nothing to add to.
+ *
+ * The two candidate pools are searched separately (PersonaIndex keys its store
+ * by `tier|name`) and merged here, each row tagged with the pool it came from
+ * so the seat can be labelled with the tier it was actually selected for.
+ */
+const NONHUMAN_TIER = "nonhuman";
+
+/** The pools a seat draws from: its nominal tier, plus nonhuman. */
+export function candidatePoolsForTier(tier) {
+  return tier === NONHUMAN_TIER ? [NONHUMAN_TIER] : [tier, NONHUMAN_TIER];
+}
+
+/**
+ * Builds a seat's candidate list from its in-tier and non-human pools.
+ *
+ * The relative cut (selectTopNPerTier) is applied to EACH POOL SEPARATELY and
+ * only then are the survivors ranked together. Cutting the merged list instead
+ * is a subtle and real regression: non-human personas are written to be
+ * adjacent to everything (a reef, a river, a market), so they cluster near the
+ * top of the union, and a single merged top-3 lets them evict the in-tier
+ * specialists the cut exists to preserve — silently undoing the P15 invariant
+ * that a seated persona is in the top-N of its own tier.
+ *
+ * Per-pool cutting keeps both guarantees at once: a human persona is only ever
+ * displaced by a better human persona of its own tier, and a non-human persona
+ * still has to beat the tier's own survivors on distance to take the seat.
+ *
+ * Exported for tests: this composition rule is the behaviour, the search
+ * plumbing around it is not.
+ * @param {Array<{persona_name: string, distance: number|null}>} inTierRows
+ * @param {Array<{persona_name: string, distance: number|null}>} nonhumanRows
+ * @param {string} nominalTier
+ * @param {number} topN
+ * @returns {Array<{persona_name: string, distance: number|null, tier: string}>} ranked union
+ */
+export function mergeSeatCandidates(inTierRows, nonhumanRows, nominalTier, topN = DEFAULT_TOP_N_PER_TIER) {
+  const tag = (rows, tier) => selectTopNPerTier(rows ?? [], topN).map((r) => ({ ...r, tier }));
+  return [...tag(inTierRows, nominalTier), ...tag(nonhumanRows, NONHUMAN_TIER)]
+    .sort((a, b) => {
+      const da = Number.isFinite(a?.distance) ? a.distance : Infinity;
+      const db = Number.isFinite(b?.distance) ? b.distance : Infinity;
+      // Unscored rows (distance null — keyword fallback hits) sort last, and
+      // ties break by name so a room is reproducible given the same question.
+      if (da === db) return String(a.persona_name).localeCompare(String(b.persona_name));
+      return da - db;
+    });
+}
+
 export async function composeRoomWithSimilarity(question, context = "", opts = {}) {
   const used = new Set();
   const participants = [];
@@ -365,14 +420,40 @@ export async function composeRoomWithSimilarity(question, context = "", opts = {
     let results = [];
     if (questionEmbedding) {
       try {
-        results = await personaIndex.searchWithEmbedding(questionEmbedding, tier, 5);
+        // Non-human pool: a parallel search merged into the seat below, so a
+        // non-human persona competes on distance rather than on a quota.
+        const nonhuman = tier === NONHUMAN_TIER
+          ? []
+          : await personaIndex.searchWithEmbedding(questionEmbedding, NONHUMAN_TIER, 5);
+        results = mergeSeatCandidates(
+          await personaIndex.searchWithEmbedding(questionEmbedding, tier, 5),
+          nonhuman,
+          tier,
+          topNPerTier,
+        );
       } catch (err) {
           composerLogger.warnThrottled("compose.vector_search_failed", "Room composition", `Vector persona search failed for tier ${tier} — stepping down to keyword search`, extractErrorInfo(err));
           vectorDegraded = true;
-          results = await personaIndex.search(compositionText, tier, 5);
+          const nonhuman = tier === NONHUMAN_TIER
+            ? []
+            : await personaIndex.search(compositionText, NONHUMAN_TIER, 5);
+          results = mergeSeatCandidates(
+            await personaIndex.search(compositionText, tier, 5),
+            nonhuman,
+            tier,
+            topNPerTier,
+          );
         }
       } else {
-        results = await personaIndex.search(compositionText, tier, 5);
+        const nonhuman = tier === NONHUMAN_TIER
+          ? []
+          : await personaIndex.search(compositionText, NONHUMAN_TIER, 5);
+        results = mergeSeatCandidates(
+          await personaIndex.search(compositionText, tier, 5),
+          nonhuman,
+          tier,
+          topNPerTier,
+        );
       }
     // P15 — relative cut replaces the absolute L2 floor: keep the top-N of the
     // tier by rank. Keyword rows (distance null) sort last.
@@ -406,10 +487,19 @@ export async function composeRoomWithSimilarity(question, context = "", opts = {
       }
     }
     if (seated) {
-      const seatTier = findPersonaByName(personas, tier, seated.persona_name) ? tier : crossTier?.tier ?? tier;
+      // Resolve the tier the persona was actually selected from. A merged row
+      // carries its own `tier` tag; the cross-tier floor carries `crossTier.tier`;
+      // otherwise the seat's nominal tier is right. A non-human persona keeps
+      // the nonhuman label so it is persisted and rendered as what it is.
+      const resolvedTier = seated.tier ?? crossTier?.tier ?? tier;
+      const seatTier = findPersonaByName(personas, resolvedTier, seated.persona_name) ? resolvedTier : tier;
       const persona = findPersonaByName(personas, seatTier, seated.persona_name) ?? findPersonaByName(personas, tier, seated.persona_name);
       if (persona) {
-        selectedDistances.push({ tier: seatTier, persona: persona.name, distance: seated.distance ?? null, cross_tier: seatTier !== tier });
+        const isNonhuman = seatTier === NONHUMAN_TIER;
+        if (isNonhuman) {
+          composerLogger.info("compose_nonhuman_seat", `${tier}: seated non-human "${persona.name}" at ${Number.isFinite(seated.distance) ? seated.distance.toFixed(3) : "n/a"} — nearest neighbour of the question, not a reserved seat`, { nominalTier: tier, persona: persona.name, distance: seated.distance ?? null, cross_tier: seatTier !== tier });
+        }
+        selectedDistances.push({ tier: seatTier, persona: persona.name, distance: seated.distance ?? null, cross_tier: seatTier !== tier, nonhuman: isNonhuman });
         used.add(persona.name);
         participants.push(buildParticipant(persona, seatTier, String(participants.length)));
       }
@@ -480,11 +570,18 @@ function composeRoomByKeyword(question, personas, roles, complexity, count, used
   const quantitative = isQuantitativeQuestion(question);
 
   for (const tier of roles) {
-    const tierPool = personas[tier] ?? [];
-    const ranked = rankPersonasForQuestion(tierPool, question, tokens);
-    const topNPool = ranked.slice(0, topN);
-    const candidate = topNPool.find(({ persona }) => !used.has(persona.name))
-      ?? ranked.find(({ persona }) => !used.has(persona.name));
+    // Same merged pool as the vector path, and the same per-pool relative cut:
+    // rank each tier's pool by keyword overlap, keep its own top-N, then rank
+    // the survivors together. A non-human persona competes on score and wins
+    // only by scoring, without being able to evict an in-tier specialist from
+    // the cut that is supposed to preserve that tier's best.
+    const perPool = candidatePoolsForTier(tier).map((pool) =>
+      rankPersonasForQuestion(personas[pool] ?? [], question, tokens)
+        .slice(0, topN)
+        .map((r) => ({ ...r, tier: pool })),
+    );
+    const ranked = perPool.flat().sort((a, b) => b.score - a.score || a.persona.name.localeCompare(b.persona.name));
+    const candidate = ranked.find(({ persona }) => !used.has(persona.name));
     if (candidate) {
       if (candidate.score < minScore) {
         composerLogger.info("compose_relative_cut_below_floor", `${tier}: seated "${candidate.persona.name}" (score ${candidate.score}) below the old floor ${minScore} — relative cut keeps the best available`);
@@ -493,9 +590,12 @@ function composeRoomByKeyword(question, personas, roles, complexity, count, used
       // candidate shares no vocabulary with the question has nothing to say,
       // and an on-topic persona from another tier outranks an off-topic one
       // from the nominal tier. A score of 0 is the same statement as a distance
-      // past the floor.
+      // past the floor. The non-human pool participates here too, and is only
+      // excluded by name when it is the pool that already won the seat — an
+      // unqualified exclude would lock a non-human persona in and stop it
+      // being available to rescue a starved human tier.
       let seat = candidate.persona;
-      let seatTier = tier;
+      let seatTier = candidate.tier ?? tier;
       if (candidate.score <= 0) {
         const crossTier = pickCrossTierCandidateByScore(personas, question, tokens, used, { exclude: [tier], quantitative });
         if (crossTier && crossTier.persona.name !== candidate.persona.name) {
@@ -505,6 +605,18 @@ function composeRoomByKeyword(question, personas, roles, complexity, count, used
         }
       }
       used.add(seat.name);
+      if (seatTier === NONHUMAN_TIER) {
+        composerLogger.info("compose_nonhuman_seat", `${tier}: seated non-human "${seat.name}" (score ${candidate.score}) — best keyword match, not a reserved seat`, {
+          nominalTier: tier,
+          persona: seat.name,
+          score: candidate.score,
+          // Whether it won the seat outright or arrived via the cross-tier
+          // floor changes how a reader should treat it: the former is a
+          // nearest-neighbour claim, the latter means no human in the
+          // nominal tier had anything to say either.
+          via: seatTier === (candidate.tier ?? tier) ? "pool_rank" : "cross_tier_floor",
+        });
+      }
       participants.push(buildParticipant(seat, seatTier, String(participants.length)));
     } else if (tier !== "civilian") {
       composerLogger.info("compose_keyword_no_relevant", `No ${tier} candidate left — skipping seat`);
@@ -535,6 +647,28 @@ function getVocab() {
   return _vocabCache;
 }
 
+/**
+ * Function words carry no topical signal but match persona prose constantly —
+ * "and" hits "repetition and memory", "can"/"how"/"why"/"does" appear in most
+ * agendas. Every matched stopword was therefore a small bonus proportional to
+ * how much prose a persona had, which is the same length bias the divisor
+ * below corrects, arriving from the other direction. Filtering them here is
+ * what makes a topical hit mean something: after this, a persona scores only on
+ * words that actually describe its domain.
+ */
+const QUESTION_STOPWORDS = new Set([
+  "a", "about", "after", "all", "also", "am", "an", "and", "any", "are", "as", "at",
+  "be", "because", "been", "being", "but", "by", "can", "could", "did", "do", "does",
+  "doing", "done", "for", "from", "get", "got", "had", "has", "have", "he", "her",
+  "here", "him", "his", "how", "i", "if", "in", "into", "is", "it", "its", "just",
+  "like", "make", "me", "might", "more", "most", "much", "must", "my", "no", "not",
+  "now", "of", "on", "one", "only", "or", "other", "our", "out", "over", "own",
+  "same", "should", "so", "some", "such", "than", "that", "the", "their", "them",
+  "then", "there", "these", "they", "this", "those", "through", "to", "too", "up",
+  "us", "use", "very", "was", "we", "well", "were", "what", "when", "where",
+  "which", "while", "who", "why", "will", "with", "would", "you", "your",
+]);
+
 function scorePersonaForQuestion(persona, tokens, questionText = "") {
   const tags = getPersonaTags(persona);
   const expertise = Array.isArray(persona.expertise) ? persona.expertise : [];
@@ -545,6 +679,7 @@ function scorePersonaForQuestion(persona, tokens, questionText = "") {
   const escTokens = [];
   for (const t of cappedTokens) {
     if (t.length < 2) continue;
+    if (QUESTION_STOPWORDS.has(t.toLowerCase())) continue;
     const esc = t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     if (esc.length > 30) continue;
     escTokens.push(esc.toLowerCase());
@@ -584,6 +719,23 @@ function scorePersonaForQuestion(persona, tokens, questionText = "") {
       }
       if (hits >= 2) score += 3;
     }
+  }
+  // Length normalisation. The scorer above counts persona-prose hits at double
+  // weight, which means a long persona scores higher than a short one covering
+  // the same ground. That was survivable while every persona was roughly the
+  // same size; it is not once a tier holds 77 long-written non-humans searched
+  // for every seat — prose volume alone beat topical relevance, and the
+  // keyword path seated non-humans on questions they had nothing to say about
+  // (three of three seats on a database migration).
+  //
+  // Dividing by a linear function of the text length — not by the raw length,
+  // which would over-correct and flatten genuinely rich matches — holds the
+  // signal from topical hits while removing the reward for writing more. The
+  // divisor is deliberately gentle (LEN_REF + length) so a persona only loses
+  // the advantage of bulk, not the substance of an unusually apt match.
+  if (score > 0) {
+    const LEN_REF = 220;
+    score = score / (1 + Math.max(0, personaText.length - LEN_REF) / LEN_REF);
   }
   return score;
 }

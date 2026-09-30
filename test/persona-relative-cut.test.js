@@ -118,3 +118,54 @@ test("the car-manufacturer question no longer seats a keyboard enthusiast", asyn
   const again = await composeRoomWithSimilarity(question, "", { keywordOnly: true });
   assert.deepEqual(again.participants.map((p) => p.id), room.participants.map((p) => p.id));
 });
+
+// The keyword scorer counts a question-token hit in persona prose at double
+// weight (that is what distinguishes a persona whose DESCRIPTION matches from
+// one whose TAGS do). That made raw score partly a proxy for how much a
+// persona had been written. Harmless while every persona was roughly the same
+// size; actively wrong once the nonhuman tier held 77 long-written personas
+// searched for every seat — prose volume beat topical relevance and a database
+// migration seated three non-humans out of three.
+
+test("keyword scoring is not a proxy for persona length", () => {
+  // Same topical content, wildly different prose volume: the long one must not
+  // outscore the short one just for having been written at length.
+  const short = { name: "short", tags: ["bleaching", "reef"], expertise: ["coral"], persona: "You are a reef.", agenda: "Ask about coral." };
+  const long = { name: "long", tags: ["bleaching", "reef"], expertise: ["coral"], persona: "x".repeat(3000), agenda: "y".repeat(3000) };
+  const q = "why does the coral reef bleach";
+  const tokens = q.toLowerCase().split(/\W+/).filter((t) => t.length > 1);
+  const shortScore = rankPersonasForQuestion([short], q, tokens)[0].score;
+  const longScore = rankPersonasForQuestion([long], q, tokens)[0].score;
+  assert.ok(shortScore > 0, "the topical persona scores at all");
+  // Prose volume alone must not carry a persona past a genuinely apt one.
+  assert.ok(longScore <= shortScore, `long persona (${longScore}) outscored short (${shortScore}) on identical topical content`);
+});
+
+test("stopwords in the question do not score", () => {
+  // "and" hits "repetition and memory", "can"/"how" appear in most agendas.
+  // Before the filter, every persona's prose was a stopword bonus.
+  const persona = {
+    name: "p",
+    tags: ["tides"],
+    expertise: ["coastal reading"],
+    // Deliberately stopword-dense prose, the way a real agenda is.
+    persona: "You and the sea. How the tide can be read, and why it matters.",
+    agenda: "How and why does it matter, and what can be read.",
+  };
+  // tokens=null so the scorer derives them from the question, as production does.
+  const topical = rankPersonasForQuestion([persona], "tides can be read")[0].score;
+  const stopwordOnly = rankPersonasForQuestion([persona], "how and can it be")[0].score;
+  assert.ok(topical > 0, "content words score");
+  assert.equal(stopwordOnly, 0, "a question made only of function words must score nothing");
+});
+
+test("the keyword path seats a non-human persona for its own subject", async () => {
+  // The inverse of the crowding test above: the pool must still be reachable.
+  // A reef question should find the reef persona, not merely avoid crowding.
+  const room = await composeRoomWithSimilarity("why does the coral reef bleach and can it recover", "", { keywordOnly: true });
+  const names = room.participants.map((p) => p.name);
+  assert.ok(
+    names.includes("The Coral Head"),
+    `expected the reef persona to be seated for a reef question, got ${names.join(", ")}`,
+  );
+});

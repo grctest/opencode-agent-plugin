@@ -83,14 +83,17 @@ test("quality telemetry carries the degraded reasons and the unmeasurable flag",
     _stateManager: {
       getWeave: () => [{ type: "contribution", participant_id: "a", round: 1 }],
       getParticipants: () => [{ config: { id: "a" } }],
-      getObjections: () => [],
       getMeetingId: () => meetingId,
     },
   };
   const q = _computeQualityTelemetry.call(ctx, {});
-  assert.deepEqual(q.meeting_degraded_reasons, ["cost_unmeasurable", "state_patch_rejected"]);
-  // cost_unmeasurable stays as its own flag for existing consumers.
-  assert.equal(q.cost_unmeasurable, true);
+  assert.deepEqual(q.meeting_degraded_reasons, ["state_patch_rejected"]);
+  // Cost/token reporting is gone: the only telemetry-derived health signal is a
+  // refusal, and slow LLM calls (latency) are kept because they signal rate limiting.
+  assert.equal("cost_unmeasurable" in q, false);
+  for (const gone of ["input_tokens", "output_tokens", "total_tokens"]) {
+    assert.equal(gone in q, false, `${gone} should no longer be published`);
+  }
   // N7 — the per-turn high-water mark and the cap are reported together so a
   // round's audited total can never be read as a per-turn overrun.
   assert.equal(q.tool_calls.cap_per_turn, 12);
@@ -122,25 +125,20 @@ test("N12 — mechanism mix counts argument vs decision per round, and constrain
     { id: 5, type: "evidence_response", round: 2, participant_id: "b" },
     { id: 6, type: "pass", round: 2, participant_id: "c" },
   ];
-  const objections = [
-    { id: "o1", round: 1, unresolved: true },
-    { id: "o2", round: 1, unresolved: false },
-    { id: "o3", round: 2, unresolved: true },
-  ];
-  const mix = computeMechanismMix(weave, objections);
+  const mix = computeMechanismMix(weave);
   assert.equal(mix.argument_shaped, 3);
   assert.equal(mix.decision_shaped, 2);
   assert.equal(mix.other, 1);
-  assert.equal(mix.unresolved_objections, 2);
   assert.equal(mix.decision_share, 0.4);
+  // No objection counters: dissent is the orchestrator's judgement, not a regex's.
   assert.deepEqual(mix.by_round, [
-    { round: 1, argument_shaped: 2, decision_shaped: 2, other: 0, objections: 2, unresolved_objections: 1 },
-    { round: 2, argument_shaped: 1, decision_shaped: 0, other: 1, objections: 1, unresolved_objections: 1 },
+    { round: 1, argument_shaped: 2, decision_shaped: 2, other: 0 },
+    { round: 2, argument_shaped: 1, decision_shaped: 0, other: 1 },
   ]);
   // The classification is a statement about the record, not a budget.
   assert.equal(ARGUMENT_SHAPED_TYPES.has("vote_response"), false);
   assert.equal(DECISION_SHAPED_TYPES.has("vote_response"), true);
-  assert.equal(computeMechanismMix([], []).decision_share, 0);
+  assert.equal(computeMechanismMix([]).decision_share, 0);
 });
 
 test("N9 — the round-budget floor measures the closing round against the median", () => {
@@ -259,10 +257,13 @@ test("N6 — a rejected state patch is in both the counters and the audit table"
     activeLooms: new Map([[meetingId, engine]]),
   }).loom_state_patch;
 
+  // loom_pass in this turn — a patch after a pass is a genuine sequencing
+  // refusal (the pass is a terminal statement for the turn), so the N6 telemetry
+  // guarantee is still exercised. Shape errors and a second call in one turn are
+  // no longer refusals: they coerce and merge respectively.
   manager.beginTurn(target.config.id);
-  // Second patch in the same turn — the tool refuses it.
-  manager.markTurnPatchApplied();
-  const refused = await stateTool.execute({ stance: "second patch" }, { sessionID: "agent-session" });
+  manager.markTurnPassRequested();
+  const refused = await stateTool.execute({ stance: "after pass" }, { sessionID: "agent-session" });
 
   assert.equal(refused.metadata.error, true);
   assert.equal(refused.metadata.reason, "state_patch_rejected");
@@ -273,5 +274,70 @@ test("N6 — a rejected state patch is in both the counters and the audit table"
   assert.equal(refusalRows.length, 1);
   assert.equal(refusalRows[0].tool, "loom_state_patch");
   assert.equal(refusalRows[0].participantId, "agent");
-  assert.match(refusalRows[0].output, /only one loom_state_patch call is allowed per turn/);
+  assert.match(refusalRows[0].output, /cannot follow loom_pass/);
+});
+
+test("state patches never fail on shape — a nested object and an over-long stance both apply", async () => {
+  const { createStatePatchTool } = await import("../src/plugin/tools/state-patch.js");
+  const { DEFAULT_CONFIG } = await import("../src/config/defaults.js");
+
+  const meetingId = "m-patch-loose";
+  const target = {
+    config: {
+      id: "agent", name: "Agent", tier: "mid",
+      persona: "Tests grounded reasoning.", agenda: "Verify state continuity.",
+      known_biases: [], preferred_contribution_types: [], anti_patterns: [],
+      model: { providerID: "test", modelID: "test-model" },
+    },
+    tier_config: {},
+    status: "speaking",
+    session_id: "agent-session",
+    contributions_count: 0,
+  };
+  const manager = new StateManager({
+    id: meetingId, participants: [target], weave: [], rounds: [{ number: 1, contributions: [], token_path: [] }],
+    current_round: 1, max_rounds: 3, next_contribution_id: 0, status: "weaving", state_of_play: "",
+  });
+  const audits = [];
+  const db = {
+    addToolAudit: (row) => audits.push(row),
+    setParticipantStatus() {}, setParticipantReflection() {}, addStatePatch() {}, setParticipantState() {},
+  };
+  const engine = {
+    getStateManager: () => manager,
+    getDatabase: () => db,
+    getRoundExecutor: () => ({ getEffectiveAgentTools: () => DEFAULT_CONFIG.agentTools }),
+  };
+  const stateTool = createStatePatchTool({
+    config: { getValue: (key) => (key === "agentTools" ? DEFAULT_CONFIG.agentTools : undefined) },
+    resolveMeeting: async () => ({ meetingId }),
+    activeLooms: new Map([[meetingId, engine]]),
+  }).loom_state_patch;
+
+  // Every one of these was a rejection in meeting 0d5acaba.
+  const hostile = [
+    { stance: "s".repeat(700) },
+    { established_add: ["b".repeat(500)] },
+    { established_add: { contested_add: { contested_add: { item: ["recursive nest"] } } } },
+    { established_add: "bare string" },
+    { established_add: ["a", "b", "c", "d", "e"] },
+    { stance: "fine", typo_key: "ignored" },
+  ];
+  for (const input of hostile) {
+    manager.beginTurn(target.config.id);
+    const res = await stateTool.execute(input, { sessionID: "agent-session" });
+    assert.equal(res.metadata.error, undefined, `refused ${JSON.stringify(input).slice(0, 50)}`);
+    assert.equal(res.metadata.applied, true, `not applied ${JSON.stringify(input).slice(0, 50)}`);
+    assert.equal(audits.filter((r) => r.status === "rejected").length, 0);
+  }
+
+  // A second patch in the same turn merges instead of failing.
+  manager.beginTurn(target.config.id);
+  const first = await stateTool.execute({ established_add: ["alpha"] }, { sessionID: "agent-session" });
+  const second = await stateTool.execute({ established_add: ["beta"] }, { sessionID: "agent-session" });
+  assert.equal(first.metadata.applied, true);
+  assert.equal(second.metadata.applied, true);
+  assert.equal(second.metadata.merged, true);
+  const queued = manager.getActiveTurn()?.pendingPatch;
+  assert.deepEqual(queued.state.established, ["alpha", "beta"]);
 });

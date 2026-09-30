@@ -10,7 +10,7 @@ You ask a question. The Loom uses embedding-based similarity search (no LLM doma
 
 Agents deliberate in structured rounds. During a turn an agent isn't limited to writing prose — it interacts with peers directly through real tool calls: `loom_query` queries specific peers (with seven answer modes: factual clarify, stance-taking perspective, forced-research evidence, adversarial critique, risk analysis, assumption surfacing, alternatives), `loom_vote` polls everyone on lettered options, `loom_summon` brings in a guest expert persona, and `loom_request_next` claims speaking priority for the next round. Peer answers and ballots are returned **inline within the same turn**, so the speaker synthesizes them into their contribution immediately instead of waiting for future rounds. Ballots come back verbatim and the invoker is the declared interpreter of them — nothing counts them behind the speaker's back, because a tally that drops a ballot the room actually cast is worse than no tally at all.
 
-Termination is deterministic: after the configured minimum rounds, everyone passes or fails, the round limit is reached, or a hard timeout or token budget fires. Agents pass by calling the `loom_pass` tool — the meeting ends when all active participants have passed. Once the meeting ends, a neutral **synthesizer** produces the final artifact: decisions, action items, unresolved dissent, and a confidence level, then self-critiques its draft against the transcript.
+Termination is deterministic: after the configured minimum rounds, everyone passes or fails, the round limit is reached, or a hard timeout fires. Agents pass by calling the `loom_pass` tool — the meeting ends when all active participants have passed. Once the meeting ends, a neutral **synthesizer** produces the final artifact: decisions, action items, unresolved dissent, and a confidence level, then self-critiques its draft against the transcript.
 
 A real-time web dashboard is the sole control plane: you preview the suggested room, approve personas (or pick manually) and per-tier models, then start the deliberation. Every agent contribution streams in as it happens, and the final synthesis lives in the dashboard's Output tab — nothing is returned to chat. The Setup tab can extend an existing deliberation with new input rather than starting fresh.
 
@@ -21,7 +21,7 @@ A real-time web dashboard is the sole control plane: you preview the suggested r
 - **Inline peer interactions** — query peers in seven modes, call votes, summon guest experts; results return within the same turn
 - **Tool-using agents** — web search/fetch, project file inspection, forum sub-discussions, and structured pass via `loom_pass`
 - **Per-agent carried state** — every turn projects stance + key bullets via `loom_state_patch`, so prompts stay flat and stance flips land in one turn
-- **Deterministic termination** — pass/fail exhaustion, round limit, hard timeout, or token budget
+- **Deterministic termination** — pass/fail exhaustion, round limit, or hard timeout
 - **Minority-report synthesis** — neutral synthesizer emits decisions, reasoning, action items, dissent, and confidence, then self-critiques its draft
 - **Model discovery** — finds available models from your opencode providers, assigns them per tier, and lets you override the model per seat in the dashboard Setup tab
 - **Real-time dashboard** — live timeline with a full prompt/tool audit trail; Markdown and JSON export
@@ -105,6 +105,8 @@ Models are stored under `OPENCODE_CONFIG_DIR` when set, otherwise globally at:
 
 The embedding model is initialized at plugin startup (`ensureEmbedderInitialized` in `src/index.js:65`, async with 5s race) and separately in the dashboard (`initEmbeddingModel` in `src/dashboard/server/helpers.js:17` with build default). Both use real embeddings; if unavailable, room composition degrades via keyword fallback with warnings.
 
+**`loom_summon` is capability-gated on the embedding model.** It picks the guest expert by semantic similarity over the same persona index, so with no model loaded there is nothing to rank your issue against and the tool would return an arbitrary guest. Rather than degrade it hides itself: it is dropped from the agent's tool list and from its prompt entirely, and a direct call is refused with the reason. `agentTools.loom.loom_summon` is permission, not a guarantee — run `npm run model:download` (or point `embeddingModel` at a downloaded model) and start a new meeting to get it back. Every other loom tool is unaffected.
+
 ### Where Meetings Live
 
 Meetings are stored per-project (or globally when no workspace):
@@ -157,17 +159,19 @@ Nothing is returned to chat — the dashboard is the control plane.
 
 ## Personas
 
-The Loom ships with 89 personas organized into five tiers (including `civilian` generalists):
+The Loom ships with 349 personas organized into six tiers. The first five are humans — four seniority bands plus `civilian`
+generalists. The sixth, `nonhuman`, is a pool of sentient non-humans.
 
 <!-- CENSUS-BEGIN -->
 | Tier | Personas |
 |------|----------|
-| junior | 15 |
-| mid | 14 |
-| senior | 11 |
-| principal | 9 |
-| civilian | 40 |
-| **Total** | **89** |
+| junior | 54 |
+| mid | 57 |
+| senior | 52 |
+| principal | 48 |
+| civilian | 61 |
+| nonhuman | 77 |
+| **Total** | **349** |
 <!-- CENSUS-END -->
 
 When you ask a question, the Loom uses **embedding similarity** (not LLM domain detection) to select personas — the question is embedded and the most similar personas per tier are chosen via `PersonaIndex.search` (cosine similarity against the in-memory persona store). For example, a finance question gets finance experts; an engineering question gets engineers.
@@ -179,6 +183,38 @@ When you ask a question, the Loom uses **embedding similarity** (not LLM domain 
 | "What's our go-to-market strategy?" | business, operations |
 
 Each tier has different behavioral guidance defined in each persona's `tier_guidance` field, blended with a per-tier doctrine line in the agent system prompt. Personas also include a `reflection_guidance` field used when peers solicit their stance via `loom_query mode=perspective`. Personas can be customized by editing the JSON files in the `personas/` directory. The `civilian` tier maps to `mid` seniority via `utils/tier.js`.
+
+### The `nonhuman` tier: a pool, not a seat
+
+Six tiers of seniority would be one too many if `nonhuman` were another band. It is
+not a band — it is a **pool that every seat also draws from**. For each seat the
+composer searches that seat's own tier *and* the `nonhuman` tier, then ranks the
+union by similarity. A non-human persona therefore wins a seat exactly when it is
+the nearest neighbour of your question, and loses every seat it is not.
+
+Reserving a seat for the tier would be the opposite of the intent: a forced alien
+voice either repeats itself across every room, or arrives on questions it has
+nothing to add to. Composition stays deterministic, and a non-human seat holds a
+vote like any other (`getRightsForTier`).
+
+Two details matter in `mergeSeatCandidates` (`src/composer/room.js`):
+
+- **The relative cut runs per pool, not over the union.** Non-human personas are
+  written to sit adjacent to everything — a reef, a river, a market — so they
+  cluster near the top of any merged list. A single merged top-3 would let them
+  evict the in-tier specialists the cut exists to preserve, silently undoing the
+  invariant that a seated persona is in the top-N of its own tier. Cutting each
+  pool separately keeps both guarantees: a human persona is only ever displaced
+  by a better human persona of its own tier, and a non-human still has to beat
+  that tier's survivors on distance.
+- **Seats are logged either way.** `compose_nonhuman_seat` records the persona,
+  the distance, and whether it won the seat outright (`pool_rank`) or arrived via
+  the cross-tier floor (`cross_tier_floor`). The second means no human in the
+  nominal tier had anything to say either.
+
+Selection is unchanged for questions with no non-human neighbour: the pool is
+merged, ranked, and loses. `test/nonhuman-tier.test.js` asserts both the
+reachability of the tier and that it cannot crowd specialists off human questions.
 
 ### Writing a persona: the lens is not a body
 
@@ -204,6 +240,75 @@ device claims, body-only verbs, external-system access, and unverifiable
 bundled persona that trips it. Two companion lints keep lenses portable
 (`lintRangeRule` — at most one analogy, plus an off-ramp sentence) and guidance
 from becoming an agenda echo (`lintCircularity`).
+
+### Writing a non-human persona: senses become evidence
+
+The rule above gets sharper for a being whose senses are not ours, and it
+inverts into a positive authoring law:
+
+> **A being's senses become the evidence it demands, not the actions it takes.**
+
+The bat does not echolocate — an agent has no ears. It asks *what would have to
+bounce back for the shape of this problem to be knowable*, and rejects any answer
+that only reads fine. That is not a workaround for the embodiment lint; it is
+better than the human roster, because a genuinely alien sense is an unimpeachable
+reason to distrust the room's default epistemics.
+
+| Instead of | Write |
+|---|---|
+| "I echolocate" | "Ask what would have to come back for the shape of the problem to be knowable" |
+| "I feel the pressure" | "Name the constraint that only becomes visible when nothing can be pushed back against" |
+| "I have smelt this before" | "Name the prior rate this resembles, and what would distinguish it from a different cause" |
+| "I am three hundred years old" | "Ask which horizon the decision is written in, and who is not here to live with it" |
+
+The bundled `nonhuman` personas are ordered by how much lore a being actually
+carries, and within the animal branches by intelligence rather than by novelty.
+Smartest first — the chimpanzee that does coalition politics, the orca pod that
+keeps tradition, the octopus whose arms decide before its head does, the corvid
+that bends wire on the spot — and only then the beaver that dams the leak it
+hears. Nonsentient concepts are weighted the same way, toward things with a body
+of existing mythology behind them: the Norns, Talos and his single vein, Baba
+Yaga's examination, the Ship of Theseus. Each carries the specific fact that
+makes its lens non-negotiable — that the ouroboros is about the *rate* of a loop
+and not its closure, that the Tsukumogami wakes at exactly one hundred years,
+that Alex the parrot asked what colour he was.
+
+<details>
+<summary>The 77 bundled non-human personas, by branch</summary>
+
+**Animal minds, smartest first:** The Chimpanzee, The Orca, The Octopus, The
+Corvid, The Grey Parrot, The Elephant, The Dog, The Rat, The Cat, The Feral Cat,
+The Sperm Whale, The Pigeon, The Bee, The Bat, The Mantis Shrimp, The Vulture,
+Portia the Jumping Spider, The Beaver.
+
+**The hadal deep:** The Anglerfish, The Vent Tubeworm, The Hadal Snailfish, The
+Vampire Squid, The Black Smoker Plume, The Whale Fall.
+
+**Collective minds:** The Ant Colony, The Portuguese Man o' War, The Lichen, The
+Coral Head, The Mycelial Network, The Slime Mold, The City, The Language, The
+Market, The Bureaucracy.
+
+**Mythic and folkloric, deepest lore first:** The Dragon, The Kitsune, Baba Yaga,
+Koschei the Deathless, The Golem, The Genie, The Phoenix, The Hydra, Sisyphus,
+Penelope, The River, The Mountain, The Forest, The Fire, The Moon, The Wind,
+Proteus, Charon, Scylla and Charybdis, Talos, Ariadne's Thread, Rumpelstiltskin,
+The Salmon of Knowledge, The Norns, Huginn and Muninn, The Tsukumogami,
+Frankenstein's Creature, The Enchanted Broom, Janus, The Preta, The Dhyāna Buddha
+Statue.
+
+**Planetary and deep time:** The Biosphere, The Genome, Tectonics, The Glacier,
+The Permafrost, The Tidal Marsh.
+
+**Abstractions and thought-figures:** The Ouroboros, Time Itself, The
+Second-Order Effect, The Long Tail, The Golden Touch, The Ship of Theseus.
+</details>
+
+`test/nonhuman-tier.test.js` enforces the parts a linter cannot: no duplicate
+names across the catalog, no persona named after a human office, a shared
+`tier_guidance` opening under 60 characters (a corpus of 77 personas with a
+common preamble is the one forbidden shape), distinct `reflection_guidance`
+openings across the tier, and the embodiment regexes applied to the tier as a
+whole.
 
 ## Dashboard
 
@@ -252,7 +357,7 @@ Project-level equivalent in `.loomrc.json` (same keys, no `"loom"` wrapper):
 
 Environment overrides: `LOOM_<KEY>` applies on top of files for scalar schema keys (e.g. `LOOM_AGENT_TIMEOUT_MS=240000`, `LOOM_MODEL_DIVERSITY=false`). `OPENCODE_CONFIG_DIR` selects the shared opencode configuration and Loom data root; without a workspace, Loom data is stored below that directory. Log verbosity is controlled by `LOOM_LOG_LEVEL` (`DEBUG`|`INFO`|`WARN`|`ERROR`|`FATAL`, default `INFO`). The dashboard binds `127.0.0.1` by default and requires a per-dashboard capability cookie for API access. Bash is disabled by default; enable it only with an explicit Loom permission profile. To expose the dashboard beyond loopback, set `dashboard.host` deliberately and set `LOOM_ALLOW_LAN=1`; authenticated LAN access is still required.
 
-Other available options include agent and synthesis timeouts, retry policy, max tool calls, meeting timeout, stall detection (`stallTimeoutMs`, default 10 min (600000 ms)), composition relevance floor (`composition.maxCosineDistance`, default 0.85), token budget (`maxTotalTokens`, `0` = unlimited — a runaway meeting ends early and still synthesizes), same-turn synthesis for inline loom tool results (`agentTools.sameTurnSynthesis`), and embedding model selection (`embeddingModel`/`embeddingQuant`).
+Other available options include agent and synthesis timeouts, retry policy, max tool calls, meeting timeout, stall detection (`stallTimeoutMs`, default 10 min (600000 ms)), composition relevance floor (`composition.maxCosineDistance`, default 0.85), no meeting-wide token budget (each call is trimmed to fit its own model's input window — 32k to 1M — and provider refusals for rate limits, exhausted token budgets and context overflow are handled as degradations), same-turn synthesis for inline loom tool results (`agentTools.sameTurnSynthesis`), and embedding model selection (`embeddingModel`/`embeddingQuant`).
 
 ## Operational caveats
 

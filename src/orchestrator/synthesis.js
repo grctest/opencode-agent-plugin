@@ -2,7 +2,6 @@ import { getConfig } from "../config.js";
 import { TUNING } from "../config/defaults.js";
 import { LoomError, extractErrorInfo } from "../logger.js";
 import { getMetricsSnapshot, getMeetingDegradedReasons, recordMeetingDegradedReason } from "../metrics.js";
-import { collectObjections } from "../objection-collector.js";
 import { computeMechanismMix } from "../utils/contribution-types.js";
 import { reconcileNumericalConflicts } from "../synthesizer.js";
 
@@ -153,17 +152,10 @@ export async function _synthesize() {
       transcriptData.buildMode = !!(at?.enabled && (at?.buildMode === true || at?.builtIn?.write === true || at?.builtIn?.edit === true));
     } catch { transcriptData.buildMode = false; }
 
-    const objections = collectObjections({
-      rounds: this._stateManager.getRounds(),
-      participants: this._stateManager.getParticipants(),
-    });
-    this._stateManager.setObjections(objections);
-
-    // P10 — pre-synthesis reconciliation pass: collectObjections is the
-    // natural hook — objections and numerical conflicts are both pre-synthesis
-    // scans of the weave. The authoritative report is recomputed inside
-    // finalizeSynthesis (which owns the artifact); here we surface the
-    // round-headroom signal before synthesis begins.
+    // P10 — pre-synthesis reconciliation pass: a pre-synthesis scan of the
+    // weave for numerical conflicts. Here we surface the round-headroom signal
+    // before synthesis begins; the authoritative report is recomputed inside
+    // finalizeSynthesis (which owns the artifact).
     try {
       const reconciliation = reconcileNumericalConflicts(this._stateManager.getWeave());
       if (reconciliation.reserveRoundRecommended) {
@@ -176,7 +168,6 @@ export async function _synthesize() {
       result = await this._synthesisCoordinator.run({
         transcriptData,
         participants: this._stateManager.getParticipants(),
-        objections,
         model: orchestratorModel,
         onStart: () => {
           if (this._options.onSynthesisStart) this._options.onSynthesisStart();
@@ -241,23 +232,6 @@ export async function _synthesize() {
   return output;
 }
 
-/**
- * P14 — a meeting is unmeasurable when every cost counter is zero: no tokens
- * recorded AND no latency samples. Quality gates must never grade on empty
- * telemetry, so this flag travels with the metrics row and the quality
- * telemetry.
- */
-export function isCostTelemetryUnmeasurable(stats) {
-  const s = stats ?? {};
-  const tokens = (Number(s.input_tokens) || 0) + (Number(s.output_tokens) || 0);
-  if (tokens > 0) return false;
-  const lat = s.latencies ?? {};
-  for (const bucket of Object.values(lat)) {
-    if (bucket && Number(bucket.count) > 0) return false;
-  }
-  return true;
-}
-
 /** Summarizes latency buckets ({count, avg, p50, p95, max}) for the quality telemetry. */
 function summarizeLatencies(latencies) {
   const out = {};
@@ -283,29 +257,19 @@ export function _computeQualityTelemetry(stats = {}) {
       }
       const participants = this._stateManager.getParticipants();
       const contributors = new Set(weave.map((c) => c.participant_id));
-      const objections = this._stateManager.getObjections?.() ?? [];
-      const unresolved = objections.filter((o) => o.unresolved);
-      // P14 — surface token/latency accounting in the quality telemetry
-      const inputTokens = Number(stats.input_tokens) || 0;
-      const outputTokens = Number(stats.output_tokens) || 0;
-      // N6 — a meeting's health is the union of "the counters are empty" and
-      // "something was refused". `cost_unmeasurable` stays for compatibility;
-      // `meeting_degraded_reasons` is the general form.
+      // N6 — a meeting's health is "something was refused" (a tool rejection, a
+      // rate-limit halt, a token-budget stop). Cost/token *reporting* is not
+      // telemetry we keep: the only token-derived signal we act on is a refused
+      // LLM call from rate limiting or an exhausted budget, and that arrives as
+      // a degradation reason / halt, not as a count we publish.
       const degradedReasons = new Set(getMeetingDegradedReasons(this._stateManager.getMeetingId?.() ?? this._meetingId ?? ""));
-      if (isCostTelemetryUnmeasurable(stats)) degradedReasons.add("cost_unmeasurable");
       return {
         contributions_by_type: byType,
-        unresolved_objections: unresolved.length,
-        total_objections: objections.length,
         participants: participants.length,
         contributors: contributors.size,
         participation_ratio: participants.length > 0 ? Math.round((contributors.size / participants.length) * 100) / 100 : 0,
         votes_held: byType.vote_response ?? 0,
-        input_tokens: inputTokens,
-        output_tokens: outputTokens,
-        total_tokens: inputTokens + outputTokens,
         latencies: summarizeLatencies(stats.latencies),
-        cost_unmeasurable: isCostTelemetryUnmeasurable(stats),
         // N7 — the cap is per turn, the audit is per round. Reporting the
         // per-turn high-water mark beside the round total is what stops a
         // reader from calling a healthy meeting an overrun.
@@ -319,7 +283,7 @@ export function _computeQualityTelemetry(stats = {}) {
         // N12 — mechanism mix, per round. Visibility, never a constraint:
         // whether a ballot-heavy round was a good trade is not decidable from
         // one meeting, so it is measured, not legislated.
-        mechanism_mix: computeMechanismMix(weave, this._stateManager.getObjections?.() ?? []),
+        mechanism_mix: computeMechanismMix(weave),
         meeting_degraded_reasons: [...degradedReasons].sort(),
       };
     } catch {
@@ -359,17 +323,16 @@ export function _saveMeetingMetrics() {
           // N6 — refusal reasons, counted where the refusal happened.
           meeting_degraded_reasons: snapshot.counters.meeting_degraded_reasons ?? {},
         };
-        // P14 — surface real latency telemetry: the process-wide snapshot
-        // carries the llm_prompt_ms / synthesis_ms buckets recorded via
-        // recordLatency; the old hardcoded {} reported empty latencies for
-        // every meeting.
+        // Latency telemetry: the process-wide snapshot carries the
+        // llm_prompt_ms / synthesis_ms / round_span_ms buckets recorded via
+        // recordLatency. Kept because slow LLM calls are the leading indicator
+        // of provider rate limiting, which we do act on. Token *counts* are not
+        // published — see the note in _computeQualityTelemetry.
         latencies = snapshot.latencies ?? {};
       } catch { /* metrics unavailable — keep going */ }
       this._database.saveMeetingMetrics({
         counters: { ...stats, ...processCounters, quality: this._computeQualityTelemetry(stats) },
         latencies,
-         input_tokens: stats.input_tokens ?? 0,
-         output_tokens: stats.output_tokens ?? 0,
          duration_ms: Date.now() - this._startTime,
          rounds: this._stateManager.getCurrentRound(),
          contributions: weave.length,

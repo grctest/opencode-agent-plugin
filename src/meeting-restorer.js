@@ -118,11 +118,6 @@ export function restoreStateFromDb({ db, stateManager, meetingId, options }) {
     const artifact = db.getArtifact ? (db.getArtifact(meetingId) ?? db.getArtifact()) : null;
     if (artifact && artifact.content) stateManager.setArtifact(artifact);
   } catch {}
-  // Restore objections if persisted (stateManager keeps in-memory)
-  try {
-    const objections = db.getObjections?.(meetingId) ?? null;
-    if (Array.isArray(objections) && objections.length) stateManager.setObjections(objections);
-  } catch {}
 
   const summaries = db.getRoundSummaries(meetingId);
   const roundMap = new Map();

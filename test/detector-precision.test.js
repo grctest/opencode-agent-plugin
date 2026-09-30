@@ -146,7 +146,7 @@ test("a flag-on, dry-run-off run ships the section and records the count", () =>
     "## Open Questions", "- none", "",
     "## Confidence", "Low.",
   ].join("\n");
-  const on = finalizeSynthesis(text, transcriptData, participants, [], {
+  const on = finalizeSynthesis(text, transcriptData, participants, {
     detectors: { needsVerification: true, citationWarnings: true, dryRun: false },
   });
   assert.equal(on.artifact.detector_report.needsVerification.shipped, true);

@@ -39,10 +39,10 @@ function v12Db() {
 
 test("LATEST_SCHEMA_VERSION and MIGRATIONS stay in lockstep", () => {
   assert.equal(MIGRATIONS.length, LATEST_SCHEMA_VERSION);
-  assert.equal(LATEST_SCHEMA_VERSION, 13);
+  assert.equal(LATEST_SCHEMA_VERSION, 14);
 });
 
-test("a migrated v12 DB and a fresh v13 DB have identical shapes", () => {
+test("a migrated v12 DB and a fresh DB have identical shapes", () => {
   const migrated = v12Db();
   assert.equal(runMigrations(migrated), LATEST_SCHEMA_VERSION);
   const fresh = freshDb();
@@ -51,7 +51,7 @@ test("a migrated v12 DB and a fresh v13 DB have identical shapes", () => {
   const b = schemaParityReport(fresh);
   assert.deepEqual(a.tables.artifacts, b.tables.artifacts);
   assert.equal(a.user_version, b.user_version);
-  assert.equal(a.user_version, 13);
+  assert.equal(a.user_version, LATEST_SCHEMA_VERSION);
   // The orphaned P16 column is gone, and the P9 split has landed.
   assert.ok(!a.tables.artifacts.includes("dissent"));
   assert.ok(a.tables.artifacts.includes("confidence_name"));

@@ -12,7 +12,7 @@ import { persistentAtom } from "@nanostores/persistent";
  */
 
 const FORM_VERSION = 6;
-const KNOWN_TIERS = new Set(["junior", "mid", "senior", "principal", "civilian"]);
+const KNOWN_TIERS = new Set(["junior", "mid", "senior", "principal", "civilian", "nonhuman"]);
 const FEATURE_MODES = new Set(["disabled", "optional", "mandatory"]);
 // SKILL.state is an off/on toggle (not a 3-state mode): on = every non-pass
 // turn must end with loom_state_patch as the agent's absolutely-last inline
