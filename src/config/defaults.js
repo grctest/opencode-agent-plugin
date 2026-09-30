@@ -14,6 +14,10 @@ export const TUNING = {
   MAX_DB_CACHE_SIZE: 10,
   VOTE_TIMEOUT_MS: 60_000,
   SUMMON_TIMEOUT_MS: 90_000,
+  // N9 — the closing round gets one bounded, patch-only turn per participant
+  // that did not patch, so a short final round cannot cost the room its
+  // memory. 0 disables the grace pass.
+  FINAL_ROUND_PATCH_GRACE_MS: 45_000,
   FANOUT: { queryBatch: 5, voteBatch: 5, rpm: 100 },
   CONTENT_TRUNCATION: { question: 10000, result: 4000, content: 4000, summary: 800 },
   TRANSCRIPT_BUDGET: { critiqueChunk: 8000, fullLimit: 24000 },
@@ -44,7 +48,33 @@ export const DEFAULT_CONFIG = {
   stallTimeoutMs: 600000,
   maxTotalTokens: 500000,
   dashboard: { host: "127.0.0.1" },
-  composition: { maxCosineDistance: 0.85, topNPerTier: 3 },
+  composition: {
+    maxCosineDistance: 0.85,
+    topNPerTier: 3,
+    // N11 — the one absolute distance left in composition, and a cross-tier
+    // switch rather than an exclusion: a tier whose best candidate is further
+    // away than this has nothing on-topic to offer, so the seat goes to the
+    // best candidate in any tier rather than to the least-off-topic persona in
+    // the nominal one. Raise it to disable (the relative cut alone then
+    // applies, which is the P15 behaviour and the reason a keyboard
+    // enthusiast ranked #2 for a car-manufacturer question).
+    maxTierDistance: 1.25,
+  },
+  // N3 — automated artifact detectors ship advisory and OFF by default. Both
+  // `Needs Verification` and `Citation Warnings` were majority-false in
+  // deliberation 1355a723 (~40% precision), and a warning section that is
+  // mostly wrong trains readers to skip it. A detector that cannot state its
+  // precision runs dry (counts only, nothing written to the artifact) until a
+  // hand-audited sample clears `precisionFloor` over `minDryRunMeetings`.
+  detectors: {
+    needsVerification: false,
+    citationWarnings: false,
+    dryRun: true,
+    dryRunMeetings: 2,
+    precisionFloor: 0.9,
+    // A 57-character ballot cannot be checked for topical support.
+    minCitationTargetChars: 400,
+  },
   modelDiversity: true,
   tuning: JSON.parse(JSON.stringify(TUNING)),
   circuitBreaker: {
@@ -132,6 +162,13 @@ export const NESTED_SCHEMA = {
   'dashboard.host': { type: 'string' },
   'composition.maxCosineDistance': { type: 'number', min: 0.1, max: 1.9 },
   'composition.topNPerTier': { type: 'number', min: 1, max: 10 },
+  'composition.maxTierDistance': { type: 'number', min: 0.1, max: 2.9 },
+  'detectors.needsVerification': { type: 'boolean' },
+  'detectors.citationWarnings': { type: 'boolean' },
+  'detectors.dryRun': { type: 'boolean' },
+  'detectors.dryRunMeetings': { type: 'number', min: 1, max: 50 },
+  'detectors.precisionFloor': { type: 'number', min: 0.5, max: 1 },
+  'detectors.minCitationTargetChars': { type: 'number', min: 0, max: 5000 },
   'circuitBreaker.failureThreshold': { type: 'number', min: 1, max: 10 },
   'circuitBreaker.resetTimeoutMs': { type: 'number', min: 10000, max: 3600000 },
   'agentTools.enabled': { type: 'boolean' },

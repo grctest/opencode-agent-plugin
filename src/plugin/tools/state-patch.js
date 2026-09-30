@@ -1,4 +1,5 @@
 import { tool } from "@opencode-ai/plugin";
+import { loomToolRefusal } from "./audit.js";
 
 export function createStatePatchTool({ config, resolveMeeting, activeLooms }) {
   return {
@@ -52,8 +53,13 @@ export function createStatePatchTool({ config, resolveMeeting, activeLooms }) {
           let ephemeralOwnerId = null;
           try { ephemeralOwnerId = sessionManager?.resolveEphemeralOwner?.(context.sessionID) ?? null; } catch {}
           if (ephemeralOwnerId) {
+            // N6 — the audit row needs a participant id; the ephemeral owner is
+            // the participant the patch would have belonged to.
+            const ownerParticipant = sm.getParticipant?.(ephemeralOwnerId) ?? { config: { id: ephemeralOwnerId, name: ephemeralOwnerId } };
             if (sessionManager?.hasEphemeralPatchApplied?.(context.sessionID)) {
-              return { output: JSON.stringify({ error: "only one loom_state_patch call is allowed per query answer" }), metadata: { error: true, validationFailed: true }, title: "loom_state_patch error" };
+              return loomToolRefusal({ db, stateManager: sm, caller: ownerParticipant, meetingId: meetingInfo.meetingId, tool: "loom_state_patch", input: args,
+                error: "only one loom_state_patch call is allowed per query answer", reason: "state_patch_rejected",
+                metadata: { validationFailed: true }, title: "loom_state_patch error" });
             }
             const { StatePatchSchema } = await import("../../schemas.js");
             const parsedEphemeral = StatePatchSchema.safeParse({
@@ -63,7 +69,9 @@ export function createStatePatchTool({ config, resolveMeeting, activeLooms }) {
               remove: args.remove ?? [],
             });
             if (!parsedEphemeral.success)
-              return { output: JSON.stringify({ error: "invalid patch", issues: parsedEphemeral.error.issues.slice(0, 5) }), metadata: { error: true, validationFailed: true }, title: "loom_state_patch error" };
+              return loomToolRefusal({ db, stateManager: sm, caller: ownerParticipant, meetingId: meetingInfo.meetingId, tool: "loom_state_patch", input: args,
+                error: "invalid patch", extra: { issues: parsedEphemeral.error.issues.slice(0, 5) },
+                reason: "state_patch_rejected", metadata: { validationFailed: true }, title: "loom_state_patch error" });
             const { applyStatePatch } = await import("../../state-patch.js");
             const prevEphemeral = sm.getParticipantState(ephemeralOwnerId);
             const { next, applied, unmatched, evicted, overCap, skipped } = applyStatePatch(prevEphemeral, parsedEphemeral.data);
@@ -87,7 +95,6 @@ export function createStatePatchTool({ config, resolveMeeting, activeLooms }) {
             } catch {}
             try {
               const { auditLoomTool } = await import("./audit.js");
-              const ownerParticipant = sm.getParticipant?.(ephemeralOwnerId) ?? { config: { id: ephemeralOwnerId } };
               auditLoomTool({ db, stateManager: sm, caller: ownerParticipant, meetingId: meetingInfo.meetingId,
                 tool: "loom_state_patch", input: args,
                 output: JSON.stringify({ applied: true, version: next.version, ephemeral: true }),
@@ -103,17 +110,28 @@ export function createStatePatchTool({ config, resolveMeeting, activeLooms }) {
             };
           }
           const caller = resolveCaller(sm.getParticipants(), sm.getWeave?.() ?? [], context.sessionID);
+          // N6 — every refusal is audited with a non-completed status and a
+          // named degraded reason. Before this, four rejected patches in one
+          // meeting left a database reporting 100% of tool_audit rows
+          // `completed` and zero errors: the failure existed only in prose.
+          const refuse = (error, patchArgs, refCaller, extra) => loomToolRefusal({
+            db, stateManager: sm, caller: refCaller, meetingId: meetingInfo.meetingId,
+            tool: "loom_state_patch", input: patchArgs, error,
+            ...(extra ? { extra: { issues: extra } } : {}),
+            reason: "state_patch_rejected", metadata: { validationFailed: true },
+            title: "loom_state_patch error",
+          });
            if (!caller?.config?.id)
              return { output: JSON.stringify({ error: "caller identity unavailable" }), metadata: { error: true }, title: "loom_state_patch error" };
            const activeTurn = sm.getActiveTurn?.();
            if (activeTurn?.participantId === caller.config.id && activeTurn.passRequested) {
-             return { output: JSON.stringify({ error: "state patch cannot follow loom_pass in the same turn" }), metadata: { error: true, validationFailed: true }, title: "loom_state_patch error" };
+             return refuse("state patch cannot follow loom_pass in the same turn", args, caller);
            }
            if (activeTurn?.participantId === caller.config.id && activeTurn.patchApplied) {
-             return { output: JSON.stringify({ error: "only one loom_state_patch call is allowed per turn" }), metadata: { error: true, validationFailed: true }, title: "loom_state_patch error" };
+             return refuse("only one loom_state_patch call is allowed per turn", args, caller);
            }
            if (!activeTurn || activeTurn.participantId !== caller.config.id) {
-             return { output: JSON.stringify({ error: "state patch requires the caller's active primary turn" }), metadata: { error: true, validationFailed: true }, title: "loom_state_patch error" };
+             return refuse("state patch requires the caller's active primary turn", args, caller);
            }
 
            // Validate via Zod (same StatePatchSchema as §5.2).
@@ -123,7 +141,7 @@ export function createStatePatchTool({ config, resolveMeeting, activeLooms }) {
           const ALLOWED_PATCH_KEYS = new Set(["stance", "established_add", "contested_add", "open_add", "facts_add", "files_add", "remove"]);
           const unknownKeys = Object.keys(args ?? {}).filter((k) => !ALLOWED_PATCH_KEYS.has(k));
           if (unknownKeys.length > 0)
-            return { output: JSON.stringify({ error: "invalid patch", issues: [{ message: `unknown keys: ${unknownKeys.slice(0, 5).join(", ")}` }] }), metadata: { error: true, validationFailed: true }, title: "loom_state_patch error" };
+            return refuse("invalid patch", args, caller, [{ message: `unknown keys: ${unknownKeys.slice(0, 5).join(", ")}` }]);
           const { StatePatchSchema } = await import("../../schemas.js");
           const parsed = StatePatchSchema.safeParse({
             stance: args.stance, established_add: args.established_add ?? [],
@@ -132,7 +150,7 @@ export function createStatePatchTool({ config, resolveMeeting, activeLooms }) {
             remove: args.remove ?? [],
           });
           if (!parsed.success)
-            return { output: JSON.stringify({ error: "invalid patch", issues: parsed.error.issues.slice(0, 5) }), metadata: { error: true, validationFailed: true }, title: "loom_state_patch error" };
+            return refuse("invalid patch", args, caller, parsed.error.issues.slice(0, 5));
 
           const { applyStatePatch } = await import("../../state-patch.js");
           const prev = sm.getParticipantState(caller.config.id);
@@ -146,7 +164,7 @@ export function createStatePatchTool({ config, resolveMeeting, activeLooms }) {
              output: { applied: true, version: next.version, added: applied.added, removed: applied.removed, evicted, overCap, skipped },
            }) === true;
            if (!pending) {
-             return { output: JSON.stringify({ error: "could not queue state patch for this turn" }), metadata: { error: true, validationFailed: true }, title: "loom_state_patch error" };
+             return refuse("could not queue state patch for this turn", args, caller);
            }
            const persisted = true;
            sm.markTurnPatchApplied?.();

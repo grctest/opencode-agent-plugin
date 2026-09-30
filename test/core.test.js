@@ -4,7 +4,6 @@ import { DEFAULT_CONFIG } from "../src/config/defaults.js";
 import { applyStatePatch } from "../src/state-patch.js";
 import { mergeStateOfPlay } from "../src/state-of-play.js";
 import { getBashCommand, isBashCommandAllowed } from "../src/utils/sanitize.js";
-import { buildTally, extractVoteLetter } from "../src/utils/vote-tally.js";
 import { hasDashboardCapability, isAllowedDashboardHost, isSameOriginRequest } from "../src/dashboard/security.js";
 import { buildFlatItems } from "../src/dashboard/utils/timeline.js";
 import { SessionContract } from "../src/session-contract.js";
@@ -47,19 +46,26 @@ test("state-of-play merge retains unpatched dissent", () => {
   assert.match(merged, /unpatched turn/);
 });
 
-test("vote tally counts only explicit votes", () => {
-  assert.equal(extractVoteLetter("[Vote: b] because it is reversible"), "B");
-  const tally = buildTally({
-    question: "A) ship B) wait",
-    responses: [
-      { voter: "one", content: "[Vote: A]" },
-      { voter: "two", content: "[Vote: B]" },
-      { voter: "three", content: "I prefer A" },
-    ],
-  });
-  assert.equal(tally.counts.A, 1);
-  assert.equal(tally.counts.B, 1);
-  assert.equal(tally.totalVoters, 2);
+test("N1 — no vote-tally interpreter remains on disk or in the source graph", async () => {
+  // The regex tally dropped 44% of ballots in deliberation 1355a723 while still
+  // presenting a "Total voters" line the room trusted. It is deleted, not
+  // hardened: the invoker's model is the interpreter.
+  const { existsSync, readFileSync, readdirSync, statSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  assert.equal(existsSync("src/utils/vote-tally.js"), false, "utils/vote-tally.js must not exist");
+
+  const walk = (dir, out = []) => {
+    for (const entry of readdirSync(dir)) {
+      const p = join(dir, entry);
+      if (statSync(p).isDirectory()) walk(p, out);
+      else if (/\.(js|jsx|mjs)$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+  for (const file of walk("src")) {
+    const body = readFileSync(file, "utf8");
+    assert.doesNotMatch(body, /extractVoteLetter|buildTally|vote-tally/, `${file} still references the deleted vote tally`);
+  }
 });
 
 test("dashboard capability and origin checks fail closed", () => {

@@ -127,6 +127,47 @@ export function findUncitedPlainContributions(contributions = []) {
   });
 }
 
+// N8 — engagement metrics the clerk check and the artifact both read. A
+// coverage number that is not computed is a number nobody can improve: the
+// 1355a723 audit measured 0.929 coverage, 50% peer-uncited plain
+// contributions and 13 self-cites, and none of it was in force anywhere.
+const PLAIN_TYPES = new Set(["contribution", "propose", "refine", "support", "synthesize", "question"]);
+
+/**
+ * Peer-engagement ledger for a set of contributions: how many plain
+ * contributions engage no peer, how many citations point at the author, and
+ * how much of the weave the artifact actually cites.
+ * @param {Array} weave
+ * @param {string} [artifactText] when given, coverage is measured against it
+ * @returns {{plain_contributions: number, peer_uncited: number, self_cites: number, coverage: number, uncited_ids: number[]}}
+ */
+export function computeEngagementMetrics(weave = [], artifactText = "") {
+  const plain = weave.filter((c) => PLAIN_TYPES.has(c.type));
+  const uncited = findUncitedPlainContributions(plain);
+  let selfCites = 0;
+  for (const c of weave) {
+    for (const m of String(c.content ?? "").matchAll(/\[#(\d+)\]/g)) {
+      if (String(m[1]) === String(c.id)) selfCites++;
+    }
+  }
+  const counted = weave.filter((c) => c.type !== "pass");
+  const covered = artifactText
+    ? new Set([...artifactText.matchAll(/\[#(\d+)\]/g)].map((m) => m[1]))
+    : null;
+  const uncitedIds = covered
+    ? counted.filter((c) => !covered.has(String(c.id))).map((c) => Number(c.id))
+    : [];
+  return {
+    plain_contributions: plain.length,
+    peer_uncited: uncited.length,
+    self_cites: selfCites,
+    coverage: covered && counted.length > 0
+      ? Math.round(((counted.length - uncitedIds.length) / counted.length) * 1000) / 1000
+      : null,
+    uncited_ids: uncitedIds,
+  };
+}
+
 export function buildRoundSummaryUser(round, state, participantStates = [], orchestratorConfig = {}, opts = {}) {
   const contribCount = round.contributions.length;
   const summaryContributions = filterRoundSummaryContributions(round.contributions);

@@ -5,9 +5,18 @@
  * survive plugin updates — so schema evolution goes through PRAGMA user_version
  * and an ordered migration list. New deployments start at LATEST_SCHEMA_VERSION
  * directly; older files run only the migrations they are missing.
+ *
+ * N2 (schema changes ship atomically): any change to the DDL below REQUIRES
+ * `LATEST_SCHEMA_VERSION += 1` and a matching entry in MIGRATIONS[] in the
+ * same change, so two structurally different databases can never claim the
+ * same user_version. `runMigrations` enforces the length invariant, and
+ * `schemaParityReport()` (exported for tests) checks that a fresh DB and a
+ * migrated v12 DB agree on every table.
  */
 
-export const LATEST_SCHEMA_VERSION = 12;
+import { parseSplitConfidence } from "../utils/confidence.js";
+
+export const LATEST_SCHEMA_VERSION = 13;
 
 /**
  * Ordered migrations. MIGRATIONS[n] upgrades a DB at user_version n to n+1.
@@ -178,6 +187,34 @@ export const MIGRATIONS = [
     );
     if (!cols.has("settled_items")) db.exec("ALTER TABLE meetings ADD COLUMN settled_items TEXT");
   },
+  // v12 → v13 (N2 — finishes the two half-landed schema changes):
+  //   a) drop the orphaned `artifacts.dissent` column. P16 removed it from
+  //      initSchema without a version bump, so v12 meant two different shapes.
+  //      DROP COLUMN needs SQLite ≥ 3.35; a runtime that lacks it raises here
+  //      rather than silently converging on a different shape.
+  //   b) land P9 in the schema: confidence_name / confidence_number, with
+  //      `confidence` becoming a computed roll-up of the two. A machine reader
+  //      must never see "high" for a deliberation whose own prose says the
+  //      number-confidence is Low.
+  (db) => {
+    const artifactCols = new Set(
+      db.prepare("PRAGMA table_info(artifacts)").all().map((c) => c.name),
+    );
+    if (artifactCols.has("dissent")) {
+      db.exec("ALTER TABLE artifacts DROP COLUMN dissent");
+    }
+    if (!artifactCols.has("confidence_name")) db.exec("ALTER TABLE artifacts ADD COLUMN confidence_name TEXT");
+    if (!artifactCols.has("confidence_number")) db.exec("ALTER TABLE artifacts ADD COLUMN confidence_number TEXT");
+    // Backfill the split for artifacts that predate the columns, from the
+    // prose the synthesizer already wrote ("Name: High; Number: Low").
+    const rows = db.prepare("SELECT meeting_id, content FROM artifacts").all();
+    const update = db.prepare("UPDATE artifacts SET confidence_name = ?, confidence_number = ? WHERE meeting_id = ?");
+    for (const row of rows) {
+      const { name, number } = parseSplitConfidence(row.content ?? "");
+      if (!name && !number) continue;
+      update.run(name ?? null, number ?? null, row.meeting_id);
+    }
+  },
 ];
 
 export function initSchema(db) {
@@ -319,6 +356,8 @@ export function initSchema(db) {
       action_items TEXT,
       open_questions TEXT,
       confidence TEXT,
+      confidence_name TEXT,
+      confidence_number TEXT,
       refusals TEXT,
       orchestrator_config TEXT,
       created_at TEXT NOT NULL
@@ -449,4 +488,23 @@ export function runMigrations(rawDb, opts = {}) {
     throw err;
   }
   return LATEST_SCHEMA_VERSION;
+}
+
+/**
+ * N2 acceptance helper: a normalized `{ table: [column, ...] }` map of a
+ * database's shape, plus its user_version. Tests assert that a fresh DB and a
+ * DB migrated from v12 produce identical reports — the invariant that two
+ * structurally different databases can no longer share one version number.
+ * @param {any} rawDb
+ * @returns {{ user_version: number, tables: Record<string, string[]> }}
+ */
+export function schemaParityReport(rawDb) {
+  const tables = new Set(
+    rawDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all().map((r) => r.name),
+  );
+  const report = { user_version: Number(rawDb.prepare("PRAGMA user_version").get()?.user_version ?? 0), tables: {} };
+  for (const table of [...tables].sort()) {
+    report.tables[table] = rawDb.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name).sort();
+  }
+  return report;
 }

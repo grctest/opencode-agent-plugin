@@ -107,9 +107,11 @@ export async function runRound() {
 
 export async function _finalizeRound(updatedRound) {
     try {
-      // SKILL.state SoP read-view (plan §5.8): aggregation over per-agent Σⁱ is primary;
-      // legacy full-weave keyword scan is the cold-start fallback (all states empty,
-      // flag off, or old DB). Output markdown shape is unchanged for downstream consumers.
+      // SKILL.state SoP read-view (plan §5.8): aggregation over per-agent Σⁱ is the
+      // only path that files an agent's own positions; the type-driven full-weave
+      // digest is the cold-start fallback (all states empty, flag off, or old DB)
+      // and it never infers a bucket from prose. Output markdown shape is
+      // unchanged for downstream consumers.
       // Per-turn cost drops from O(T) scan to O(P × buckets).
       let newStateOfPlay = "";
       let stateCoverageComplete = false;
@@ -133,21 +135,16 @@ export async function _finalizeRound(updatedRound) {
         );
       } catch {}
       const weave = this._stateManager.getWeave();
-      const hasUncapturedContribution = weave.some((contribution) => {
-        if (contribution.type === "pass") return false;
-        // Peer-interaction responses (query/perspective/evidence/critique/summon)
-        // do NOT force the legacy O(T) weave scan: they are already visible to
-        // agents in the Live block (current-round contributions), and forcing
-        // the scan every round merges the legacy keyword classifier's garbage
-        // (contribution headings filed as agreements, perspective prefixes as
-        // open questions) into the canonical SoP (retrospective P0-1).
-        // vote_response stays excluded as before (audit A7) — ballots are
-        // noise, the tally carries the result.
-        // Only a PRIMARY contribution whose state patch genuinely failed to
-        // apply forces the legacy scan — that content is in no agent's state.
-        return contribution.type === "contribution" && contribution.prompt_context?.state_patch_outcome !== "applied";
-      });
-      if (!stateCoverageComplete || hasUncapturedContribution || !newStateOfPlay) {
+      // The legacy weave scan is a FALLBACK, and it files only what the
+      // contribution's own type tag says it is: peer-interaction responses and
+      // file references. An untyped primary turn contributes nothing to it —
+      // there is no keyword classifier left to guess a bucket from prose — so
+      // the condition that used to force this scan for every patch-missed turn
+      // is gone. A turn that did not call loom_state_patch is not represented
+      // in the State of Play; its prose is still in that round's Live block and
+      // in the synthesis transcript, so nothing is lost from the record, it is
+      // simply not claimed as settled.
+      if (!stateCoverageComplete || !newStateOfPlay) {
         const weaveStateOfPlay = updateStateOfPlay(
           weave,
           this._stateManager.getQuestion(),

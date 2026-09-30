@@ -4,12 +4,20 @@ import { buildVotePrompt, buildSummonPrompt } from "../../prompts/interaction-pr
 import { extractAgentResponse, mapToolResults } from "../../shared.js";
 import { getPersonas } from "../../composer.js";
 import { degrade } from "../../utils/degrade.js";
-import * as sharedVoteTally from "../../utils/vote-tally.js";
 import { TUNING } from "../../config/defaults.js";
 import { getConfig } from "../../config.js";
 import { resolveCaller, resolveModel, buildBatchId, normalizeQuestionForMatch } from "./shared.js";
 import { auditLoomTool } from "./audit.js";
 import { mapInBatches, batchDelayForRpm } from "../../utils/fanout.js";
+
+/**
+ * N1 — the invoker is the sole, declared interpreter. Ballots come back
+ * verbatim; nothing in the payload re-counts them. Making the reading step
+ * explicit is what keeps the record checkable: downstream synthesis cites the
+ * invoker's contribution (which carries the interpretation) rather than raw
+ * ballot rows, so an interpretation error is visible at its source.
+ */
+const BALLOT_INTERPRETATION_NOTE = "Ballots are returned verbatim and you are the interpreter — no tally is computed and no ballot is dropped. State the outcome, the number of responders, and the margin, and record the ballots you are relying on in your contribution. The source does not ballot.";
 
 export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
   return {
@@ -66,12 +74,11 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
           const normQuestionV = normalizeQuestionForMatch(args.question);
           let roundObj = null;
           try { const st = stateManager.getState(); roundObj = (st.rounds || []).find(r => r.number === currentRound) || null; } catch {}
-          // Source snippet for context only — not a vote (source does not ballot, only voters do)
-          const sourceSnippet = args.question.slice(0,300);
-          // Voters = all other active participants excluding caller
-          const voters = allParticipants.filter(p => (!caller || p.config.id !== caller.config.id) && p.status !== "failed" && p.status !== "passed");
-          const extractVoteLetter = (text) => sharedVoteTally.extractVoteLetter(text);
-          // Idempotent per-question guard: reuse existing votes across any plausible batch (retry guard with normalized match)
+           // Source snippet for context only — not a vote (source does not ballot, only voters do)
+           const sourceSnippet = args.question.slice(0,300);
+           // Voters = all other active participants excluding caller
+           const voters = allParticipants.filter(p => (!caller || p.config.id !== caller.config.id) && p.status !== "failed" && p.status !== "passed");
+           // Idempotent per-question guard: reuse existing votes across any plausible batch (retry guard with normalized match)
           const findExistingVotes = (weave, batchIds, questionNorm, sourceId, roundNum) => {
             // exact batch + normalized question
             for (const bid of batchIds) {
@@ -87,36 +94,22 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
           };
           try {
             const weave = stateManager.getWeave ? stateManager.getWeave() : [];
-            const existingVotesForQuestion = findExistingVotes(weave, allBatchCandidatesV, normQuestionV, caller?.config?.id ?? null, currentRound);
-            if (existingVotesForQuestion.length > 0) {
-              const voteResponses = existingVotesForQuestion.map(v => {
-                const raw = (v.content ?? "").replace(/^\[Vote from .+?\]\s*/m, "").trim();
-                const name = v.content.match(/\[Vote from (.+?)\]/)?.[1] ?? v.participant_id;
-                return { voter: name, content: raw };
-              });
-              const { lines: tallyLines } = sharedVoteTally.buildTally({
-                question: args.question,
-                sourceLetter: null,
-                sourceLabel: caller?.config?.name ?? "source",
-                responses: voteResponses,
-              });
-              const tallyContent = tallyLines.join("\n");
-              const voterResults = existingVotesForQuestion.map(v => {
-                const raw = (v.content ?? "").replace(/^\[Vote from .+?\]\s*/m, "").trim();
-                return { voter: v.participant_id, name: v.content.match(/\[Vote from (.+?)\]/)?.[1] ?? v.participant_id, content: raw.slice(0,200) };
-              });
-              const payload = { inline: true, question: args.question, tally: tallyContent.slice(0,800), votes: voterResults, note: "Vote reused — partial poll already exists for this batch, tally rebuilt inline." };
-              return { output: JSON.stringify(payload), metadata: { inline: true, voteCount: voterResults.length, reused: true }, title: `loom_vote:${voterResults.length} votes (reused)` };
-            }
-          } catch {}
-          if (voters.length === 0) {
-            const tallyContent = `[Vote Tally] ${args.question}\nNo voters (source does not ballot)\nTotal voters: 0`;
-            const payload = { inline: true, question: args.question, tally: tallyContent.slice(0,800), votes: [], note: "Vote completed inline — source only (no voters, source does not ballot)." };
-            return { output: JSON.stringify(payload), metadata: { inline: true }, title: "loom_vote:source only" };
+             const existingVotesForQuestion = findExistingVotes(weave, allBatchCandidatesV, normQuestionV, caller?.config?.id ?? null, currentRound);
+             if (existingVotesForQuestion.length > 0) {
+               const voterResults = existingVotesForQuestion.map(v => {
+                 const raw = (v.content ?? "").replace(/^\[Vote from .+?\]\s*/m, "").trim();
+                 return { voter: v.participant_id, name: v.content.match(/\[Vote from (.+?)\]/)?.[1] ?? v.participant_id, content: raw };
+               });
+               const payload = { inline: true, question: args.question, votes: voterResults, note: BALLOT_INTERPRETATION_NOTE };
+               return { output: JSON.stringify(payload), metadata: { inline: true, voteCount: voterResults.length, reused: true }, title: `loom_vote:${voterResults.length} votes (reused)` };
+             }
+           } catch {}
+           if (voters.length === 0) {
+             const payload = { inline: true, question: args.question, votes: [], note: "Vote completed inline — source only (no voters, source does not ballot). " + BALLOT_INTERPRETATION_NOTE };
+             return { output: JSON.stringify(payload), metadata: { inline: true }, title: "loom_vote:source only" };
           }
           // Parallel fan-out to voters in rate-limited batches (default 5/batch,
           // ~100/min) — with hardened retry guard (any plausible batch + source+round fallback)
-          const voteResponses = [];
           const voterResults = [];
           const voteFanoutCfg = (() => { try { return getConfig()?.tuning?.FANOUT ?? TUNING.FANOUT; } catch { return TUNING.FANOUT; } })();
           const voteBatchSize = Math.max(1, Number(voteFanoutCfg?.voteBatch) || 5);
@@ -141,8 +134,7 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
                const existing = findExistingVoteForVoter(voter.config.id, normQuestionV);
               if (existing) {
                 const raw = (existing.content ?? "").replace(/^\[Vote from .+?\]\s*/m, "").trim();
-                voteResponses.push({ voter: voter.config.name, content: raw });
-                voterResults.push({ voter: voter.config.id, name: voter.config.name, content: raw.slice(0,200), reused: true });
+                voterResults.push({ voter: voter.config.id, name: voter.config.name, content: raw, reused: true });
                 return;
               }
             } catch {}
@@ -184,7 +176,7 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
                  stateManager.getStateOfPlay?.() ?? "",
                  voterState
                );
-              const systemPrompt = `You are ${voter.config.name} (${voter.config.tier}) — voting in Loom.\n\nChoose one letter (A/B/C…) as listed in the vote question. Format exactly:\n[Vote: X]\nOne sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No contribution tags, 1-2 sentences total, in character.\nYour prose IS the vote — never write "State patched" in place of it. After casting your vote you MAY call loom_state_patch at most once to record anything worth carrying into your own future state; optional, skip if nothing new.`;
+              const systemPrompt = `You are ${voter.config.name} (${voter.config.tier}) — voting in Loom.\n\nChoose one letter (A/B/C…) as listed in the vote question. Open with your choice as the first token — [Vote: X] — then one sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No contribution tags, 1-2 sentences total, in character.\nYour prose IS the vote and is stored verbatim — the invoker reads it directly, so there is no parser to satisfy. State your reasoning, not only the letter. Never write "State patched" in place of it. After casting your vote you MAY call loom_state_patch at most once to record anything worth carrying into your own future state; optional, skip if nothing new.`;
               const effectiveSourceId = caller?.config?.id ?? callerForPrompt.config.id;
               const promptContext = {
                 type: "vote_response",
@@ -227,8 +219,7 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
               };
               stateManager.addContribution(contrib);
               if (roundObj) roundObj.contributions.push(contrib);
-              voteResponses.push({ voter: voter.config.name, content: text.trim() });
-              voterResults.push({ voter: voter.config.id, name: voter.config.name, content: text.trim().slice(0,200) });
+              voterResults.push({ voter: voter.config.id, name: voter.config.name, content: text.trim() });
               // O(1) increment instead of an O(N) weave scan (audit 11 PF5)
               stateManager.incrementParticipantContributions(voter.config.id);
               degrade("vote_response_db_failed", "Failed to persist vote_response — visible in memory only this session", () => db.addContributionWithTurnRequest(stateManager.getState().id, contrib, null), null);
@@ -246,15 +237,10 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
                restoreVoterStatus();
              }
           }, { batchSize: voteBatchSize, delayMs: voteDelayMs, signal: voteSignal });
-          // Tally generation — source does not ballot, only voter responses counted
-          const { lines: tallyLines } = sharedVoteTally.buildTally({
-            question: args.question,
-            sourceLetter: null,
-            sourceLabel: caller?.config?.name ?? "source",
-            responses: voteResponses,
-          });
-          const tallyContent = tallyLines.join("\n");
-          const payload = { inline: true, question: args.question, tally: tallyContent.slice(0,800), votes: voterResults, note: "Vote completed inline — invoker interprets tally (no persisted vote_tally row)." };
+          // N1 — no tally: ballots are returned verbatim and the invoker is the
+          // sole, declared interpreter. A regex tally was a lossy second source
+          // of truth that silently dropped ballots the room had actually cast.
+          const payload = { inline: true, question: args.question, votes: voterResults, note: BALLOT_INTERPRETATION_NOTE };
           const outStr = JSON.stringify(payload);
           auditLoomTool({ db, stateManager, caller, meetingId: meetingInfo.meetingId, tool: "loom_vote", input: args, output: outStr, status: "completed", title: `loom_vote:${voterResults.length} votes` });
           return { output: outStr, metadata: { inline: true, voteCount: voterResults.length }, title: `loom_vote:${voterResults.length} votes` };

@@ -64,19 +64,22 @@ test("findNumericalConflicts ignores consistent values and single-contribution q
   assert.equal(findNumericalConflicts(w).length, 0);
 });
 
-test("reconcileNumericalConflicts resolves a retracted side", () => {
+test("reconcileNumericalConflicts no longer infers a retraction from phrasing", () => {
+  // The retraction detector was 11 English-phrase regexes deciding that a
+  // contribution withdrew a claim, and the retraction-lookup falsifier then
+  // resolved a numeric conflict from that guess. Both are deleted: a sentence
+  // is not a retraction because it contains the word "retract". The two values
+  // are now treated as a genuine, unresolved conflict and versioned.
   const w = weave(
     [1, "a", 1, "Antonelli will win 8 races this season, dominating the championship."],
     [2, "a", 2, "I retract my earlier claim that Antonelli will win 8 races this season. Antonelli wins 6 races."],
   );
   const report = reconcileNumericalConflicts(w);
   const phrase = report.conflicts.find((c) => c.granularity === "phrase");
-  assert.equal(phrase.status, "resolved");
-  assert.equal(phrase.resolution.basis, "retraction");
-  assert.equal(phrase.resolution.value, 6);
-  assert.equal(phrase.falsifier.method, "retraction-lookup");
-  assert.equal(phrase.falsifier.ran, true);
-  assert.equal(report.resolvedCount >= 1, true);
+  assert.equal(phrase.status, "versioned");
+  assert.notEqual(phrase.resolution?.basis, "retraction");
+  assert.notEqual(phrase.falsifier.method, "retraction-lookup");
+  assert.deepEqual(phrase.versions.map((v) => v.value), [8, 6]);
 });
 
 test("reconcileNumericalConflicts resolves rounding-level disagreement", () => {
@@ -119,7 +122,7 @@ test("reconcileNumericalConflicts versions unresolvable conflicts v1/v2 with a r
   assert.deepEqual(phrase.versions.map((v) => v.value), [11, 8]);
   assert.equal(phrase.versions[0].contributionId, 1);
   assert.equal(phrase.versions[1].contributionId, 2);
-  assert.match(phrase.reconciliationRule, /later value supersedes unless retracted/);
+  assert.match(phrase.reconciliationRule, /later value supersedes/);
   assert.equal(phrase.falsifier.method, "band");
   assert.equal(phrase.falsifier.ran, true);
   assert.equal(phrase.falsifier.reconciled, false);
@@ -144,7 +147,7 @@ test("shouldReserveReconciliationRound fires when R-final yields a new conflicti
   assert.equal(shouldReserveReconciliationRound(early, earlyReport), false);
 });
 
-test("finalizeSynthesis versions numerical conflicts before the final output", () => {
+test("finalizeSynthesis counts versioned conflicts but does not ship them by default (N3)", () => {
   const transcriptData = {
     question: "Who wins the most races?",
     rounds: [
@@ -172,12 +175,72 @@ test("finalizeSynthesis versions numerical conflicts before the final output", (
     "## Confidence",
     "Medium.",
   ].join("\n");
+  // Detectors ship OFF and dry (N3): the conflict is found and counted, but a
+  // section that cannot state its precision does not reach the deliverable.
   const { artifact, output } = finalizeSynthesis(text, transcriptData, participants, []);
+  assert.doesNotMatch(output, /## Needs Verification/);
+  assert.equal(artifact.detector_report.needsVerification.shipped, false);
+  assert.ok(artifact.detector_report.needsVerification.candidates >= 1, "candidates are still counted for the precision audit");
+  // Structured report is unaffected — the truth is available either way.
+  assert.match(artifact.reconciliation.conflicts.find((c) => c.status === "versioned").quantity, /antonelli win/);
+  assert.equal(artifact.reconciliation.versionedCount >= 1, true);
+  assert.equal(artifact.reconciliation.reserveRoundRecommended, true);
+});
+
+test("finalizeSynthesis ships Needs Verification once the flag is on and dry-run is off", () => {
+  const transcriptData = {
+    question: "Who wins the most races?",
+    rounds: [
+      { number: 1, contributions: [{ id: 1, participant_id: "a", type: "contribution", round: 1, content: "Antonelli will win 11 races." }] },
+      { number: 2, contributions: [{ id: 2, participant_id: "b", type: "contribution", round: 2, content: "Antonelli will win 8 races." }] },
+    ],
+  };
+  const participants = [
+    { config: { id: "a", name: "A", tier: "senior" }, status: "listening" },
+    { config: { id: "b", name: "B", tier: "mid" }, status: "listening" },
+  ];
+  const text = [
+    "## Executive Summary", "Antonelli is the modal pick.", "",
+    "## Reasoning", "Two counts were stated.", "",
+    "## Action Items", "— Verify the win count — owner: A", "",
+    "## Open Questions", "- Which count is right?", "",
+    "## Confidence", "Medium.",
+  ].join("\n");
+  const { artifact, output } = finalizeSynthesis(text, transcriptData, participants, [], {
+    detectors: { needsVerification: true, citationWarnings: true, dryRun: false },
+  });
   assert.match(output, /## Needs Verification/);
   assert.match(output, /antonelli win: v1 = 11 win \[#1\] vs v2 = 8 win \[#2\]/);
   assert.match(output, /falsifier: band/);
-  assert.equal(artifact.reconciliation.versionedCount >= 1, true);
-  assert.equal(artifact.reconciliation.reserveRoundRecommended, true);
+  assert.equal(artifact.detector_report.needsVerification.shipped, true);
+  assert.equal(artifact.detector_report.policy.dryRun, false);
+});
+
+test("the enabled flag still stays dry while dryRun is on", () => {
+  const transcriptData = {
+    question: "Who wins?",
+    rounds: [
+      { number: 1, contributions: [{ id: 1, participant_id: "a", type: "contribution", round: 1, content: "Antonelli will win 11 races." }] },
+      { number: 2, contributions: [{ id: 2, participant_id: "b", type: "contribution", round: 2, content: "Antonelli will win 8 races." }] },
+    ],
+  };
+  const participants = [
+    { config: { id: "a", name: "A", tier: "senior" }, status: "listening" },
+    { config: { id: "b", name: "B", tier: "mid" }, status: "listening" },
+  ];
+  const text = [
+    "## Executive Summary", "Antonelli is the modal pick.", "",
+    "## Reasoning", "Two counts were stated.", "",
+    "## Action Items", "— Verify the win count — owner: A", "",
+    "## Open Questions", "- Which count is right?", "",
+    "## Confidence", "Medium.",
+  ].join("\n");
+  const { artifact, output } = finalizeSynthesis(text, transcriptData, participants, [], {
+    detectors: { needsVerification: true, dryRun: true },
+  });
+  assert.doesNotMatch(output, /## Needs Verification/);
+  assert.equal(artifact.detector_report.policy.needsVerification, true);
+  assert.ok(artifact.detector_report.needsVerification.candidates >= 1);
 });
 
 test("finalizeSynthesis adds no reconciliation section when numbers agree", () => {

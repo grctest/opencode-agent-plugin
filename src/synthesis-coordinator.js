@@ -7,6 +7,7 @@ import { LoomError, extractErrorInfo } from "./logger.js";
 import { incrementKeyedCounter, recordLatency } from "./metrics.js";
 import { withRetry, isRetryableError } from "./utils/retry.js";
 import { SUBSTANTIVE_TYPES } from "./utils/contribution-types.js";
+import { computeEngagementMetrics, findUncitedPlainContributions } from "./round-summarizer.js";
 import { buildOrchestratorInstruction, getSynthesisGuidance, normalizeOrchestratorConfig } from "./orchestrator/models.js";
 
 function getMaxCritiqueRetries() { try { return getConfig()?.tuning?.MAX_CRITIQUE_RETRIES ?? TUNING.MAX_CRITIQUE_RETRIES; } catch { return TUNING.MAX_CRITIQUE_RETRIES; } }
@@ -14,6 +15,21 @@ function getMaxCritiqueRetries() { try { return getConfig()?.tuning?.MAX_CRITIQU
 // (audit D10) — prompt text and repair feedback cannot drift apart.
 const REQUIRED_SECTIONS = [...SYNTHESIS_SECTION_CONTRACT.core, ...SYNTHESIS_SECTION_CONTRACT.always];
 const REQUIRED_ACTION_GROUP = [...SYNTHESIS_SECTION_CONTRACT.actionGroup];
+
+/**
+ * N8 — peer-engagement ledger for the synthesis prompt: the plain
+ * contributions that engage no peer, with their ids, so the auditor can close
+ * each one by citing, synthesizing, or naming it superseded.
+ * @param {{rounds?: Array<{contributions?: Array}>}} transcriptData
+ */
+export function computeEngagementLedger(transcriptData) {
+  const weave = (transcriptData?.rounds ?? []).flatMap((r) => r.contributions ?? []);
+  const metrics = computeEngagementMetrics(weave);
+  return {
+    ...metrics,
+    uncited_plain_ids: findUncitedPlainContributions(weave).map((c) => c.id),
+  };
+}
 
 export function buildOrchestratorSynthesisSystem(config = {}) {
   // Scoped operator block (role + custom only; posture lives in the user-prompt
@@ -96,8 +112,12 @@ export class SynthesisCoordinator {
     const maxRetries = Number.isFinite(rawMaxRetries) ? rawMaxRetries : 1;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      // N8 — the peer-engagement ledger travels with every synthesis attempt, so
+      // the rule is in force at the point the deliverable is written rather
+      // than only in the round clerk's summary.
+      const engagement = computeEngagementLedger(transcriptData);
       const userPrompt =
-        buildSynthesisPrompt(transcriptData.question, transcript, allParticipants, transcriptData.tags ?? [], stateOfPlay, objections, userContext, { buildMode: transcriptData.buildMode, decisionPosture: effectiveConfig?.decisionPosture }) +
+        buildSynthesisPrompt(transcriptData.question, transcript, allParticipants, transcriptData.tags ?? [], stateOfPlay, objections, userContext, { buildMode: transcriptData.buildMode, decisionPosture: effectiveConfig?.decisionPosture, engagement }) +
         additionalFeedback;
 
       const llmStart = Date.now();

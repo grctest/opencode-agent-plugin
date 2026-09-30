@@ -514,6 +514,11 @@ export async function promptChildSession(participant) {
   return { result: null, error: lastError.value ?? new Error("all models failed") };
    } finally {
      if (!localSucceeded && participant.status === "speaking") participant.status = prevStatus;
+     // N7 — the tool-call cap is PER TURN while the audit is PER ROUND, so
+     // comparing a round's audited total against the cap reads as an overrun
+     // that never happened. Record the per-turn high-water mark so the two are
+     // never conflated in telemetry.
+     this._stateManager.recordTurnToolHighWater?.();
      this._stateManager.endTurn?.();
      this._hintLocked = false;
    }

@@ -12,7 +12,41 @@ const counters = {
   retry_events: {},
   breaker_events: {},
   degradation_events: {},
+  // N6 — meeting_degraded_reasons: a named, countable reason a meeting ran
+  // degraded. Liveness and health were conflated: a run where a third of state
+  // writes were rejected reported `agent_errors: 0` and 100% of tool_audit
+  // rows `completed`. These reasons are recorded at the point of refusal, where
+  // the information actually exists.
+  meeting_degraded_reasons: {},
 };
+
+// meetingId -> Set<reason>, so a meeting's health travels with its row rather
+// than with the process.
+const degradedReasonsByMeeting = new Map();
+
+/**
+ * N6 — record that a meeting ran degraded for a named reason. Call this at the
+ * point of refusal, never inferred from prose after the fact.
+ * @param {string} meetingId
+ * @param {string} reason stable key, e.g. "state_patch_rejected"
+ * @param {number} [count=1]
+ */
+export function recordMeetingDegradedReason(meetingId, reason, count = 1) {
+  if (!meetingId || !reason) return;
+  if (!degradedReasonsByMeeting.has(meetingId)) degradedReasonsByMeeting.set(meetingId, new Set());
+  degradedReasonsByMeeting.get(meetingId).add(reason);
+  incrementKeyedCounter("meeting_degraded_reasons", reason, count);
+}
+
+/** The named reasons a meeting ran degraded, sorted for stable output. */
+export function getMeetingDegradedReasons(meetingId) {
+  return [...(degradedReasonsByMeeting.get(meetingId) ?? [])].sort();
+}
+
+/** Drops a meeting's degraded-reason set (meeting deleted). */
+export function clearMeetingDegradedReasons(meetingId) {
+  degradedReasonsByMeeting.delete(meetingId);
+}
 
 // Circular buffers per latency bucket — O(1) push
 const latencyBuffers = {
@@ -86,6 +120,7 @@ export function getMetricsSnapshot() {
       retry_events: { ...counters.retry_events },
       breaker_events: { ...counters.breaker_events },
       degradation_events: { ...counters.degradation_events },
+      meeting_degraded_reasons: { ...counters.meeting_degraded_reasons },
     },
     latencies: Object.fromEntries(
       Object.entries(latencyBuffers).map(([k, _]) => [k, latencyStats(getLatencyValues(k))])

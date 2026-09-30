@@ -1,8 +1,91 @@
 import { getConfig } from "../config.js";
+import { TUNING } from "../config/defaults.js";
 import { LoomError, extractErrorInfo } from "../logger.js";
-import { getMetricsSnapshot } from "../metrics.js";
+import { getMetricsSnapshot, getMeetingDegradedReasons, recordMeetingDegradedReason } from "../metrics.js";
 import { collectObjections } from "../objection-collector.js";
+import { computeMechanismMix } from "../utils/contribution-types.js";
 import { reconcileNumericalConflicts } from "../synthesizer.js";
+
+/**
+ * N9 — round-budget floor, first half: make the closing round measurable.
+ * Returns `{ final_span_ms, median_span_ms, ratio, below_floor }` over the
+ * recorded round spans. A final round under `floorRatio` of the median is
+ * flagged rather than tolerated silently: in 1355a723 the round that produced
+ * the meeting's best contribution and the closing ballot ran at 29% of the
+ * peak and two of three participants never patched.
+ * @param {Array<{number: number, span_ms?: number}>} rounds
+ * @param {number} [floorRatio=0.6]
+ */
+export function measureRoundBudget(rounds = [], floorRatio = 0.6) {
+  const spans = (rounds ?? [])
+    .filter((r) => Number.isFinite(r?.span_ms) && r.span_ms > 0)
+    .map((r) => r.span_ms);
+  if (spans.length < 2) return { final_span_ms: spans.at(-1) ?? null, median_span_ms: null, ratio: null, below_floor: false };
+  const sorted = [...spans].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  const median = sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+  const finalSpan = spans.at(-1);
+  const ratio = median > 0 ? Math.round((finalSpan / median) * 1000) / 1000 : null;
+  return { final_span_ms: finalSpan, median_span_ms: median, ratio, below_floor: ratio !== null && ratio < floorRatio };
+}
+
+/**
+ * N9 — round-budget floor, second half: guarantee a patch opportunity before
+ * synthesis regardless of elapsed time. The patch is the agent's memory for the
+ * room's next deliberation; a closing round that runs short must not be the
+ * reason a participant's reasoning is lost. Participants who did not patch in
+ * the final round get one bounded, patch-only turn each. Nothing is required
+ * of them: an empty or skipped patch is fine, and no contribution is expected.
+ *
+ * @returns {Promise<{attempted: number, patched: number, failed: number}>}
+ */
+export async function runFinalRoundPatchGrace() {
+  const timeoutMs = (() => {
+    try { return Number(getConfig()?.tuning?.FINAL_ROUND_PATCH_GRACE_MS ?? TUNING.FINAL_ROUND_PATCH_GRACE_MS); } catch { return TUNING.FINAL_ROUND_PATCH_GRACE_MS; }
+  })();
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return { attempted: 0, patched: 0, failed: 0 };
+  if (this._cancelled) return { attempted: 0, patched: 0, failed: 0 };
+
+  const finalRound = this._stateManager.getCurrentRound();
+  const participants = this._stateManager.getParticipants().filter((p) => p?.status !== "failed" && p?.status !== "passed");
+  const weave = this._stateManager.getWeave();
+  // Who already patched in the final round? A state written in an earlier
+  // round is carried, so the test is the patch's round, not its existence.
+  const patchedInFinal = new Set(
+    weave
+      .filter((c) => c.round === finalRound)
+      .map((c) => c.participant_id),
+  );
+
+  let attempted = 0;
+  let patched = 0;
+  let failed = 0;
+  for (const p of participants) {
+    if (patchedInFinal.has(p.config.id)) continue;
+    if (this._cancelled) break;
+    const model = (() => { try { return this._getParticipantModel?.(p) ?? null; } catch { return null; } })();
+    if (!model) { failed++; continue; }
+    attempted++;
+    try {
+      const res = await this._sessionManager.runEphemeralPrompt(p, {
+        system: `You are ${p.config.name} (${p.config.tier}). The deliberation is closing. Call loom_state_patch ONCE with anything from your last turn worth carrying forward (stance, and any established/contested/open/facts bullets you still rely on). If there is nothing new, do not call it. Do not write prose, do not argue, do not re-litigate — this is your private notes only.`,
+        model,
+        parts: [{ type: "text", text: "Closing the deliberation. Save anything worth remembering, or skip if there is nothing." }],
+        tools: { loom_state_patch: true },
+        timeoutMs,
+      }, this._meetingId);
+      if (res?.ok) patched++;
+      else failed++;
+    } catch (err) {
+      failed++;
+      this._logger.warn("final_round_patch_grace_failed", `Patch grace failed for ${p.config.name}`, extractErrorInfo(err));
+    }
+  }
+  if (attempted > 0) {
+    this._logger.info("final_round_patch_grace", `Patch grace: ${patched}/${attempted} participants patched before synthesis (${failed} failed)`, { round: finalRound, attempted, patched, failed });
+  }
+  return { attempted, patched, failed };
+}
 
 export async function _synthesize() {
     const participants = this._stateManager.getParticipants();
@@ -10,6 +93,25 @@ export async function _synthesize() {
     const maxRounds = this._stateManager.getMaxRounds();
     const failed = participants.filter((p) => p.status === "failed").length;
     const partialDeliberation = failed > 0;
+
+    // N9 — round-budget floor, before anything else: the closing round gets a
+    // guaranteed patch opportunity and its span is measured against the
+    // median. Both are cheap, and both happen while there is still a meeting
+    // to patch for.
+    this._roundBudget = measureRoundBudget(this._stateManager.getRounds());
+    if (this._roundBudget.below_floor) {
+      this._logger.warn("final_round_below_floor", `Final round ran at ${Math.round((this._roundBudget.ratio ?? 0) * 100)}% of the median round (${this._roundBudget.final_span_ms}ms vs ${this._roundBudget.median_span_ms}ms) — the closing round is a deadline, not a round`);
+      try { recordMeetingDegradedReason(this._meetingId, "final_round_below_floor"); } catch {}
+    }
+    try {
+      this._finalPatchGrace = await this.runFinalRoundPatchGrace?.();
+      const { attempted, failed: graceFailed } = this._finalPatchGrace ?? {};
+      if (attempted > 0 && graceFailed > 0) {
+        try { recordMeetingDegradedReason(this._meetingId, "final_round_patch_grace_failed"); } catch {}
+      }
+    } catch (err) {
+      this._logger.warn("final_round_patch_grace_failed", "Closing patch grace failed — synthesis continues", extractErrorInfo(err));
+    }
 
     const weave = this._stateManager.getWeave();
     const substantiveForSynthesis = weave.filter((c) => {
@@ -125,7 +227,7 @@ export async function _synthesize() {
  * (restore forces in-memory status to weaving, and _synthesize persists that
  * via _persistState — without this step finish would regress terminal state).
  */
-export async function finishSynthesis(originalStatus) {
+  export async function finishSynthesis(originalStatus) {
   const output = await this._synthesize();
   try {
     const valid = ["converged", "cancelled", "timeout", "max_rounds_reached", "aborted"];
@@ -186,6 +288,11 @@ export function _computeQualityTelemetry(stats = {}) {
       // P14 — surface token/latency accounting in the quality telemetry
       const inputTokens = Number(stats.input_tokens) || 0;
       const outputTokens = Number(stats.output_tokens) || 0;
+      // N6 — a meeting's health is the union of "the counters are empty" and
+      // "something was refused". `cost_unmeasurable` stays for compatibility;
+      // `meeting_degraded_reasons` is the general form.
+      const degradedReasons = new Set(getMeetingDegradedReasons(this._stateManager.getMeetingId?.() ?? this._meetingId ?? ""));
+      if (isCostTelemetryUnmeasurable(stats)) degradedReasons.add("cost_unmeasurable");
       return {
         contributions_by_type: byType,
         unresolved_objections: unresolved.length,
@@ -199,6 +306,21 @@ export function _computeQualityTelemetry(stats = {}) {
         total_tokens: inputTokens + outputTokens,
         latencies: summarizeLatencies(stats.latencies),
         cost_unmeasurable: isCostTelemetryUnmeasurable(stats),
+        // N7 — the cap is per turn, the audit is per round. Reporting the
+        // per-turn high-water mark beside the round total is what stops a
+        // reader from calling a healthy meeting an overrun.
+        tool_calls: {
+          max_in_a_turn: this._stateManager.getMaxToolCallsInATurn?.() ?? 0,
+          cap_per_turn: Number(getConfig()?.agentTools?.maxToolCallsPerTurn) || 12,
+        },
+        // N9 — the closing round measured against the median of the others.
+        round_budget: this._roundBudget ?? null,
+        final_patch_grace: this._finalPatchGrace ?? null,
+        // N12 — mechanism mix, per round. Visibility, never a constraint:
+        // whether a ballot-heavy round was a good trade is not decidable from
+        // one meeting, so it is measured, not legislated.
+        mechanism_mix: computeMechanismMix(weave, this._stateManager.getObjections?.() ?? []),
+        meeting_degraded_reasons: [...degradedReasons].sort(),
       };
     } catch {
       return null;
@@ -234,6 +356,8 @@ export function _saveMeetingMetrics() {
           degradation_events: snapshot.counters.degradation_events ?? {},
           retry_events: snapshot.counters.retry_events ?? {},
           breaker_events: snapshot.counters.breaker_events ?? {},
+          // N6 — refusal reasons, counted where the refusal happened.
+          meeting_degraded_reasons: snapshot.counters.meeting_degraded_reasons ?? {},
         };
         // P14 — surface real latency telemetry: the process-wide snapshot
         // carries the llm_prompt_ms / synthesis_ms buckets recorded via

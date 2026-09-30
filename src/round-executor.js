@@ -10,13 +10,10 @@ import { CircuitBreaker } from "./utils/retry.js";
 import { selectFallbackModel } from "./services/model-service.js";
 import { loadGlobalHealth, markGlobalUnhealthy } from "./services/global-model-health.js";
 import { incrementKeyedCounter, recordLatency } from "./metrics.js";
-import { extractVoteLetter, buildTally } from "./utils/vote-tally.js";
 import { degrade } from "./utils/degrade.js";
 import { randomUUID } from "node:crypto";
 import { promptChildSession as promptChildSessionHelper, executeAgentTurn as executeAgentTurnHelper, recordFallbackFailure as recordFallbackFailureHelper } from "./round-executor/agent-turn.js";
 import { buildToolsMap as buildToolsMapHelper, buildToolsMapWithoutLoom as buildToolsMapWithoutLoomHelper } from "./round-executor/tools.js";
-
-export { extractVoteLetter };
 
 export class RoundExecutor {
   _db;

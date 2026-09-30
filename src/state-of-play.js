@@ -32,8 +32,14 @@ function cleanContent(content) {
  * Captures decisions, agreements, disagreements, open questions, and key facts
  * so agents have a compact, accurate running context without O(N²) token growth.
  *
- * Classification uses the parsed contribution type tag (c.type) as the primary
- * signal. Falls back to keyword matching only when c.type is missing or unknown.
+ * Classification is driven ENTIRELY by the structured contribution type
+ * (`c.type`) plus the interaction mode the tool recorded. There is no
+ * keyword-matching fallback (see `classifyContribution`): a primary turn is
+ * untyped, and guessing which bucket its prose belongs in from words like
+ * "we should" or "agree" put a machine-made judgement into the room's primary
+ * shared context. An agent declares its own positions through
+ * `loom_state_patch`, whose buckets are aggregated by `aggregateStateOfPlay`;
+ * a turn that did not declare anything contributes nothing here.
  */
 function hasFileMention(content) {
   // Exclude version strings like 1.2.js — require src/ path or file= prefix or word boundary without leading digit-dot
@@ -71,7 +77,7 @@ export function updateStateOfPlay(weave, question, tags) {
 
     const toolCalls = c.tool_calls;
     const hasToolBacking = Array.isArray(toolCalls) ? toolCalls.length > 0 : toolCalls != null && toolCalls !== "";
-    const bucket = classifyContribution(c.type, content, c.prompt_context?.mode ?? "", hasToolBacking);
+    const bucket = classifyContribution(c.type, c.prompt_context?.mode ?? "", hasToolBacking);
     if (bucket === null) continue;
     switch (bucket) {
       case "decisions": decisions.push(content); break;
@@ -96,13 +102,23 @@ export function updateStateOfPlay(weave, question, tags) {
 }
 
 /**
- * Classifies a contribution into a state-of-play bucket.
- * Primary: use the parsed type tag. Fallback: keyword matching on content.
+ * Classifies a contribution into a state-of-play bucket from STRUCTURED signals
+ * only: the contribution's type tag and, for peer interactions, the mode the
+ * calling tool recorded in `prompt_context.mode`.
+ *
+ * Returns `null` for an untyped primary turn (`contribution`) and for any
+ * unrecognised type. That is deliberate: a primary turn is untyped by design, so
+ * filing it would require guessing from its prose, and the room's primary
+ * shared context is the last place a guess belongs. `loom_state_patch` is the
+ * declaration channel — see `aggregateStateOfPlay` in `src/state-patch.js`.
  */
-function classifyContribution(type, content, mode = "", hasToolBacking = true) {
+function classifyContribution(type, mode = "", hasToolBacking = true) {
   switch (type) {
     case "contribution":
-      return classifyByKeywords(content);
+      // Undeclared. The agent's own state patch is the source of truth for
+      // what a primary turn established; if it did not declare, nothing is
+      // claimed on its behalf.
+      return null;
     case "critique_response":
       return "disagreements";
     case "perspective_response":
@@ -127,38 +143,20 @@ function classifyContribution(type, content, mode = "", hasToolBacking = true) {
     case "refuse":
     case "pass":
       return null;
-    // Legacy typed contributions no longer emitted; route to keyword fallback
+    // Legacy typed contributions no longer emitted. Not filed: their bucket
+    // cannot be derived from a type this build does not understand.
     case "propose":
     case "refine":
     case "support":
     case "question":
-      return classifyByKeywords(content);
+      return null;
     case "reflection":
       return "keyFacts";
     default:
-      return classifyByKeywords(content);
+      return null;
   }
 }
 
-/**
- * Fallback keyword-based classification for contributions with unknown/missing type tags.
- * Uses word-boundary-aware matching to avoid substring false positives.
- */
-function classifyByKeywords(content) {
-  // Code signal is checked BEFORE stripping spans/URLs: a decision whose substance
-  // lives inside a fenced diff or file= reference is otherwise invisible to the
-  // classifier and falls through to keyFacts (audit C5).
-  const hasCodeRef = /file\s*=|```|src\//i.test(content);
-  const withoutUrls = content.replace(/https?:\/\/\S+/g, "").replace(/`[^`]*`/g, "");
-  const lower = withoutUrls.toLowerCase();
-  const isProposal = /\bwe should\b/.test(lower) || /\bdecision\b/.test(lower) || /\bpropose\b/.test(lower) || /\badopt\b/.test(lower);
-  if (isProposal && hasCodeRef) return "decisions";
-  if (/\bwe should\b/.test(lower) || /\bdecision\b/.test(lower)) return "decisions";
-  if (/\bagree\b/.test(lower) || /\bconsensus\b/.test(lower)) return "agreements";
-  if (/\bdisagree\b/.test(lower)) return "disagreements";
-  if (/\?\s*$/.test(withoutUrls.trim()) || /\?\s+[A-Z]/.test(withoutUrls)) return "openQuestions";
-  return "keyFacts";
-}
 
 /**
  * Formats structured state-of-play sections into a markdown summary — thorough, not terse.

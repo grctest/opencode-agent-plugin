@@ -1,19 +1,22 @@
 import { Logger, extractErrorInfo } from "../logger.js";
 import { isoNow } from "./connection.js";
+import { parseSplitConfidence, rollupConfidence } from "../utils/confidence.js";
 
 const dbLogger = new Logger();
 
 export function saveArtifact(db, meetingId, artifact) {
   db
     .prepare(
-      `INSERT INTO artifacts (meeting_id, content, decisions, action_items, open_questions, confidence, refusals, orchestrator_config, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO artifacts (meeting_id, content, decisions, action_items, open_questions, confidence, confidence_name, confidence_number, refusals, orchestrator_config, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(meeting_id) DO UPDATE SET
            content = excluded.content,
            decisions = excluded.decisions,
            action_items = excluded.action_items,
            open_questions = excluded.open_questions,
            confidence = excluded.confidence,
+           confidence_name = excluded.confidence_name,
+           confidence_number = excluded.confidence_number,
            refusals = excluded.refusals,
            orchestrator_config = excluded.orchestrator_config,
            created_at = excluded.created_at`,
@@ -25,6 +28,8 @@ export function saveArtifact(db, meetingId, artifact) {
       artifact.action_items ? JSON.stringify(artifact.action_items) : null,
       artifact.open_questions ? JSON.stringify(artifact.open_questions) : null,
       artifact.confidence ?? null,
+      artifact.confidence_name ?? null,
+      artifact.confidence_number ?? null,
       artifact.refusals ? JSON.stringify(artifact.refusals) : null,
       artifact.orchestrator_config ? JSON.stringify(artifact.orchestrator_config) : null,
       isoNow(),
@@ -34,7 +39,7 @@ export function saveArtifact(db, meetingId, artifact) {
 export function getArtifact(db, meetingId) {
   const row = db
     .prepare(
-      `SELECT content, decisions, action_items, open_questions, confidence, refusals, orchestrator_config, created_at
+      `SELECT content, decisions, action_items, open_questions, confidence, confidence_name, confidence_number, refusals, orchestrator_config, created_at
          FROM artifacts WHERE meeting_id = ?`,
     )
     .get(meetingId);
@@ -57,6 +62,9 @@ export function getArtifact(db, meetingId) {
       return null;
     }
   };
+  // Pre-v13 rows carry only the flat level; derive the missing layers from the
+  // prose so every consumer sees the same split a fresh run would produce.
+  const split = parseSplitConfidence(row.content ?? "");
   return {
     content: row.content,
     decisions: parse(row.decisions),
@@ -64,6 +72,9 @@ export function getArtifact(db, meetingId) {
     open_questions: parse(row.open_questions),
     refusals: parse(row.refusals),
     confidence: row.confidence,
+    confidence_name: row.confidence_name ?? split.name ?? null,
+    confidence_number: row.confidence_number ?? split.number ?? null,
+    confidence_rollup: rollupConfidence(row.confidence_name ?? split.name, row.confidence_number ?? split.number) ?? row.confidence,
     orchestrator_config: parseObj(row.orchestrator_config),
     created_at: row.created_at,
   };

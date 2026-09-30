@@ -88,15 +88,11 @@ export function buildVotePrompt(sourceAgent, targetAgent, sourceContribution, qu
   const recentMine = getRecentContributionsBlock(roundContributions, targetAgent.config.id, { mineCount: 0, mineBudget: 0, othersCount: 3, othersBudget: 300 });
   const roundContext = buildRoundContext(currentRound, maxRounds);
   let sopOptions = "";
-  let sopFallbackNote = "";
   if (stateOfPlay) {
     const decisions = stateOfPlay.split("## Decisions")[1]?.split("##")[0] || "";
     const decisionLines = decisions.split("\n").filter(l => l.trim().startsWith("-")).slice(0, 4).map((l,i) => `${i+1}. ${sanitizeForDisplay(l.slice(2).trim().slice(0, 120))}`).join("\n");
-    if (decisionLines) {
-      sopOptions = `SoP Decisions (vote by number if question not lettered):\n${decisionLines}\n`;
-      sopFallbackNote = `If vote question lists A) B) C), vote by letter: [Vote: A]. If not lettered, vote by SoP number: [Vote: 2]. Both formats accepted: [Vote: A] or [Vote: 2].\n`;
-    }
-    sopOptions = `State of Play — Decisions & Disagreements (your vote is on these):\n${sanitizeForDisplay(stateOfPlay, 650)}\n\n${sopOptions}${sopFallbackNote}`;
+    if (decisionLines) sopOptions = `SoP Decisions (vote by number if question not lettered):\n${decisionLines}\n`;
+    sopOptions = `State of Play — Decisions & Disagreements (your vote is on these):\n${sanitizeForDisplay(stateOfPlay, 650)}\n\n${sopOptions}`;
   }
   const sopSnippet = sopOptions;
 
@@ -112,9 +108,9 @@ ${sopSnippet}${recentMine ? recentMine + "\n" : ""}${stateLine ? stateLine + "\n
 
 Choose one option. If the vote question lists A) B) C) … vote by letter. If it lists 1) 2) 3) or is unlettered, vote by SoP number.
 
-Format exactly (both accepted for backward compat):
-[Vote: A]  or  [Vote: 2]
-One sentence criterion (cost / risk / time / reversibility) for your choice, citing [#id] that motivated your vote if possible.
+Open with your choice as the first token — "[Vote: A]" or "[Vote: 2]" — then one sentence criterion (cost / risk / time / reversibility) for your choice, citing [#id] that motivated your vote if possible.
+
+Your ballot is read by the invoker agent, not by a parser: it is stored verbatim and your full reasoning is what the room records. Say why you chose, not only which.
 
 No contribution tags. Stay in character — your criterion should reflect your agenda.`;
 }

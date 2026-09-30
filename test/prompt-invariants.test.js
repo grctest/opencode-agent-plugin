@@ -300,17 +300,17 @@ test("objections collect only critique_response type", () => {
   assert.ok(!cited[0].stale, "cited resolution mislabelled stale");
 });
 
-// 19. C5 — code decisions classify to decisions; alternatives stay out of facts.
-// (perspective_response now files as keyFacts per retrospective P0-1 — it is
-// attributed context, not a question.)
-test("code-span decisions and mode routing classify correctly", () => {
+// 19. C5 — mode routing classifies correctly from STRUCTURED signals only.
+// (perspective_response files as keyFacts per retrospective P0-1 — it is
+// attributed context, not a question. An untyped primary turn files nothing:
+// the keyword classifier is deleted, so no prose can put itself in a bucket.)
+test("mode routing classifies correctly and untyped turns file nothing", () => {
   const weave = [
     { id: 1, participant_id: "a", type: "contribution", content: "We should adopt the guard.\n```tsx file=src/app/layout.tsx\ncode\n```" },
     { id: 2, participant_id: "b", type: "query_response", content: "Consider a queue instead of a lock.", prompt_context: { mode: "alternatives" } },
     { id: 3, participant_id: "c", type: "perspective_response", content: "I stand by short-lived tokens." },
   ];
   const sop = updateStateOfPlay(weave, "Q", []);
-  assert.match(sop, /## Decisions & Proposals/);
   const facts = sop.split("## Key Facts")[1]?.split("## ")[0] ?? "";
   assert.ok(!facts.includes("queue instead of a lock"), "alternative misfiled as fact");
   // perspective_response is attributed context → keyFacts (P0-1), and it must
@@ -318,6 +318,14 @@ test("code-span decisions and mode routing classify correctly", () => {
   const oq = sop.split("## Open Questions")[1]?.split("## ")[0] ?? "";
   assert.ok(!oq.includes("I stand by short-lived tokens"), "perspective misfiled as open question");
   assert.match(facts, /I stand by short-lived tokens/, "perspective filed as attributed fact");
+  // The untyped primary turn declared nothing, so nothing is claimed for it —
+  // not even the "We should adopt the guard" phrasing that used to be scraped
+  // into Decisions & Proposals.
+  assert.doesNotMatch(sop, /## Decisions & Proposals/, "no decision bucket should exist");
+  assert.ok(!sop.includes("We should adopt the guard"), "undeclared turn filed into the SoP");
+  assert.ok(!oq.includes("We should adopt the guard"), "undeclared turn filed as an open question");
+  // Its file reference is still captured — that is a declared marker, not a guess.
+  assert.match(sop, /src\/app\/layout\.tsx/);
 });
 
 // 20. X6 — persisted tool outputs are LOSSLESS (no truncation); shape preserved.
@@ -581,18 +589,27 @@ test("synthesis prompt demands consolidated thresholds and committed owner", () 
 
 // Local helper: cleanContent is not exported; test it indirectly via
 // updateStateOfPlay on a contribution whose content carries the prefixes.
+// `summoned_response` is used because it always files (to Key Facts) from its
+// type tag alone; an untyped `contribution` files nothing now that the keyword
+// classifier is gone, so it cannot be used to observe the text.
 function cleanContentForTest(content) {
-  const weave = [{ id: 1, participant_id: "a", type: "contribution", content }];
+  const weave = [{ id: 1, participant_id: "a", type: "summoned_response", content }];
   const sop = updateStateOfPlay(weave, "Q", []);
   return sop;
 }
 
-// 35. P11 — citation support: [#id] must resolve to a contribution whose
-// content shares a significant keyword with the citing sentence.
+// 35. P11 + N3 — citation support: [#id] must resolve to a contribution whose
+// content shares a significant keyword with the citing sentence. N3 exempts
+// targets shorter than CITATION_MIN_TARGET_CHARS: keyword overlap cannot
+// succeed on a 57-character ballot, so the flag measured noise, not the
+// artifact.
+const LONG_ROLLBACK = "The rollback path is unsafe and untested in production. " + "Migration rehearsal is required before cutover, and the on-call rotation needs a written abort procedure with named owners and dates. ".repeat(4);
+const LONG_QUANTUM = "Quantum entanglement enables faster-than-light communication. " + "The Bell inequality experiment reproduces the predicted correlation at kilometre baselines, and the channel capacity bound holds under repeaterless conditions. ".repeat(4);
+
 test("citation support check flags mismatched citations", () => {
   const weave = [
-    { id: 1, participant_id: "a", type: "contribution", content: "The rollback path is unsafe and untested in production." },
-    { id: 2, participant_id: "b", type: "contribution", content: "Quantum entanglement enables faster-than-light communication." },
+    { id: 1, participant_id: "a", type: "contribution", content: LONG_ROLLBACK },
+    { id: 2, participant_id: "b", type: "contribution", content: LONG_QUANTUM },
   ];
   // "rollback" (len > 4, not a stopword) overlaps → supported.
   assert.deepEqual(checkCitationSupport("We should adopt the rollback strategy [#1].", weave), []);
@@ -603,13 +620,17 @@ test("citation support check flags mismatched citations", () => {
   assert.match(unsupported[0].sentence, /rollback/);
   // Unresolved ids are out of scope — sectionHasValidCite flags those.
   assert.deepEqual(checkCitationSupport("Anything at all [#99].", weave), []);
+  // N3 — a target below the minimum length is uncheckable, not unsupported.
+  const ballot = [{ id: 2, participant_id: "b", type: "vote_response", content: "Vote cast: D." }];
+  assert.deepEqual(checkCitationSupport("The engine is a regulation change [#2]", ballot), []);
 });
 
-// 36. P11 — finalizeSynthesis appends a warning section when citations lack support.
+// 36. P11 + N3 — finalizeSynthesis appends a warning section when citations lack
+// support, and only when the detector is enabled and out of dry-run.
 test("finalizeSynthesis warns on unsupported citations", () => {
   const transcriptData = {
     question: "Q",
-    rounds: [{ number: 1, contributions: [{ id: 7, participant_id: "a", type: "contribution", content: "Quantum entanglement enables faster-than-light communication." }] }],
+    rounds: [{ number: 1, contributions: [{ id: 7, participant_id: "a", type: "contribution", content: LONG_QUANTUM }] }],
   };
   const participants = [{ config: { id: "a", name: "A", tier: "senior" }, status: "listening" }];
   const text = [
@@ -628,9 +649,16 @@ test("finalizeSynthesis warns on unsupported citations", () => {
     "## Confidence",
     "Medium.",
   ].join("\n");
-  const { output } = finalizeSynthesis(text, transcriptData, participants, []);
+  const enabled = { detectors: { citationWarnings: true, needsVerification: true, dryRun: false } };
+  const { output, artifact } = finalizeSynthesis(text, transcriptData, participants, [], enabled);
   assert.match(output, /## Citation Warnings/);
   assert.match(output, /\[#7\]/);
+  assert.equal(artifact.detector_report.citationWarnings.shipped, true);
+  // N3 — the same text, flags off: the candidate is counted, not rendered.
+  const { output: gated, artifact: gatedArtifact } = finalizeSynthesis(text, transcriptData, participants, []);
+  assert.doesNotMatch(gated, /## Citation Warnings/);
+  assert.equal(gatedArtifact.detector_report.citationWarnings.candidates, 2);
+  assert.equal(gatedArtifact.detector_report.citationWarnings.shipped, false);
   // A supported citation (every citing sentence shares "entanglement")
   // produces no warning section.
   const supportedText = [
@@ -649,6 +677,6 @@ test("finalizeSynthesis warns on unsupported citations", () => {
     "## Confidence",
     "Medium.",
   ].join("\n");
-  const clean = finalizeSynthesis(supportedText, transcriptData, participants, []);
+  const clean = finalizeSynthesis(supportedText, transcriptData, participants, [], enabled);
   assert.doesNotMatch(clean.output, /## Citation Warnings/);
 });

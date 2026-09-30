@@ -74,6 +74,15 @@ export function buildSynthesisPrompt(question, transcript, participants = [], ta
     ? `\n## Original User Context (from the person who asked)\n${delimitContext(escapeDelimiters(sanitizeForDisplay(userContext, 20000)), "USER_CONTEXT")}\n`
     : "";
 
+  // N8 — the clerk check, at the point where the deliverable is written. The
+  // round clerk already names peer-uncited plain contributions per round; the
+  // synthesis is where they either get cited or they are silently dropped, so
+  // the auditor is handed the same ledger.
+  const engagement = opts.engagement ?? null;
+  const engagementSection = engagement && engagement.peer_uncited > 0
+    ? `\n## Engagement Ledger (clerk check — P7)\n${engagement.peer_uncited} of ${engagement.plain_contributions} plain contributions engage no peer via [#id]${engagement.self_cites ? `, and ${engagement.self_cites} citation(s) point at the author` : ""}.\n\n_Ids: ${(engagement.uncited_plain_ids ?? []).slice(0, 20).map((id) => `[#${id}]`).join(" ")}_\n\nEvery one of these must be cited, explicitly synthesized into a position above, or named as superseded. An uncited contribution that contributed nothing is a legitimate outcome; one that did and went unmentioned is a hole in the record. Self-citation is not engagement — cite the peer whose claim you are answering._\n`
+    : "";
+
   const groundingRule = isCode
     ? `1. **Grounding:** Group citations per evidence block — cite once as [#id] or State-of-Play or Source: https://… per block. If you synthesize a novel fix/code not present verbatim, mark it “Proposed — synthesized from [#id]” and keep it. Do not invent file contents not read via tool; if no file was read, qualify as “Proposed (unverified — no tool read)”. Never emit vec: round / vec round / [Round X vec — those are internal retrieval traces. Don’t spam [#id] per sentence; one grouped cite per block. The Agent States block (if present) is positions-only, never evidence — state bullets without a [#id] trail are unattributed positions, not findings.\n`
     : `1. **Grounding:** Group citations per paragraph/block — cite once as [#id] or State-of-Play or Source: https://… per block. If you synthesize a novel conclusion, mark it “Proposed — synthesized from [#id]” and keep it. Do not invent numbers/dates unsupported by transcript/State-of-Play. Do not reference files, diffs, or code you have not seen in the transcript. Never emit vec: / vec round — use [#id] or State-of-Play instead. Don’t spam citations. The Agent States block (if present) is positions-only, never evidence — state bullets without a [#id] trail are unattributed positions, not findings.\n`;
@@ -139,7 +148,7 @@ Files involved + diffs with \`\`\`tsx file=src/...\`\`\` blocks. Mark any novel 
 Human-first plain narrative (no citations). 2-4 sentences: what was asked, what the deliberation found, and the key open tradeoff. Write for a busy human scanning — concise.
 
 ## Decision
-If convergent: one-paragraph direct answer citing key [#id]s (grouped per block, never vec:). If divergent / open-ended: write “No single decision — spectrum below” then present a table | Position | Holder(s) | Evidence (30-35w max + one grouped cite) | Tradeoff (30-35w max) | — still cite [#id]s per row. Tables MUST include the GFM delimiter row as the second line (| --- | --- | --- | --- |) or they will not render. Preserve numbers verbatim. Do not force consensus; mapping the disagreement is a valid outcome. Keep cells concise.
+If convergent: one-paragraph direct answer citing key [#id]s (grouped per block, never vec:). If divergent / open-ended: write “No single decision — spectrum below” then present a table | Position | Holder(s) | Evidence (30-35w max + one grouped cite) | Tradeoff (30-35w max) | — still cite [#id]s per row. **Label each Position by its content, never by its ballot letter** — letters are scoped to one question and shift meaning between rounds, so “ballot C” is not an identifier. A row keyed only by a letter is a defect. Tables MUST include the GFM delimiter row as the second line (| --- | --- | --- | --- |) or they will not render. Preserve numbers verbatim. Do not force consensus; mapping the disagreement is a valid outcome. Keep cells concise.
 
 ## Decision Rule
 Required when there is no single Decision above. State the rule that WILL resolve the spectrum — Trigger, Order, Owner, Date, Default, Re-pricing. If a single Decision was reached above, write "None — decided above."
@@ -168,7 +177,7 @@ ${modeNote}
 ## Original Question
 ${safeQuestion}
 ${tagContext ? `\n## Tags (topic)\n${tagContext}\n` : ""}
-${userContextSection}${stateOfPlaySection}${objectionsSection}${resolvedSection}${staleSection}
+${userContextSection}${stateOfPlaySection}${objectionsSection}${resolvedSection}${staleSection}${engagementSection}
 ## Deliberation Transcript (supporting detail — cite [#id] when using it)
 ${safeTranscript}
 ${participantsSection}
@@ -183,6 +192,8 @@ ${groundingRule}2. **No invention:** Do not invent numbers, dates, costs, tool r
 6. **Ratchet votes:** A ballot is never final against new evidence. If later contributions supersede a voted question — new data, a corrected figure, a changed premise — record the vote as re-opened and state which evidence re-opened it. When new evidence has emerged since the last ballot, the final round closes with a confirmation ballot on the superseded question; record its outcome, not just the original tally.
 7. **No naked numbers:** Before finishing, scan your draft for every percentage and rate. Each must carry (n, window, source) — sample size, the time/scope window it covers, and where it came from ([#id], State-of-Play, or Source:). A rate with n<10 may illustrate but never licenses a conclusion — label it "n=X, illustrative only" or strike it. A number you cannot attribute to the transcript/State-of-Play is removed or explicitly flagged as unverified; never let a bare "%" or "X per season" stand on its own.
 8. **Calibration sheet for gate ladders:** When you record a Decision Rule with trigger thresholds, each trigger must ship with its calibration — the base rate, historical precedent, or data that justifies the number, or the cheap test that would measure it. If the room never calibrated a trigger, record it as "uncalibrated — needs base rate" rather than presenting it as a working gate; a threshold justified two rounds after authorship is not calibrated.
+9. **Positions are named, not numbered (N10):** a ballot letter identifies an option inside one question and nothing else; it changes meaning in the next round. Label every position by what it claims, and reference it by that label. If a decision, a reasoning bullet, or a Decision-Rule trigger is keyed by a letter alone, rewrite the key.
+10. **Nothing silently dropped (P7):** every contribution that carried a position must be cited, explicitly synthesized, or named as superseded. A contribution that was answered, folded into a Synthesis, or overruled is represented; one that is merely absent is a hole. Self-citation does not count as engagement.
 
 ${lengthSection}
 ${requiredSections}
@@ -209,10 +220,10 @@ Deliberation split between incremental rollout (safer, slower) and big-bang (fas
 ## Decision
 No single decision — spectrum below:
 | Position | Holder(s) | Evidence | Tradeoff |
-| A: Incremental | Staff Lead [#4] | maintainability, reversibility | slower time-to-value |
-| B: JWT big-bang | Founder [#5] | 10ms latency | SOC2 revocation risk |
+| Incremental rollout | Staff Lead [#4] | maintainability, reversibility | slower time-to-value |
+| JWT big-bang | Founder [#5] | 10ms latency | SOC2 revocation risk |
 ## Reasoning
-- **Staff Lead (senior, [#4])** proposed B citing maintainability — built on [#2] cost numbers. **Security Engineer (mid, [#5])** challenged revocation, then reflected [#14] accepting short-lived tokens with rotation. Tradeoff: speed vs auditability.
+- **Staff Lead (senior, [#4])** proposed the big-bang path citing maintainability — built on [#2] cost numbers. **Security Engineer (mid, [#5])** challenged revocation, then reflected [#14] accepting short-lived tokens with rotation. Tradeoff: speed vs auditability.
 ${isCode ? "\n## Good Fragment (code-analysis)\n## Proposed Fix\n- Files: `src/app/layout.tsx:18` — hydration mismatch from client-only hook (read in [#4])\n- Diff: ```tsx file=src/app/layout.tsx\n  // Proposed — synthesized from [#4][#7]\n  'use client';\n  import { useEffect, useState } from 'react';\n  // guard hydration: only render after mount\n  ```\n  Why: [#4] read src/app/layout.tsx via read tool; [#7] challenge on useEffect stale closure. [#9] evidence via grep. Tests: `npm test` hydration case.\n" : ""}
 `;
 }

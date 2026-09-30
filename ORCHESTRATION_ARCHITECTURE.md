@@ -1,6 +1,6 @@
 # The Loom Orchestration Architecture
 
-**Schema version:** `PRAGMA user_version = 7` (`LATEST_SCHEMA_VERSION` in `src/database/schema.js:10`) — `meetings.status ∈ {initializing,weaving,converged,timeout,cancelled,aborted,max_rounds_reached}` — fresh DBs enforce `CHECK(status IN …)` + `CHECK(tier IN …)` + foreign keys. v5→v6 adds the SKILL.state layer: `participants.state_json` (JSON `AgentState`) + append-only `state_patches` audit table (see §12). v6→v7 persists the complete persona behavior contract. Static schema and bundle checks cover version 7; live Bun/opencode integration remains environment-dependent.
+**Schema version:** `PRAGMA user_version = 13` (`LATEST_SCHEMA_VERSION` in `src/database/schema.js`) — `meetings.status ∈ {initializing,weaving,converged,timeout,cancelled,aborted,max_rounds_reached}` — fresh DBs enforce `CHECK(status IN …)` + `CHECK(tier IN …)` + foreign keys. v5→v6 adds the SKILL.state layer: `participants.state_json` (JSON `AgentState`) + append-only `state_patches` audit table (see §12). v6→v7 persists the complete persona behavior contract; v9→v10 stamps the effective orchestrator config; v11→v12 adds the meeting-level settled registry; **v12→v13 lands the confidence split and drops the orphaned `artifacts.dissent` column**. Rule: any change to the DDL ships with `LATEST_SCHEMA_VERSION += 1` *and* a matching `MIGRATIONS[]` entry in the same change, so two structurally different databases can never claim one version number (N2). Static schema and bundle checks cover the current version; live Bun/opencode integration remains environment-dependent.
 
 A complete technical reference for how the Loom multi-agent deliberation system works, from user input to final output. Every LLM prompt, every data structure, every decision point. Written for someone who cannot read the source code.
 
@@ -61,7 +61,7 @@ When a user approves and starts a deliberation from the dashboard Setup tab, thi
    - Agents write **untyped prose** — there are no `[PROPOSE]`/`[CHALLENGE]` type tags anymore; following agents interpret content directly. Agents call `loom_pass` when they have nothing new to contribute.
    - During their turn agents can invoke **loom_\* interaction tools** (`loom_query`, `loom_vote`, `loom_summon`, `loom_request_next`, `loom_pass`) alongside research tools. These are plugin-registered tools that execute server-side during `session.prompt`: peer answers, ballots, and tallies are returned **inline in the same turn** and folded back into the speaker's final contribution via an optional same-turn synthesis pass (Section 22).
 4. **Round summarization** — After all agents speak, an LLM clerk summary is generated every round (Established / Contested / Evidence / Open bullets), degrading to a deterministic digest when the LLM returns empty (Section 13).
-5. **State of play update** — The state of play is primarily aggregated from each agent's bounded `Σⁱ` state. If patch coverage is incomplete, a deterministic full-weave digest is merged in as a safety fallback.
+5. **State of play update** — The state of play is aggregated entirely from each agent's bounded `Σⁱ` state. If patch coverage is incomplete, a **type-driven** full-weave digest is merged in as a fallback; it files only peer responses and file references, and never guesses a primary turn's bucket from its prose.
 6. **Turn order planning** — `planTurnOrder()` produces the next round's ordered participant list from `loom_request_next` requests (Section 9).
 7. **Termination** — Deterministic: (a) all participants have called `loom_pass` or failed after the configured minimum rounds, (b) the round limit reached, or (c) stall detection or token budget fires. There is no meeting-level wall-clock timeout — per-agent provider timeouts (`agentTimeoutMs`) bound each LLM call, and the stall watchdog bounds inactivity.
 8. **Synthesis** — One agent (typically the principal) synthesizes all contributions into a structured artifact with Decision, Reasoning, Action Items, Dissenting Views, Open Questions, and Confidence, then self-critiques it.
@@ -102,10 +102,11 @@ There is **no LLM domain detection** — the now-removed `domain` pipeline was r
 1. All personas are loaded from JSON files (`personas/<tier>/*.json`, or legacy `<tier>.json` arrays) and embedded into a process-scoped in-memory store via `PersonaIndex.indexAll()` (no database tables; a store-level fingerprint skips re-indexing when the model and catalog are unchanged).
 2. For each role tier in the role list, `PersonaIndex.search(question, tier, 5)` returns the 5 most similar personas for that tier (brute-force cosine over the in-memory store, filtered by tier, with fallback keyword scoring when embeddings are unavailable); the first persona not already used is selected. Cache key is `model|quant|persona|tier|dim|fingerprint` (model-aware, `TUNING.EMBEDDING_CACHE_MAX` LRU).
 3. Selection is deterministic given the same question and persona index.
+3a. **Relative cut, then a cross-tier floor (N11).** The top-`composition.topNPerTier` of each tier survive by rank regardless of absolute similarity — the old absolute floor admitted 181/181 personas and never bound. But a relative cut alone still returns three candidates per tier however far away they are, which is how a mechanical keyboard enthusiast ranked #2 for a car-manufacturer question. So: if the best in-tier candidate is further than `composition.maxTierDistance` (L2; default 1.25), the tier has nothing on-topic to say, and the seat goes to the best candidate in *any* tier (`rankCrossTierCandidates`) instead of to the least-off-topic persona in the nominal one. On a quantitative question a near-tie is broken toward a quantitative persona — a tie-break, not a question-type classifier. The keyword fallback path has the same rule with a score of 0 standing in for a past-the-floor distance. Every crossing is logged as `compose_cross_tier_floor` with both distances.
 4. Meeting-level `tags` are derived from the selected participants' most common tags (top 3).
 5. Estimated rounds: `base` high=4/medium=3/low=2 clamped to `±1` around `getConfig().defaultMaxRounds` (default 4) — `estimated = clamp(base, cfg-1, cfg+1)` (fresh DB: `participants.tags`/`expertise` persisted).
 
-If the embedding service is unavailable, composition falls back to keyword-based `composeRoomByKeyword` (token overlap + `maxCosineDistance` relevance floor `minScore = max(1, floor(2*(1-maxDistance+0.15)))`), not an empty room; civilian generalist fills gaps.
+If the embedding service is unavailable, composition falls back to keyword-based `composeRoomByKeyword` (token overlap, top-N per tier, and the same cross-tier floor for a tier with zero overlap), not an empty room; civilian generalist fills gaps.
 
 **Custom rooms:** Approving an edited participant list in the Setup tab skips composition entirely. Each participant requires `name`, `persona`, `agenda`, `tier` (an `id` is derived; `tags`/`expertise` default to `["general"]`). Persona similarity needs no database access, so composition imposes no ordering constraint on the meeting-row insert.
 
@@ -261,7 +262,7 @@ Senior doctrine: name the irreversible commitment and its mitigation/rollback...
         - Interaction tools fan out to peers in parallel and return their answers inline within
           this same turn — wait for the result, then cite [#id] from the returned responses
           or tally in your final contribution.
-        - Up to <maxToolCallsPerTurn> loom calls per turn; prefer one focused interaction call.
+        - Up to <maxToolCallsPerTurn> loom calls per turn; prefer one focused interaction call. `loom_state_patch` is exempt from that cap (N7).
         - CRITICAL: tool invocations are transmitted through the model's function-calling
           channel, never through response prose. Any function-call notation in text executes
           nothing. Bracket tags like [QUERY: @id], [EVIDENCE: @id], [CALL_VOTE] are obsolete.
@@ -370,7 +371,7 @@ Then call loom_state_patch once — project your stance and 1-3 bullets so they 
 Note the structure:
 
 - **Question (canonical)** + tags + round number lead the prompt.
-- **State of Play**: structured summary of decisions, agreements, disagreements, open questions, key facts (and files involved) — explicitly labeled CANONICAL (Section 11). Primary path is deterministic aggregation over per-agent states (§11); legacy full-weave keyword scan is the cold-start fallback.
+- **State of Play**: structured summary of decisions, agreements, disagreements, open questions, key facts (and files involved) — explicitly labeled CANONICAL (Section 11). The state is what *you* declared via `loom_state_patch`; aggregation over those per-agent states is the only path, and the type-driven weave digest that backs it up never infers meaning from prose.
 - **Your State**: the agent's own carried execution state Σⁱ (stance + established/contested/open/facts/files), rendered from runtime-validated `loom_state_patch` calls only — never model prose. Empty states render `(empty — patch it this turn)`. Shown only when `agentTools.loom.loom_state_patch` is on; flag-off prompts are byte-identical to legacy. Prompt invariant: `Aⁱ_r = (P, Σⁱ_r, Oⁱ_r)` — immutable spec, own state, latest observation. (SKILL.state complementary implementation; see `plans/skill-state-complementary-implementation.md`.)
 - **Live contributions**: current-round contributions only (round == r, `vote_response` excluded, ≤12), each budgeted ~800 chars prose / ~1200 chars code, with stable IDs like `[#4]`. Prior rounds arrive via Σⁱ + SoP digest, never raw replay — per-turn prompt footprint is flat in T.
 - **No reflection section**: the participant's stored reflection is *not* injected into primary turns. Σⁱ.stance is the single source of truth for position; legacy reflection is the fallback only when stance is empty. Peer-facing prompts (query/vote/summon targets) see one line: `Your position (from your state vN): "…"` plus top bullets — never both stance and reflection side by side.
@@ -692,7 +693,7 @@ Terminal statuses: `converged`, `cancelled`, `timeout`, `max_rounds_reached`, an
 
 ## 11. State of Play
 
-The state of play is the primary running context for agents. It replaces the old fabric-compaction system with a structured summary primarily aggregated from each agent's bounded `Σⁱ` state; a deterministic weave digest is merged when patch coverage is incomplete.
+The state of play is the primary running context for agents. It replaces the old fabric-compaction system with a structured summary aggregated from each agent's bounded `Σⁱ` state; a type-driven weave digest is merged when patch coverage is incomplete. Nothing infers a bucket from an agent's prose — the state of play says what agents *declared*, not what a regex inferred.
 
 ### What It Contains
 
@@ -728,30 +729,28 @@ engineering, security
 
 ### How It's Derived
 
-Primary path is **deterministic aggregation over per-agent states** (`aggregateStateOfPlay` in `src/state-patch.js`): each bucket collects bullets with holder attribution, dedupes case-insensitively, ranks by holder-count then recency (round, then contribution id — lexicographic text is only the final deterministic tiebreak), and selects the top 8 with a per-holder cap (3) plus a coverage pass guaranteeing every active voice ≥1 slot; `established` maps to `## Decisions & Proposals` while `## Agreements` holds the true-consensus subset (≥2 holders); stances are ranked into Key Facts alongside evidence with a floor of 3 evidence slots; files are unioned most-recent-first by (round, contribution id). Output markdown shape is identical to the legacy path, so every consumer works untouched. Aggregation itself is `O(P × buckets)`; note the round finalizer still runs an `O(T)` uncaptured-contribution scan each round (with `vote_response` correctly excluded, since ballots are noise by design).
+Primary path is **deterministic aggregation over per-agent states** (`aggregateStateOfPlay` in `src/state-patch.js`): each bucket collects bullets with holder attribution, dedupes case-insensitively, ranks by holder-count then recency (round, then contribution id — lexicographic text is only the final deterministic tiebreak), and selects the top 8 with a per-holder cap (3) plus a coverage pass guaranteeing every active voice ≥1 slot; `established` maps to `## Decisions & Proposals` while `## Agreements` holds the true-consensus subset (≥2 holders); stances are ranked into Key Facts alongside evidence with a floor of 3 evidence slots; files are unioned most-recent-first by (round, contribution id). Output markdown shape is identical to the legacy path, so every consumer works untouched. Aggregation itself is `O(P × buckets)`; the round finalizer runs the `updateStateOfPlay` fallback only when state coverage is incomplete or the aggregate is empty.
 
-Fallback is the legacy `updateStateOfPlay(weave, question, tags)` keyword/type scan, used when all states are empty (meeting start, flag off, old DB). Flag off is therefore a zero-behavior cliff: with no patches, aggregation returns `""` and the legacy scan runs exactly as before.
-
-The orchestrator calls `updateStateOfPlay(weave, question, tags)` which categorizes contributions using **the stored contribution type** (`c.type`) as the primary signal:
+Fallback is `updateStateOfPlay(weave, question, tags)`, a **type-driven** scan used when all states are empty (meeting start, SKILL.state off, old DB). It categorizes contributions from **the stored contribution type** (`c.type`) and the interaction mode the calling tool recorded (`prompt_context.mode`) — nothing else:
 
 | `c.type` | Category |
 |-----------|----------|
-| `contribution` (primary turns — untyped) | Fallback keyword matching |
-| `propose`, `refine` | Decisions & Proposals |
-| `support` | Agreements |
-| `challenge`, `dissent`, `critique_response` | Disagreements & Concerns |
-| `question` | Open Questions |
+| `contribution` (primary turns — untyped) | **not filed** — see below |
+| `critique_response` | Disagreements & Concerns |
 | `query_response` | Key Facts — except modes `risks`/`assumptions`/`alternatives` (Open Questions) and `critique` (Disagreements) |
-| `perspective_response` | Open Questions (a position, not a finding) |
+| `perspective_response` | Key Facts (attributed context, not a finding) |
 | `evidence_response` | Key Facts — only when tool-backed; un-backed answers route to Open Questions as claimed-but-ungrounded |
 | `summoned_response` | Key Facts |
 | `reflection` | Key Facts, wrapped as `[Reflected: …]` |
-| `vote_response` | (excluded — individual ballots are noise; the tally carries the result) |
+| `vote_response` | (excluded — individual ballots are noise; the invoker's interpretation carries the result) |
 | `synthesize`, `refuse` | (excluded) |
 | `pass` | (skipped before classification) |
-| unknown/missing | Fallback keyword matching |
+| `propose`, `refine`, `support`, `question` (legacy, no longer emitted) | (not filed) |
+| unknown/missing | (not filed) |
 
-**Fallback keyword matching** (for untyped contributions and missing/unknown types) uses word-boundary-aware regex: `\bwe should\b`/`\bdecision\b` → Decisions, `\bagree\b`/`\bconsensus\b` → Agreements, `\bdisagree\b`/`\bconcern\b` → Disagreements, `?` → Open Questions, otherwise Key Facts.
+**Untyped primary turns are not filed, and there is no keyword fallback.** This is a deliberate deletion. The state of play is the room's primary shared context, and a word-boundary regex (`\bwe should\b` → Decisions, `\bagree\b` → Agreements, `\bdisagree\b` → Disagreements, trailing `?` → Open Questions) was deciding what the room believed it had established — from an agent's prose, with no way for anyone to see or override the guess. `loom_state_patch` is the declaration channel for a primary turn: its `established` / `contested` / `open` / `facts` buckets are what `aggregateStateOfPlay` reads. A turn that did not call it contributed nothing to the state of play, and its prose is still in that round's Live block and in the synthesis transcript, so it is in the record without being claimed as settled.
+
+For the same reason the round finalizer no longer forces the `O(T)` scan for a turn whose patch missed (`hasUncapturedContribution` / `state_patch_outcome` are gone): the scan could not capture the content that condition named.
 
 **Files Involved:** content mentioning file paths (`file=` markers, `src/…` references, or code-file extensions) additionally contributes a short snippet to a dedicated `## Files Involved` section (deduplicated, 5 most recent) so agents can target project files during code-analysis deliberations.
 
@@ -776,7 +775,7 @@ The state of play is stored in `meetings.state_of_play` and updated after each r
 
 ### Why This Replaces Fabric Compaction
 
-The old system appended round summaries to a "fabric" string and compressed it past `maxFabricChars`. Problems: O(N²) token growth and information loss on compaction. The current state of play is derived from bounded per-agent state with a deterministic weave fallback when coverage is incomplete, and is bounded in size. Combined with ephemeral sessions, per-turn token growth is O(1). The legacy `fabric` column remains only for initial user context and compatibility.
+The old system appended round summaries to a "fabric" string and compressed it past `maxFabricChars`. Problems: O(N²) token growth and information loss on compaction. The current state of play is derived from bounded per-agent state with a type-driven weave fallback when coverage is incomplete, and is bounded in size. Combined with ephemeral sessions, per-turn token growth is O(1). The legacy `fabric` column remains only for initial user context and compatibility.
 
 ---
 
@@ -981,14 +980,18 @@ If the draft is accurate, grounded, and complete, respond with exactly: [NO_CHAN
 - Appends **## Unresolved Objections** and **## Resolved Concerns** (from `objection_collector`).
 - Appends **## Refusals** (agents who refused to engage, as `Name: content`).
 - Adds a note for any required section the model omitted (`> **Note:** The synthesizer did not generate…`).
-- **Grounded-synthesis check:** every `## Decision` line citing no valid `[#id]` from the weave is listed under **## Needs Verification** rather than silently kept.
+- **Grounded-synthesis check:** every `## Decision` line citing no valid `[#id]` from the weave is collected for **## Needs Verification** — and, with the detectors off by default (N3), counted rather than written.
+- **Detector precision gate (N3):** `## Needs Verification` and `## Citation Warnings` are both computed and both **counted** in `artifact.detector_report`; neither is written to the deliverable unless its flag is on *and* `detectors.dryRun` is false. Conflicts require a shared unit, a shared label and a time order, so a year is never banded against a percentage; citation targets under `minCitationTargetChars` and "synthesized from" attributions are exempt.
 - Parses the Confidence section if present; otherwise derives it heuristically (`deriveConfidence`):
   ```javascript
   if (dissentCount === 0 && challengeRatio < 0.3 && participationRate >= 0.5) return "high";
   if (dissentCount <= 1 && challengeRatio < 0.5 && participationRate >= 0.33) return "medium";
   return "low";
   ```
-- Extracts structured fields (`decisions`, `action_items`, `proposed_fix`, `files_involved`, `open_questions`, `dissent`, `refusals`, `confidence`) and persists the artifact with `_saveArtifact`.
+- **Confidence roll-up (N2):** the stored `confidence` is `min(name, number)` — the weaker layer wins — so the column can never read `high` while the artifact's own prose says `Number: Low`. Both layers are persisted in `confidence_name` / `confidence_number`; the prose split, when the synthesizer wrote one, wins over the derived one.
+- **Engagement ledger (N8):** `artifact.engagement` records how many plain contributions engage no peer, how many citations point at the author, and what fraction of the weave this very artifact cites. The same ledger is handed to the synthesis prompt so each uncited contribution must be cited, synthesized, or named as superseded.
+- Extracts structured fields (`decisions`, `action_items`, `proposed_fix`, `files_involved`, `open_questions`, `refusals`, `confidence`, `confidence_name`, `confidence_number`, `reconciliation`, `detector_report`, `engagement`) and persists the artifact with `_saveArtifact`.
+- **No retraction detection.** An earlier build inferred retractions from 11 English-phrase regexes (`i retract`, `scratch that`, `i no longer stand by`…), bound each to its original by `[#id]` citation or keyword overlap, propagated taint over the citation graph, and wrote `⚠ retracted claim [#n]` / `⚠ retracted figure 16.7pp` markers into the artifact. All of it is deleted. A house style that did not match the regex produced a retraction that silently was not one — the same failure as the deleted vote tally, one layer up: code guessing at meaning and then reporting the guess as a record. Retracting a figure is a thing an agent *does*, and when it wants to it says so in its own prose; the synthesizer sees the whole transcript and can weigh the correction itself. `test/no-prose-interpreters.test.js` pins the deletion.
 
 ### Fallback Synthesis
 
@@ -1056,7 +1059,7 @@ State is persisted via the `PersistenceService` after each round finalization an
 
 ### Per-Agent Execution State (SKILL.state)
 
-Each agent owns a bounded structured state `Σⁱ = { stance, established[], contested[], open[], facts[], files[], version, updated_round, updated_contribution_id }` (`src/state-patch.js`). In memory it lives in `StateManager.participantStates` (per-agent ownership — no two agents ever write the same slice); `buildSharedState` carries only a summary (counts + versions) to avoid inflating the per-round clone. Persisted in `participants.state_json` plus an append-only `state_patches` audit table (`UNIQUE(meeting_id, participant_id, version)`, `ON DELETE CASCADE`), schema `user_version 7`. During a primary turn the validated patch is held in `StateManager`; the contribution, participant state, and patch audit row commit in one SQLite transaction. `version++` happens only on successfully applied patches; failed validation, empty patches, and misses mutate nothing and write no row. Resume/extension carries all `Σⁱ` forward (`restoreParticipantStates`); missing/corrupt rows seed deterministically (reflection-seeded when available, else empty, `rebuilt: true`). Full spec: `plans/skill-state-complementary-implementation.md`.
+Each agent owns a bounded structured state `Σⁱ = { stance, established[], contested[], open[], facts[], files[], version, updated_round, updated_contribution_id }` (`src/state-patch.js`). In memory it lives in `StateManager.participantStates` (per-agent ownership — no two agents ever write the same slice); `buildSharedState` carries only a summary (counts + versions) to avoid inflating the per-round clone. Persisted in `participants.state_json` plus an append-only `state_patches` audit table (`UNIQUE(meeting_id, participant_id, version)`, `ON DELETE CASCADE`), schema `user_version 13`. During a primary turn the validated patch is held in `StateManager`; the contribution, participant state, and patch audit row commit in one SQLite transaction. `version++` happens only on successfully applied patches; failed validation, empty patches, and misses mutate nothing and write no row. Resume/extension carries all `Σⁱ` forward (`restoreParticipantStates`); missing/corrupt rows seed deterministically (reflection-seeded when available, else empty, `rebuilt: true`). Full spec: `plans/skill-state-complementary-implementation.md`.
 
 **Bounded by construction (`STATE_PATCH_CAPS`).** Each bucket holds ≤ `buckets` (8) items — ≤ `buckets + reserve` (10) transiently, reported in `overCap`; `stance` ≤400ch, bullets ≤280ch, files ≤160ch; ≤3 adds and ≤5 removes per call. `renderMyStateMarkdown` slices to `buckets`, and `aggregateStateOfPlay` caps every shared bucket at `buckets`, so prompt footprint is flat in `T`.
 
@@ -1303,7 +1306,7 @@ When loom tools are enabled, the system prompt includes:
 | `builtIn.*` | (see above) | Enable built-in tools for agent turns |
 | `builtIn.bash.allowlist` | `["git","ls","wc","head","tail","grep","find"]` | Only these commands via bash |
 | `loom.*` | all `true` | Enable loom plugin tools (query/vote/summon/request_next/pass/state_patch) |
-| `maxToolCallsPerTurn` | `12` | Hard per-turn Loom tool-call limit enforced before execution |
+| `maxToolCallsPerTurn` | `12` | Hard per-turn Loom tool-call limit enforced before execution. **`loom_state_patch` is exempt** (N7): the patch is the agent's memory for the next turn, and a limiter that can evict it discards the work the turn just did. The tool enforces its own at-most-once-per-turn rule, so the exemption cannot be spent on extra calls. A refusal at the cap is recorded as a `meeting_degraded_reasons` entry and an audit row with status `rejected` (N6) |
 | `maxToolOutputTokens` | `12000` | Warning threshold for stored tool-output volume; synthesis context remains bounded |
 
 ### Risk Mitigations
@@ -1387,14 +1390,14 @@ One call can query multiple peers (1 per item). Each item specifies a `target` (
 
 **Signature:** `loom_vote({ question })`
 
-Fan-out to **all other active participants** (the source does not ballot; failed/passed participants are excluded). Voters are prompted in **parallel batches** (`src/utils/fanout.js`: default 5/batch, ~100/min budget from `TUNING.FANOUT`) and the source interprets the returned tally. Partial failures are per-voter entries — one failed ballot never blocks the rest. Note: at very large room sizes (e.g. 300 participants ≈ 60 batches) full fan-out is complete but slow by design; the caller waits for all batches.
+Fan-out to **all other active participants** (the source does not ballot; failed/passed participants are excluded). Voters are prompted in **parallel batches** (`src/utils/fanout.js`: default 5/batch, ~100/min budget from `TUNING.FANOUT`) and **the source is the sole, declared interpreter** of the returned ballots. Partial failures are per-voter entries — one failed ballot never blocks the rest. Note: at very large room sizes (e.g. 300 participants ≈ 60 batches) full fan-out is complete but slow by design; the caller waits for all batches.
 
 - **Prompt** (`buildVotePrompt`): poll question, source's contribution, voter's last 2 contributions and stored reflection, round context.
-- **Ballot format:** `[Vote: <letter>]` + 1–2 sentences reasoning. `extractVoteLetter()` accepts the tag or a standalone capital letter.
+- **Ballot format:** `[Vote: <letter>]` first, then 1–2 sentences of reasoning. Nothing parses it: the ballot is stored and returned verbatim, and the invoker's model reads it. (N1 — the former `utils/vote-tally.js` regex interpreted ballots and silently dropped 44% of them while still reporting `Total voters: 0`; the module was deleted rather than hardened, because a lossy second source of truth beside the raw ballots is worse than no second source of truth.)
 - **Tools:** none — `tool_choice: "none"` (fast, tool-free poll).
-- **Output:** each ballot stored as `vote_response` (`[Vote from <Name>]`); tally is returned **inline** to the caller (`{tally:"[Vote Tally] …", votes:[…]}`) for same-turn synthesis — no `vote_tally` row is persisted (invoker interprets in prose).
-- **Edge case:** source-only → tally inline with 1 voter.
-- **Idempotency:** same `batch_id + question` reuses existing `vote_response` rows and rebuilds tally inline.
+- **Output:** each ballot stored as `vote_response` (`[Vote from <Name>]`), **untruncated** — the reasoning is the evidence, and a 200-character prefix once cut the load-bearing sentence of a ballot mid-word. Ballots are returned **inline** to the caller as `{question, votes:[…], note}` for same-turn synthesis; there is no `tally` field and no `vote_tally` row. The note states the contract: *"Ballots are returned verbatim and you are the interpreter — no tally is computed and no ballot is dropped. State the outcome, the number of responders, and the margin, and record the ballots you are relying on in your contribution."* Because the interpretation lives in the invoker's contribution, downstream synthesis cites that contribution and an interpretation error is visible at its source.
+- **Edge case:** source-only → empty `votes` with the same note.
+- **Idempotency:** same `batch_id + question` reuses existing `vote_response` rows verbatim.
 
 ### `loom_summon` — Guest Expert
 
@@ -1547,14 +1550,30 @@ Dashboard-first, callbacks are intentionally silent toward chat:
 
 A simple process-wide collector exposed via `/api/metrics` and `getMetricsSnapshot()` (circular `latencyBuffers` `TUNING.LATENCY_SAMPLE_LIMIT` 100, O(1) `recordLatency`):
 
-- **Counter** — `llm_calls_by_type` (agent/synthesis), `retry_events` (`attempted`/`retry_success`/`exhausted` via `withRetry`), `breaker_events` (`open`/`half_open`/`closed`), `degradation_events`.
-- **Latencies** — `llm_prompt_ms`, `synthesis_ms` (last `LATENCY_SAMPLE_LIMIT` samples; aggregated into count/avg/p50/p95/max via `latencyStats`).
+- **Counter** — `llm_calls_by_type` (agent/synthesis), `retry_events` (`attempted`/`retry_success`/`exhausted` via `withRetry`), `breaker_events` (`open`/`half_open`/`closed`), `degradation_events`, `meeting_degraded_reasons`.
+- **Latencies** — `llm_prompt_ms`, `synthesis_ms`, `round_span_ms` (last `LATENCY_SAMPLE_LIMIT` samples; aggregated into count/avg/p50/p95/max via `latencyStats`).
 
 RoundExecution records per-call tokens and `llm_prompt_ms` per agent call; synthesis records its own bucket. `getMetricsSnapshot()` is polled by dashboard `GET /api/metrics` and persisted per-meeting via `meeting_metrics` at synthesis.
 
 ### Per-Meeting Metrics
 
 On meeting end the orchestrator persists `meeting_metrics` via `saveMeetingMetrics`: counters (LLM calls by type, token counts), duration_ms, rounds, contributions, turn request count. The dashboard can render these alongside the meeting.
+
+`meeting_metrics.counters.quality` is the per-meeting health block, and the rule it follows is that **liveness is not health** (N6). A run in which a third of state writes were refused used to present as `agent_errors: 0` with 100% of `tool_audit` rows `completed`, because refusals existed only in an agent's prose. It now carries:
+
+| Field | Meaning |
+|---|---|
+| `contributions_by_type` | raw mix |
+| `unresolved_objections` / `total_objections` | the objection inventory |
+| `input_tokens` / `output_tokens` / `total_tokens` / `latencies` | real cost accounting |
+| `cost_unmeasurable` | every cost counter is zero — never grade on empty telemetry |
+| `meeting_degraded_reasons` | **named** reasons this meeting ran degraded: `state_patch_rejected`, `tool_call_limit_reached`, `final_round_below_floor`, `final_round_patch_grace_failed`, `cost_unmeasurable`. Recorded at the point of refusal via `recordMeetingDegradedReason` |
+| `tool_calls.max_in_a_turn` / `tool_calls.cap_per_turn` | the cap is per turn and the audit is per round; reporting the per-turn high-water mark beside the cap is what stops a healthy meeting reading as an overrun (N7) |
+| `round_budget` | `{ final_span_ms, median_span_ms, ratio, below_floor }` — the closing round measured against the median of the others (N9) |
+| `final_patch_grace` | `{ attempted, patched, failed }` — the closing round's guaranteed patch opportunity |
+| `mechanism_mix` | argument-shaped vs decision-shaped contributions per round, plus the objection inventory for each round (N12). **Visibility, not a rule**: ballots rose 2 → 16 while unresolved objections fell 15 → 3 in one meeting, and whether that is a good trade is not decidable from a single meeting. The earlier proposal to cap ballot share was withdrawn — it would have punished a legitimate mechanism choice and suppressed the definition-freeze and denominator decisions that meeting's reasoning rests on |
+
+Refusals are also written to `tool_audit` with a status that is not `completed` (`loomToolRefusal`), so the audit table stops reading 100% success.
 
 ### Logging
 
@@ -1607,9 +1626,9 @@ The appendix table lists every model-related configuration key (`fastPathModel`,
 
 Loaded from `.loomrc.json` (project or `<opencode-config-dir>/.loomrc.json`), or the legacy `opencode.json` `"loom"` key. Validated and merged over defaults; unknown keys warn and are ignored. `OPENCODE_CONFIG_DIR` selects the shared Loom data root when no workspace is supplied. `DEFAULT_CONFIG.tuning` is `JSON.parse(JSON.stringify(TUNING))` deep-clone (not ref) — per-meeting `createMeetingConfig()` deep-freezes.
 
-`TUNING` (current constants, `src/config/defaults.js:1`): `MAX_ITERATIONS 100` (weaving loop guard), `WATCHDOG_TICK_MS 30000`, `RING_BUFFER_SIZE 500`, `SKIP_PASSED_*` (3,10,2), `EXTENSION_EXTRA_ROUNDS_FALLBACK 4`, `MAX_CRITIQUE_RETRIES 3`, `SYSTEM_PROMPT_CACHE_MAX 50`, `EMBEDDING_CACHE_MAX 512`, `LATENCY_SAMPLE_LIMIT 100`, `DASHBOARD_IDLE_TIMEOUT_MS 60000`, `MAX_DB_CACHE_SIZE 10`, `VOTE_TIMEOUT_MS 60000`/`SUMMON_TIMEOUT_MS 90000`, and bounded state/transcript budgets. There is no fabric-RAG tuning or vector search tool in the current agent context path.
+`TUNING` (current constants, `src/config/defaults.js:1`): `MAX_ITERATIONS 100` (weaving loop guard), `WATCHDOG_TICK_MS 30000`, `RING_BUFFER_SIZE 500`, `SKIP_PASSED_*` (3,10,2), `EXTENSION_EXTRA_ROUNDS_FALLBACK 4`, `MAX_CRITIQUE_RETRIES 3`, `SYSTEM_PROMPT_CACHE_MAX 50`, `EMBEDDING_CACHE_MAX 512`, `LATENCY_SAMPLE_LIMIT 100`, `DASHBOARD_IDLE_TIMEOUT_MS 60000`, `MAX_DB_CACHE_SIZE 10`, `VOTE_TIMEOUT_MS 60000`/`SUMMON_TIMEOUT_MS 90000`/`FINAL_ROUND_PATCH_GRACE_MS 45000` (N9 — one bounded, patch-only turn for each participant that did not patch in the closing round; `0` disables), and bounded state/transcript budgets. There is no fabric-RAG tuning or vector search tool in the current agent context path.
 
-DB fresh `meetings`/`participants` enforce `CHECK` + `UNIQUE` + `FK` at `initSchema()`; ordered migrations bring existing databases to schema version 7. (Pre-existing DBs may still contain the removed `persona_embeddings`/vec tables; nothing reads them.)
+DB fresh `meetings`/`participants` enforce `CHECK` + `UNIQUE` + `FK` at `initSchema()`; ordered migrations bring existing databases to the current schema version (13). (Pre-existing DBs may still contain the removed `persona_embeddings`/vec tables; nothing reads them.)
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -1626,7 +1645,7 @@ DB fresh `meetings`/`participants` enforce `CHECK` + `UNIQUE` + `FK` at `initSch
 | `modelDiversity` | `true` | Give each agent a distinct model when enough are available |
 | `maxSummonsPerRound` | `2` | Summoned experts per round |
 | `maxQueryTargetsPerTurn` | `3` | Maximum peer targets in one `loom_query` call |
-| `maxToolCallsPerTurn` | `12` | Maximum Loom interaction calls per turn; enforced before execution |
+| `maxToolCallsPerTurn` | `12` | Maximum Loom interaction calls per turn; enforced before execution, **except `loom_state_patch`** (N7) |
 | `agentTools.maxToolOutputTokens` | `12,000` | Warning threshold for stored tool-output volume; synthesis context remains bounded |
 | `maxTotalTokens` | `500,000` | Default total token budget; set `0` only for an intentional unbounded run |
 | `maxSummonsPerAgent` | `1` | Summons per agent per round |
@@ -1638,5 +1657,73 @@ DB fresh `meetings`/`participants` enforce `CHECK` + `UNIQUE` + `FK` at `initSch
 | `agentTools.sameTurnSynthesis` | `true` | Peer responses returned inline for same-turn synthesis (Section 22) |
 | `agentTools.*` | (see Section 20) | Tool enablement — built-in tools + loom plugin tools (query/vote/summon/request_next/pass/state_patch) |
 | `agentTools.builtIn.bash.enabled` | `false` | Bash is disabled unless explicitly enabled with a safe allowlist |
+| `detectors.needsVerification` | `false` | Ship the `## Needs Verification` section in the artifact. Off by default (N3): a detector that cannot state its precision is advisory, and this one was ~40% precise |
+| `detectors.citationWarnings` | `false` | Ship the `## Citation Warnings` section. Same gate |
+| `detectors.dryRun` | `true` | Count candidates without writing them. Candidate counts always travel in `artifact.detector_report`, so a hand audit can measure precision before either flag is enabled |
+| `detectors.dryRunMeetings` | `2` | Meetings to dry-run before enabling a flag |
+| `detectors.precisionFloor` | `0.9` | Measured precision a detector must clear on a hand-audited sample before it graduates from advisory to authoritative |
+| `detectors.minCitationTargetChars` | `400` | Citation targets shorter than this are exempt — keyword overlap cannot check a 57-character ballot |
+| `composition.maxTierDistance` | `1.25` | N11 cross-tier floor: a tier whose best candidate is further than this has nothing on-topic, so the seat goes to the best candidate in any tier. The one absolute distance left in composition, and a cross-tier switch rather than an exclusion |
+| `composition.topNPerTier` | `3` | Relative cut: keep the top-3 of a tier by rank regardless of absolute similarity |
 | `DEFAULT_EMBEDDING_MODEL` | `"Snowflake/snowflake-arctic-embed-xs"` | Default embedder for persona selection (warmed up on dashboard start) |
 | `DEFAULT_EMBEDDING_QUANT` | `"onnx/model_int8.onnx"` | ONNX quantization variant used by the embedder |
+---
+
+## 27. What Code May and May Not Interpret
+
+Every subsystem here parses text the models wrote. That is unavoidable — but it is
+not all the same activity, and conflating the kinds is how a machine-made guess
+ends up presented as a record.
+
+### Three kinds, only one of which is a defect
+
+| Kind | What it is | Examples | Verdict |
+|------|------------|----------|---------|
+| **Rendering** | The artifact is a markdown document for humans; its headings *are* its structure. Reading them back is formatting, not interpretation. | `extractSection(text, "Decision")` → the `decisions` column; `normalizePipeTables` | **Keep.** Deleting these would be the vote-tally lesson misapplied — the fix there was a *lossy second source of truth*, not a contract. |
+| **Integrity** | Facts about stored data, not about meaning. | does `[#12]` resolve to a real row; is a state patch schema-valid; is a turn under the length cap | **Keep.** Correct in code, and cheap to verify. |
+| **Semantic judgement** | Code deciding what an agent *meant*. | "this is a retraction"; "this turn established a decision"; "this objection is answered"; "this fact is grounded" | **This is the vote-tally class.** |
+
+### The rule
+
+> Code may not make a semantic claim about an agent's prose that a human cannot
+> see, audit, and override.
+
+Concretely: if a regex or a heuristic would decide *what the room believes*, or
+*what an agent claimed*, and the answer reaches an agent prompt, a DB column, or
+the deliverable, it is doing the model's job. The agent's own words are the
+source of truth. If a structured channel already exists for the declaration
+(`loom_state_patch` buckets, tool calls, contribution types), code reads that
+channel and nothing else.
+
+### Deleted under this rule
+
+- **Vote tallying** — a regex counted ballots and dropped 44% of them, reporting
+  `Total voters: 0` while presenting the count as fact. `utils/vote-tally.js`
+  removed; the invoker's model is the declared interpreter and ballots are stored
+  and returned verbatim.
+- **`classifyByKeywords`** — decided which state-of-play bucket a turn's prose
+  belonged in from `we should` / `agree` / `disagree` / a trailing `?`, and its
+  output was the room's primary shared context. Removed. Untyped primary turns
+  file nothing; `loom_state_patch` is the declaration channel.
+- **Retraction detection** — 11 English-phrase regexes decided that a claim was
+  withdrawn, then value+unit string matching tainted every downstream number,
+  and the artifact was mutated with `⚠ retracted …` markers. Removed entirely,
+  including the `retractions` / `retracted_figures` artifact fields and the
+  retraction-lookup falsifier in the reconciliation pass.
+
+`test/no-prose-interpreters.test.js` greps `src/` for the deleted symbols and for
+the detector's own phrase vocabulary, so none of it can come back unnoticed.
+
+### Still on the list, deliberately not yet removed
+
+These remain load-bearing and are tracked rather than silently tolerated:
+
+| Site | What it guesses |
+|---|---|
+| `state-patch.js` `isPinned` | that a `facts_add` bullet is grounded because its text contains `Source:` or `[#id]` — and, when it is not, it **silently** re-routes the fact to `open (unverified)` |
+| `utils/text.js` `extractFileBlockTools` | that a ```` ```file=…``` ```` fence in prose was a real file write, fabricating a `write` tool call that then satisfies `deriveConfidence`'s grounding test and `hasToolBacking` — code inventing evidence and then rewarding it |
+| `round-summarizer.js` `strength:` | that a contribution's evidence is strong/weak/inconclusive from a prose keyword — and orders the clerk's input budget by it |
+| `objection-collector.js` | that an objection is stale from keyword overlap; the verdict feeds `deriveConfidence`'s `dissentCount` gate |
+| `execute-turn.js` | that a second-pass synthesis is substantive from a 200-character count, overriding the first pass |
+| `state-of-play.js` `hasFileMention` | that a bare `layout.tsx` mention in prose is a file the room touched |
+| `moderation.js` `extractBalancedJsonArray` | a structural scrape, but of planner prose — the next round's speaking order |

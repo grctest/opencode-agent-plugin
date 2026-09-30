@@ -60,7 +60,10 @@ const EXPECTED_SYS = {
   "Mode": "e2f67c7b37e3",
   "Research Tools — Tool Ladder": "ede28bc2a52c",
   "WHEN TO PASS": "20cc67420712",
-  "OUTPUT CONTRACT — read last, it governs; in conflict it wins": "af0f38a73638",
+  // N7 — the OUTPUT CONTRACT changed: loom_state_patch is now exempt from the
+  // per-turn tool cap, and the contract says so instead of telling agents to
+  // "reserve tool budget" for a call the limiter can no longer evict.
+  "OUTPUT CONTRACT — read last, it governs; in conflict it wins": "d90f660b4223",
 };
 
 const EXPECTED_USER = {

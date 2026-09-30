@@ -1,5 +1,6 @@
 import { RoundExecutor } from "../round-executor.js";
 import { summarizeRound } from "../round-summarizer.js";
+import { recordLatency } from "../metrics.js";
 import { Logger } from "../logger.js";
 
 /**
@@ -38,6 +39,11 @@ export class RoundService {
       const { round, activeParticipants, promptOrchestrator, getHighestTierModel, getFallbackModel, orchestratorConfig } = params;
 
     this.#roundExecutor.resetRoundStats();
+    // N9 — measure the round's span. Without it there is no way to tell a
+    // deadline round from a substantive one: deliberation 1355a723's closing
+    // round ran 382s against a 1301s peak and nothing in the system said so.
+    const startedAt = Date.now();
+    round.started_at = new Date(startedAt).toISOString();
 
     await this.#roundExecutor.runPromptPhase(round, activeParticipants);
 
@@ -70,6 +76,12 @@ export class RoundService {
       this.#logger.warn("round_summary_failed", `Round ${round.number} summary failed — using digest fallback`, { error: err?.message ?? String(err) });
       round.summary = "";
     }
+
+    // N9 — the span travels with the round so the closing round can be
+    // measured against the median of the rounds that came before it.
+    round.span_ms = Date.now() - startedAt;
+    try { recordLatency("round_span_ms", round.span_ms); } catch {}
+    this.#logger.info("round_span", `Round ${round.number} ran ${Math.round(round.span_ms / 1000)}s`, { round: round.number, span_ms: round.span_ms });
 
     return { round };
   }

@@ -1,3 +1,5 @@
+import { recordMeetingDegradedReason } from "../../metrics.js";
+
 function safeAuditValue(value) {
   if (value == null) return null;
   const serialized = typeof value === "string" ? value : JSON.stringify(value) ?? String(value);
@@ -40,4 +42,28 @@ export function auditLoomTool({ db, stateManager, caller, meetingId, tool, input
       } catch {}
     }
   } catch {}
+}
+
+/**
+ * N6 — a refusal is a fact, not a non-event. tool_audit recorded what was
+ * invoked, never what succeeded, so four rejected state patches and a failed
+ * forum read left a database reporting a flawless run. Every refusal now
+ * writes an audit row with a non-completed status AND a named degraded reason,
+ * so a monitor built on these tables is measuring something.
+ *
+ * @param {Object} params
+ * @param {string} params.reason stable degraded-reason key, e.g. "state_patch_rejected"
+ * @param {string} [params.status="rejected"] audit status for the row
+ * @param {Object} [params.extra] extra fields to keep in the agent-facing payload
+ * @returns {Object} the tool result payload to return to the agent
+ */
+export function loomToolRefusal({ db, stateManager, caller, meetingId, tool, input = null, error, extra = {}, reason, status = "rejected", title = null, metadata = {} }) {
+  const output = JSON.stringify({ error, ...extra, degraded: true, reason });
+  try {
+    auditLoomTool({ db, stateManager, caller, meetingId, tool, input, output, status, title: title ?? `${tool}:refused` });
+  } catch {}
+  try {
+    recordMeetingDegradedReason(meetingId, reason);
+  } catch {}
+  return { output, metadata: { error: true, degraded: true, reason, ...metadata }, title: title ?? `${tool} refused` };
 }

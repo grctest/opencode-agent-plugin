@@ -1,4 +1,8 @@
 import { LENGTH_LIMITS } from "./prompts/constants.js";
+import { parseSplitConfidence, rollupConfidence } from "./utils/confidence.js";
+import { getConfig } from "./config.js";
+import { incrementKeyedCounter } from "./metrics.js";
+import { computeEngagementMetrics } from "./round-summarizer.js";
 
 function supplementMissingSections(text, missingSections) {
   const note = `> **Note:** The synthesizer did not generate the following sections: ${missingSections.join(", ")}. Consider reviewing the raw deliberation transcript for additional context.`;
@@ -31,8 +35,10 @@ export function deriveConfidence(weave, dissentCount, totalParticipants = 0, act
 
 /** Parses the Confidence section — anchors to the Confidence heading block to avoid picking a stray High in body. */
 export function parseConfidence(text) {
-  // Find the Confidence section block, then search for the confidence word inside it
-  const sectionRe = /^#{2,}\s*Confidence\b([\s\S]*?)(?=^#{2,}\s|\z)/im;
+  // (?![\s\S]) is the portable end-of-string assertion; JS has no \z and
+  // /\z/ silently matches a literal "z", so the block anchor used to fall
+  // through to the whole document whenever the section held no "z".
+  const sectionRe = /^#{2,}\s*Confidence\b([\s\S]*?)(?=^#{2,}\s|(?![\s\S]))/im;
   const secMatch = text.match(sectionRe);
   const searchScope = secMatch ? secMatch[1] : text;
   // Look for the confidence word on its own line or as a label (avoid matching "High risk" in body unless it's the answer)
@@ -173,148 +179,6 @@ export function extractSection(text, sectionName) {
 }
 
 // ---------------------------------------------------------------------------
-// P13 — Retract-and-propagate
-// A retraction is a graph operation, not a local edit: when a participant
-// retracts a figure, every downstream contribution that cites it (directly
-// or transitively) inherits the taint. The synthesis output annotates —
-// never silently drops — claims that depend on retracted figures, so no
-// retracted figure survives as a live dispute in the artifact.
-// ---------------------------------------------------------------------------
-
-/** Explicit retraction phrasings — English words, not contribution types. */
-const RETRACTION_PATTERNS = [
-  /\bi retract\b/i,
-  /\bi withdraw\b/i,
-  /\bi take back\b/i,
-  /\bi was wrong\b/i,
-  /\bi'?m wrong\b/i,
-  /\bcorrecting my earlier\b/i,
-  /\bretract (?:my|the|that)\b/i,
-  /\bwithdraw (?:my|the|that)\b/i,
-  /\bi no longer stand by\b/i,
-  /\bscratch that\b/i,
-  /\bdisregard (?:my|that|the above)\b/i,
-];
-
-/** Extracts [#id] citation targets from a text block. */
-function extractCitations(text) {
-  const ids = new Set();
-  for (const m of String(text || "").matchAll(/\[#(\d+)\]/g)) ids.add(m[1]);
-  return ids;
-}
-
-/** Count of shared significant words between two texts — binds a retraction to its original. */
-function keywordOverlap(a, b) {
-  const words = (t) => String(t || "").toLowerCase().split(/\W+/).filter((w) => w.length > 4);
-  const setB = new Set(words(b));
-  return words(a).filter((w) => setB.has(w)).length;
-}
-
-/**
- * Scans the weave for explicit retractions and resolves, for each, the
- * original contribution being retracted. Binding order:
- *   1. explicit [#id] citations inside the retraction text;
- *   2. fallback — the same participant's earlier contribution with the
- *      strongest keyword overlap (minimum bar avoids binding a retraction
- *      to an unrelated earlier claim).
- * @returns {Array<{retraction: object, retracted: object|null, retractedIds: string[]}>}
- */
-export function findRetractions(weave) {
-  const retractions = [];
-  for (const c of weave) {
-    const content = String(c.content || "");
-    if (!RETRACTION_PATTERNS.some((re) => re.test(content))) continue;
-    const cited = [...extractCitations(content)];
-    let retracted = null;
-    if (cited.length > 0) {
-      retracted = weave.find((w) => String(w.id) === cited[0]) ?? null;
-    }
-    if (!retracted) {
-      let best = null;
-      let bestScore = 0;
-      for (const earlier of weave) {
-        if (earlier === c) break; // only earlier contributions are retractable
-        if (earlier.participant_id !== c.participant_id) continue;
-        const score = keywordOverlap(content, earlier.content);
-        if (score > bestScore) { best = earlier; bestScore = score; }
-      }
-      if (best && bestScore >= 3) retracted = best;
-    }
-    retractions.push({
-      retraction: c,
-      retracted,
-      retractedIds: retracted ? [String(retracted.id)] : [],
-    });
-  }
-  return retractions;
-}
-
-/**
- * Computes the full taint set: retracted contributions plus every downstream
- * contribution that cites a tainted one (transitive closure over the [#id]
- * citation graph). A vote whose reasoning cites a retracted figure is itself
- * tainted — retraction propagates through the reasoning text of later votes.
- * @returns {{retractedIds: Set<string>, taintedIds: Set<string>, retractions: Array}}
- */
-export function propagateRetractions(weave) {
-  const retractions = findRetractions(weave);
-  const retractedIds = new Set();
-  for (const r of retractions) for (const id of r.retractedIds) retractedIds.add(id);
-
-  // citation graph: contributor id -> set of ids it cites
-  const cites = new Map();
-  for (const c of weave) cites.set(String(c.id), extractCitations(c.content));
-
-  // BFS from each retracted id: anything citing a tainted contribution is tainted
-  const taintedIds = new Set(retractedIds);
-  const queue = [...retractedIds];
-  while (queue.length > 0) {
-    const id = queue.shift();
-    for (const c of weave) {
-      const cid = String(c.id);
-      if (taintedIds.has(cid)) continue;
-      if (cites.get(cid)?.has(id)) {
-        taintedIds.add(cid);
-        queue.push(cid);
-      }
-    }
-  }
-  return { retractedIds, taintedIds, retractions };
-}
-
-/**
- * Annotates claims in the synthesis output that depend on retracted figures.
- * Every line citing a retracted or tainted contribution gets an inline marker;
- * open-question items built on retracted figures are flagged so they do not
- * survive as live disputes. Annotations are additive — the underlying claim
- * stays readable for audit.
- * @returns {{text: string, annotations: number}}
- */
-export function annotateRetractedClaims(text, retractionInfo) {
-  const { retractedIds, taintedIds, retractions } = retractionInfo;
-  if (retractedIds.size === 0) return { text, annotations: 0 };
-  const retractionById = new Map();
-  for (const r of retractions) for (const id of r.retractedIds) retractionById.set(id, r.retraction);
-
-  let annotations = 0;
-  const out = text.split("\n").map((line) => {
-    const cited = [...line.matchAll(/\[#(\d+)\]/g)].map((m) => m[1]);
-    const retractedCites = cited.filter((id) => retractedIds.has(id));
-    const taintedCites = cited.filter((id) => taintedIds.has(id) && !retractedIds.has(id));
-    if (retractedCites.length === 0 && taintedCites.length === 0) return line;
-    const parts = [];
-    for (const id of retractedCites) {
-      const r = retractionById.get(id);
-      parts.push(`⚠ retracted claim [#${id}]${r ? ` — retracted by [#${r.id}]` : ""}`);
-    }
-    for (const id of taintedCites) parts.push(`⚠ contains retracted claim [#${id}]`);
-    annotations += parts.length;
-    return `${line} ${parts.join(" ")}`;
-  });
-  return { text: out.join("\n"), annotations };
-}
-
-// ---------------------------------------------------------------------------
 // P9 — Split name/number confidence
 // The artifact separates confidence in the qualitative layer (the NAME: what
 // we are deciding) from confidence in the quantitative layer (the NUMBER:
@@ -406,8 +270,8 @@ export function findStraddlingBands(text) {
 // One pass resolves-or-versions every numerical conflict and RUNS (not merely
 // states) the cheapest falsifier for each. A conflict is two or more values
 // for the same quantity (normalized phrase or count unit) asserted by
-// different contributions. Each conflict is either resolved (retraction,
-// rounding, rate×count, or denominator basis) or versioned (v1/v2 with a
+// different contributions. Each conflict is either resolved (rounding,
+// rate×count, or denominator basis) or versioned (v1/v2 with a
 // reconciliation rule) — never silently stacked in the artifact.
 // ---------------------------------------------------------------------------
 
@@ -421,6 +285,13 @@ const QUANTITY_NOISE_WORDS = new Set(
   "line lines row rows col cols column columns page pages chapter chapters step steps part parts item items id ids version v round fig figure figures table tables eq equation no nos number numbers ref refs section sections para paragraph paragraphs slide slides eqn".split(" ")
 );
 
+// N3 (a) — syntax words are not quantity labels. A matcher that groups on the
+// word "vs" or "per" is reading its own punctuation: deliberation 1355a723
+// shipped "vs: v1 = 0.5 % vs v2 = 14 %" as a genuine conflict.
+const QUANTITY_CONNECTOR_WORDS = new Set(
+  "vs versus v per pro con versus cf versus than then about roughly approx approximately around near over under plus minus and or but so if when while because since although though yet nor also both either neither each every any all some no not only own same such as at by for from into onto with without within without across through during before after above below between among plus minus equal equals roughly about".split(" ")
+);
+
 const UNIT_NORMALIZE = {
   percent: "%", win: "win", wins: "win", won: "win", race: "race", races: "race",
   round: "round", rounds: "round", point: "point", points: "point",
@@ -430,12 +301,19 @@ const UNIT_NORMALIZE = {
   dollar: "$", dollars: "$", ms: "ms", second: "s", seconds: "s",
   minute: "min", minutes: "min", hour: "h", hours: "h",
   day: "d", days: "d", week: "w", weeks: "w", x: "x", k: "k", m: "m",
+  // Percentage-point and basis-point deltas are their own units, not
+  // percentages: without them a "16.7pp swing" is indistinguishable from a
+  // bare count and reconciliation cannot tell a delta from a level.
+  pp: "pp", ppt: "pp", "percentage point": "pp", "percentage points": "pp",
+  bps: "bps", "basis point": "bps", "basis points": "bps",
 };
 
 const COUNT_UNITS = new Set(["win", "race", "round", "point", "event", "podium", "pole", "game", "match", "season"]);
 
 // A numeric claim: optional preceding quantity phrase, a number, optional unit.
-const CLAIM_RE = /(?:\b([A-Za-z][\w'’-]*(?:\s+(?:[A-Za-z][\w'’-]*|of|in|for|to|at|by|with|the|a|an|per)){0,4})\s+)?(\d+(?:\.\d+)?)\s*(%|percent|wins?|races?|rounds?|points?|events?|podiums?|poles?|games?|matches?|seasons?|dollars?|ms|seconds?|minutes?|hours?|days?|weeks?|x|k|m)?/gi;
+// Order matters: "percentage point" must be tried before "percent", or a
+// percentage-point delta is recorded as a percentage.
+const CLAIM_RE = /(?:\b([A-Za-z][\w'’-]*(?:\s+(?:[A-Za-z][\w'’-]*|of|in|for|to|at|by|with|the|a|an|per)){0,4})\s+)?(\d+(?:\.\d+)?)\s*(%|percentage\s+points?|percent|pp|ppt|basis\s+points?|bps|wins?|races?|rounds?|points?|events?|podiums?|poles?|games?|matches?|seasons?|dollars?|ms|seconds?|minutes?|hours?|days?|weeks?|x|k|m)?/gi;
 
 /**
  * Extracts numeric claims ({ quantity, unit, value, raw }) from text. The
@@ -453,7 +331,7 @@ export function extractNumericClaims(text) {
     const unit = UNIT_NORMALIZE[unitRaw] ?? (unitRaw || null);
     const words = (m[1] ?? "").toLowerCase().split(/\s+/).filter(Boolean)
       .map((w) => UNIT_NORMALIZE[w] ?? w)
-      .filter((w) => !QUANTITY_STOPWORDS.has(w) && !QUANTITY_NOISE_WORDS.has(w));
+      .filter((w) => !QUANTITY_STOPWORDS.has(w) && !QUANTITY_NOISE_WORDS.has(w) && !QUANTITY_CONNECTOR_WORDS.has(w));
     const quantity = words.join(" ");
     if (!quantity && !unit) continue;
     // "Antonelli will win 8 races" — the 8 counts WINS; the trailing "races"
@@ -464,6 +342,25 @@ export function extractNumericClaims(text) {
     claims.push({ quantity, unit: effectiveUnit, value, raw: m[0] });
   }
   return claims;
+}
+
+/** Label words of a claim: the quantity phrase minus the unit word itself. */
+function labelWordsOf(claim) {
+  return (claim.quantity ?? "")
+    .split(/\s+/)
+    .filter((w) => w.length > 2 && !COUNT_UNITS.has(w) && !QUANTITY_CONNECTOR_WORDS.has(w));
+}
+
+/**
+ * N3 (a) — a quantity label must be a real noun phrase. A label that is empty,
+ * a bare unit, or made only of syntax words is not a quantity the room revised.
+ * @param {string} key
+ * @returns {boolean}
+ */
+export function isRealQuantityLabel(key) {
+  const words = String(key ?? "").split(/\s+/).filter(Boolean);
+  if (words.length === 0) return false;
+  return words.some((w) => w.length > 2 && !COUNT_UNITS.has(w) && !QUANTITY_CONNECTOR_WORDS.has(w));
 }
 
 /**
@@ -487,7 +384,15 @@ export function findNumericalConflicts(weave) {
   }
   const conflicts = [];
   const seen = new Set();
-  const addConflict = (key, unit, conflictClaims, granularity) => {
+  // N3 (a) — two values conflict only when they share a UNIT and a LABEL and
+  // the later one supersedes the earlier in time. Banding a year against a
+  // percentage, or 12 wins against 40 points, is how a keyword matcher ships
+  // confident nonsense; every partition below is therefore unit-first.
+  const addConflict = (key, unit, conflictClaims, granularity, label = null) => {
+    // N3 (a) — a real label, or the claim set collapses to "a number appeared
+    // twice" (the old "vs:" rows).
+    const labelKey = label ?? key;
+    if (!isRealQuantityLabel(labelKey)) return;
     const byValue = new Map();
     for (const cl of conflictClaims) {
       if (!byValue.has(cl.value)) byValue.set(cl.value, []);
@@ -495,56 +400,69 @@ export function findNumericalConflicts(weave) {
     }
     if (byValue.size < 2) return;
     if (new Set(conflictClaims.map((c) => c.contributionId)).size < 2) return;
-    const sig = `${key}|${[...byValue.keys()].sort((a, b) => a - b).join(",")}`;
+    // N3 (a) — the superseding value must be strictly later than the value it
+    // replaces. Two claims from the same position in time are a disagreement,
+    // not a revision, and are not emitted as a v1/v2 band.
+    const ordered = [...conflictClaims].sort((a, b) => (a.round ?? 0) - (b.round ?? 0) || a.order - b.order);
+    const first = ordered[0];
+    const last = ordered[ordered.length - 1];
+    if (first === last) return;
+    if ((first.round ?? 0) === (last.round ?? 0) && first.contributionId === last.contributionId) return;
+    const sig = `${granularity}|${key}|${label ?? ""}|${[...byValue.keys()].sort((a, b) => a - b).join(",")}`;
     if (seen.has(sig)) return;
     seen.add(sig);
     conflicts.push({
       quantity: key,
+      label: label ?? null,
       unit,
       granularity,
       values: [...byValue.keys()].sort((a, b) => a - b),
       claims: conflictClaims,
     });
   };
-  // Primary grouping: normalized quantity phrase (or bare unit).
+  // Primary grouping: normalized quantity phrase (or bare unit), partitioned by
+  // unit so a percentage never meets a bare count.
   const byPhrase = new Map();
   for (const cl of claims) {
     const key = cl.quantity || cl.unit || "%";
     if (!byPhrase.has(key)) byPhrase.set(key, []);
     byPhrase.get(key).push(cl);
   }
-  for (const [key, group] of byPhrase) addConflict(key, group[0].unit, group, "phrase");
+  for (const [key, group] of byPhrase) {
+    const byUnit = new Map();
+    for (const cl of group) {
+      const u = cl.unit ?? null;
+      if (!byUnit.has(u)) byUnit.set(u, []);
+      byUnit.get(u).push(cl);
+    }
+    for (const [unit, sub] of byUnit) addConflict(key, unit, sub, "phrase");
+  }
   // Secondary grouping: count-unit net — catches "6 wins" vs "8 wins" even
-  // when the surrounding phrasing differs ("Antonelli wins" vs "wins").
+  // when the surrounding phrasing differs. N3 (a): the net alone is not a
+  // conflict — the two sides must also share a LABEL, so "12 works" and
+  // "40 points" never meet even when both reduce to a count.
   const byUnit = new Map();
   for (const cl of claims) {
     if (!cl.unit || !COUNT_UNITS.has(cl.unit)) continue;
     if (!byUnit.has(cl.unit)) byUnit.set(cl.unit, []);
     byUnit.get(cl.unit).push(cl);
   }
-  for (const [unit, group] of byUnit) addConflict(unit, unit, group, "unit");
+  for (const [unit, group] of byUnit) {
+    const clusters = new Map();
+    for (const cl of group) {
+      for (const label of labelWordsOf(cl)) {
+        if (label === unit) continue;
+        if (!clusters.has(label)) clusters.set(label, []);
+        clusters.get(label).push(cl);
+      }
+    }
+    for (const [label, cluster] of clusters) addConflict(unit, unit, cluster, "unit", label);
+  }
   return conflicts;
 }
 
 /**
- * Falsifier 1 — cheapest (set lookup): is one side of the conflict dead by
- * retraction? A value whose every asserting contribution is retracted or
- * tainted cannot stand against a live side.
- */
-function runRetractionFalsifier(conflict, retractions) {
-  const { retractedIds, taintedIds } = retractions;
-  const isDead = (c) => retractedIds.has(String(c.contributionId)) || taintedIds.has(String(c.contributionId));
-  const dead = conflict.claims.filter(isDead);
-  const live = conflict.claims.filter((c) => !isDead(c));
-  if (dead.length > 0 && live.length > 0) {
-    const liveValues = [...new Set(live.map((c) => c.value))];
-    return { ran: true, reconciled: true, method: "retraction-lookup", detail: `${dead.length} value(s) retracted/tainted; live side stands: ${liveValues.join(", ")}` };
-  }
-  return { ran: true, reconciled: false, method: "retraction-lookup", detail: "no retracted/tainted side" };
-}
-
-/**
- * Falsifier 2 — cheap (a few divisions): can arithmetic reconcile the values?
+ * Falsifier 1 — cheap (a few divisions): can arithmetic reconcile the values?
  * (a) rounding-level agreement, (b) rate × count against a stated denominator,
  * (c) the same rate restated on a different denominator.
  */
@@ -590,7 +508,7 @@ function runArithmeticFalsifier(conflict, { denominators, percentClaims }) {
 }
 
 /**
- * Falsifier 3 — last resort: the values form a reportable band. This falsifier
+ * Falsifier 2 — last resort: the values form a reportable band. This falsifier
  * never reconciles; its negative result is what justifies versioning.
  */
 function runBandFalsifier(conflict) {
@@ -632,23 +550,10 @@ function mostPreciseClaim(conflict) {
 
 /**
  * Resolves-or-versions one conflict: runs the cheapest falsifier first
- * (retraction lookup → arithmetic → band) and stops at the first
- * reconciliation. Unreconcilable conflicts are versioned v1 (earliest) /
+ * (arithmetic → band) and stops at the first reconciliation. Unreconcilable conflicts are versioned v1 (earliest) /
  * v2 (latest) with a reconciliation rule.
  */
-function resolveConflict(conflict, { retractions, denominators, percentClaims }) {
-  const retraction = runRetractionFalsifier(conflict, retractions);
-  if (retraction.reconciled) {
-    const live = conflict.claims.filter((c) => !retractions.retractedIds.has(String(c.contributionId)) && !retractions.taintedIds.has(String(c.contributionId)));
-    return {
-      ...conflict,
-      status: "resolved",
-      resolution: { basis: "retraction", value: live[0]?.value ?? conflict.values[0], detail: retraction.detail },
-      versions: null,
-      reconciliationRule: null,
-      falsifier: retraction,
-    };
-  }
+function resolveConflict(conflict, { denominators, percentClaims }) {
   const arithmetic = runArithmeticFalsifier(conflict, { denominators, percentClaims });
   if (arithmetic.reconciled) {
     // rate×count resolves to the count itself; rounding resolves to the most
@@ -678,7 +583,7 @@ function resolveConflict(conflict, { retractions, denominators, percentClaims })
       { version: 1, value: first.value, contributionId: first.contributionId, round: first.round },
       { version: 2, value: last.value, contributionId: last.contributionId, round: last.round },
     ],
-    reconciliationRule: "later value supersedes unless retracted; report as a band while they diverge",
+    reconciliationRule: "later value supersedes; report as a band while they diverge",
     falsifier: band,
   };
 }
@@ -690,12 +595,10 @@ function resolveConflict(conflict, { retractions, denominators, percentClaims })
  * yields a new dataset that conflicts with earlier rounds and stays
  * versioned, the meeting needs another round to reconcile.
  * @param {Array} weave - all contributions
- * @param {{retractionInfo?: Object}} [options] - precomputed propagateRetractions result
  * @returns {Object} reconciliation report
  */
-export function reconcileNumericalConflicts(weave, { retractionInfo } = {}) {
+export function reconcileNumericalConflicts(weave) {
   const conflicts = findNumericalConflicts(weave);
-  const retractions = retractionInfo ?? propagateRetractions(weave);
   const denominators = collectDenominatorCandidates(weave);
   const percentClaims = collectPercentClaims(weave);
   const report = {
@@ -707,7 +610,7 @@ export function reconcileNumericalConflicts(weave, { retractionInfo } = {}) {
     reserveRoundReason: null,
   };
   for (const conflict of conflicts) {
-    const result = resolveConflict(conflict, { retractions, denominators, percentClaims });
+    const result = resolveConflict(conflict, { denominators, percentClaims });
     report.conflicts.push(result);
     if (result.status === "resolved") report.resolvedCount++;
     else report.versionedCount++;
@@ -754,8 +657,15 @@ function normalizeVecTraces(text) {
 
 // P11 — function words excluded from citation keyword-overlap matching.
 const CITATION_STOPWORDS = new Set(
-  "the a an is are was were be been being have has had do does did will would could should may might must shall can need dare ought used to of in for on with at by from as into through during before after above below between under again further then once here there when where why how all each every both few more most other some such no nor not only own same so than too very just and but if or because until while this that these those am it its i me my we our you your he him his she her they them their what which who whom".split(" ")
+  "the a an is are was were be been being have has had do does did will would could should may might must shall can need dare ought used to of in for on with at by from as into through during before after above below between under again further then once here there when where why how all each every both few more most other some such no nor not only own same so than too very just and but if or because until while that those am it its i me my we our you your he him his she her they them their what which who whom".split(" ")
 );
+
+// N3 — a citation target below this length cannot be checked for topical
+// support; the detector is measuring its own noise, not the artifact.
+export const CITATION_MIN_TARGET_CHARS = 400;
+
+// N3 (c) — attributions that legitimately draw on several sources.
+const SYNTHESIZED_FROM_RE = /\bsynthesi[sz]ed\s+from\b/i;
 
 /** Extracts significant keywords (len > 4, not a stopword) from text. */
 function significantKeywords(text) {
@@ -769,16 +679,35 @@ function significantKeywords(text) {
  * sentence (word-boundary matching via whole-word set intersection).
  * Returns unsupported citations with their locations. Unresolved ids are out
  * of scope — sectionHasValidCite already flags those.
+ *
+ * N3 (b)/(c) — two exemptions, both from the hand audit of deliberation
+ * 1355a723 where precision was ~40%:
+ *   - a target shorter than `minTargetChars` cannot be checked for topical
+ *     support at all. The worst offender was a 57-character ballot
+ *     ("Vote cast: D.") — keyword overlap cannot succeed on a body that short,
+ *     so the flag was meaningless rather than true.
+ *   - "synthesized from [#a][#b]" attributions legitimately draw on several
+ *     sources; demanding a single shared keyword with the citing sentence
+ *     punishes exactly the honest, marked synthesis the doctrine requires.
+ *
+ * @param {string} text
+ * @param {Array} weave
+ * @param {{minTargetChars?: number}} [opts]
+ * @returns {Array<{id: string, sentence: string}>}
  */
-export function checkCitationSupport(text, weave) {
+export function checkCitationSupport(text, weave, { minTargetChars = CITATION_MIN_TARGET_CHARS } = {}) {
   const byId = new Map(weave.map((c) => [String(c.id), c]));
   const unsupported = [];
   const sentences = String(text).split(/(?<=[.!?])\s+|\n+/);
   for (const sentence of sentences) {
+    // N3 (c) — synthesized-from attributions are exempt.
+    if (SYNTHESIZED_FROM_RE.test(sentence)) continue;
     const sentenceWords = significantKeywords(sentence);
     for (const m of sentence.matchAll(/\[#(\d+)\]/g)) {
       const contrib = byId.get(m[1]);
       if (!contrib) continue;
+      // N3 (b) — too-short targets are uncheckable, not unsupported.
+      if (String(contrib.content ?? "").trim().length < minTargetChars) continue;
       const citedWords = significantKeywords(contrib.content);
       const supported = [...sentenceWords].some((w) => citedWords.has(w));
       if (!supported) unsupported.push({ id: m[1], sentence: sentence.trim().slice(0, 120) });
@@ -787,8 +716,40 @@ export function checkCitationSupport(text, weave) {
   return unsupported;
 }
 
+/**
+ * N3 — detector policy. Both automated artifact sections ship OFF by default
+ * and run dry: candidates are computed and counted (so a hand audit can measure
+ * precision) but nothing is written into the deliverable until the flag is
+ * enabled. A detector that cannot state its precision is advisory, not
+ * authoritative.
+ * @returns {{needsVerification: boolean, citationWarnings: boolean, dryRun: boolean, minCitationTargetChars: number}}
+ */
+export function resolveDetectorPolicy(overrides) {
+  let configured = {};
+  try { configured = getConfig()?.detectors ?? {}; } catch {}
+  const cfg = { ...configured, ...(overrides ?? {}) };
+  const enabled = (name) => cfg[name] === true;
+  return {
+    needsVerification: enabled("needsVerification"),
+    citationWarnings: enabled("citationWarnings"),
+    dryRun: cfg.dryRun !== false,
+    dryRunMeetings: Number(cfg.dryRunMeetings) || 2,
+    precisionFloor: Number(cfg.precisionFloor) || 0.9,
+    minCitationTargetChars: Number.isFinite(Number(cfg.minCitationTargetChars)) ? Number(cfg.minCitationTargetChars) : CITATION_MIN_TARGET_CHARS,
+  };
+}
+
 /** Post-processes raw synthesis text into the final artifact: objections, missing-section notes, confidence, structured fields. */
-export function finalizeSynthesis(artifactText, transcriptData, participants, objections) {
+export function finalizeSynthesis(artifactText, transcriptData, participants, objections, opts = {}) {
+  const policy = resolveDetectorPolicy(opts.detectors);
+  // A section is written only when its flag is on AND dry-run is off.
+  const shipNeedsVerification = policy.needsVerification && !policy.dryRun;
+  const shipCitationWarnings = policy.citationWarnings && !policy.dryRun;
+  const detectorReport = {
+    policy,
+    needsVerification: { candidates: 0, shipped: false },
+    citationWarnings: { candidates: 0, shipped: false },
+  };
   // Normalize vec traces in the draft before any validation — auto-fix per user Q4
   artifactText = normalizeVecTraces(artifactText);
   const unresolvedObjections = (objections ?? []).filter((o) => o.unresolved);
@@ -837,10 +798,15 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, ob
   const reasoning = extractSection(finalOutput, "Reasoning");
   const reasoningHasValidCite = sectionHasValidCite(reasoning);
   const overallGrounded = decisionHasValidCite || (hasExecutive && reasoningHasValidCite);
+  // N3 — collect the section bodies first, then ship or count depending on the
+  // detector policy. The grounding check is exact (a citation that does not
+  // resolve is a fact, not a heuristic), but it shares the section with the
+  // heuristic detectors, so it is gated with them.
+  const needsVerificationBodies = [];
   if (!overallGrounded && decisions.length > 0) {
     const ungrounded = ungroundedLines(decisions);
     if (ungrounded.length === decisions.length) {
-      finalOutput += `\n\n## Needs Verification\nThe Decision section lacks a valid [#id] citation to the transcript and should be verified before acting. Consider checking State of Play or transcript.\n${ungrounded.slice(0, 5).map((l) => `- ${l.slice(0, 200)}`).join("\n")}`;
+      needsVerificationBodies.push(`## Needs Verification\nThe Decision section lacks a valid [#id] citation to the transcript and should be verified before acting. Consider checking State of Play or transcript.\n${ungrounded.slice(0, 5).map((l) => `- ${l.slice(0, 200)}`).join("\n")}`);
     }
   }
   // Action Items are executable — an ungrounded action item is the highest-cost
@@ -850,39 +816,37 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, ob
   if (overallGrounded && actionItems.length > 0 && !sectionHasValidCite(actionItems)) {
     const ungroundedActions = ungroundedLines(actionItems);
     if (ungroundedActions.length === actionItems.length) {
-      finalOutput += `\n\n## Needs Verification\nThe Action Items below cite no valid [#id] from the transcript — they assign work, so verify ownership and basis before acting.\n${ungroundedActions.slice(0, 5).map((l) => `- ${l.slice(0, 200)}`).join("\n")}`;
+      needsVerificationBodies.push(`## Needs Verification\nThe Action Items below cite no valid [#id] from the transcript — they assign work, so verify ownership and basis before acting.\n${ungroundedActions.slice(0, 5).map((l) => `- ${l.slice(0, 200)}`).join("\n")}`);
     }
   }
-  // P11 — citation support: every [#id] must resolve to a contribution that
-  // actually contains the attributed claim (keyword overlap with the citing
-  // sentence). Mismatch annotates with a warning section.
-  const unsupportedCitations = checkCitationSupport(finalOutput, weave);
-  if (unsupportedCitations.length > 0) {
+  // P11 + N3 — citation support: every [#id] must resolve to a contribution that
+  // actually contains the attributed claim. Short targets and synthesized-from
+  // attributions are exempt; the section ships only when the flag is on.
+  const unsupportedCitations = checkCitationSupport(finalOutput, weave, { minTargetChars: policy.minCitationTargetChars });
+  detectorReport.citationWarnings.candidates = unsupportedCitations.length;
+  if (unsupportedCitations.length > 0 && shipCitationWarnings) {
+    detectorReport.citationWarnings.shipped = true;
     finalOutput += `\n\n## Citation Warnings\nThe following [#id] citations do not resolve to a contribution that supports the cited claim — verify before acting:\n${unsupportedCitations.slice(0, 5).map((u) => `- [#${u.id}] — ${u.sentence}`).join("\n")}`;
-  }
-
-  // P13 — retract-and-propagate: annotate claims that depend on retracted
-  // figures so no retracted figure survives as a live dispute.
-  const retractionInfo = propagateRetractions(weave);
-  if (retractionInfo.retractedIds.size > 0) {
-    finalOutput = annotateRetractedClaims(finalOutput, retractionInfo).text;
   }
 
   // P10 — pre-synthesis reconciliation pass: resolve-or-version every
   // numerical conflict and run the cheapest falsifier BEFORE the final output
   // is produced, so contradictions are versioned (v1/v2 + rule) in the
   // artifact instead of stacked.
-  const reconciliation = reconcileNumericalConflicts(weave, { retractionInfo });
-  if (reconciliation.versionedCount > 0) {
-    const lines = reconciliation.conflicts
-      .filter((c) => c.status === "versioned")
-      .map((c) => {
-        const v1 = c.versions[0];
-        const v2 = c.versions[1];
-        const unit = c.unit ? ` ${c.unit}` : "";
-        return `- ${c.quantity}: v1 = ${v1.value}${unit} [#${v1.contributionId}] vs v2 = ${v2.value}${unit} [#${v2.contributionId}] — ${c.reconciliationRule} (falsifier: ${c.falsifier.method} — ${c.falsifier.detail})`;
-      });
-    finalOutput += `\n\n## Needs Verification\n${reconciliation.versionedCount} numerical conflict(s) are stated with competing values — versioned here with reconciliation rules; cite the latest version unless retracted:\n${lines.join("\n")}\n`;
+  const reconciliation = reconcileNumericalConflicts(weave);
+  const versionedConflicts = reconciliation.conflicts.filter((c) => c.status === "versioned");
+  if (versionedConflicts.length > 0) {
+    // N3 (a) — a band is only ever printed for values that share a unit, a
+    // label and a time order. The partition above guarantees it; this guard
+    // makes the invariant visible at the one place that renders it.
+    const lines = versionedConflicts.map((c) => {
+      const v1 = c.versions[0];
+      const v2 = c.versions[1];
+      const unit = c.unit ? ` ${c.unit}` : "";
+      const label = c.label ? `${c.quantity} (${c.label})` : c.quantity;
+      return `- ${label}: v1 = ${v1.value}${unit} [#${v1.contributionId}] vs v2 = ${v2.value}${unit} [#${v2.contributionId}] — ${c.reconciliationRule} (falsifier: ${c.falsifier.method} — ${c.falsifier.detail})`;
+    });
+    needsVerificationBodies.push(`## Needs Verification\n${reconciliation.versionedCount} numerical conflict(s) are stated with competing values — versioned here with reconciliation rules; cite the latest version:\n${lines.join("\n")}\n`);
   }
 
   // P9 — a band straddling the decision threshold is not decision-grade:
@@ -890,7 +854,25 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, ob
   const straddlingBands = findStraddlingBands(finalOutput);
   if (straddlingBands.length > 0) {
     const bandList = straddlingBands.map((s) => `${s.band[0]}–${s.band[1]} vs threshold ${s.threshold}`).join(", ");
-    finalOutput += `\n\n## Needs Verification\nThe numeric band(s) ${bandList} straddle the decision threshold — degrade to threshold analysis (state the band and what evidence would move it) instead of a point estimate.\n`;
+    needsVerificationBodies.push(`## Needs Verification\nThe numeric band(s) ${bandList} straddle the decision threshold — degrade to threshold analysis (state the band and what evidence would move it) instead of a point estimate.\n`);
+  }
+  detectorReport.needsVerification.candidates = needsVerificationBodies.length;
+  if (needsVerificationBodies.length > 0 && shipNeedsVerification) {
+    detectorReport.needsVerification.shipped = true;
+    for (const body of needsVerificationBodies) finalOutput += `\n\n${body}`;
+  }
+  // N3 (d) — dry-run accounting: candidate counts travel with the artifact so a
+  // hand audit can measure precision over `dryRunMeetings` meetings before the
+  // flag is enabled. Counted, never rendered.
+  if (policy.dryRun) {
+    try {
+      for (const [name, report] of Object.entries(detectorReport)) {
+        if (name === "policy") continue;
+        if (report.candidates > 0) {
+          incrementKeyedCounter("detector_dry_run", `${name}:${report.candidates}`);
+        }
+      }
+    } catch { /* counters are best-effort */ }
   }
 
   const parsedConfidence = parseConfidence(finalOutput);
@@ -907,9 +889,16 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, ob
       : parsedConfidence;
   }
 
-  // P9 — split name/number confidence: derive both layers; the artifact
-  // carries the split only when the layers diverge.
+  // P9 + N2 — split name/number confidence: derive both layers, prefer the
+  // prose split the synthesizer already writes, and make the stored
+  // `confidence` a computed roll-up of the two. A column that reads "high"
+  // while the artifact's own prose says Number: Low is a machine-readable
+  // contradiction (deliberation 1355a723).
   const { confidence_name, confidence_number } = deriveSplitConfidence(weave, unresolvedObjections.length, participants.length, activeParticipants);
+  const proseSplit = parseSplitConfidence(finalOutput);
+  const splitName = proseSplit.name ?? confidence_name;
+  const splitNumber = proseSplit.number ?? confidence_number;
+  const rolledUp = rollupConfidence(splitName, splitNumber);
 
   const artifact = {
     content: finalOutput,
@@ -918,23 +907,17 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, ob
     action_items: extractSection(finalOutput, "Action Items"),
     proposed_fix: extractSection(finalOutput, "Proposed Fix"),
     files_involved: extractSection(finalOutput, "Files Involved"),
-    dissent: [],
     refusals: refusals.map(r => ({
       participant_id: r.participant_id,
       content: r.content,
     })),
     open_questions: extractSection(finalOutput, "Open Questions"),
-    confidence,
+    // N2 — the stored level is the roll-up, never a flat "high"
+    confidence: rolledUp ?? confidence,
+    confidence_name: splitName ?? null,
+    confidence_number: splitNumber ?? null,
     confidence_reported: parsedConfidence,
     confidence_derived: heuristicConfidence,
-    // P9 — split confidence surfaces only when the layers diverge
-    ...(confidence_name !== confidence_number ? { confidence_name, confidence_number } : {}),
-    // P13 — retraction record: what was retracted, by whom, and what it tainted
-    retractions: retractionInfo.retractions.map((r) => ({
-      retraction_id: r.retraction.id,
-      retracted_id: r.retracted ? Number(r.retracted.id) : null,
-      tainted_ids: [...retractionInfo.taintedIds].map(Number),
-    })),
     // P10 — reconciliation report: every numerical conflict, its status, and
     // the falsifier that ran on it
     reconciliation: {
@@ -944,6 +927,7 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, ob
       reserveRoundReason: reconciliation.reserveRoundReason,
       conflicts: reconciliation.conflicts.map((c) => ({
         quantity: c.quantity,
+        label: c.label ?? null,
         unit: c.unit,
         values: c.values,
         status: c.status,
@@ -953,6 +937,14 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, ob
         falsifier: c.falsifier,
       })),
     },
+    // N3 — detector accounting: how many candidates each automated section
+    // found, and whether it was allowed to write them. With the flags off this
+    // is the only place a candidate count exists, which is what makes a
+    // hand-audited precision measurement possible.
+    detector_report: detectorReport,
+    // N8 — what the deliverable actually did with the room's contributions.
+    // Measured, not asserted: coverage is computed against this very text.
+    engagement: computeEngagementMetrics(weave, finalOutput),
   };
 
   return { artifact, output: finalOutput };

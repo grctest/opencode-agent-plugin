@@ -20,6 +20,10 @@ export class StateManager {
   #logger;
   #activeTurn = null;
   #lastTurnPatch = null;
+  // N7 — highest tool-call count any single turn reached. The cap is per turn
+  // and the audit is per round; without this high-water mark the two look like
+  // a contradiction whenever a round's audited total exceeds the cap.
+  #maxToolCallsInATurn = 0;
 
   /**
    * @param {Object} initialState
@@ -79,7 +83,24 @@ export class StateManager {
   }
 
   recordTurnTool() {
-    if (this.#activeTurn) this.#activeTurn.toolCount += 1;
+    if (this.#activeTurn) {
+      this.#activeTurn.toolCount += 1;
+      if (this.#activeTurn.toolCount > this.#maxToolCallsInATurn) {
+        this.#maxToolCallsInATurn = this.#activeTurn.toolCount;
+      }
+    }
+  }
+
+  /** Folds the just-finished turn's count into the per-meeting high-water mark. */
+  recordTurnToolHighWater() {
+    if (this.#activeTurn && this.#activeTurn.toolCount > this.#maxToolCallsInATurn) {
+      this.#maxToolCallsInATurn = this.#activeTurn.toolCount;
+    }
+    return this.#maxToolCallsInATurn;
+  }
+
+  getMaxToolCallsInATurn() {
+    return this.#maxToolCallsInATurn;
   }
 
   queueTurnPatch(participantId, patch) {
