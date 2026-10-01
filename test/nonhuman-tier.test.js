@@ -5,7 +5,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { getPersonas, lintPersonaStyle, lintTruncation, lintRunons, lintCircularity, lintDepth, lintEmbodiment } from "../src/composer/persona-loader.js";
-import { mergeSeatCandidates, candidatePoolsForTier, composeRoomWithSimilarity, rankPersonasForQuestion } from "../src/composer/room.js";
+import { buildRankingResult } from "../src/composer/room.js";
 import { initSchema, runMigrations, LATEST_SCHEMA_VERSION, MIGRATIONS } from "../src/database/schema.js";
 import { getRightsForTier } from "../src/utils/tier.js";
 
@@ -20,11 +20,13 @@ const nonhuman = () => getPersonas().nonhuman ?? [];
 // esbuild into the test run.
 const tierMetaSrc = readFileSync(join(root, "src/dashboard/components/tierMeta.jsx"), "utf8");
 
-// The nonhuman tier is a POOL, not a reserved seat: every seat also considers
-// these personas and ranks the union. Two invariants follow, and both are
-// load-bearing — a reserved seat would put an alien voice on questions it has
-// nothing to say about, and a shared cut across pools would let personas
-// written to be adjacent to everything evict the in-tier specialists.
+// The nonhuman tier is a TIER, not a reserved seat. Room composition ranks the
+// whole catalog as one flat pool, so these personas reach a seat on the same
+// distance measurement as any human — and, equally, can sit at the bottom of
+// the list. What the tier must not acquire is a quota: nothing may force one in
+// or cap how many appear. The flat-pool behaviour itself is covered in
+// persona-ranking.test.js; what is asserted here is that this tier remains a
+// first-class tier throughout the engine.
 
 test("the nonhuman tier loads, and every bundled persona is a person with a body of lore", () => {
   const all = nonhuman();
@@ -106,96 +108,26 @@ test("the nonhuman tier is a distinct voice, not a template with the nouns swapp
 
 // --- pool mechanics -------------------------------------------------------
 
-test("a seat draws from its own tier and the non-human pool", () => {
-  assert.deepEqual(candidatePoolsForTier("mid"), ["mid", "nonhuman"]);
-  assert.deepEqual(candidatePoolsForTier("civilian"), ["civilian", "nonhuman"]);
-  // A nonhuman seat is already the pool; it must not search itself twice.
-  assert.deepEqual(candidatePoolsForTier("nonhuman"), ["nonhuman"]);
-});
+test("a non-human persona ranks in the same flat pool, with no tier quota", () => {
+  // The flat pool replaced a per-tier cut that used to cap each tier's
+  // contribution. What must survive the replacement is the absence of any
+  // quota: a non-human persona is seated when it is genuinely nearest, and a
+  // distant one is not promoted to fill a seat.
+  const nearest = buildRankingResult([
+    { persona_name: "N1", tier: "nonhuman", distance: 0.05 },
+    { persona_name: "M1", tier: "mid", distance: 0.20 },
+    { persona_name: "M2", tier: "mid", distance: 0.21 },
+  ], 2);
+  assert.deepEqual(nearest.selected.map((r) => r.name), ["N1", "M1"]);
 
-test("the non-human pool is ranked per-pool before the union, so it cannot evict in-tier specialists", () => {
-  // Every non-human persona is nearer than every mid persona. A shared cut
-  // would seat three non-humans and drop M1 entirely; per-pool cutting keeps
-  // the mid tier's own top-3 alive and lets the non-humans compete above them.
-  const nonhumanRows = [
-    { persona_name: "N1", distance: 0.10 }, { persona_name: "N2", distance: 0.12 },
-    { persona_name: "N3", distance: 0.14 }, { persona_name: "N4", distance: 0.16 },
-  ];
-  const midRows = [
-    { persona_name: "M1", distance: 0.30 }, { persona_name: "M2", distance: 0.31 },
-    { persona_name: "M3", distance: 0.32 }, { persona_name: "M4", distance: 0.33 },
-  ];
-  const merged = mergeSeatCandidates(midRows, nonhumanRows, "mid", 3);
-  assert.deepEqual(merged.filter((r) => r.tier === "mid").map((r) => r.persona_name), ["M1", "M2", "M3"],
-    "a mid persona must be excluded by another mid persona, never by a non-human one");
-  // It still wins when it is genuinely nearest — the point is distance, not a quota.
-  assert.equal(merged[0].persona_name, "N1");
-  // A tier's fourth-best row never reaches the union at all.
-  assert.ok(!merged.some((r) => r.persona_name === "M4" || r.persona_name === "N4"));
-});
-
-test("a non-human persona loses the seat when the human tier is nearer", () => {
-  const nonhumanRows = [{ persona_name: "N1", distance: 1.90 }];
-  const midRows = [{ persona_name: "M1", distance: 0.20 }];
-  const merged = mergeSeatCandidates(midRows, nonhumanRows, "mid", 3);
-  assert.equal(merged[0].persona_name, "M1");
-  assert.equal(merged[0].tier, "mid");
-});
-
-test("mergeSeatCandidates tags every row with the pool it came from", () => {
-  const merged = mergeSeatCandidates([{ persona_name: "M1", distance: 0.5 }], [{ persona_name: "N1", distance: 0.4 }], "senior", 3);
-  assert.deepEqual(merged.map((r) => [r.persona_name, r.tier]).sort(), [["M1", "senior"], ["N1", "nonhuman"]]);
-  // Untagged in-tier rows resolve to the NOMINAL tier, not to undefined.
-  assert.equal(merged.find((r) => r.persona_name === "M1").tier, "senior");
-});
-
-test("a seated non-human persona is the top of its own pool, so the in-tier invariant still holds", async () => {
-  // The generalization of the P15 test to the new tier: whoever holds a seat
-  // is within the top-3 of the tier it was actually selected from — including
-  // a non-human persona, which is the invariant a shared cut would break.
-  const question = "Why does the coral reef bleach and can it recover?";
-  const room = await composeRoomWithSimilarity(question, "", { keywordOnly: true });
-  for (const p of room.participants) {
-    const pool = getPersonas()[p.tier] ?? [];
-    if (pool.length === 0) continue;
-    const rank = rankPersonasForQuestion(pool, question).findIndex((r) => r.persona.name === p.name);
-    assert.ok(rank >= 0 && rank < 3, `${p.name} (${p.tier}) ranked ${rank + 1} in its own pool`);
-  }
-});
-
-test("keyword composition seats a non-human persona when it is the best match", async () => {
-  const room = await composeRoomWithSimilarity("why does the coral reef bleach and can it recover", "", { keywordOnly: true });
-  const seats = room.participants.map((p) => p.name);
-  assert.ok(seats.length >= 2);
-  const nonhumanSeats = room.participants.filter((p) => p.tier === "nonhuman");
-  // Not a hard requirement of every question — but this one is squarely about
-  // a system a non-human persona is written to speak for.
-  assert.ok(nonhumanSeats.length > 0, `expected a non-human seat for a reef question, got ${seats.join(", ")}`);
-});
-
-test("non-human personas do not crowd specialists off purely human questions", async () => {
-  // The crowding risk named before the tier existed: personas written to be
-  // adjacent to everything will match anything, and an over-eager pool would
-  // put a river in an API design review.
-  for (const question of [
-    "How do we design our API?",
-    "Should I buy GameStop stock?",
-    "What are the risks of storing credit card numbers ourselves?",
-  ]) {
-    const room = await composeRoomWithSimilarity(question, "", { keywordOnly: true });
-    const nonhumanSeats = room.participants.filter((p) => p.tier === "nonhuman").map((p) => p.name);
-    // No more than one non-human seat out of three, and never two of the same
-    // voice — a pool that wins every seat is a quota in disguise.
-    assert.ok(nonhumanSeats.length <= 1, `${nonhumanSeats.length} non-human seats for "${question}": ${room.participants.map((p) => p.name).join(", ")}`);
-    assert.ok(room.participants.length >= 2, `room collapsed for "${question}"`);
-  }
-});
-
-test("composition stays deterministic with a non-human pool in it", async () => {
-  const question = "How does sediment transport downstream after a flood?";
-  const a = await composeRoomWithSimilarity(question, "", { keywordOnly: true });
-  const b = await composeRoomWithSimilarity(question, "", { keywordOnly: true });
-  assert.deepEqual(a.participants.map((p) => p.id), b.participants.map((p) => p.id));
+  // Distance the other way round: no non-human is promoted over nearer humans.
+  const humansNearer = buildRankingResult([
+    { persona_name: "M1", tier: "mid", distance: 0.20 },
+    { persona_name: "S1", tier: "senior", distance: 0.30 },
+    { persona_name: "N1", tier: "nonhuman", distance: 1.90 },
+  ], 2);
+  assert.deepEqual(humansNearer.selected.map((r) => r.name), ["M1", "S1"]);
+  assert.ok(!humansNearer.selected.some((r) => r.tier === "nonhuman"));
 });
 
 // --- plumbing -------------------------------------------------------------

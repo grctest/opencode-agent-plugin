@@ -14,10 +14,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Switch } from "./ui/switch.tsx";
 import { Skeleton } from "./ui/skeleton.tsx";
 import { Alert, AlertTitle, AlertDescription } from "./ui/alert.tsx";
-import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip.tsx";
-import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "./ui/collapsible.tsx";
 import { Spinner } from "./ui/spinner.tsx";
 import { PersonaPickerDialog } from "./PersonaPickerDialog.jsx";
+import { RoomSelectionDialog } from "./RoomSelectionDialog.jsx";
 import { OrchestratorPreviewDialog } from "./OrchestratorPreviewDialog.jsx";
 import { TIER_META, AVATAR_EXPRESSION, AVATAR_COLORS } from "./tierMeta.jsx";
 
@@ -68,40 +67,6 @@ function ModelRow({ index, style, ariaAttributes, items, disabled, onToggle }) {
         </label>
       </div>
     </div>
-  );
-}
-
-const EMBEDDING_DOWNLOAD_HINT = "npm run model:download";
-
-/**
- * Auto-select composes the room by embedding the question and matching it
- * against embedded personas, so it needs a working embedding model. When none
- * is provided the button is disabled and explains how to fix it — manual seat
- * adding keeps working, so the deliberation itself is never blocked.
- *
- * A disabled <button> sets pointer-events: none, so the tooltip trigger wraps
- * the button in a span instead of being the button itself.
- */
-function AutoSelectButton({ busy, disabled, embedderReady, locked, onClick, title }) {
-  const hintEmbedder = !embedderReady && !locked;
-  const button = (
-    <Button size="sm" onClick={onClick} disabled={disabled || !embedderReady} title={hintEmbedder ? undefined : title}>
-      {busy === "preview" && <Spinner className="mr-2" />}
-      {busy === "preview" ? "Composing…" : "Auto-select"}
-    </Button>
-  );
-
-  if (!hintEmbedder) return button;
-
-  return (
-    <Tooltip>
-      <TooltipTrigger render={<span className="inline-flex" />}>{button}</TooltipTrigger>
-      <TooltipContent>
-        Provide an embedding model to enable this feature — run{" "}
-        <code className="bg-muted px-1 py-0.5 rounded text-xs">{EMBEDDING_DOWNLOAD_HINT}</code>. You can still
-        add personas manually.
-      </TooltipContent>
-    </Tooltip>
   );
 }
 
@@ -174,12 +139,11 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
   // switches (which unmount this component) and page refreshes never lose it.
   // Transient UI (catalog, llm, busy, errors, dialogs, jobs) stays in useState.
   const form = useStore($setupForm);
-  const { question, context, maxRounds, preview, seats, startedId, orchestrator, features } = form;
+  const { question, context, maxRounds, seats, startedId, orchestrator, features } = form;
   const patchForm = (patch) => $setupForm.set({ ...$setupForm.get(), ...patch });
-  const setQuestion = (v) => { patchForm({ question: v }); setPreview(null); setGuidance(null); };
-  const setContext = (v) => { patchForm({ context: v }); setPreview(null); setGuidance(null); };
+  const setQuestion = (v) => { patchForm({ question: v }); setGuidance(null); };
+  const setContext = (v) => { patchForm({ context: v }); setGuidance(null); };
   const setMaxRounds = (v) => patchForm({ maxRounds: v });
-  const setPreview = (v) => patchForm({ preview: v });
   const setStartedId = (v) => patchForm({ startedId: v });
   const setOrchestratorField = (key, value) => patchForm({ orchestrator: { ...orchestrator, [key]: value } });
   const setFeature = (key, value) => patchForm({ features: { ...features, [key]: value } });
@@ -203,6 +167,10 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
   const [guidance, setGuidance] = useState(null);
   const [swapIdx, setSwapIdx] = useState(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [rankOpen, setRankOpen] = useState(false);
+  const [ranked, setRanked] = useState([]);
+  const [rankAutoSelect, setRankAutoSelect] = useState(3);
+  const [rankSuggestedModels, setRankSuggestedModels] = useState({});
   const [job, setJob] = useState(null);
   const [extendInput, setExtendInput] = useState("");
   const [resumeStatus, setResumeStatus] = useState(null);
@@ -227,6 +195,9 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
   // durable meeting row — nothing on the page can be edited.
   const storedRunParticipants = Array.isArray(meetingParticipants) ? meetingParticipants : [];
   const readOnly = storedRunParticipants.length > 0;
+  // Setup is frozen while a deliberation is weaving, and read-only once one has
+  // already run. Everything that mutates seats checks this.
+  const locked = !!job?.running || readOnly;
   // "Already run" is a terminal-state message — while the meeting is actively
   // weaving (job running, or interrupted mid-run) the "running"/"interrupted"
   // banners own the headline instead.
@@ -438,38 +409,56 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
     return null;
   }, [llm, suggestedByTier, enabledKeys]);
 
-  const canAutoSelect = question.trim().length >= 3 && busy !== "preview" && enabledKeys.size > 0;
-  // Auto-select needs a working embedding model to match personas to the
-  // question. Without one the button is disabled (with a hint tooltip) but
-  // manual seat adding stays available, so a deliberation can still be built.
+  // Auto-select is offered only when an embedding model is actually loaded.
+  // There is no keyword fallback behind it, so with no embedder the button
+  // simply does not appear rather than appearing disabled.
   const embedderReady = embeddingStatus?.state === "ready" && !!embeddingStatus?.model;
+  // Auto-select also waits on the background persona index. Without it the
+  // dialog would open against an empty store; with it the click is instant.
+  // The button is hidden while warming rather than disabled, and a muted line
+  // takes its place so its absence is never unexplained.
+  const personaIndex = embeddingStatus?.personaIndex ?? { state: "empty", count: 0, message: null };
+  const personaIndexReady = personaIndex.state === "ready";
+  const personaIndexBusy = personaIndex.state === "indexing";
+  const canAutoSelect = question.trim().length >= 3 && enabledKeys.size > 0 && !locked;
 
-  const doPreview = async () => {
+  // Fetches the full ranking, then opens the dialog. The dialog is seeded with
+  // the server's top slice; the seats are only written on confirm, so a
+  // cancelled dialog leaves the room untouched.
+  const openAutoSelect = async () => {
     if (!canAutoSelect || !embedderReady) return;
     setError(null);
     setGuidance(null);
+    setRanked([]);
+    setRankOpen(true);
     setBusy("preview");
     try {
+      await ensureCatalog();
       const data = await postJSON("/api/room/preview", { question, context });
-      setPreview(data);
       const extraSuggested = {};
       for (const s of data.suggested_models ?? []) {
         if (s.tier && s.provider_id && s.model_id) extraSuggested[s.tier] = `${s.provider_id}/${s.model_id}`;
       }
       setSuggestedByTier((prev) => ({ ...extraSuggested, ...prev }));
-      const composed = (data.participants ?? []).map((p) => ({ ...p, approved: true, model: null }));
-      setSeats(fillSeatModels(composed, llm, extraSuggested));
-      if (!catalog) {
-        try {
-          const res = await fetch("/api/personas");
-          if (res.ok) setCatalog(await res.json());
-        } catch {}
-      }
+      setRanked(data.ranked ?? []);
+      setRankAutoSelect(Number(data.auto_select_count) > 0 ? Number(data.auto_select_count) : 3);
+      setRankSuggestedModels(extraSuggested);
     } catch (err) {
+      setRankOpen(false);
       setError(err.message);
     } finally {
       setBusy(null);
     }
+  };
+
+  // The dialog returns the personas it settled on, in ranked order.
+  const applyAutoSelect = (personas) => {
+    setSeats(fillSeatModels(
+      personas.map((p) => ({ ...p, approved: true, model: null })),
+      llm,
+      rankSuggestedModels,
+    ));
+    setRankOpen(false);
   };
 
   const ensureCatalog = async () => {
@@ -563,6 +552,7 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
   const idleOk = !job?.running;
   // While a deliberation is weaving, the entire setup form freezes in its
   // current state — question, rounds, models, seats, and actions all lock.
+  // (Declared earlier as `locked` so auto-select can read it before this point.)
   const isFrozen = !!job?.running;
 
   const requirements = useMemo(() => ([
@@ -694,8 +684,6 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
       setBusy(null);
     }
   };
-
-  const degradedPreview = preview?.reasoning ? /embedding model unavailable/i.test(preview.reasoning) : false;
 
   return (
     <div className="flex flex-col gap-5 max-w-4xl pb-4">
@@ -925,21 +913,35 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
               <CardDescription>
                 {seats.length === 0
                   ? embedderReady
-                    ? "Auto-select a suggested room, or add personas manually — at least 2 seats to start."
-                    : "Add personas manually — at least 2 seats to start. Auto-select needs an embedding model."
+                    ? "Auto-select from all personas ranked by similarity, or add them one by one — at least 2 seats to start."
+                    : "Add personas manually — at least 2 seats to start."
                   : `${seats.length} seat${seats.length === 1 ? "" : "s"} in the room — swap or remove to adjust.`}
               </CardDescription>
             </div>
             <div className="ml-auto flex flex-wrap items-center gap-2">
-              {seats.length === 0 && (
-                <AutoSelectButton
-                  busy={busy}
-                  embedderReady={embedderReady}
-                  locked={isFrozen || readOnly}
-                  disabled={!canAutoSelect || !filterOk || isFrozen || readOnly}
-                  title={isFrozen ? "Locked while a deliberation is running" : readOnly ? "Locked — this deliberation's configuration is read-only" : !filterOk ? "Enable at least one model in step 2 first" : canAutoSelect ? "Compose a suggested room from your question" : "Enter a question of at least 3 characters first"}
-                  onClick={doPreview}
-                />
+              {/* Rendered only with a live embedder. There is no keyword
+                  fallback to degrade into, so a disabled button would only be
+                  explaining something the user cannot act on inline. */}
+              {embedderReady && seats.length === 0 && personaIndexReady && (
+                <Button
+                  size="sm"
+                  onClick={openAutoSelect}
+                  disabled={!canAutoSelect || !filterOk}
+                  title={isFrozen ? "Locked while a deliberation is running" : readOnly ? "Locked — this deliberation's configuration is read-only" : !filterOk ? "Enable at least one model in step 2 first" : canAutoSelect ? "Rank every persona by similarity to your question" : "Enter a question of at least 3 characters first"}
+                >
+                  {busy === "preview" && <Spinner className="mr-2" />}
+                  {busy === "preview" ? "Ranking…" : "Auto-select"}
+                </Button>
+              )}
+              {embedderReady && seats.length === 0 && !personaIndexReady && personaIndexBusy && (
+                <span className="flex items-center gap-1.5 text-xs text-muted-foreground" aria-live="polite">
+                  <Spinner /> Preparing {personaIndex.count > 0 ? `${personaIndex.count} personas` : "personas"}…
+                </span>
+              )}
+              {embedderReady && seats.length === 0 && personaIndex.state === "error" && (
+                <span className="text-xs text-amber-600 dark:text-amber-400" title={personaIndex.message ?? undefined}>
+                  Auto-select unavailable — couldn't prepare the persona index. Add personas manually.
+                </span>
               )}
               <Button
                 variant="outline"
@@ -954,34 +956,11 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
           </div>
         </CardHeader>
           <CardContent className="flex flex-col gap-2.5">
-            {preview && (
-              <div className="rounded-lg border bg-muted/40 p-3 text-sm">
-                <div className="flex flex-wrap items-center gap-2">
-                  <strong>Suggested {preview.participants?.length ?? 0}-person room</strong>
-                  {preview.complexity && <Badge variant="secondary">{preview.complexity} complexity</Badge>}
-                  {(preview.tags ?? []).map((t) => <Badge key={t} variant="outline">{t}</Badge>)}
-                </div>
-                {degradedPreview && (
-                  <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-400">
-                    Persona matching used keyword fallback — the embedding model is unavailable.
-                  </p>
-                )}
-                <Collapsible className="mt-1.5">
-                  <CollapsibleTrigger className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground">
-                    Why this room?
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="mt-1 text-xs text-muted-foreground">
-                    {preview.reasoning}
-                    {preview.estimated_rounds != null && <> Estimated rounds: {preview.estimated_rounds}.</>}
-                  </CollapsibleContent>
-                </Collapsible>
-              </div>
-            )}
-            {seats.length === 0 && !preview && busy !== "preview" && (
+            {seats.length === 0 && busy !== "preview" && (
               <p className="text-sm text-muted-foreground">
                 {embedderReady
-                  ? "No seats yet — auto-select a room based on your question, or add personas one by one."
-                  : "No seats yet — add personas one by one (auto-select needs an embedding model)."}
+                  ? "No seats yet — auto-select to rank all personas by similarity, or add them one by one."
+                  : "No seats yet — add personas one by one."}
               </p>
             )}
             {busy === "preview" && seats.length === 0 && (
@@ -1267,6 +1246,17 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
           onOpenChange={(v) => { if (!v) setAddOpen(false); }}
         />
       )}
+      <RoomSelectionDialog
+        open={rankOpen}
+        question={question}
+        catalog={catalog}
+        ranked={ranked}
+        busy={busy === "preview"}
+        error={error}
+        autoSelectCount={rankAutoSelect}
+        onApply={applyAutoSelect}
+        onOpenChange={(v) => { if (!v) setRankOpen(false); }}
+      />
     </div>
   );
 }

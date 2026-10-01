@@ -12,7 +12,52 @@ export const embeddingStatus = {
   maxTokens: null,
   message: null,
   initializedAt: null,
+  /**
+   * Persona vector store state, surfaced to the dashboard so auto-select can
+   * wait for a usable store instead of appearing and then failing. Mirrors
+   * `getPersonaIndexStatus()` in services/persona-index.js.
+   */
+  personaIndex: { state: "empty", count: 0, message: null },
 };
+
+/**
+ * Kicks off persona indexing in the background once the embedder is ready.
+ * Never rejects and never blocks embedder readiness: a failure lands in
+ * `embeddingStatus.personaIndex.state === "error"` and auto-select retries
+ * inline. See `warmPersonaIndex` for the idempotency guarantees.
+ */
+export function schedulePersonaIndexWarm() {
+  embeddingStatus.personaIndex = { state: "indexing", count: 0, message: null };
+  import("../../services/persona-index.js")
+    .then(async (mod) => {
+      const n = await mod.warmPersonaIndex();
+      if (n > 0) console.log(`[Loom dashboard] Persona index ready (${n} personas)`);
+      else console.warn("[Loom dashboard] Persona index warm returned no personas — auto-select will retry on demand");
+    })
+    .catch((err) => {
+      embeddingStatus.personaIndex = {
+        state: "error",
+        count: 0,
+        message: err instanceof Error ? err.message : String(err),
+      };
+      console.warn(`[Loom dashboard] Persona index warm failed: ${embeddingStatus.personaIndex.message}`);
+    });
+}
+
+/**
+ * Reads the live persona-index status. Called from `GET /api/models` on every
+ * poll so the dashboard sees `indexing` progress move rather than a frozen
+ * count — the warm writes to the index module's own status, not to a copy.
+ */
+export async function readPersonaIndexStatus() {
+  try {
+    const { getPersonaIndexStatus } = await import("../../services/persona-index.js");
+    embeddingStatus.personaIndex = getPersonaIndexStatus();
+  } catch {
+    // Module unavailable (embedder deps missing) — leave the last known value.
+  }
+  return embeddingStatus.personaIndex;
+}
 
 export async function initEmbeddingModel() {
   if (embeddingStatus.state === "initializing") return;
@@ -28,6 +73,7 @@ export async function initEmbeddingModel() {
     embeddingStatus.maxTokens = getEmbeddingMaxTokens();
     embeddingStatus.initializedAt = new Date().toISOString();
     console.log(`[Loom dashboard] Embedding model ${DEFAULT_EMBEDDING_MODEL} ready (${embeddingStatus.dims}d) in ${Date.now() - started}ms`);
+    schedulePersonaIndexWarm();
   } catch (err) {
     embeddingStatus.state = "error";
     embeddingStatus.message = err instanceof Error ? err.message : String(err);

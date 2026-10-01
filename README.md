@@ -101,9 +101,9 @@ Models are stored under `OPENCODE_CONFIG_DIR` when set, otherwise globally at:
 
 ### How Embedding Models Are Used
 
-**Room composition** — At meeting creation, every persona's text (`persona`, `agenda`, `tags`, `expertise`) is embedded into a process-scoped in-memory store (no database tables). Your question is embedded too, and compared against each persona by cosine similarity: for each role slot, the most similar not-yet-used persona in that tier is picked (`PersonaIndex.search`). A finance question gets finance experts; an engineering question gets engineers. The dashboard Setup tab shows the suggestion for approval before anything runs.
+**Room composition** — Every persona's text (`persona`, `agenda`, `tags`, `expertise`) is embedded into a process-scoped in-memory store (no database tables). Your question is embedded too, and compared against **every** persona by cosine similarity. The catalog is one flat pool: there is no tier quota, no per-tier top-N, and no cross-tier promotion — the full ordering is returned closest-first and the top 3 are pre-selected (`PersonaIndex.searchAll`, `rankAllPersonas`). The dashboard Setup tab opens a dialog showing all personas in that order, with the top 3 selected; you can toggle any seniority off, select or deselect anyone, and confirm. Nothing runs until you confirm.
 
-The embedding model is initialized at plugin startup (`ensureEmbedderInitialized` in `src/index.js:65`, async with 5s race) and separately in the dashboard (`initEmbeddingModel` in `src/dashboard/server/helpers.js:17` with build default). Both use real embeddings; if unavailable, room composition degrades via keyword fallback with warnings.
+The embedding model is initialized at plugin startup (`ensureEmbedderInitialized` in `src/index.js:65`, async with 5s race) and separately in the dashboard (`initEmbeddingModel` in `src/dashboard/server/helpers.js:17` with build default). Persona vectors are built in the background as soon as the embedder is ready (and rebuilt when you switch embedding models), so the first auto-select does not wait on indexing; the button appears once the index reports ready. If no embedding model is loaded, auto-select is not offered at all — there is no keyword fallback, because a keyword-overlap score is a different answer to a different question, not a weaker version of the same one. Manual persona selection stays available either way.
 
 **`loom_summon` is capability-gated on the embedding model.** It picks the guest expert by semantic similarity over the same persona index, so with no model loaded there is nothing to rank your issue against and the tool would return an arbitrary guest. Rather than degrade it hides itself: it is dropped from the agent's tool list and from its prompt entirely, and a direct call is refused with the reason. `agentTools.loom.loom_summon` is permission, not a guarantee — run `npm run model:download` (or point `embeddingModel` at a downloaded model) and start a new meeting to get it back. Every other loom tool is unaffected.
 
@@ -187,34 +187,25 @@ Each tier has different behavioral guidance defined in each persona's `tier_guid
 ### The `nonhuman` tier: a pool, not a seat
 
 Six tiers of seniority would be one too many if `nonhuman` were another band. It is
-not a band — it is a **pool that every seat also draws from**. For each seat the
-composer searches that seat's own tier *and* the `nonhuman` tier, then ranks the
-union by similarity. A non-human persona therefore wins a seat exactly when it is
-the nearest neighbour of your question, and loses every seat it is not.
+not a band — it is simply **another tier in one flat ranking**. The composer scores
+every persona in the catalog against your question and sorts them together, so a
+non-human persona wins a seat exactly when it is the nearest neighbour of your
+question, and loses every seat it is not.
 
 Reserving a seat for the tier would be the opposite of the intent: a forced alien
 voice either repeats itself across every room, or arrives on questions it has
 nothing to add to. Composition stays deterministic, and a non-human seat holds a
 vote like any other (`getRightsForTier`).
 
-Two details matter in `mergeSeatCandidates` (`src/composer/room.js`):
+Because selection is one flat ranking, a non-human persona is seated exactly when
+it is among the nearest to your question — never because a slot was held for it.
+Nothing guarantees the tier appears; equally, nothing caps it or promotes it. A
+reef question legitimately seats three non-humans; an API-design question
+legitimately seats none.
 
-- **The relative cut runs per pool, not over the union.** Non-human personas are
-  written to sit adjacent to everything — a reef, a river, a market — so they
-  cluster near the top of any merged list. A single merged top-3 would let them
-  evict the in-tier specialists the cut exists to preserve, silently undoing the
-  invariant that a seated persona is in the top-N of its own tier. Cutting each
-  pool separately keeps both guarantees: a human persona is only ever displaced
-  by a better human persona of its own tier, and a non-human still has to beat
-  that tier's survivors on distance.
-- **Seats are logged either way.** `compose_nonhuman_seat` records the persona,
-  the distance, and whether it won the seat outright (`pool_rank`) or arrived via
-  the cross-tier floor (`cross_tier_floor`). The second means no human in the
-  nominal tier had anything to say either.
-
-Selection is unchanged for questions with no non-human neighbour: the pool is
-merged, ranked, and loses. `test/nonhuman-tier.test.js` asserts both the
-reachability of the tier and that it cannot crowd specialists off human questions.
+`test/nonhuman-tier.test.js` asserts the tier is a first-class tier everywhere one
+is named (loader, dashboard, DB CHECK, packaged personas) and that no quota has
+crept back in.
 
 ### Writing a persona: the lens is not a body
 
@@ -357,7 +348,7 @@ Project-level equivalent in `.loomrc.json` (same keys, no `"loom"` wrapper):
 
 Environment overrides: `LOOM_<KEY>` applies on top of files for scalar schema keys (e.g. `LOOM_AGENT_TIMEOUT_MS=240000`, `LOOM_MODEL_DIVERSITY=false`). `OPENCODE_CONFIG_DIR` selects the shared opencode configuration and Loom data root; without a workspace, Loom data is stored below that directory. Log verbosity is controlled by `LOOM_LOG_LEVEL` (`DEBUG`|`INFO`|`WARN`|`ERROR`|`FATAL`, default `INFO`). The dashboard binds `127.0.0.1` by default and requires a per-dashboard capability cookie for API access. Bash is disabled by default; enable it only with an explicit Loom permission profile. To expose the dashboard beyond loopback, set `dashboard.host` deliberately and set `LOOM_ALLOW_LAN=1`; authenticated LAN access is still required.
 
-Other available options include agent and synthesis timeouts, retry policy, max tool calls, meeting timeout, stall detection (`stallTimeoutMs`, default 10 min (600000 ms)), composition relevance floor (`composition.maxCosineDistance`, default 0.85), no meeting-wide token budget (each call is trimmed to fit its own model's input window — 32k to 1M — and provider refusals for rate limits, exhausted token budgets and context overflow are handled as degradations), same-turn synthesis for inline loom tool results (`agentTools.sameTurnSynthesis`), and embedding model selection (`embeddingModel`/`embeddingQuant`).
+Other available options include agent and synthesis timeouts, retry policy, max tool calls, meeting timeout, stall detection (`stallTimeoutMs`, default 10 min (600000 ms)), auto-select pre-selection count (`composition.autoSelectSeats`, default 3), no meeting-wide token budget (each call is trimmed to fit its own model's input window — 32k to 1M — and provider refusals for rate limits, exhausted token budgets and context overflow are handled as degradations), same-turn synthesis for inline loom tool results (`agentTools.sameTurnSynthesis`), and embedding model selection (`embeddingModel`/`embeddingQuant`).
 
 ## Operational caveats
 

@@ -207,6 +207,10 @@ export function useEmbeddingStatus() {
           dims: data.status?.dims ?? null,
           maxTokens: data.status?.maxTokens ?? null,
           message: data.status?.message ?? null,
+          // Persona vector store state. The Setup tab gates auto-select on this
+          // so it can wait for the background index instead of opening a dialog
+          // that will fail or spin.
+          personaIndex: data.status?.personaIndex ?? { state: "empty", count: 0, message: null },
           models: data.models ?? [],
         });
       }

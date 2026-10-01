@@ -45,16 +45,10 @@ export const DEFAULT_CONFIG = {
   stallTimeoutMs: 600000,
   dashboard: { host: "127.0.0.1" },
   composition: {
-    maxCosineDistance: 0.85,
-    topNPerTier: 3,
-    // N11 — the one absolute distance left in composition, and a cross-tier
-    // switch rather than an exclusion: a tier whose best candidate is further
-    // away than this has nothing on-topic to offer, so the seat goes to the
-    // best candidate in any tier rather than to the least-off-topic persona in
-    // the nominal one. Raise it to disable (the relative cut alone then
-    // applies, which is the P15 behaviour and the reason a keyboard
-    // enthusiast ranked #2 for a car-manufacturer question).
-    maxTierDistance: 1.25,
+    // How many of the ranked personas are pre-selected when the auto-select
+    // dialog opens. Purely a presentation default — it does not influence
+    // which personas rank highly, and the user can change the selection freely.
+    autoSelectSeats: 3,
   },
   // N3 — automated artifact detectors ship advisory and OFF by default. Both
   // `Needs Verification` and `Citation Warnings` were majority-false in
@@ -155,9 +149,7 @@ export const CONFIG_SCHEMA = {
 
 export const NESTED_SCHEMA = {
   'dashboard.host': { type: 'string' },
-  'composition.maxCosineDistance': { type: 'number', min: 0.1, max: 1.9 },
-  'composition.topNPerTier': { type: 'number', min: 1, max: 10 },
-  'composition.maxTierDistance': { type: 'number', min: 0.1, max: 2.9 },
+  'composition.autoSelectSeats': { type: 'number', min: 1, max: 7 },
   'detectors.needsVerification': { type: 'boolean' },
   'detectors.citationWarnings': { type: 'boolean' },
   'detectors.dryRun': { type: 'boolean' },

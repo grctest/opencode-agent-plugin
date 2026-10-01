@@ -14,7 +14,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync, openSyn
 import { join } from "node:path";
 import { MeetingOrchestrator } from "../../orchestrator.js";
 import { normalizeOrchestratorConfig, validateOrchestratorConfig } from "../../orchestrator/models.js";
-import { composeRoomWithSimilarity } from "../../composer.js";
+import { rankAllPersonas, EMBEDDER_UNAVAILABLE } from "../../composer.js";
 import { getPersonas, getPersonaTags } from "../../composer/persona-loader.js";
 import { discoverModels, assignModelsToParticipants } from "../../services/model-service.js";
 import { createModelPlan } from "../../model-discovery.js";
@@ -211,17 +211,19 @@ export function handleListPersonas() {
   return Response.json({ tiers });
 }
 
-// --- Room preview (in-memory persona index, no database) ---
+// --- Persona ranking (in-memory persona index, no database) ---
 
 /**
- * Compose a preview room using the same PersonaIndex path as a real run.
- * Persona vectors live in process memory, so the preview needs no database
- * at all — it never appears in the meetings list or session index. Falls
- * back to keyword composition when anything fails (including an unavailable
- * embedder, handled inside composeRoomWithSimilarity).
+ * Ranks the whole persona catalog against the question. Persona vectors live
+ * in process memory, so this needs no database at all — it never appears in
+ * the meetings list or session index.
+ *
+ * There is no keyword fallback. Without a loaded embedder the endpoint
+ * reports `embedder_unavailable` and the UI hides auto-select entirely rather
+ * than showing the user a ranking it cannot stand behind.
  */
-async function composePreviewRoom(question, context = "") {
-  return composeRoomWithSimilarity(question, context);
+async function rankPreviewPersonas(question, context = "") {
+  return rankAllPersonas(question, context);
 }
 
 export async function handleRoomPreview(req) {
@@ -238,21 +240,24 @@ export async function handleRoomPreview(req) {
   if (!question || question.trim().length < 3) {
     return Response.json({ error: "question required (≥3 chars)" }, { status: 400 });
   }
-  let room;
+  let ranking;
   try {
-    room = await composePreviewRoom(question, String(body?.context ?? ""));
+    ranking = await rankPreviewPersonas(question, String(body?.context ?? ""));
   } catch (err) {
-      logger.warn("dashboard_preview_fallback", "Room preview failed — falling back to keyword composition", extractErrorInfo(err));
-    try {
-      room = await composeRoomWithSimilarity(question, String(body?.context ?? ""), { keywordOnly: true });
-    } catch (err2) {
-      const info = extractErrorInfo(err2);
+    if (err?.code === EMBEDDER_UNAVAILABLE) {
+      logger.warn("dashboard_rank_no_embedder", "Persona ranking requested without an embedder — auto-select unavailable", extractErrorInfo(err));
       return Response.json({
-        error: `Room preview failed (${info.message}). [preview_failed]`,
-        code: "preview_failed",
-        detail: info.message,
-      }, { status: 500 });
+        error: "Auto-select needs an embedding model. Add personas manually instead.",
+        code: EMBEDDER_UNAVAILABLE,
+        detail: err.message,
+      }, { status: 503 });
     }
+    const info = extractErrorInfo(err);
+    return Response.json({
+      error: `Persona ranking failed (${info.message}). [rank_failed]`,
+      code: "rank_failed",
+      detail: info.message,
+    }, { status: 500 });
   }
   // Attach suggested per-tier models so the UI can pre-fill pickers.
   let suggestedModels = [];
@@ -277,15 +282,17 @@ export async function handleRoomPreview(req) {
        }
     }
   } catch {}
+  // `ranked` carries identity + distance only. Full persona text for all ~349
+  // catalog entries would be megabytes on every rank; the dialog already
+  // loads the catalog from /api/personas to render rows, so it joins on `name`
+  // locally rather than receiving it twice.
   return Response.json({
-    participants: (room.participants ?? []).map((p) => personaDto(p, p.tier)),
-    tags: room.tags ?? [],
-    estimated_rounds: room.estimated_rounds ?? 3,
-    reasoning: room.reasoning ?? "",
-     complexity: room.complexity ?? null,
+    ranked: ranking.ranked ?? [],
+    selected: ranking.selected ?? [],
+    auto_select_count: ranking.autoSelectCount ?? 0,
      suggested_models: suggestedModels,
      suggested_orchestrator: suggestedOrchestrator,
-   });
+});
 }
 
 export async function handleOrchestratorPreview(req) {

@@ -11,6 +11,8 @@ import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_QUANT } from "../services/mo
 import {
   embeddingStatus,
   initEmbeddingModel,
+  schedulePersonaIndexWarm,
+  readPersonaIndexStatus,
   getPackageVersion,
   findAssetsDir,
   MIME_TYPES,
@@ -430,6 +432,10 @@ export function startDashboard(directory, port, runtimeOpts = null) {
         if (url.pathname === "/api/models") {
           const { listDownloadedModels } = await import("./api.js");
           const models = listDownloadedModels();
+          // Read live rather than serving the cached copy: the background index
+          // writes its progress to the index module, not to `embeddingStatus`,
+          // so the poll is what moves the "Preparing N personas…" counter.
+          await readPersonaIndexStatus();
           return Response.json({ models, status: embeddingStatus });
         }
 
@@ -470,6 +476,10 @@ export function startDashboard(directory, port, runtimeOpts = null) {
             embeddingStatus.maxTokens = getEmbeddingMaxTokens();
             embeddingStatus.initializedAt = new Date().toISOString();
             embeddingStatus.message = null;
+            // A new model invalidates the persona vectors (the store
+            // fingerprint includes the model name), so re-warm in the
+            // background — same non-blocking contract as startup.
+            schedulePersonaIndexWarm();
             return Response.json({ ok: true, status: embeddingStatus });
           } catch (err) {
             embeddingStatus.state = "error";

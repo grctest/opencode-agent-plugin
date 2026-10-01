@@ -11,7 +11,7 @@ import { persistentAtom } from "@nanostores/persistent";
  * dialogs, catalog/LLM snapshots) stays in useState and is refetched.
  */
 
-const FORM_VERSION = 6;
+const FORM_VERSION = 7;
 const KNOWN_TIERS = new Set(["junior", "mid", "senior", "principal", "civilian", "nonhuman"]);
 const FEATURE_MODES = new Set(["disabled", "optional", "mandatory"]);
 // SKILL.state is an off/on toggle (not a 3-state mode): on = every non-pass
@@ -50,7 +50,6 @@ export const DEFAULT_SETUP_FORM = {
   context: "",
   maxRounds: 4,
   seats: [],
-  preview: null,
   startedId: null,
   orchestrator: { ...DEFAULT_ORCHESTRATOR },
   features: { ...DEFAULT_FEATURES },
@@ -138,17 +137,6 @@ function sanitizeSeat(raw) {
   };
 }
 
-function sanitizePreview(raw) {
-  if (!raw || typeof raw !== "object" || !Array.isArray(raw.participants)) return null;
-  return {
-    participants: [],
-    tags: Array.isArray(raw.tags) ? raw.tags.filter((t) => typeof t === "string") : [],
-    estimated_rounds: Number.isFinite(+raw.estimated_rounds) ? +raw.estimated_rounds : 3,
-    reasoning: asString(raw.reasoning),
-    complexity: asString(raw.complexity) || null,
-  };
-}
-
 function sanitizeForm(raw) {
   if (!raw || typeof raw !== "object") return { ...DEFAULT_SETUP_FORM };
   const seats = Array.isArray(raw.seats)
@@ -186,7 +174,6 @@ function sanitizeForm(raw) {
     context: asString(raw.context),
     maxRounds,
     seats,
-     preview: sanitizePreview(raw.preview),
      startedId: typeof raw.startedId === "string" && raw.startedId ? raw.startedId : null,
      orchestrator: sanitizeOrchestrator(raw.orchestrator, raw.orchestratorModel),
      features,
