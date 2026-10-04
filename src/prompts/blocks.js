@@ -64,8 +64,8 @@ export function buildAgentStateBlock(state) {
 /**
  * Sub-agent state line (cut-back contract for loom_query/loom_vote targets).
  * Read-only context, never a directive: the target answers from the question +
- * room lines; patching is optional and happens via the loom_state_patch tool
- * (offered in the ephemeral tool map), never by writing "State patched" in prose.
+ * room lines. Sub-agents never patch (primary-tail-only) — they must never
+ * write "State patched" in prose either.
  * Empty state is the normal round-1 case — it must not hijack the task.
  */
 export function buildSubAgentStateLine(targetAgent, targetState) {
@@ -80,9 +80,9 @@ export function buildSubAgentStateLine(targetAgent, targetState) {
 
 /**
  * Accurate tool guidance for ephemeral sub-agents. Mirrors the actual tool map
- * offered in query-evidence.js (websearch/webfetch/read + loom_state_patch),
- * unlike buildEvidenceGuidance which advertises primary-turn loom_* tools the
- * sub-agent does not have. Answer-first, patch-last ordering included.
+ * offered in query-evidence.js (websearch/webfetch/read only — patching is
+ * primary-tail-only), unlike buildEvidenceGuidance which advertises
+ * primary-turn loom_* tools the sub-agent does not have.
  */
 export function buildSubAgentToolGuidance(kind = "query") {
   const base = kind === "evidence"
@@ -97,9 +97,8 @@ If a tool returns error or 0 hits, write "evidence unavailable — searched X" a
 
 ${base}
 
-- After drafting your full answer, you MAY call loom_state_patch at most once to record anything worth carrying into your own future state (stance + 1-3 bullets). Optional — skip it if nothing new.
-- You do NOT have loom_query, loom_vote, loom_summon, loom_forum, loom_request_next, or loom_pass. Do not attempt them and do not mention them.
-- Your prose IS the contribution. Never write "State patched" or "Contribution delivered" in place of the answer — a patch never substitutes for prose.
+- You do NOT have loom_query, loom_vote, loom_summon, loom_forum, loom_request_next, loom_pass, or any state tool. Do not attempt them and do not mention them.
+- Your prose IS the contribution. Never write about patching or state in place of the answer.
 - ${CITATION_LINE}`;
 }
 

@@ -458,10 +458,10 @@ function validateParticipants(list) {
 const FEATURE_MODES = new Set(["disabled", "optional", "mandatory"]);
 
 // SKILL.state is an off/on toggle, not a 3-state mode: when on, every
-// non-pass turn ends with loom_state_patch as the agent's absolutely-last
-// inline tool call. Prompt emphasis is the only enforcement — a miss is
-// logged and the turn stands, so the prompt wording is always REQUIRED
-// when on.
+// non-pass primary turn is followed by a bounded patch-only tail call (same
+// session, loom_state_patch only). The primary never offers the tool, so the
+// primary prompt carries no patch wording; a tail miss is logged and the
+// turn stands.
 const SKILL_STATE_MODES = new Set(["on", "off"]);
 
 function normalizeFeatureMode(value, fallback = "optional") {

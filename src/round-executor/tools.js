@@ -23,10 +23,10 @@ export function buildToolsMap(config, { activeCount, omitStatePatch = false } = 
     if (loom.loom_summon && isSummonAvailable()) toolsMap.loom_summon = true;
     if (loom.loom_request_next && !isSolo) toolsMap.loom_request_next = true;
     if (loom.loom_pass) toolsMap.loom_pass = true;
-    // State patch is offered inline (omitStatePatch stays for callers that
-    // must not offer it, e.g. synthesis/recovery passes). The agent's
-    // absolutely-last tool use is the patch; a miss is logged and the turn
-    // stands — prompt emphasis is the only enforcement.
+    // State patch is hidden from primary/synthesis by design
+    // (omitStatePatch:true in the primary call, excluded from the synthesis
+    // map below). The patch-only tail pass owns it with a { loom_state_patch }
+    // map, so the model gets the full turn picture before projecting state.
     if (loom.loom_state_patch && !omitStatePatch) toolsMap.loom_state_patch = true;
     if (loom.loom_forum) {
       toolsMap.loom_forum_create_topic = true;
@@ -63,7 +63,7 @@ export function buildToolsMapWithoutLoom(config, { activeCount } = {}) {
     // passes must not open a new peer interaction with no further pass to
     // fold the answers in (audit B8). loom_request_next (fire-and-forget)
     // and the forum tools stay available. loom_state_patch stays out too:
-    // a synthesis/recovery pass must never rewrite the agent's notes.
+    // only the dedicated patch tail may write the agent's notes.
   }
   return toolsMap;
 }

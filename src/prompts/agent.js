@@ -111,14 +111,8 @@ export function buildAgentSystemPrompt(participant, { activeCount, agentTools, c
 
    const agentToolsConfig = getEffectiveAgentTools(agentTools) ?? {};
    const mandatoryCapabilities = agentToolsConfig?.mandatory ?? {};
-   const statePatchEnabled = !!(agentToolsConfig?.enabled && agentToolsConfig?.loom?.loom_state_patch);
-    // SKILL.state is an off/on toggle: when the tool is enabled the patch is
-    // always the turn's final action (inline in the primary turn, emphasized
-    // by contract item 8). mandatory.skillState
-    // is kept as the wire flag for "on" (server maps features.skillState ===
-    // "on" to true); a legacy false with the tool enabled still gets the
-    // REQUIRED wording because prompt emphasis is the only enforcement.
-   const statePatchMandatory = statePatchEnabled;
+   // NOTE: loom_state_patch is hidden from the primary turn by design (tail
+   // pass owns it). No patch wording belongs in the primary system prompt.
    const forumMandatory = !!(agentToolsConfig?.enabled && agentToolsConfig?.loom?.loom_forum && mandatoryCapabilities.forums);
     const queryMandatory = !!(agentToolsConfig?.enabled && agentToolsConfig?.loom?.loom_query && mandatoryCapabilities.agentQueries);
     const localSearchMandatory = !!mandatoryCapabilities.localSearch;
@@ -171,12 +165,11 @@ ${isBuildModeGlobal
         if (summonAvailable) tools.push('loom_summon');
         if (loom.loom_request_next && !isSolo) tools.push('loom_request_next');
         if (loom.loom_pass) tools.push('loom_pass');
-        // loom_state_patch IS offered inline in the primary turn: the agent's
-        // absolutely-last tool use is the patch (see OUTPUT CONTRACT),
-        // so it is maximally up to date. No dedicated per-turn patch call
-        // exists and no enforcement retry follows — a miss is logged and
-        // the turn stands.
-        if (loom.loom_state_patch) tools.push('loom_state_patch');
+        // loom_state_patch is deliberately HIDDEN from the primary turn: the
+        // patch-only tail pass (execute-turn.js) runs after prose + synthesis
+        // with the full turn picture, so the primary must never mention or
+        // offer it. It stays out of the Available list and out of the contract.
+        // (omitStatePatch:true in buildToolsMap enforces the runtime side.)
         if (loom.loom_forum) {
           tools.push('loom_forum_create_topic', 'loom_forum_list_topics', 'loom_forum_read_topic', 'loom_forum_add_comment');
         }
@@ -208,8 +201,7 @@ For code collaboration: prioritize read/glob/grep first to inspect project files
 Loom Interaction Tools — real tool use (required, auditable):${isSolo ? "" : `
   - **loom_query**: query one or more peers — pass \`queries: [{target, question, mode}]\` where \`target\` is the exact participant **id** from *Other Participants* (e.g. "dr_sarah_3", not display name "Dr. Sarah" or role "Strategist"). Modes: 'clarify' (factual), 'perspective' (stance on your statement — Position-tagged), 'evidence' (they MUST use a research tool — Finding+Source+Strength), 'critique' (steelman attack), 'risks'/'assumptions'/'alternatives' (deep dives). Returned inline for same-turn synthesis.
   - **loom_vote**: call a vote with lettered options (A) ... B) ...). All active peers vote in parallel; tally returned inline. A ballot is never final against new evidence: when new evidence supersedes the question you voted on, call loom_vote again on the superseded question rather than treating the earlier tally as final. In the final round, if new evidence has emerged since the last ballot, close with a confirmation ballot on the superseded question and record its outcome.`}
-${summonBullets.length ? summonBullets.join("\n") + "\n" : ""}  - **loom_pass**: pass when you have nothing new. Include reason. Ends when all active participants pass (the round limit or a timeout can also end it) — not a failure to dissent. A pass needs no state patch (your state correctly stays as-is); calling both still applies the patch, but it is wasted.
-${statePatchEnabled ? "  - **loom_state_patch**: required once per non-pass turn to project what survives — your stance + 1-3 bullets. Call it exactly once, as your ABSOLUTELY LAST tool use this turn — after your contribution and after all peer answers are synthesized — so it is the most up to date it can be. Details in the tool description, which is authoritative for arguments and eviction.\n" : ""}
+${summonBullets.length ? summonBullets.join("\n") + "\n" : ""}  - **loom_pass**: pass when you have nothing new. Include reason. Ends when all active participants pass (the round limit or a timeout can also end it) — not a failure to dissent. Passing means "nothing new", so your carried state is correctly left as-is.
 ${loom.loom_forum ? `Forum — async sub-discussions between participants:
   - **loom_forum_create_topic**: propose a sub-problem or question — pass \`title, body, tags?\`. Returns topic_id.
   - **loom_forum_list_topics**: browse existing topics — optional tag filter. Returns titles + comment counts.
@@ -282,7 +274,7 @@ ${modeSection}
 
   ## WHEN TO PASS
 
-  A pass needs no state patch — passing means "nothing new", so your state is correctly left as-is. Don't call loom_state_patch on a pass turn.
+  Passing means "nothing new", so your carried state is correctly left as-is.
 
   Call the loom_pass tool when:
   - You have no new evidence, data, or tool output to introduce
@@ -296,7 +288,6 @@ ${modeSection}
   Dissent is not a reason to stay silent — it’s valuable. Only pass when the deliberation has nothing left from your lens.
 
   The deliberation ends naturally when all active participants pass (anti-timeout only — no token-pressure to pass early). Your thoughtful pass signals natural conclusion, not cost saving.
-${statePatchMandatory ? "  (Passing is the one turn that does NOT require loom_state_patch — a pass means \"nothing new\", so your state is correctly left as-is.)" : ""}
 
   ## OUTPUT CONTRACT — read last, it governs; in conflict it wins
 
@@ -306,7 +297,7 @@ ${statePatchMandatory ? "  (Passing is the one turn that does NOT require loom_s
   4. Interaction — peer actions happen only through the real loom_* tools in your tool list:
         - loom_query queries peers via \`queries:[{target, question, mode}]\` — modes: 'clarify' (factual), 'perspective' (their stance — Position-tagged), 'evidence' (Finding+Source+Strength), 'critique'/'risks'/'assumptions'/'alternatives' (deep dives); loom_vote polls on lettered options;${summonOffered(agentTools) ? " loom_summon brings guest expert;" : ""} loom_request_next requests priority next round (capped at ${priorityCap}).
         - Interaction tools fan out in parallel and return inline within this same turn — wait for result, then synthesize citing [#id] per block.
-        - Aim for at most ${agentToolsConfig?.maxToolCallsPerTurn ?? 200} tool calls per turn — all tools share one budget, and overages are logged, not hard-stopped; prefer one focused interaction call when specific. loom_state_patch is EXEMPT from that cap (one call per turn, enforced by the tool), so never cut the patch to protect the budget.
+        - Aim for at most ${agentToolsConfig?.maxToolCallsPerTurn ?? 200} tool calls per turn — all tools share one budget, and overages are logged, not hard-stopped; prefer one focused interaction call when specific.
         - CRITICAL: tool invocations are transmitted through the model's function-calling channel, never through response text. Your prose must NEVER contain function-name() or JSON argument blobs. Bracket tags like [QUERY: @id] are legacy — ignored everywhere except loom_vote ballots, which still require [Vote: A].
         Reference contributions by [#id] from Recent Contributions, e.g. [#12].
   5. Identity — persona and agenda shape framing, not facts. Precedence: OUTPUT CONTRACT > persona/tier guidance > State of Play > Live. Persona voice never overrides budgets or the tool channel.
@@ -315,8 +306,8 @@ ${statePatchMandatory ? "  (Passing is the one turn that does NOT require loom_s
   7a. Test craft — when you propose a test, threshold, or numeric bar: (a) Calibrate it — name the base rate, historical precedent, or data that justifies the number; if you don’t know, say so and propose the cheap test that would measure it. (b) Check internal consistency — a minimum-game floor, a percentage share, and an absolute-minute estimate must be mutually possible; if your floor makes your share unreachable (or trivial), fix one of the three. (c) Prefer a test whose every branch can actually fire — a threshold that can never trigger is not falsifiable, it’s decoration.
   7b. Ladder atomicity — when you propose or vote on a decision ladder, the trigger, order, owner, full date (year included), and re-pricing conditions form ONE atomic object: the vote assigns all five or adopts nothing. Never propose a partial ladder (a trigger with no owner, or an owner with no date).
   7c. Versioned base tables — when you state a recurring number set (leaderboard, standings, win totals, season stats), publish it as a versioned base table: “leaderboard vN” with the full scope (season length, per-team/driver wins, sources, as-of round). In later rounds, cite the existing version or publish v(N+1) with a diff line showing what changed. Never restate numbers without either citing the current version or superseding it.
-${statePatchMandatory ? `  8. **loom_state_patch, once, every non-pass turn** — call it exactly once, as your ABSOLUTELY LAST tool use this turn (after your contribution and after all peer answers are synthesized), so it is the most up to date it can be; a pass skips it and vice versa. This tool maintains only your private notes for your next turn — your contribution prose is what the room and the end user read, and a patch never substitutes for it. Never write about patching in prose: no "Patched", "state", "stance", "bullets", or version numbers — write the deliberation itself (argument details in the tool description). **Your patch is never evicted** — it is exempt from the per-turn call cap, so a deep-research turn still ends with its memory written. Do not apologize for a patch in prose and do not skip it: if the tool reports a rejection, name the reason in one clause and carry on.
-` : ""}  9. Newness — every contribution must add at least one of: (a) new evidence with Source: or tool output, (b) a new argument or objection, (c) a refinement that changes a number, threshold, or scope, (d) a synthesis that resolves or narrows a contested point. Re-stating settled points or your own prior position without a delta is a violation — cite [#id] and move on. In rounds 3+ this rule is strict; in rounds 1–2 thoroughness takes precedence.
+  8. State carry-forward — a follow-up step saves your stance and bullets automatically from this turn; do not call any state tool now and never write about patching in prose: no "Patched", "state", "stance", "bullets", or version numbers — write the deliberation itself.
+  9. Newness — every contribution must add at least one of: (a) new evidence with Source: or tool output, (b) a new argument or objection, (c) a refinement that changes a number, threshold, or scope, (d) a synthesis that resolves or narrows a contested point. Re-stating settled points or your own prior position without a delta is a violation — cite [#id] and move on. In rounds 3+ this rule is strict; in rounds 1–2 thoroughness takes precedence.
   10. Frozen terms — the question's load-bearing terms (event set, scoring body, season shape, roster date, and any other key definitions) are frozen before round 1. If your contribution uses a term that differs from the frozen definition, flag the divergence explicitly in one clause (e.g., "using X to mean Y, which differs from the frozen definition Z") rather than letting it pass silently. Definition-adjacent disputes are clerk-flagged, not debated — don't spend rounds re-litigating what a term means.
   11. Citation engagement — each contribution must engage with at least one other contribution via [#id] (a peer's claim, a State-of-Play item, or a prior contribution). Isolated contributions that cite nothing are flagged by the clerk. If you genuinely have no peer contribution to engage (round 1, first speaker), say so explicitly and open the strongest thread from your lens.
   12. No naked numbers — every percentage or rate you state must ship with (n, window, source): the sample size, the time/scope window it covers, and where it came from ([#id], State-of-Play, or Source:). A rate with n<10 may illustrate a point but never license a conclusion — label it "n=X, illustrative only" and don't build a decision on it. If you cannot source a number, strike it or qualify it ("in my experience…"); the clerk strikes what you leave naked.
@@ -330,6 +321,35 @@ ${statePatchMandatory ? `  8. **loom_state_patch, once, every non-pass turn** �
   }
   systemPromptCache.set(cacheKey, result);
   return result;
+}
+
+/**
+ * Patch-only tail prompt (second LLM call, primary turns only).
+ * Context is the turn that just happened: final prose + tool outputs that
+ * produced it, plus the agent's current carried state for dedup context.
+ * The model does exactly one thing here: call loom_state_patch once.
+ * Sub-agents (query/vote/summon targets) never see this — it runs only for
+ * the primary turn owner on the same round-scoped session.
+ */
+export function buildPatchTailPrompt({ finalText = "", toolDigest = "", myStateMarkdown = "" } = {}) {
+  const prose = sanitizeForDisplay(String(finalText ?? "").slice(0, 4000), 4000);
+  const tools = sanitizeForDisplay(String(toolDigest ?? "").slice(0, 6000), 6000);
+  const state = sanitizeForDisplay(String(myStateMarkdown ?? "").slice(0, 2000), 2000);
+  return `Your contribution for this turn is recorded. Now save what should survive to your next turn.
+
+## Your final prose (this turn's deliberation move)
+
+${delimitContext(prose || "(no prose — tool-only turn)", "FINAL_PROSE")}
+
+${tools ? `## Tool outputs from this turn (what produced the prose above)\n\n${delimitContext(tools, "TURN_TOOL_OUTPUTS")}\n` : ""}${state ? `## Your current carried state (avoid re-adding what is already there)\n\n${delimitContext(state, "CURRENT_STATE")}\n` : ""}
+Call loom_state_patch ONCE now with your stance (1 sentence, where you stand after this turn) and 1-3 bullets across established/contested/open/facts/files for anything new this turn decided, plus exact-text remove entries for your own outdated bullets. facts need Source: or [#id]. At least one field. No prose needed beyond the call — a patch never substitutes for prose, and prose about patching is forbidden.`;
+}
+
+export function buildPatchTailSystem({ name = "agent", tier = "" } = {}) {
+  const safe = escapeDelimiters(sanitizeForDisplay(String(name ?? "agent"), 120));
+  return `You are **${safe}**${tier ? ` (${tier})` : ""} — saving private notes for your next turn.
+
+Call loom_state_patch exactly once. It updates only your own notes; the room never sees them, only your contribution prose. Never write about patching in prose.`;
 }
 
 /**
@@ -474,11 +494,11 @@ ${delimitContext(lines.join("\n"), "OTHER_PARTICIPANTS")}
 _Use these ids verbatim for loom_query. Example: {target: "${exampleId}", question: "...", mode: "perspective"}. Do not invent ids — only the listening/speaking ids above are queryable.${mandatoryCapabilities.agentQueries ? " This turn requires at least one eligible peer interaction tool when an eligible peer is available." : ""}_`;
   })() : "";
 
-  // SKILL.state is off/on: when Your State renders (tool enabled), the patch
-  // is always the final action — no "optional" timing variant, and no
-  // dedicated follow-up call: the patch is one of this turn's own tool calls.
+  // Your State still renders in the primary turn (it is the agent's carried
+  // context), but the patch tool lives only in the tail pass — the primary
+  // must not name it or invite its use.
   const stateGuidance = showState
-    ? `- **Your State is your private notes to maintain** — project it with a single loom_state_patch call, made as your ABSOLUTELY LAST tool use this turn, after your prose and after all peer answers are synthesized (argument details live in the tool description). Only you see this block next turn; the room and the end user only ever read your contribution prose. If you reason well but patch nothing, your next turn starts without those notes — but the room still read your contribution.
+    ? `- **Your State is carried forward automatically** — a follow-up step saves what survives from this turn. Only you see this block next turn; the room and the end user only ever read your contribution prose.
 - **Live is current round only** — anything older you still need must already be in Your State; if it isn't, re-establish it from the digest (don't quote full old prose).
 `
     : "";
@@ -490,8 +510,8 @@ _Use these ids verbatim for loom_query. Example: {target: "${exampleId}", questi
     ? `- **Round phase** — ${buildRoundContext(round, options.maxRounds)}\n`
     : "";
   const hasLive = Array.isArray(recentContributions) && recentContributions.length > 0;
-  // Steering hints (contribution-mix nudges) render here — before the final
-  // patch line, so the strongest recency position keeps the mandatory call.
+  // Steering hints render before the closer; the patch line is gone by design
+  // (tail pass owns it), so recency belongs to deliberation.
   const steeringBlock = options.steeringHint
     ? `\n${delimitContext(sanitizeForDisplay(String(options.steeringHint), 300), "STEERING_HINT")}\n`
     : "";
@@ -521,7 +541,5 @@ To challenge SoP: cite [#id] contradicting it + Source/tool output + falsifiable
 
 Rules: contract §1 (length) · §2 (citations) · §3 (boundaries) govern. Keep code diffs in \`\`\` file=src/... \`\`\` blocks (not counted); preserve code and numbers verbatim.
 ${steeringBlock}
-${showState ? `After your prose, call loom_state_patch exactly once as your ABSOLUTELY LAST tool use this turn (private notes for your next turn — never a substitute for prose).
-
-` : ""}Make your contribution or pass — thorough, grounded prose with [#id] citations is what the room and the end user read.}`;
+Make your contribution or pass — thorough, grounded prose with [#id] citations is what the room and the end user read.}`;
 }

@@ -133,11 +133,13 @@ test("committed unique state is used in the next primary prompt and collective S
 
   const agentTools = structuredClone(DEFAULT_CONFIG.agentTools);
   const systemPrompt = buildAgentSystemPrompt(agent, { activeCount: 2, agentTools });
-  const toolsMap = buildToolsMap({ agentTools }, { activeCount: 2 });
+  const toolsMap = buildToolsMap({ agentTools }, { activeCount: 2, omitStatePatch: true });
   const userPrompt = buildAgentUserPrompt(agent, "", [], 2, "Question", [], "", [], [], state);
 
-  assert.match(systemPrompt, /loom_state_patch/);
-  assert.equal(toolsMap.loom_state_patch, true);
+  // Tail-pass design: the primary hides the patch tool (the patch-only tail
+  // owns it) but still renders the carried Your State block.
+  assert.doesNotMatch(systemPrompt, /loom_state_patch/);
+  assert.equal(toolsMap.loom_state_patch, undefined);
   assert.match(userPrompt, /## Your State — CARRIED FORWARD/);
   for (const marker of [
     "Unique next-turn stance",

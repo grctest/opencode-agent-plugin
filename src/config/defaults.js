@@ -18,6 +18,10 @@ export const TUNING = {
   // that did not patch, so a short final round cannot cost the room its
   // memory. 0 disables the grace pass.
   FINAL_ROUND_PATCH_GRACE_MS: 45_000,
+  // Patch-only tail pass (primary turns): same-session second LLM call whose
+  // only job is loom_state_patch, with the turn's final prose + tool outputs
+  // as context. Bounded short — a tail miss logs and the turn stands.
+  PATCH_TAIL_TIMEOUT_MS: 45_000,
   FANOUT: { queryBatch: 5, voteBatch: 5, rpm: 100 },
   CONTENT_TRUNCATION: { question: 10000, result: 4000, content: 4000, summary: 800 },
   STATE_OF_PLAY: { bucketCap: 8, truncation: 500, reflectionTruncation: 400 },
@@ -105,11 +109,12 @@ export const DEFAULT_CONFIG = {
     sameTurnSynthesis: true,
     // Capability policy — single default shared with the Setup tab
     // (control.js SKILL_STATE_MODES). skillState:true means the SKILL.state
-    // toggle is on: every non-pass turn ends with loom_state_patch as the
-    // agent's absolutely-last inline tool call. Prompt emphasis is the only
-    // enforcement — a miss is logged and the turn stands (no follow-up call).
-    // The salience surfaces in prompts/agent.js (contract item 8, guidance
-    // bullet, final line) all render REQUIRED whenever the tool is enabled.
+    // toggle is on: every non-pass primary turn is followed by a bounded
+    // patch-only tail call (same session, loom_state_patch only) with the
+    // turn's final prose + tool outputs as context. The primary never offers
+    // the tool. A tail miss is logged and the turn stands (no retry).
+    // The salience surfaces in prompts/agent.js (neutral carry-forward note;
+    // the primary never names the tool).
     mandatory: {
       forums: false,
       skillState: true,

@@ -177,7 +177,7 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
                  stateManager.getStateOfPlay?.() ?? "",
                  voterState
                );
-              const systemPrompt = `You are ${voter.config.name} (${voter.config.tier}) — voting in Loom.\n\nChoose one letter (A/B/C…) as listed in the vote question. Open with your choice as the first token — [Vote: X] — then one sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No contribution tags, 1-2 sentences total, in character.\nYour prose IS the vote and is stored verbatim — the invoker reads it directly, so there is no parser to satisfy. State your reasoning, not only the letter. Never write "State patched" in place of it. After casting your vote you MAY call loom_state_patch at most once to record anything worth carrying into your own future state; optional, skip if nothing new.`;
+              const systemPrompt = `You are ${voter.config.name} (${voter.config.tier}) — voting in Loom.\n\nChoose one letter (A/B/C…) as listed in the vote question. Open with your choice as the first token — [Vote: X] — then one sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No contribution tags, 1-2 sentences total, in character.\nYour prose IS the vote and is stored verbatim — the invoker reads it directly, so there is no parser to satisfy. State your reasoning, not only the letter.`;
               const effectiveSourceId = caller?.config?.id ?? callerForPrompt.config.id;
               const promptContext = {
                 type: "vote_response",
@@ -189,12 +189,13 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
                  round: currentRound,
                  state_version: voterState?.version ?? 0,
               };
-              // Shared ephemeral-prompt primitive (audit 10 MA1) — scoped: vote prose + optional own-state patch only, no nested loom_* or built-ins
+              // Shared ephemeral-prompt primitive (audit 10 MA1) — scoped: vote prose only, no tools.
+              // Patching is primary-tail-only; sub-agent votes never patch.
               const res = await sessionManager.runEphemeralPrompt(voter, {
                 system: systemPrompt,
                 model,
                 parts: [{ type: "text", text: prompt }],
-                tools: { loom_state_patch: true },
+                tools: {},
                 timeoutMs: getConfig()?.tuning?.VOTE_TIMEOUT_MS ?? TUNING.VOTE_TIMEOUT_MS,
                 signal: context.abort,
                 abort: context.abort,

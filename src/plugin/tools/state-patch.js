@@ -48,62 +48,24 @@ export function createStatePatchTool({ config, resolveMeeting, activeLooms }) {
           // Resolve caller (same helper as query-evidence.js: resolveCaller)
           const { resolveCaller } = await import("./shared.js");
           const sessionManager = engine.getSessionManager?.();
-          // Ephemeral sub-agent branch (loom_query/loom_vote targets): the
-          // target answers inside the asker's primary turn, so there is no
-          // activeTurn for it and resolveCaller would misattribute to the
-          // asker. The owner was recorded at runEphemeralPrompt time.
-          // Answer-first, patch-last is prompt-enforced; here we enforce
-          // own-state-only + at-most-once per ephemeral session.
+          // Ephemeral sub-agent branch (loom_query/loom_vote/summon targets):
+          // patching is primary-tail-only by design. A peer answer runs
+          // inside the asker's primary turn with no activeTurn of its own,
+          // so allowing it here would bypass atomic commit (contribution +
+          // state in one txn) and let a sub-agent write outside the tail's
+          // full-turn context. Refuse with guidance; the asker's tail will
+          // project anything worth keeping.
           let ephemeralOwnerId = null;
           try { ephemeralOwnerId = sessionManager?.resolveEphemeralOwner?.(context.sessionID) ?? null; } catch {}
           if (ephemeralOwnerId) {
-            // N6 — the audit row needs a participant id; the ephemeral owner is
-            // the participant the patch would have belonged to.
             const ownerParticipant = sm.getParticipant?.(ephemeralOwnerId) ?? { config: { id: ephemeralOwnerId, name: ephemeralOwnerId } };
-            const { StatePatchSchema } = await import("../../schemas.js");
-            const { coerceStatePatch, applyStatePatch } = await import("../../state-patch.js");
-            const parsedEphemeral = StatePatchSchema.safeParse(args);
-            const coerced = coerceStatePatch(parsedEphemeral.success ? parsedEphemeral.data : args);
-            const prevEphemeral = sm.getParticipantState(ephemeralOwnerId);
-            // A second patch for one query answer folds into the first: applyStatePatch
-            // merges into the live state, so a repeat call is additive rather than
-            // refused. It used to be rejected outright, costing the target its own
-            // reasoning over a formatting habit.
-            const { next, applied, unmatched, evicted, overCap, skipped } =
-              applyStatePatch(prevEphemeral, coerced.patch);
-            next.updated_round = sm.getCurrentRound?.() ?? 0;
-            try { sm.setParticipantState(ephemeralOwnerId, next); } catch {}
-            try { sm.markStateDirty?.(ephemeralOwnerId); } catch {}
-            try {
-              if (typeof db.setParticipantState === "function") db.setParticipantState(ephemeralOwnerId, next);
-            } catch {}
-            try {
-              if (typeof db.addStatePatch === "function") {
-                db.addStatePatch({
-                  participantId: ephemeralOwnerId,
-                  round: sm.getCurrentRound?.() ?? 0,
-                  contributionId: null,
-                  version: next.version,
-                  patchJson: args,
-                  appliedJson: { applied: true, version: next.version },
-                });
-              }
-            } catch {}
-            try {
-              const { auditLoomTool } = await import("./audit.js");
-              auditLoomTool({ db, stateManager: sm, caller: ownerParticipant, meetingId: meetingInfo.meetingId,
-                tool: "loom_state_patch", input: args,
-                output: JSON.stringify({ applied: true, version: next.version, ephemeral: true }),
-                status: "completed", title: `loom_state_patch:v${next.version} (query answer)` });
-            } catch {}
-            try { sessionManager?.markEphemeralPatchApplied?.(context.sessionID); } catch {}
-            return {
-              output: JSON.stringify({ applied: true, version: next.version, added: applied.added,
-                removed: applied.removed, unmatched: unmatched.slice(0, 5), evicted, overCap, skipped,
-                note: "Patch applied to YOUR state. Your prose answer is still required — a patch never substitutes for it." }),
-              metadata: { applied: true, version: next.version, ephemeral: true },
-              title: `loom_state_patch:v${next.version} (query answer)`,
-            };
+            return loomToolRefusal({
+              db, stateManager: sm, caller: ownerParticipant, meetingId: meetingInfo.meetingId,
+              tool: "loom_state_patch", input: args,
+              error: "loom_state_patch runs only in the primary turn's patch tail — peer answers cannot patch directly; the asker's tail projects what survives",
+              reason: "state_patch_ephemeral_refused", metadata: { validationFailed: true },
+              title: "loom_state_patch error",
+            });
           }
           const caller = resolveCaller(sm.getParticipants(), sm.getWeave?.() ?? [], context.sessionID);
           // N6 — every refusal is audited with a non-completed status and a

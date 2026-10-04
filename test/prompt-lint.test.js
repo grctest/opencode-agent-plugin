@@ -59,8 +59,9 @@ test("tool budget is worded as guidance, not a hard cap", () => {
 });
 
 // 3. Tools described == tools offered, across config combos. The comparison
-// targets the PRIMARY turn's map: loom_state_patch is offered inline there
-// (the agent's absolutely-last tool use), so it must be advertised too.
+// targets the PRIMARY turn's map: loom_state_patch is hidden there by design
+// (the patch-only tail pass owns it), so Available must match the
+// omitStatePatch:true map exactly.
 function availableSet(sys) {
   const m = sys.match(/Available: ([^\n]+)/);
   assert.ok(m, "Available line missing");
@@ -70,7 +71,7 @@ function availableSet(sys) {
 }
 function offeredSet(agentTools, activeCount) {
   return new Set(
-    Object.keys(buildToolsMap({ agentTools }, { activeCount }))
+    Object.keys(buildToolsMap({ agentTools }, { activeCount, omitStatePatch: true }))
       .map((n) => (n.startsWith("loom_forum_") ? "loom_forum" : n)),
   );
 }
@@ -88,19 +89,17 @@ for (const [label, mutate, activeCount] of [
   });
 }
 
-// 3a. Inline-first patch design: the primary map offers loom_state_patch (the
-// agent's absolutely-last tool use), and there is no dedicated per-turn patch
-// call and no enforcement retry — a miss is logged and the turn stands;
-// prompt emphasis is the only enforcement.
-test("state patch is offered inline in the primary turn", () => {
+// 3a. Tail-pass patch design: the primary map hides loom_state_patch (the
+// patch-only tail owns it with the full turn picture), so the primary system
+// prompt must never name the tool. The tail builders carry the patch wording.
+test("state patch is hidden from the primary turn", () => {
   const at = cloneTools();
-  const primary = buildToolsMap({ agentTools: at }, { activeCount: 5 });
-  assert.ok("loom_state_patch" in primary, "primary turn must offer loom_state_patch inline");
+  const primary = buildToolsMap({ agentTools: at }, { activeCount: 5, omitStatePatch: true });
+  assert.ok(!("loom_state_patch" in primary), "primary turn must NOT offer loom_state_patch");
   const sys = buildAgentSystemPrompt(participant(), { activeCount: 5, agentTools: at });
-  assert.match(sys, /loom_state_patch/);
-  assert.match(sys.match(/Available: ([^\n]+)/)?.[1] ?? "", /loom_state_patch/);
-  assert.match(sys, /ABSOLUTELY LAST tool use/);
-  assert.doesNotMatch(sys, /do not call it during your main turn/);
+  assert.doesNotMatch(sys, /loom_state_patch/);
+  assert.doesNotMatch(sys.match(/Available: ([^\n]+)/)?.[1] ?? "", /loom_state_patch/);
+  assert.doesNotMatch(sys, /ABSOLUTELY LAST tool use/);
 });
 
 // 3b. Forum descriptions vanish with the flag (not just the tool list).
@@ -274,15 +273,17 @@ test("primary user prompt carries round-phase guidance", () => {
   assert.doesNotMatch(withoutPhase, /Round phase/);
 });
 
-// 12. Steering hint renders before the patch note and the contribution closer (recency).
-test("steering hint precedes the final patch line", () => {
+// 12. Steering hint renders before the contribution closer (recency).
+// The patch line is gone by design (tail pass owns it), so the prompt ends
+// on deliberation and never names the patch tool.
+test("steering hint precedes the contribution closer", () => {
   const user = buildAgentUserPrompt(
     participant(), "", [], 2, "Q", [], "", [], [], { stance: "s", version: 1, updated_round: 1 },
     false, false, { skillState: true }, { steeringHint: "consolidate first", maxRounds: 4 },
   );
   const hint = user.indexOf("STEERING_HINT");
-  const patch = user.indexOf("After your prose, call loom_state_patch exactly once");
-  assert.ok(hint > 0 && patch > 0 && hint < patch, "hint must precede the patch note");
+  assert.ok(hint > 0, "hint must render");
+  assert.doesNotMatch(user, /loom_state_patch/);
   assert.ok(user.trimEnd().replace(/\}+$/, "").trimEnd().endsWith("is what the room and the end user read."), "prompt must end on the contribution");
 });
 
@@ -301,29 +302,31 @@ test("no mandatory enforcement call exists", () => {
   assert.match(src, /synthesis_empty/);
 });
 
-// 13b. No dedicated per-turn patch call and no enforcement retry: the patch
-// is offered inline and a miss is logged, like any other mandatory
-// capability. A second LLM call per turn must never return.
-test("no dedicated per-turn state-patch LLM call exists", () => {
+// 13b. Patch-only tail pass: the primary omits the patch tool and a bounded
+// second LLM call (patch-only map) projects state after prose + synthesis.
+// A tail miss is logged and the turn stands — never retried, never gating.
+test("patch-only tail pass exists and primary omits the patch tool", () => {
   const src = readFileSync(join(SRC, "round-executor", "agent", "execute-turn.js"), "utf-8");
-  assert.doesNotMatch(src, /omitStatePatch: true/);
-  assert.doesNotMatch(src, /patchToolsMap = \{ loom_state_patch: true \}/);
-  assert.doesNotMatch(src, /state_patch_final/);
-  assert.doesNotMatch(src, /one and only loom_state_patch call for this turn/);
-  // The miss joins the miss list for logging instead of a retry.
-  assert.match(src, /State: call loom_state_patch once, as your final action/);
+  assert.match(src, /omitStatePatch: true/);
+  assert.match(src, /buildPatchTailPrompt/);
+  assert.match(src, /tools: \{ loom_state_patch: true \}/);
+  assert.match(src, /patch_tail_failed|patch_tail_error/);
+  // The old inline miss wording is gone: the tail is the only writer.
+  assert.doesNotMatch(src, /State: call loom_state_patch once, as your final action/);
   assert.match(src, /mandatory_capability_missed/);
-  // No enforcement map offers the patch tool for a miss case.
   const toolsSrc = readFileSync(join(SRC, "round-executor", "tools.js"), "utf-8");
-  assert.doesNotMatch(toolsSrc, /includeStatePatch/);
+  assert.match(toolsSrc, /omitStatePatch/);
 });
 
-// 14. Pass needs no patch — stated where the model decides.
-test("pass needs no patch is stated in contract and tool", () => {
+// 14. Pass leaves carried state as-is — stated where the model decides.
+// The primary never names the patch tool (tail-owned), so the contract uses
+// tool-agnostic wording; the pass tool description stays tool-agnostic too.
+test("pass leaves carried state as-is", () => {
   const sys = buildAgentSystemPrompt(participant(), { activeCount: 5, agentTools: cloneTools() });
-  assert.match(sys, /A pass needs no state patch/);
+  assert.match(sys, /Passing means "nothing new"/);
+  assert.doesNotMatch(sys, /loom_state_patch/);
   const passSrc = readFileSync(join(SRC, "plugin", "tools", "pass.js"), "utf-8");
-  assert.match(passSrc, /mutually exclusive/);
+  assert.doesNotMatch(passSrc, /loom_state_patch/);
 });
 
 // 15. Mandatory default parity: config default matches the Setup tab.

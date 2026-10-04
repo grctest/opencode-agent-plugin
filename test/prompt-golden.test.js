@@ -62,15 +62,20 @@ const EXPECTED_SYS = {
   // loaded (the default in a fresh checkout), so the tool ladder omits it from
   // the available list, the guidance bullet, and the mandatory-peer-interaction
   // note. The hash moves to reflect the tool being absent, not reworded.
-  "Research Tools — Tool Ladder": "e49787427f64",
-  "WHEN TO PASS": "20cc67420712",
+  // Tail-pass design: loom_state_patch is hidden from the primary Available
+  // list and contract (the patch-only tail owns it), and WHEN TO PASS is
+  // tool-agnostic. Hashes below reflect the hidden-patch wording.
+  "Research Tools — Tool Ladder": "f4d836564552",
+  "WHEN TO PASS": "4013ac9d695b",
   // N7 — the OUTPUT CONTRACT changed: loom_state_patch is now exempt from the
   // per-turn tool cap, and the contract says so instead of telling agents to
   // "reserve tool budget" for a call the limiter can no longer evict.
   // The hash moved again because interaction item 4 now drops the
   // "loom_summon brings guest expert" clause when the tool is gated off — the
   // contract must not name a tool that was never offered.
-  "OUTPUT CONTRACT — read last, it governs; in conflict it wins": "a45cdb4ed7d7",
+  // Tail-pass: contract item 8 is now a neutral carry-forward note; the
+  // primary never names the patch tool.
+  "OUTPUT CONTRACT — read last, it governs; in conflict it wins": "e3267031c071",
 };
 
 const EXPECTED_USER = {
@@ -84,7 +89,9 @@ const EXPECTED_USER = {
   "Your State — CARRIED FORWARD (your private notes for your next turn; the room never sees this block — they only read your contribution prose)": "17d527b1ab23",
   "Other Participants — valid loom_query targets (use target = id exactly, not display name)": "4745981b61b7",
   "Live — Recent Contributions": "fce0b7f16023",
-  "Your Turn — Weighted Guidance": "ceb4d3c17020",
+  // Tail-pass: Weighted Guidance no longer ends on a patch call line — the
+  // patch-only tail owns it, so recency belongs to deliberation.
+  "Your Turn — Weighted Guidance": "597d09d3c012",
 };
 
 test("golden system prompt sections are unchanged", () => {

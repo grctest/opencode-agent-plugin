@@ -1,4 +1,4 @@
-import { buildAgentSystemPrompt, buildAgentUserPrompt } from "../../prompts/agent.js";
+import { buildAgentSystemPrompt, buildAgentUserPrompt, buildPatchTailPrompt, buildPatchTailSystem } from "../../prompts/agent.js";
 import { getConfig, resolveBuiltInTools, resolveLoomTools } from "../../config.js";
 import { extractAgentResponse, mapToolResults, extractFileBlockTools, getPriorityCap } from "../../shared.js";
 import { parseAgentResponse } from "../../validation.js";
@@ -10,6 +10,7 @@ import { extractErrorInfo } from "../../logger.js";
 import { buildToolsMap, buildToolsMapWithoutLoom } from "../tools.js";
 import { truncateLoomOutputs } from "../../utils/text.js";
 import { getBashCommand, isBashCommandAllowed } from "../../utils/sanitize.js";
+import { renderMyStateMarkdown } from "../../state-patch.js";
 
 export async function executeAgentTurn(participant, model, timeoutMs, promptContext) {
   const config = getConfig();
@@ -74,12 +75,12 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
     const activeCountExec = (() => { try { return this._stateManager.getActiveParticipants().length; } catch { return undefined; }})();
     const effectiveAgentTools = this.getEffectiveAgentTools?.() ?? this._options?.agentTools ?? this._tools ?? config.agentTools;
     const effectiveConfig = { ...config, agentTools: effectiveAgentTools };
-    // loom_state_patch IS offered inline in the primary turn: the agent's
-    // absolutely-last tool use is the patch (see OUTPUT CONTRACT), so it
-    // is maximally up to date. No dedicated per-turn LLM call exists for
-    // patching and no enforcement retry follows — a miss is logged and the
-    // turn stands.
-    const toolsMap = buildToolsMap(effectiveConfig, { activeCount: activeCountExec });
+    // loom_state_patch is HIDDEN from the primary turn by design: the
+    // patch-only tail pass below runs after prose + synthesis with the full
+    // turn picture (final prose + all tool outputs). omitStatePatch enforces
+    // the runtime side; prompts/agent.js enforces the wording side (the
+    // primary never names the tool).
+    const toolsMap = buildToolsMap(effectiveConfig, { activeCount: activeCountExec, omitStatePatch: true });
     const agentToolsConfig = effectiveAgentTools;
 
     const offeredTools = Object.keys(toolsMap);
@@ -233,27 +234,100 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
       finalToolResults = truncateToolResults(finalToolResults, agentToolsConfig);
     }
 
-    // SKILL.state: loom_state_patch is offered inline in the primary turn
-    // (see toolsMap above) as the agent's absolutely-last tool use. Prompt
-    // emphasis is the only enforcement: a miss is logged below and the turn
-    // still succeeds (prose is preserved) — there is deliberately no
-    // follow-up LLM call, so deliberations stay fast.
+    // SKILL.state patch-only tail pass (primary turns only): the primary turn
+    // above never offers loom_state_patch, so the model cannot patch early or
+    // forget the shape. After prose + synthesis are final, one bounded second
+    // LLM call on the SAME session — with the full turn picture (final prose
+    // + all tool outputs) — does exactly one thing: call loom_state_patch.
+    // Sub-agent (ephemeral query/vote/summon) turns never reach this function,
+    // so ownership stays primary-only by construction. A tail miss leaves
+    // state at its prior version and the turn still succeeds.
     const patchEnabled = !!agentToolsConfig?.enabled && !!agentToolsConfig?.loom?.loom_state_patch;
     const mandatoryCapabilities = agentToolsConfig?.mandatory ?? {};
-    let statePatchVersion = (() => {
-      const hit = (finalToolResults ?? []).find((t) => t.tool === "loom_state_patch" && t.metadata?.applied === true);
-      return hit?.metadata?.version ?? null;
-    })();
+    let statePatchVersion = null;
+    let tailAttempted = false;
+    let tailRejected = false;
+    let tailDetail = null;
+    if (patchEnabled && !loomPassCall && ((finalText && String(finalText).trim().length > 0) || (finalToolResults ?? []).length > 0)) {
+      tailAttempted = true;
+      try {
+        const digestParts = [];
+        for (const tr of finalToolResults ?? []) {
+          if (tr.tool === "loom_state_patch") continue;
+          const name = tr.tool ?? tr.attempted_tool ?? "tool";
+          const out = tr.output != null ? String(tr.output) : (tr.error != null ? `ERROR: ${String(tr.error)}` : "");
+          if (!out.trim()) continue;
+          digestParts.push(`Tool ${name} (${tr.callID ?? "n/a"}) [${tr.status ?? "unknown"}]:\n${out.slice(0, 800)}`);
+          if (digestParts.join("\n\n").length > 6000) break;
+        }
+        const toolDigest = digestParts.join("\n\n").slice(0, 6000);
+        let myStateMarkdown = "";
+        try {
+          const cur = this._stateManager.getParticipantState?.(participant.config.id) ?? null;
+          if (cur) myStateMarkdown = renderMyStateMarkdown(cur);
+        } catch {}
+        const tailSystem = buildPatchTailSystem({ name: participant.config.name, tier: participant.config.tier });
+        const tailUser = buildPatchTailPrompt({ finalText: finalText ?? "", toolDigest, myStateMarkdown });
+        const tailBudgetMs = (() => {
+          try {
+            const t = getConfig()?.tuning?.PATCH_TAIL_TIMEOUT_MS
+              ?? getConfig()?.tuning?.FINAL_ROUND_PATCH_GRACE_MS ?? 45000;
+            const n = Number(t);
+            if (Number.isFinite(n) && n > 0) return Math.min(n, 60000);
+          } catch {}
+          return 45000;
+        })();
+        const tailTimeout = timeoutMs === 0 ? tailBudgetMs : Math.min(tailBudgetMs, timeoutMs);
+        this._callStats.agent_prompts++;
+        this._notifyCallStats?.();
+        const tailStart = Date.now();
+        const tailRes = await this._sessionManager.getContract().prompt({
+          sessionId: ephemeralSessionId,
+          system: tailSystem,
+          model,
+          parts: [{ type: "text", text: tailUser }],
+          tools: { loom_state_patch: true },
+          toolChoice: "auto",
+          timeoutMs: tailTimeout,
+          signal: abortController.signal,
+        });
+        recordLatency("llm_patch_tail_ms", Date.now() - tailStart);
+        incrementKeyedCounter("llm_calls_by_type", "patch_tail");
+        if (tailRes?.ok) {
+          const { toolResults: tailToolResults } = extractAgentResponse(tailRes.data);
+          const tailEffective = truncateToolResults(tailToolResults ?? [], agentToolsConfig);
+          if ((tailEffective ?? []).length > 0) {
+            finalToolResults = truncateToolResults([...(finalToolResults ?? []), ...tailEffective], agentToolsConfig);
+          }
+          const hit = (tailEffective ?? []).find((t) => t.tool === "loom_state_patch" && t.metadata?.applied === true);
+          if (hit) {
+            statePatchVersion = hit.metadata?.version ?? null;
+          } else {
+            const bad = (tailEffective ?? []).find((t) => t.tool === "loom_state_patch" && (t.status === "error" || t.metadata?.validationFailed || t.metadata?.persistenceFailed));
+            if (bad) {
+              tailRejected = true;
+              tailDetail = String(bad?.output ?? bad?.error ?? "tail patch failure").slice(0, 300);
+            }
+          }
+        } else {
+          tailRejected = true;
+          tailDetail = String(tailRes?.error?.message ?? "tail prompt failed").slice(0, 300);
+          this._logger.warn("patch_tail_failed", `Patch tail failed for ${participant.config.name}: ${tailDetail}`, { participant: participant.config.id, round: currentRound });
+        }
+      } catch (err) {
+        tailRejected = true;
+        tailDetail = String(err?.message ?? err).slice(0, 300);
+        this._logger.warn("patch_tail_error", `Patch tail error for ${participant.config.name}: ${tailDetail}`, extractErrorInfo(err));
+      }
+    }
     const hasSuccessfulTool = (toolName) => (finalToolResults ?? []).some((t) => t.tool === toolName && t.status !== "error" && t.output != null);
     const hasSuccessfulOneOf = (toolNames) => toolNames.some((toolName) => hasSuccessfulTool(toolName));
-    // Miss visibility without a follow-up call: unmet mandatory capabilities
-    // are logged so skips stay visible in logs; the turn is never re-prompted.
+    // Miss visibility without re-prompting: unmet mandatory capabilities are
+    // logged so skips stay visible in logs; the turn is never re-prompted.
+    // (State patch is NOT in this list by design — the tail pass owns it and
+    // reports applied/missed separately below.)
     const missingMandatory = [];
     if (mandatoryCapabilities.forums && !hasSuccessfulOneOf(["loom_forum_create_topic", "loom_forum_list_topics", "loom_forum_read_topic", "loom_forum_add_comment"])) missingMandatory.push("Forums: call loom_forum_list_topics, loom_forum_read_topic, loom_forum_create_topic, or loom_forum_add_comment");
-    // A missing SKILL.state patch joins the miss list like any other
-    // mandatory capability. Pass turns are exempt (below).
-    const patchApplied = (finalToolResults ?? []).some((t) => t.tool === "loom_state_patch" && t.metadata?.applied === true);
-    if (patchEnabled && !loomPassCall && !patchApplied) missingMandatory.push("State: call loom_state_patch once, as your final action — project stance + 1-3 bullets so they survive into your next turn");
     if (mandatoryCapabilities.agentQueries && Number.isFinite(activeCountExec) && activeCountExec > 1 && !hasSuccessfulOneOf(["loom_query", "loom_vote", "loom_summon", "loom_request_next"])) missingMandatory.push("Agent-to-agent: call loom_query, loom_vote, loom_summon, or loom_request_next with an eligible peer");
     if (mandatoryCapabilities.localSearch && !hasSuccessfulOneOf(["read", "glob", "grep"])) missingMandatory.push("Local search: call read, glob, or grep");
     if (mandatoryCapabilities.onlineResearch && !hasSuccessfulOneOf(["websearch", "webfetch"])) missingMandatory.push("Online research: call websearch or webfetch");
@@ -261,26 +335,15 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
       this._logger.info("mandatory_capability_missed", `Unmet mandatory capabilities for ${participant.config.name} — turn stands as-is, no follow-up call`, { participant: participant.config.id, round: currentRound, missing: missingMandatory });
     }
 
-    // No dedicated per-turn patch call and no enforcement retry: the patch is
-    // offered inline in the primary turn. A missed patch leaves state at its
-    // prior version and the turn still succeeds (prose is preserved).
-
-    // Per-turn patch outcome (§5.10 observability, made legible). "No patch"
-    // has several distinct causes that a single counter collapses. Recording
-    // the cause lets the dashboard explain coverage without anyone reading
-    // logs. Ordered by specificity.
-    // Refresh the applied version from the FINAL tool results (single pass —
-    // no follow-up call can land a patch after this point).
-    const retryHit = (finalToolResults ?? []).find((t) => t.tool === "loom_state_patch" && t.metadata?.applied === true);
-    if (retryHit) statePatchVersion = retryHit.metadata?.version ?? statePatchVersion;
-    const patchAttempted = (finalToolResults ?? []).some((t) => t.tool === "loom_state_patch");
-    const patchRejected = (finalToolResults ?? []).some(
-      (t) => t.tool === "loom_state_patch" && (t.status === "error" || t.metadata?.validationFailed || t.metadata?.persistenceFailed),
-    );
+    // Per-turn patch outcome (§5.10 observability). The tail is the only
+    // writer, so "no patch" means the tail missed, was rejected, or was
+    // skipped (pass/disabled) — never "the model forgot inline".
+    const patchAttempted = tailAttempted;
+    const patchRejected = tailRejected;
     // A patch that actually landed reports "applied" even on a pass turn —
     // both calls are honored (the patch updates the agent's own state, the
-    // pass ends their participation). "exempt_pass" means no patch was needed
-    // and none landed.
+    // pass ends their participation). "exempt_pass" means no tail ran and
+    // none was needed.
     const patchOutcome = !patchEnabled
       ? "disabled"
       : statePatchVersion != null
@@ -292,12 +355,12 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
             : patchAttempted
               ? "unverified"
               : "never_attempted";
-    let patchOutcomeDetail = null;
-    if (patchOutcome === "rejected") {
+    let patchOutcomeDetail = tailDetail;
+    if (patchOutcome === "rejected" && !patchOutcomeDetail) {
       const bad = (finalToolResults ?? []).find(
         (t) => t.tool === "loom_state_patch" && (t.status === "error" || t.metadata?.validationFailed || t.metadata?.persistenceFailed),
       );
-      patchOutcomeDetail = String(bad?.output ?? bad?.error ?? "validation/persistence failure").slice(0, 300);
+      patchOutcomeDetail = bad ? String(bad?.output ?? bad?.error ?? "validation/persistence failure").slice(0, 300) : null;
     }
 
     // Operational logging only (§5.10): DEBUG patch/version counts, never gating.

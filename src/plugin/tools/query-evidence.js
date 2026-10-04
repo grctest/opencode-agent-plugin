@@ -207,9 +207,9 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
                   system: systemPrompt,
                   model,
                   parts: [{ type: "text", text: prompt }],
-                  // Sub-agent scope: research tools + own-state patch only.
-                  // No nested loom_query/loom_vote/loom_summon/loom_forum —
-                  // enforced by omission from this map.
+                  // Sub-agent scope: research tools only (patching is
+                  // primary-tail-only). No nested loom_query/loom_vote/
+                  // loom_summon/loom_forum — enforced by omission.
                   tools: subAgentTools(),
                   timeoutMs: meta.timeoutMs,
                   signal: context.abort,

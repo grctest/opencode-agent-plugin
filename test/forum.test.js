@@ -100,24 +100,27 @@ test("mandatory capability modes are reflected in turn prompts", () => {
   assert.match(system, /must make at least one forum tool call/i);
   assert.match(system, /must make at least one local search tool call/i);
   assert.match(system, /must make at least one online research tool call/i);
-  assert.match(system, /required once per non-pass turn/i);
+  // Tail-pass design: the primary never names the patch tool (the patch-only
+  // tail owns it). The contract carries a neutral carry-forward note instead.
+  assert.doesNotMatch(system, /loom_state_patch/);
+  assert.match(system, /follow-up step saves your stance and bullets/i);
   assert.match(user, /requires one forum tool call/i);
   assert.match(user, /eligible peer interaction tool/i);
-  // DEFAULT_CONFIG now ships mandatory.skillState:true (toggle on), so the
-  // default prompt carries the REQUIRED line.
+  // DEFAULT_CONFIG ships the tail (tool on) — primary still names no tool.
   const defaultSystem = buildAgentSystemPrompt(participant, { activeCount: 3, agentTools: DEFAULT_CONFIG.agentTools });
-  assert.match(defaultSystem, /required once per non-pass turn/i);
-  // SKILL.state is off/on: when the tool is enabled the patch is always the
-  // final action, even with a legacy mandatory.skillState:false. Only a
-  // disabled tool removes the REQUIRED wording.
+  assert.doesNotMatch(defaultSystem, /loom_state_patch/);
+  assert.match(defaultSystem, /follow-up step saves your stance and bullets/i);
+  // Legacy mandatory.skillState:false changes nothing: the tail owns the patch
+  // whenever the tool is enabled. Only a disabled tool changes anything (and
+  // the primary stays silent either way).
   const optionalTools = structuredClone(DEFAULT_CONFIG.agentTools);
   optionalTools.mandatory = { forums: false, skillState: false, agentQueries: false, localSearch: false, onlineResearch: false };
   const legacyOptionalSystem = buildAgentSystemPrompt(participant, { activeCount: 3, agentTools: optionalTools });
-  assert.match(legacyOptionalSystem, /required once per non-pass turn/i);
+  assert.doesNotMatch(legacyOptionalSystem, /loom_state_patch/);
   const disabledTools = structuredClone(DEFAULT_CONFIG.agentTools);
   disabledTools.loom.loom_state_patch = false;
   const disabledSystem = buildAgentSystemPrompt(participant, { activeCount: 3, agentTools: disabledTools });
-  assert.doesNotMatch(disabledSystem, /required once per non-pass turn/i);
+  assert.doesNotMatch(disabledSystem, /loom_state_patch/);
 });
 
 test("all forum commands use the active meeting override and persist through the round session", async () => {
