@@ -33,6 +33,7 @@ import { loadGlobalHealth, getGlobalUnhealthySet } from "../../services/global-m
 import { TERMINAL_STATUSES } from "../../constants.js";
 import { clearGlobalUnhealthy, clearAllGlobalUnhealthy } from "../../services/global-model-health.js";
 import { clearGlobalUnhealthyKey, clearAllGlobalUnhealthyKeys } from "../../utils/retry.js";
+import { resetPollCursorsForMeeting } from "./poll-cursors.js";
 
 const logger = new Logger();
 const ALLOWED_TIERS = new Set(["junior", "mid", "senior", "principal", "civilian", "nonhuman"]);
@@ -1229,6 +1230,11 @@ async function handleResumeWithContext(req, _mode) {
   (async () => {
     try {
       await resetStuckSpeaking(resumeDbPath, meetingId);
+      // Force the next poll to rebroadcast state/participants unconditionally
+      // so watchers can't sit pinned on the pre-resume round if the 5→6-style
+      // transition was consumed by the diff-cache while no client was connected. Delta
+      // cursors (contributions etc.) are intentionally preserved.
+      try { resetPollCursorsForMeeting(meetingId); } catch {}
       await resumeEngine.initialize();
       const artifact = await resumeEngine.resumeMeeting();
       const resumeState = resumeEngine.getState();

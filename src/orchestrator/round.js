@@ -20,6 +20,9 @@ import { isHardRateLimitError } from "../utils/retry.js";
  * persisted), so a participant recorded as passed-but-rowless is re-prompted —
  * they simply see the turns committed since their pass.
  *
+ * A round with zero durable rows (kill at round start) is restarted from
+ * scratch under the same number — never skipped via a fresh increment.
+ *
  * Returns true (finalized — caller should continue the weaving loop), false
  * (finalize converged the meeting — caller should synthesize now), or null
  * (no partial round — caller should run the normal loop).
@@ -27,9 +30,23 @@ import { isHardRateLimitError } from "../utils/retry.js";
 export async function _continueInterruptedRound() {
   const roundNum = this._stateManager.getCurrentRound();
   if (!Number.isFinite(roundNum) || roundNum <= 0) return null;
-  const round = this._stateManager.getRounds().find((r) => r.number === roundNum) ?? null;
-  if (!round) return null;
-  if (round.summary && String(round.summary).trim()) return null; // already finalized
+  let round = this._stateManager.getRounds().find((r) => r.number === roundNum) ?? null;
+  if (round && round.summary && String(round.summary).trim()) return null; // already finalized
+
+  // Crash landed between initializeRound's number commit (meetings.round=N)
+  // and the first durable row for N — zero contributions, turn-requests, and
+  // no summary. Restart N from scratch UNDER THE SAME NUMBER (never
+  // increment): recreate the shell in memory only, so no empty rounds-table
+  // row is ever persisted. The normal path below then drives the full
+  // speaker list and finalizes, exactly like a fresh round N.
+  let freshRestart = false;
+  if (!round) {
+    round = { number: roundNum, contributions: [], turn_requests: [], token_path: [], summary: "" };
+    this._stateManager.addRound(round);
+    freshRestart = true;
+    this._logger.info("resume_round_restart_empty", `Round ${roundNum} had no durable rows — restarting it from scratch under the same number`);
+    try { await this._sessionManager.postProgress(`🧵 Resuming interrupted round ${roundNum} — restarting from scratch (no turns were saved).`); } catch {}
+  }
 
   const spoken = new Set((round.contributions ?? []).map((c) => c.participant_id));
   const { activeParticipants, skipped } = this._roundInitializer.filterActiveParticipants(this._stateManager, round);
@@ -39,6 +56,12 @@ export async function _continueInterruptedRound() {
   const remaining = activeParticipants.filter((p) => !spoken.has(p.config.id));
 
   if (remaining.length === 0) {
+    if (freshRestart) {
+      // No speakers at all (everyone failed) — mirror runRound: converge
+      // rather than finalizing an empty round into the record.
+      this._stateManager.transitionTo("converged");
+      return false;
+    }
     // Everyone spoke but the finalize transaction never ran (kill between
     // last turn commit and finalize) — just finalize to write summary + SoP.
     this._logger.info("resume_round_finalize_only", `Round ${roundNum} fully spoken before crash — finalizing without new turns`);

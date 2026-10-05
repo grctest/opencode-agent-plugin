@@ -91,7 +91,24 @@ There is **no LLM domain detection** — the now-removed `domain` pipeline was r
 
 **There is no embedder → there is no auto-select.** Ranking is the one operation that cannot degrade: a keyword-overlap score is not a weaker version of a vector ranking, it is a different answer to a different question, and it fails worst exactly where it matters — a question whose vocabulary overlaps no persona's prose ranks everyone at zero and presents an arbitrary order as relevance. So `rankAllPersonas` throws with `code: "embedder_unavailable"`, `POST /api/room/preview` maps that to **503**, and the Setup tab omits the auto-select button entirely. Manual persona selection is unaffected. The keyword fallback path and all the tier machinery it mirrored have been deleted, so there is no second selection path left to keep in sync.
 
-**The dialog.** The endpoint returns `{ ranked: [{name, tier, distance}], selected, auto_select_count }` — identity and distance only, since full persona text for 349 entries would be megabytes and the client already holds the catalog from `/api/personas`. `RoomSelectionDialog` renders all 349 in distance order with a similarity bar, pre-selects the top 3, and lets the user toggle any of the six seniorities off, select or deselect anyone, and confirm. Two invariants: filtering only ever *removes* rows (it never re-sorts — the list *is* the similarity ordering), and hiding a tier does not evict already-selected seats from it. Seats are written only on confirm, so a cancelled dialog leaves the room untouched.
+**The dialog.** The endpoint returns `{ ranked: [{name, tier, distance}], selected, auto_select_count }` — identity and distance only, since full persona text for 349 entries would be megabytes and the client already holds the catalog from `/api/personas`. `RoomSelectionDialog` renders all 349 in distance order with a similarity bar, pre-selects the top 3, and lets the user toggle any of the six seniorities off, select or deselect anyone, and confirm. Three invariants. First, filtering only ever *removes* rows — it never re-sorts, because the list *is* the similarity ordering and re-sorting by tier would be making a different claim about relevance. Second, hiding a tier does not evict already-selected seats from it; the footer says so explicitly when that happens. Third, and purely mechanical: **the list viewport has a height floor** (`min-h-[220px]` on the wrapper, and `MIN_LIST_HEIGHT` clamping the measured value).
+
+That third one exists because the measurement and the rendered height are mutually
+dependent — the `List`'s height is what gives the wrapper its height. With no floor
+that is a feedback loop: hiding every tier unmounts the `List`, leaving only a
+one-line empty-state message, which collapses the wrapper, which makes
+`ResizeObserver` record the collapsed height, which means re-showing tiers mounts a
+`List` one row tall — permanently, because the short `List` keeps the wrapper short.
+The floor makes collapse unreachable rather than merely unlikely.
+
+`RoomSelectionDialog` is also the dashboard's only react-window virtualisation, and
+`react-window` is v2 (`rowComponent`/`rowCount`/`rowHeight`/`rowProps`); v2 ignores
+the v1 names, so a v1 call renders with `rowCount === undefined` and throws
+`Invalid index 0`. `PersonaPickerDialog` is the reference implementation for both
+invariants, and `test/room-selection-dialog.test.js` asserts all of them against the
+component source — the failures need a DOM, but the causes are statically checkable.
+
+Seats are written only on confirm, so a cancelled dialog leaves the room untouched.
 
 4. Meeting-level `tags` are derived from the selected participants' most common tags (top 3).
 

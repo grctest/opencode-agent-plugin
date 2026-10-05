@@ -6,6 +6,25 @@ import { TERMINAL_STATUSES } from "./constants.js";
 
 const restorerLogger = new Logger();
 
+/**
+ * Ensures the round map contains an in-memory shell for the persisted current
+ * round. Pure helper (no I/O) so resume numbering stays anchored to
+ * meetings.round even when the crash left zero durable rows for it.
+ * Never writes to the rounds table — callers finalize the shell later, which
+ * is the only path that creates a persisted row.
+ */
+export function ensureCurrentRoundShell(roundMap, currentRound, summaries = {}) {
+  const n = Number(currentRound);
+  if (!Number.isFinite(n) || n <= 0 || roundMap.has(n)) return false;
+  roundMap.set(n, {
+    number: n,
+    contributions: [],
+    turn_requests: [],
+    summary: summaries?.[n] ?? "",
+  });
+  return true;
+}
+
 function parseSettledItems(raw) {
   if (!raw) return [];
   try {
@@ -152,6 +171,14 @@ export function restoreStateFromDb({ db, stateManager, meetingId, options }) {
       reason: tr.reason,
     });
   }
+
+  // Crash-durability: initializeRound commits meetings.round=N BEFORE any turn
+  // runs, so a kill at the start of round N leaves zero durable rows for N
+  // (no contributions, turn-requests, or summary). Without a shell,
+  // _continueInterruptedRound sees "no partial round" and the next runRound
+  // increments to N+1, skipping N forever. Recreate the shell IN MEMORY ONLY —
+  // no rounds-table write here, so no empty persisted row is ever kept.
+  ensureCurrentRoundShell(roundMap, meeting.round, summaries);
 
   stateManager.setRounds(Array.from(roundMap.values()).sort((a, b) => a.number - b.number));
 

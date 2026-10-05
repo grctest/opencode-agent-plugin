@@ -39,6 +39,7 @@ export const OverviewTab = memo(({
   participantName,
   totalRounds,
   activeRound,
+  roundSummaries = {},
 }) => {
   const stats = state?.stats ?? {};
   const totalCalls = useMemo(() => CALL_COUNTER_KEYS.reduce((sum, key) => sum + (Number(stats[key]) || 0), 0), [stats]);
@@ -87,6 +88,7 @@ export const OverviewTab = memo(({
         orchestratorMessages={orchestratorMessages}
         rounds={totalRounds}
         activeRound={activeRound}
+        roundSummaries={roundSummaries}
       />
 
       {agentErrors.length > 0 && (

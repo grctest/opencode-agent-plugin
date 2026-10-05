@@ -149,7 +149,7 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
           <Button variant="outline" className="w-full justify-start gap-2 h-auto py-2" onClick={() => onToggleCollapse(item.round)} aria-expanded={!item.isCollapsed} aria-controls={`round-content-${item.round}`} aria-label={`Round ${item.round} ${item.isCollapsed ? "collapsed" : "expanded"}`}>
             <span className="text-[10px] text-muted-foreground w-3">{item.isCollapsed ? "▶" : "▼"}</span>
             <span className="text-sm font-semibold">Round {item.round}</span>
-            <span className="text-xs text-muted-foreground ml-auto" aria-live="polite">{item.contribsCount} contribution{item.contribsCount !== 1 ? "s" : ""}</span>
+            <span className="text-xs text-muted-foreground ml-auto" aria-live="polite">{item.isSkipped ? "skipped — no turns recorded" : `${item.contribsCount} contribution${item.contribsCount !== 1 ? "s" : ""}`}</span>
             {item.errorsCount > 0 && (<Badge variant="destructive" className="ml-1"><TriangleAlertIcon className="size-3" /> {item.errorsCount}</Badge>)}
           </Button>
           <div id={`round-content-${item.round}`} hidden={item.isCollapsed} aria-hidden={item.isCollapsed} />
@@ -718,9 +718,9 @@ const TimelineTabBase = ({
                             {tc.title && <span className="text-xs text-muted-foreground truncate">{tc.title}</span>}
                             <Badge variant={failed ? "destructive" : "secondary"} className="ml-auto text-[10px]">{failed ? "error" : (tc.status ?? "ok")}</Badge>
                           </div>
-                          {hasInput && <div><div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Input</div><ScrollArea className="max-h-48 rounded-md border bg-muted"><pre className="text-xs p-2 whitespace-pre-wrap break-words font-mono">{prettyJson(tc.input)}</pre></ScrollArea></div>}
-                          {hasOutput && <div><div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Output</div><ScrollArea className="max-h-80 rounded-md border bg-muted"><pre className="text-xs p-2 whitespace-pre-wrap break-words font-mono">{prettyJson(tc.output)}</pre></ScrollArea></div>}
-                          {tc.error && <div><div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Error</div><ScrollArea className="max-h-48 rounded-md border border-destructive/30 bg-destructive/10"><pre className="text-xs p-2 whitespace-pre-wrap break-words font-mono text-destructive">{prettyJson(tc.error)}</pre></ScrollArea></div>}
+                          {hasInput && <div><div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Input</div><ScrollArea className="h-48 w-full overflow-hidden rounded-md border bg-muted"><pre className="text-xs p-2 whitespace-pre-wrap break-words font-mono">{prettyJson(tc.input)}</pre></ScrollArea></div>}
+                          {hasOutput && <div><div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Output</div><ScrollArea className="h-80 w-full overflow-hidden rounded-md border bg-muted"><pre className="text-xs p-2 whitespace-pre-wrap break-words font-mono">{prettyJson(tc.output)}</pre></ScrollArea></div>}
+                          {tc.error && <div><div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Error</div><ScrollArea className="h-48 w-full overflow-hidden rounded-md border border-destructive/30 bg-destructive/10"><pre className="text-xs p-2 whitespace-pre-wrap break-words font-mono text-destructive">{prettyJson(tc.error)}</pre></ScrollArea></div>}
                           {!hasInput && !hasOutput && !tc.error && <p className="text-xs text-muted-foreground italic">No input/output recorded for this call.</p>}
                         </CardContent>
                       </Card>

@@ -18,6 +18,15 @@ import { similarityOf, similarityPercent } from "../../composer/similarity.js";
 
 const ROW_HEIGHT = 68;
 
+/**
+ * Floor for the list viewport, in pixels. Three rows' worth: enough that an
+ * empty filter result reads as an empty list rather than as a broken one, and
+ * — critically — a hard lower bound that breaks the height feedback loop
+ * described at the ResizeObserver below. Must match the `min-h` on the list
+ * wrapper, or one of the two floors is doing nothing.
+ */
+const MIN_LIST_HEIGHT = 220;
+
 /** Mirrors the composer's L2 distance back to cosine similarity for display. */
 export { similarityOf, similarityPercent };
 
@@ -122,11 +131,22 @@ export function RoomSelectionDialog({
   const listWrapRef = useRef(null);
   const [listHeight, setListHeight] = useState(380);
 
+  // Measure the list viewport so the virtualized List gets exact pixels.
+  //
+  // The measurement and the rendered height are mutually dependent — the List's
+  // height IS what makes the wrapper that height — so this is a feedback loop
+  // unless the wrapper has a floor. `min-h-0` allowed that loop to run away:
+  // hiding every tier unmounts the List (leaving only a one-line message),
+  // which collapsed the wrapper, which set `listHeight` to that collapsed
+  // height, so re-showing tiers remounted a List one row tall — permanently,
+  // because the shrunken List kept the wrapper shrunken. `MIN_LIST_HEIGHT` on
+  // both the CSS floor and the setter makes collapse unreachable rather than
+  // merely unlikely.
   useEffect(() => {
     if (!open) return;
     const el = listWrapRef.current;
     if (!el) return;
-    const update = () => setListHeight(el.clientHeight);
+    const update = () => setListHeight(Math.max(MIN_LIST_HEIGHT, el.clientHeight));
     update();
     const ro = new ResizeObserver(update);
     ro.observe(el);
@@ -243,7 +263,7 @@ export function RoomSelectionDialog({
             })}
           </div>
 
-          <div ref={listWrapRef} className="min-h-0 flex-1">
+          <div ref={listWrapRef} className="min-h-[220px] flex-1">
             {busy && (
               <p className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
                 <Spinner /> Ranking {catalog ? `${items.length} ` : ""}personas…

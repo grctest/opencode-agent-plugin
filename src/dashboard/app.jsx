@@ -443,6 +443,7 @@ export function App() {
                       participantName={participantName}
                       totalRounds={totalRounds}
                       activeRound={activeRound}
+                      roundSummaries={roundSummaries}
                     />
                   )}
                 </ErrorBoundary>

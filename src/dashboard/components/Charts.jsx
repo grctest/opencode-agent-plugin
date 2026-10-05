@@ -8,7 +8,7 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent } from "./ui/chart.ts
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line } from "recharts";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip.tsx";
 
-export const ParticipationMatrix = memo(function ParticipationMatrix({ participants, contributions, agentErrors, orchestratorMessages, rounds, activeRound }) {
+export const ParticipationMatrix = memo(function ParticipationMatrix({ participants, contributions, agentErrors, orchestratorMessages, rounds, activeRound, roundSummaries = {} }) {
   const roundData = useMemo(() => {
     const contribMap = new Map();
     for (const c of contributions) contribMap.set(`${c.participant_id}:${c.round}`, true);
@@ -46,12 +46,16 @@ export const ParticipationMatrix = memo(function ParticipationMatrix({ participa
         else if (errorMap.has(key)) row[p.id] = { status: "error", order: null, reflectionCount };
         else if (p.status === "passed") row[p.id] = { status: "passed", order: null, reflectionCount };
         else if (activeRound && r > activeRound) row[p.id] = { status: "future", order: null, reflectionCount };
+        // A past round with no rows and no summary was skipped (e.g. crash at
+        // round start before the numbering fix) — render hollow like "future"
+        // so it never reads as a pending/underway round. Display-only.
+        else if (activeRound && r < activeRound && !roundSummaries?.[r]) row[p.id] = { status: "skipped", order: null, reflectionCount };
         else row[p.id] = { status: isSpeaking ? "speaking" : "none", order: null, reflectionCount };
       }
       data.push({ round: r, participants: row });
     }
     return { data, errorRounds };
-  }, [participants, contributions, agentErrors, rounds, activeRound]);
+  }, [participants, contributions, agentErrors, rounds, activeRound, roundSummaries]);
 
   const orchestratorData = useMemo(() => {
     const msgs = orchestratorMessages ?? [];
@@ -135,8 +139,9 @@ export const ParticipationMatrix = memo(function ParticipationMatrix({ participa
                               status === "error" && "bg-destructive",
                               status === "passed" && "bg-muted-foreground/40",
                               status === "none" && "bg-amber-500",
-                              status === "future" && "bg-transparent border border-border"
-                            )} title={status} />
+                              status === "future" && "bg-transparent border border-border",
+                              status === "skipped" && "bg-transparent border border-dashed border-border"
+                            )} title={status === "skipped" ? "skipped — no turns recorded for this round" : status} />
                             {reflectionCount > 0 && <Badge variant="reflection" className="ml-1 text-[10px] px-1 py-0 h-4">{reflectionCount}↩</Badge>}
                           </TableCell>
                         );
@@ -165,6 +170,7 @@ export const ParticipationMatrix = memo(function ParticipationMatrix({ participa
           <span className="flex items-center gap-1"><span className="inline-block size-3 rounded-full bg-destructive" /> Error</span>
           <span className="flex items-center gap-1"><span className="inline-block size-3 rounded-full bg-muted-foreground/40" /> Passed</span>
           <span className="flex items-center gap-1"><span className="inline-block size-3 rounded-full bg-amber-500" /> Pending</span>
+          <span className="flex items-center gap-1"><span className="inline-block size-3 rounded-full bg-transparent border border-dashed border-border" /> Skipped</span>
         </div>
       </CardContent>
     </Card>

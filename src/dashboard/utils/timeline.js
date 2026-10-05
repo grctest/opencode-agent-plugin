@@ -52,10 +52,22 @@ export function buildFlatItems(groupedContributions, opts) {
     return 4;
   })();
   const groups = [...groupedContributions];
+  // Interior gap-fill (display-only): a round skipped by a pre-fix crash at
+  // round start has zero contribution rows, so the timeline would jump e.g.
+  // 4→6. Render the missing number as an empty (skipped) section instead.
+  // No DB row is created or implied — this only affects the rendered list.
+  if (groups.length > 0) {
+    const present = new Set(groups.map(([round]) => round));
+    const lo = Math.min(...present);
+    const hi = Math.max(...present);
+    for (let r = lo; r <= hi; r++) {
+      if (!present.has(r)) groups.push([r, []]);
+    }
+  }
   if (isWeaving && activeRound > 0 && !groups.some(([round]) => round === activeRound)) {
     groups.push([activeRound, []]);
-    groups.sort((a, b) => a[0] - b[0]);
   }
+  groups.sort((a, b) => a[0] - b[0]);
 
   for (const [round, contribs] of groups) {
     const isCollapsed = collapsedRounds.includes(round);
@@ -64,11 +76,13 @@ export function buildFlatItems(groupedContributions, opts) {
 
     const visibleContribsCount = contribs.filter(c => c.type !== "vote_tally").length;
     const segItems = [];
+    const isSkipped = contribs.length === 0 && !roundSummaries?.[round] && round !== activeRound;
     segItems.push({
       type: "header",
       round,
       isCollapsed,
       isActive: round === activeRound,
+      isSkipped,
       contribsCount: visibleContribsCount,
       errorsCount: roundErrors.length,
       showExtensionMarker,

@@ -5,6 +5,7 @@ import { TERMINAL_STATUSES } from "../../constants.js";
 import { getMeetingDbPath } from "../api/free.js";
 import { sendSSE } from "./helpers.js";
 import { onDatabaseWrite } from "../../services/write-notifier.js";
+import { registerPollSystem, resetMeetingCursorsIn } from "./poll-cursors.js";
 
 export function createPollSystem(directory) {
   const sseClients = new Map();
@@ -481,7 +482,15 @@ export function createPollSystem(directory) {
 
   pollTimer = setInterval(pollMeetings, currentPollInterval);
 
+  const unregister = registerPollSystem({
+    participantStatusCache,
+    lastRoundSummariesHash,
+    lastArtifactCreatedAt,
+    pendingQueues,
+  });
+
   const stop = () => {
+    try { unregister(); } catch {}
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     if (pingTimer) { clearInterval(pingTimer); }
   };
@@ -494,6 +503,12 @@ export function createPollSystem(directory) {
     lastErrorId,
     participantStatusCache,
     broadcast,
+    resetMeetingCursors: (meetingId) => resetMeetingCursorsIn({
+      participantStatusCache,
+      lastRoundSummariesHash,
+      lastArtifactCreatedAt,
+      pendingQueues,
+    }, meetingId),
     subscribeToWrites,
     unsubscribeFromWrites,
     pingTimer,
