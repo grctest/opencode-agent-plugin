@@ -72,6 +72,7 @@ export async function runFinalRoundPatchGrace() {
         parts: [{ type: "text", text: "Closing the deliberation. Save anything worth remembering, or skip if there is nothing." }],
         tools: { loom_state_patch: true },
         timeoutMs,
+        onHeartbeat: () => { try { this._stallWatchdog.touch(); } catch {} },
       }, this._meetingId);
       if (res?.ok) patched++;
       else failed++;
@@ -178,6 +179,7 @@ export async function _synthesize() {
         },
         stateOfPlay,
         userContext: this._stateManager.getContext?.() ?? "",
+        onActivity: () => { try { this._stallWatchdog.touch(); } catch {} },
       });
     } catch (err) {      const message = err instanceof Error ? err.message : String(err);
       this._logger.error("synthesis_failed", `Synthesis failed — persisting degraded artifact: ${message}`);
@@ -270,12 +272,10 @@ export function _computeQualityTelemetry(stats = {}) {
         participation_ratio: participants.length > 0 ? Math.round((contributors.size / participants.length) * 100) / 100 : 0,
         votes_held: byType.vote_response ?? 0,
         latencies: summarizeLatencies(stats.latencies),
-        // N7 — the cap is per turn, the audit is per round. Reporting the
-        // per-turn high-water mark beside the round total is what stops a
-        // reader from calling a healthy meeting an overrun.
+        // Tool-call volume is telemetry only — there is no per-turn cap.
         tool_calls: {
           max_in_a_turn: this._stateManager.getMaxToolCallsInATurn?.() ?? 0,
-          cap_per_turn: Number(getConfig()?.agentTools?.maxToolCallsPerTurn) || 12,
+          cap_per_turn: null,
         },
         // N9 — the closing round measured against the median of the others.
         round_budget: this._roundBudget ?? null,

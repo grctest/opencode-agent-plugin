@@ -94,9 +94,8 @@ test("quality telemetry carries the degraded reasons and the unmeasurable flag",
   for (const gone of ["input_tokens", "output_tokens", "total_tokens"]) {
     assert.equal(gone in q, false, `${gone} should no longer be published`);
   }
-  // N7 — the per-turn high-water mark and the cap are reported together so a
-  // round's audited total can never be read as a per-turn overrun.
-  assert.equal(q.tool_calls.cap_per_turn, 12);
+  // Tool-call volume is telemetry only — no per-turn cap remains.
+  assert.equal(q.tool_calls.cap_per_turn, null);
   assert.equal(q.tool_calls.max_in_a_turn, 0);
 });
 

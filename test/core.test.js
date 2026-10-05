@@ -151,7 +151,11 @@ test("safe defaults are finite and shell-free", () => {
   assert.equal(DEFAULT_CONFIG.agentTools.builtIn.bash.enabled, false);
   assert.ok(DEFAULT_CONFIG.agentTimeoutMs > 0);
   assert.ok(DEFAULT_CONFIG.synthesisTimeoutMs > 0);
-  assert.ok(DEFAULT_CONFIG.agentTools.maxQueryTargetsPerTurn > 0);
+  // No tool-call count limits remain — agents may make unlimited calls.
+  assert.equal(DEFAULT_CONFIG.agentTools.maxToolCallsPerTurn, undefined);
+  assert.equal(DEFAULT_CONFIG.agentTools.maxQueryTargetsPerTurn, undefined);
+  assert.equal(DEFAULT_CONFIG.maxSummonsPerRound, undefined);
+  assert.equal(DEFAULT_CONFIG.maxSummonsPerAgent, undefined);
 });
 
 test("model paths reject traversal segments", () => {

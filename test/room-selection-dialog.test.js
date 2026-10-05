@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { MIN_LIST_HEIGHT, resolveListHeight } from "../src/dashboard/components/roomSelectionLayout.js";
 
 // The auto-select dialog is the only place in the dashboard that virtualises
 // with react-window. It is also the component with the most subtle layout
@@ -23,6 +24,30 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const readSrc = (rel) => readFileSync(join(root, rel), "utf8");
 const dialogSrc = readSrc("src/dashboard/components/RoomSelectionDialog.jsx");
 const pickerSrc = readSrc("src/dashboard/components/PersonaPickerDialog.jsx");
+
+test("the dialog itself has a definite height, so the list never depends on content", () => {
+  // This is the root cause behind both the collapse and the "half height"
+  // report, and it is upstream of the floor. With `max-h-[88vh]` the dialog's
+  // height is derived from its contents, so the list wrapper's `flex-1` has
+  // nothing stable to resolve against: it measures whatever the current
+  // children happen to add up to. Unmount the list and the whole chain settles
+  // at a smaller number, which is what "about half as tall" looked like.
+  //
+  // A definite height (`h-[85vh]`) makes the parent's height independent of its
+  // contents, so `flex-1` resolves to the same pixels whether the list is
+  // mounted, empty, or showing a placeholder.
+  const content = dialogSrc.match(/<DialogContent[\s\S]*?className="([^"]+)"/);
+  assert.ok(content, "expected to find the DialogContent className");
+  assert.match(
+    content[1],
+    /\bh-\[[^\]]+\]/,
+    `dialog needs a definite height, got "${content[1]}" — max-h alone leaves it content-derived`,
+  );
+  assert.ok(
+    !/\bmax-h-\[/.test(content[1]),
+    "a max-height on the dialog leaves its height content-derived",
+  );
+});
 
 test("the list viewport has a height floor rather than being free to collapse", () => {
   // `min-h-0` opts the wrapper out of any minimum height. Because the List's
@@ -48,10 +73,8 @@ test("the JS height floor and the CSS height floor agree", () => {
   // drift, whichever is smaller is the floor that actually applies and the
   // other is decoration — so pin them together.
   const css = Number(dialogSrc.match(/min-h-\[(\d+)px\]/)?.[1]);
-  const js = Number(dialogSrc.match(/const MIN_LIST_HEIGHT = (\d+)/)?.[1]);
   assert.ok(Number.isFinite(css), "expected a min-h-[Npx] class on the list wrapper");
-  assert.ok(Number.isFinite(js), "expected a MIN_LIST_HEIGHT constant");
-  assert.equal(css, js, `CSS floor ${css}px != JS floor ${js}px`);
+  assert.equal(css, MIN_LIST_HEIGHT, `CSS floor ${css}px != JS floor ${MIN_LIST_HEIGHT}px`);
 });
 
 test("the measured height can never be set below the floor", () => {
@@ -59,9 +82,46 @@ test("the measured height can never be set below the floor", () => {
   // clamps too, so a future layout change that removes the CSS floor still
   // cannot produce a one-row-tall list.
   assert.ok(
-    /setListHeight\(Math\.max\(MIN_LIST_HEIGHT, el\.clientHeight\)\)/.test(dialogSrc),
-    "listHeight must be clamped to MIN_LIST_HEIGHT when measured",
+    /setListHeight\(resolveListHeight\(el\.clientHeight\)\)/.test(dialogSrc),
+    "the measured height must go through resolveListHeight",
   );
+  assert.ok(
+    dialogSrc.includes('from "./roomSelectionLayout.js"'),
+    "the floor must come from the shared layout module so the two cannot drift",
+  );
+});
+
+test("resolveListHeight returns the measured height unchanged, and floors below", () => {
+  // This is the whole contract, testable without a layout engine. The property
+  // that matters for the reported bug: the function is a pure function of the
+  // measured height, so a round-trip through the observer cannot compound —
+  // feeding 520 back in yields 520, not something progressively smaller.
+  assert.equal(resolveListHeight(520), 520);
+  assert.equal(resolveListHeight(300), 300);
+  assert.equal(resolveListHeight(MIN_LIST_HEIGHT), MIN_LIST_HEIGHT);
+  assert.equal(resolveListHeight(MIN_LIST_HEIGHT - 1), MIN_LIST_HEIGHT, "below the floor clamps up");
+  assert.equal(resolveListHeight(1), MIN_LIST_HEIGHT);
+});
+
+test("resolveListHeight never reports an unmeasured height as zero", () => {
+  // Zero is the "not measured yet" sentinel that gates the List render. If an
+  // unmeasured or zero wrapper leaked through as 0 it would be indistinguishable
+  // from that sentinel and the list would never paint.
+  assert.equal(resolveListHeight(0), MIN_LIST_HEIGHT);
+  assert.equal(resolveListHeight(-50), MIN_LIST_HEIGHT);
+  assert.equal(resolveListHeight(Number.NaN), MIN_LIST_HEIGHT);
+  assert.equal(resolveListHeight(undefined), MIN_LIST_HEIGHT);
+});
+
+test("resolveListHeight is idempotent, so repeated observations cannot shrink it", () => {
+  // The failure mode this whole change is about: a loop where observing the
+  // height feeds it back as the rendered height. Idempotence is what makes that
+  // loop incapable of drifting.
+  for (const start of [180, 220, 260, 400, 640]) {
+    let h = start;
+    for (let i = 0; i < 5; i++) h = resolveListHeight(h);
+    assert.equal(h, resolveListHeight(start), `drifted from ${start} to ${h}`);
+  }
 });
 
 test("the dialog uses the react-window v2 List API", () => {

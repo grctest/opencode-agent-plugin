@@ -118,6 +118,10 @@ import { extractErrorInfo } from "../logger.js";
             this._options.onContribution?.(...args);
           },
           onProgress: async (message) => this._sessionManager.postProgress(message),
+          // Heartbeat while an LLM call is pending: proves the meeting is
+          // alive so the stall watchdog never kills a legal long turn.
+          // Wired to SessionContract onHeartbeat via execute-turn liveness.
+          onPromptActivity: () => { try { this._stallWatchdog.touch(); } catch {} },
           createEphemeralSession: async (participant) => this._sessionManager.createEphemeralSession(participant),
           deleteEphemeralSession: async (sessionId) => this._sessionManager.deleteEphemeralSession(sessionId),
         },

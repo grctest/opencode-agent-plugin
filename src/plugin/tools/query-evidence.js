@@ -13,7 +13,7 @@ import { TUNING } from "../../config/defaults.js";
 import { getConfig } from "../../config.js";
 const logger = new Logger();
 
-function normalizeQueries(args, maxTargets = 3) {
+function normalizeQueries(args) {
   if (!Array.isArray(args.queries)) return [];
   const seen = new Set();
   return args.queries
@@ -28,8 +28,7 @@ function normalizeQueries(args, maxTargets = 3) {
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
-    })
-    .slice(0, Math.max(1, maxTargets));
+    });
 }
 
 export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }) {
@@ -56,10 +55,8 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
           .describe("One query object per target peer"),
       },
        async execute(args, context) {
-         const globalCfg = config.getValue("agentTools");
-         const requestedCount = Array.isArray(args.queries) ? args.queries.length : 0;
           if (!context?.sessionID) return { output: JSON.stringify({ error: "loom_query: session context unavailable" }), metadata: { error: true }, title: "loom_query error" };
-          const queries = normalizeQueries(args, Math.max(1, Number(globalCfg?.maxQueryTargetsPerTurn) || 3));
+          const queries = normalizeQueries(args);
           if (queries.length === 0) return { output: JSON.stringify({ error: "queries required — at least one {target, question} item" }), metadata: { error: true }, title: "loom_query error" };
           let meetingInfo = null;
          let stateManager = null;
@@ -71,20 +68,18 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
             const p = { queued: true, note: "Query queued — meeting not yet resolved, will be handled post-store.", queries };
             return { output: JSON.stringify(p), metadata: { queued: true }, title: "loom_query queued" };
           }
-          const engine = activeLooms.get(meetingInfo.meetingId);
-          if (!engine || !engine.getStateManager) {
-             const p = { queued: true, queries, note: "Query queued — engine not ready." };
-             return { output: JSON.stringify(p), metadata: { queued: true }, title: "loom_query queued" };
-           }
-           const effectiveCfg = engine.getRoundExecutor?.()?.getEffectiveAgentTools?.() ?? globalCfg;
-           if (!effectiveCfg?.enabled || !effectiveCfg?.loom?.loom_query) {
-             return { output: JSON.stringify({ error: "loom_query not enabled" }), metadata: { error: true }, title: "loom_query error" };
-           }
-           const maxTargets = Math.max(1, Number(effectiveCfg?.maxQueryTargetsPerTurn) || 3);
-           if (requestedCount > maxTargets) {
-             return { output: JSON.stringify({ error: `loom_query allows at most ${maxTargets} targets per call` }), metadata: { error: true }, title: "loom_query error" };
-           }
-           stateManager = engine.getStateManager();
+           const engine = activeLooms.get(meetingInfo.meetingId);
+           if (!engine || !engine.getStateManager) {
+              const p = { queued: true, queries, note: "Query queued — engine not ready." };
+              return { output: JSON.stringify(p), metadata: { queued: true }, title: "loom_query queued" };
+            }
+            const globalCfg = config.getValue("agentTools");
+            const effectiveCfg = engine.getRoundExecutor?.()?.getEffectiveAgentTools?.() ?? globalCfg;
+            if (!effectiveCfg?.enabled || !effectiveCfg?.loom?.loom_query) {
+              return { output: JSON.stringify({ error: "loom_query not enabled" }), metadata: { error: true }, title: "loom_query error" };
+            }
+            // No target limit — query as many peers as needed.
+            stateManager = engine.getStateManager();
            const sessionManager = engine.getSessionManager();
            db = engine.getDatabase();
           if (!stateManager || !sessionManager || !db) {

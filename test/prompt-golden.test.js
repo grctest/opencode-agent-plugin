@@ -67,15 +67,8 @@ const EXPECTED_SYS = {
   // tool-agnostic. Hashes below reflect the hidden-patch wording.
   "Research Tools — Tool Ladder": "f4d836564552",
   "WHEN TO PASS": "4013ac9d695b",
-  // N7 — the OUTPUT CONTRACT changed: loom_state_patch is now exempt from the
-  // per-turn tool cap, and the contract says so instead of telling agents to
-  // "reserve tool budget" for a call the limiter can no longer evict.
-  // The hash moved again because interaction item 4 now drops the
-  // "loom_summon brings guest expert" clause when the tool is gated off — the
-  // contract must not name a tool that was never offered.
-  // Tail-pass: contract item 8 is now a neutral carry-forward note; the
-  // primary never names the patch tool.
-  "OUTPUT CONTRACT — read last, it governs; in conflict it wins": "e3267031c071",
+  // Tool calls are unlimited: the contract states no per-turn tool-call limit.
+  "OUTPUT CONTRACT — read last, it governs; in conflict it wins": "b055e265c2b8",
 };
 
 const EXPECTED_USER = {

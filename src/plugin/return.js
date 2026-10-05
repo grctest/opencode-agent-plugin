@@ -6,17 +6,14 @@ import { DashboardApi } from "../dashboard/api.js";
 import { getDatabasesBySessionId, deleteMeetingFiles, deleteMeetingsBySessionId, findMeetingBySessionId } from "../database.js";
 import { resolveLoomBaseDir } from "../paths.js";
 import { isBashCommandAllowed, getBashCommand } from "../utils/sanitize.js";
-import { recordMeetingDegradedReason } from "../metrics.js";
 import { createConfig } from "../config.js";
 import { startDashboard } from "../dashboard/server.js";
 import { createEventHandlers, PROGRESS_PATTERN } from "./hooks.js";
 export { PROGRESS_PATTERN };
 
-// N7 — tools exempt from the per-turn call cap. The state patch is the agent's
-// own memory for its next turn; evicting it discards the work the turn just did.
-// The tool enforces its own at-most-once-per-turn rule, so the exemption
-// cannot be used to spend extra calls.
-const PATCH_CAP_EXEMPT_TOOLS = new Set(["loom_state_patch"]);
+// No per-turn tool-call cap: agents may make as many tool calls as they
+// want. The turn counter below is telemetry only (high-water mark) and never
+// blocks execution.
 
 export function createPluginReturn({ activeLooms, activeDashboardRef, directory, config, agentToolRegistry, client = null, resolveMeeting = null }) {
   return {
@@ -37,45 +34,12 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
       const engine = activeLooms.get(meeting.meetingId);
       const stateManager = engine?.getStateManager?.();
       const activeTurn = stateManager?.getActiveTurn?.();
-      const effectiveAgentTools = engine?.getRoundExecutor?.()?.getEffectiveAgentTools?.() ?? config.getValue("agentTools");
+      // Unlimited tool calls by design — just count for telemetry.
       if (activeTurn) {
-        const maxCalls = Math.max(1, Number(effectiveAgentTools?.maxToolCallsPerTurn) || 12);
-        // N7 — the patch is the agent's memory: a participant who researches
-        // deeply and then cannot write their state down loses the turn. Four of
-        // twelve expected patches were lost to this cap in deliberation
-        // 1355a723, and the room reported the loss in prose. The patch is
-        // therefore exempt from the cap (one call per turn is enforced
-        // separately by the tool itself), so the limiter can never evict the
-        // one thing it was supposed to protect.
-        const exempt = PATCH_CAP_EXEMPT_TOOLS.has(input.tool);
-        if (!exempt && stateManager.getTurnToolCount() >= maxCalls) {
-          // N6 — a refusal at the cap is a real event. It used to throw with
-          // no audit row and no counter, so four rejected state patches in one
-          // meeting left the health tables reporting a flawless run.
-          const isPatch = input.tool === "loom_state_patch";
-          try {
-            recordMeetingDegradedReason(meeting.meetingId, "tool_call_limit_reached");
-            if (isPatch) recordMeetingDegradedReason(meeting.meetingId, "state_patch_rejected");
-          } catch {}
-          try {
-            const { auditLoomTool } = await import("./tools/audit.js");
-            auditLoomTool({
-              db: engine?.getDatabase?.(),
-              stateManager,
-              caller: stateManager.getParticipant?.(activeTurn.participantId),
-              meetingId: meeting.meetingId,
-              tool: input.tool ?? "unknown",
-              input: output?.args ?? null,
-              output: JSON.stringify({ error: `Loom tool-call limit reached (${maxCalls})`, degraded: true }),
-              status: "rejected",
-              title: `${input.tool}:limit`,
-            });
-          } catch {}
-          throw new Error(`Loom tool-call limit reached (${maxCalls})`);
-        }
-        if (!exempt) stateManager.recordTurnTool();
+        try { stateManager.recordTurnTool(); } catch {}
       }
       if (input.tool !== "bash") return;
+      const effectiveAgentTools = engine?.getRoundExecutor?.()?.getEffectiveAgentTools?.() ?? config.getValue("agentTools");
       const cfg = effectiveAgentTools;
       const bash = cfg?.builtIn?.bash;
       if (!bash?.enabled) throw new Error("Bash is disabled for Loom deliberations");

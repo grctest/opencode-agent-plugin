@@ -342,13 +342,15 @@ Project-level equivalent in `.loomrc.json` (same keys, no `"loom"` wrapper):
 ```json
 {
   "defaultMaxRounds": 4,
-  "agentTimeoutMs": 240000
+  "agentTimeoutMs": 1200000
 }
 ```
 
-Environment overrides: `LOOM_<KEY>` applies on top of files for scalar schema keys (e.g. `LOOM_AGENT_TIMEOUT_MS=240000`, `LOOM_MODEL_DIVERSITY=false`). `OPENCODE_CONFIG_DIR` selects the shared opencode configuration and Loom data root; without a workspace, Loom data is stored below that directory. Log verbosity is controlled by `LOOM_LOG_LEVEL` (`DEBUG`|`INFO`|`WARN`|`ERROR`|`FATAL`, default `INFO`). The dashboard binds `127.0.0.1` by default and requires a per-dashboard capability cookie for API access. Bash is disabled by default; enable it only with an explicit Loom permission profile. To expose the dashboard beyond loopback, set `dashboard.host` deliberately and set `LOOM_ALLOW_LAN=1`; authenticated LAN access is still required.
+Environment overrides: `LOOM_<KEY>` applies on top of files for scalar schema keys (e.g. `LOOM_AGENT_TIMEOUT_MS=1200000`, `LOOM_MODEL_DIVERSITY=false`). `OPENCODE_CONFIG_DIR` selects the shared opencode configuration and Loom data root; without a workspace, Loom data is stored below that directory. Log verbosity is controlled by `LOOM_LOG_LEVEL` (`DEBUG`|`INFO`|`WARN`|`ERROR`|`FATAL`, default `INFO`). The dashboard binds `127.0.0.1` by default and requires a per-dashboard capability cookie for API access. Bash is disabled by default; enable it only with an explicit Loom permission profile. To expose the dashboard beyond loopback, set `dashboard.host` deliberately and set `LOOM_ALLOW_LAN=1`; authenticated LAN access is still required.
 
-Other available options include agent and synthesis timeouts, retry policy, max tool calls, meeting timeout, stall detection (`stallTimeoutMs`, default 10 min (600000 ms)), auto-select pre-selection count (`composition.autoSelectSeats`, default 3), no meeting-wide token budget (each call is trimmed to fit its own model's input window — 32k to 1M — and provider refusals for rate limits, exhausted token budgets and context overflow are handled as degradations), same-turn synthesis for inline loom tool results (`agentTools.sameTurnSynthesis`), and embedding model selection (`embeddingModel`/`embeddingQuant`).
+Other available options include agent and synthesis timeouts, retry policy, max tool calls, meeting timeout, stall detection (`stallTimeoutMs`, default 30 min (1800000 ms)), auto-select pre-selection count (`composition.autoSelectSeats`, default 3), no meeting-wide token budget (each call is trimmed to fit its own model's input window — 32k to 1M — and provider refusals for rate limits, exhausted token budgets and context overflow are handled as degradations), same-turn synthesis for inline loom tool results (`agentTools.sameTurnSynthesis`), and embedding model selection (`embeddingModel`/`embeddingQuant`).
+
+Long-but-alive calls are protected by liveness: while a prompt pends, a 30s heartbeat (`tuning.PROMPT_LIVENESS_TICK_MS`) touches the stall watchdog, and a fired deadline slides by one more budget when fresh progress is observed (inline loom tool contributions landing in the weave), up to `PROMPT_LIVENESS_MAX_MULTIPLE` (default 3×) of the base budget. A truly dead call with no progress still times out and retries. Set any timeout to `0` to disable the client guard and rely on provider errors.
 
 ## Operational caveats
 

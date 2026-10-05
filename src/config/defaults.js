@@ -12,16 +12,24 @@ export const TUNING = {
   LATENCY_SAMPLE_LIMIT: 100,
   DASHBOARD_IDLE_TIMEOUT_MS: 60_000,
   MAX_DB_CACHE_SIZE: 10,
-  VOTE_TIMEOUT_MS: 60_000,
-  SUMMON_TIMEOUT_MS: 90_000,
+  VOTE_TIMEOUT_MS: 180_000,
+  SUMMON_TIMEOUT_MS: 300_000,
   // N9 — the closing round gets one bounded, patch-only turn per participant
   // that did not patch, so a short final round cannot cost the room its
-  // memory. 0 disables the grace pass.
-  FINAL_ROUND_PATCH_GRACE_MS: 45_000,
+  // memory. 0 disables the grace pass. Sized for heavy reasoners: a 45s grace
+  // cut off legitimate patch calls, so this now matches the per-turn tail.
+  FINAL_ROUND_PATCH_GRACE_MS: 180_000,
   // Patch-only tail pass (primary turns): same-session second LLM call whose
   // only job is loom_state_patch, with the turn's final prose + tool outputs
-  // as context. Bounded short — a tail miss logs and the turn stands.
-  PATCH_TAIL_TIMEOUT_MS: 45_000,
+  // as context. Bounded — a tail miss logs and the turn stands — but long
+  // enough for a thinking model to emit one tool call.
+  PATCH_TAIL_TIMEOUT_MS: 180_000,
+  // Liveness heartbeat for long LLM calls (see SessionContract.prompt):
+  // while a prompt is pending, onHeartbeat ticks every PROMPT_LIVENESS_TICK_MS
+  // (watchdog touch) and a fired deadline is deferred when isAlive() reports
+  // fresh progress, up to PROMPT_LIVENESS_MAX_MULTIPLE × the base budget.
+  PROMPT_LIVENESS_TICK_MS: 30_000,
+  PROMPT_LIVENESS_MAX_MULTIPLE: 3,
   FANOUT: { queryBatch: 5, voteBatch: 5, rpm: 100 },
   CONTENT_TRUNCATION: { question: 10000, result: 4000, content: 4000, summary: 800 },
   STATE_OF_PLAY: { bucketCap: 8, truncation: 500, reflectionTruncation: 400 },
@@ -33,20 +41,27 @@ export const TUNING = {
 };
 
 export const DEFAULT_CONFIG = {
-  agentTimeoutMs: 240000,
-  synthesisTimeoutMs: 180000,
+  // Per-agent LLM call budget. Heavy-reasoning models with inline loom tools
+  // legitimately run 5-15 minutes; the old 4-minute default cut them off
+  // mid-thought. 0 disables the client timeout (rely on provider errors).
+  // Liveness (SessionContract isAlive/onHeartbeat) defers the deadline while
+  // the provider shows progress, so this is a dead-query guard, not a
+  // thinking cap. Absolute cap is budget × PROMPT_LIVENESS_MAX_MULTIPLE.
+  agentTimeoutMs: 1200000,
+  synthesisTimeoutMs: 900000,
   defaultMaxRounds: 4,
   minRounds: 2,
   fastPathModel: "",
   embeddingModel: "Snowflake/snowflake-arctic-embed-xs",
   embeddingQuant: "onnx/model_int8.onnx",
-  maxSummonsPerRound: 2,
-  maxSummonsPerAgent: 1,
   maxRetryAttempts: 2,
   retryBaseDelayMs: 1000,
   retryMaxDelayMs: 8000,
   synthesisMaxRetries: 1,
-  stallTimeoutMs: 600000,
+  // Must exceed agentTimeoutMs or the watchdog kills meetings while a legal
+  // long turn is still thinking (heartbeat touches keep it alive, this is the
+  // backstop for zero-progress hangs).
+  stallTimeoutMs: 1800000,
   dashboard: { host: "127.0.0.1" },
   composition: {
     // How many of the ranked personas are pre-selected when the auto-select
@@ -127,16 +142,14 @@ export const DEFAULT_CONFIG = {
       glob: false,
       grep: false,
     },
-    maxToolCallsPerTurn: 12,
     maxToolOutputTokens: 12000,
-    maxQueryTargetsPerTurn: 3,
     parallelQueries: true,
   },
 };
 
 export const CONFIG_SCHEMA = {
-  agentTimeoutMs: { type: 'number', min: 0, max: 600000 },
-  synthesisTimeoutMs: { type: 'number', min: 0, max: 600000 },
+  agentTimeoutMs: { type: 'number', min: 0, max: 1800000 },
+  synthesisTimeoutMs: { type: 'number', min: 0, max: 1800000 },
   defaultMaxRounds: { type: 'number', min: 1, max: 10 },
   minRounds: { type: 'number', min: 1, max: 5 },
   fastPathModel: { type: 'string' },
@@ -145,9 +158,7 @@ export const CONFIG_SCHEMA = {
   maxRetryAttempts: { type: 'number', min: 0, max: 5 },
   retryBaseDelayMs: { type: 'number', min: 100, max: 30000 },
   retryMaxDelayMs: { type: 'number', min: 1000, max: 60000 },
-  stallTimeoutMs: { type: 'number', min: 30000, max: 1800000 },
-  maxSummonsPerRound: { type: 'number', min: 0, max: 5 },
-  maxSummonsPerAgent: { type: 'number', min: 0, max: 3 },
+  stallTimeoutMs: { type: 'number', min: 30000, max: 3600000 },
   synthesisMaxRetries: { type: 'number', min: 0, max: 5 },
   modelDiversity: { type: 'boolean' },
 };
@@ -189,9 +200,7 @@ export const NESTED_SCHEMA = {
   'agentTools.reflection.bash': { type: 'boolean' },
   'agentTools.reflection.glob': { type: 'boolean' },
   'agentTools.reflection.grep': { type: 'boolean' },
-  'agentTools.maxToolCallsPerTurn': { type: 'number', min: 1, max: 50 },
   'agentTools.maxToolOutputTokens': { type: 'number', min: 1000, max: 20000 },
-  'agentTools.maxQueryTargetsPerTurn': { type: 'number', min: 1, max: 7 },
   'agentTools.parallelQueries': { type: 'boolean' },
   'modelFallback.enabled': { type: 'boolean' },
   'modelFallback.maxRetriesPerModel': { type: 'number', min: 0, max: 5 },
@@ -206,4 +215,8 @@ export const DEPRECATED_KEYS = {
   'agentTools.loom.loom_type': 'removed — primary agent turns are no longer typed, following agents interpret content directly',
   'agentTools.loom.loom_vector_search': 'removed — use loom_forum or loom_query for prior context; fabric RAG deleted',
   'agentTools.patchRetry': 'removed — no enforcement follow-up call exists; mandatory flags drive prompt emphasis only, a miss is logged and the turn stands',
+  'agentTools.maxToolCallsPerTurn': 'removed — agents may make unlimited tool calls per turn; key ignored',
+  'agentTools.maxQueryTargetsPerTurn': 'removed — loom_query accepts unlimited targets per call; key ignored',
+  maxSummonsPerRound: 'removed — agents may summon unlimited guests; key ignored',
+  maxSummonsPerAgent: 'removed — agents may summon unlimited guests; key ignored',
 };

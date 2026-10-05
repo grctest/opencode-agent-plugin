@@ -51,11 +51,12 @@ test("contract is the final block of the system prompt", () => {
   assert.match(sys, /read last, it governs; in conflict it wins/);
 });
 
-// 2. No advertised hard cap the runtime does not enforce.
+// 2. No advertised cap: tool calls are unlimited.
 test("tool budget is worded as guidance, not a hard cap", () => {
   const sys = buildAgentSystemPrompt(participant(), { activeCount: 5, agentTools: cloneTools() });
   assert.doesNotMatch(sys, /Up to \d+ (loom|tool) calls per turn/);
-  assert.match(sys, /logged, not hard-stopped/);
+  assert.doesNotMatch(sys, /at most \d+ tool calls per turn/);
+  assert.match(sys, /no per-turn tool-call limit/);
 });
 
 // 3. Tools described == tools offered, across config combos. The comparison

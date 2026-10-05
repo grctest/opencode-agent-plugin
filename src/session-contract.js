@@ -77,6 +77,11 @@ export class SessionContract {
    /**
     * Sends a single stateless prompt to an existing session. Applies a timeout
     * (default: `config.agentTimeoutMs`; override with `timeoutMs`).
+    * Long-but-alive calls are protected by an optional liveness probe: when
+    * `isAlive` reports fresh progress at the deadline, the deadline slides by
+    * one more budget (up to an absolute cap) instead of failing. `onHeartbeat`
+    * ticks while pending so callers can touch the stall watchdog even with
+    * zero observable progress.
     * @param {{
     *   sessionId: string,
     *   system: string,
@@ -85,10 +90,15 @@ export class SessionContract {
     *   tools?: Record<string, boolean>,
     *   toolChoice?: string, // NOTE: PromptInput has no tool_choice field (see packages/opencode/src/session/prompt.ts:1499); server ignores this. Kept for future compat; toolChoice is actually determined by format ("required" for json_schema) and defaults to "auto". Evidence/vote "required"/"none" hints are prompt-enforced, not API-enforced.
     *   timeoutMs?: number,
+    *   signal?: AbortSignal,
+    *   heartbeatMs?: number,
+    *   isAlive?: (info: { elapsedMs: number, extensions: number, sessionId: string }) => boolean | Promise<boolean>,
+    *   onHeartbeat?: (info: { elapsedMs: number, extensions: number, sessionId: string, deadlineMs: number, absoluteDeadlineMs: number }) => void,
+    *   maxTotalMs?: number,
     * }} payload
     * @returns {Promise<{ ok: true, data: object, text: string, tokens?: { input: number; output: number } | null, error: null } | { ok: false, data: null, text: "", tokens: null, error: Error }>}
     */
-   async prompt({ sessionId, system, model, parts, tools, toolChoice, timeoutMs, signal }) {
+   async prompt({ sessionId, system, model, parts, tools, toolChoice, timeoutMs, signal, heartbeatMs, isAlive, onHeartbeat, maxTotalMs }) {
     const config = getConfig();
     try {
       if (signal?.aborted) {
@@ -136,8 +146,69 @@ export class SessionContract {
       };
       const effectiveTimeout = timeoutMs ?? config.agentTimeoutMs;
       const shouldTimeout = Number.isFinite(effectiveTimeout) && effectiveTimeout > 0;
+      // Sliding-deadline liveness: a fired deadline is deferred while the
+      // caller observes fresh provider progress (inline loom tools landing in
+      // the weave, message growth, …), bounded by an absolute cap so a
+      // trickling-but-stuck call still dies. Without isAlive this is a plain
+      // wall-clock timeout exactly as before.
+      const tuning = config?.tuning ?? {};
+      const tickRaw = heartbeatMs ?? tuning.PROMPT_LIVENESS_TICK_MS ?? 30_000;
+      const tickMs = Number.isFinite(tickRaw) && tickRaw > 0 ? tickRaw : 0;
+      const multipleRaw = tuning.PROMPT_LIVENESS_MAX_MULTIPLE ?? 3;
+      const multiple = Number.isFinite(multipleRaw) && multipleRaw >= 1 ? multipleRaw : 3;
+      const startMs = Date.now();
+      const absoluteDeadlineMs = shouldTimeout
+        ? (Number.isFinite(maxTotalMs) && maxTotalMs > 0
+            ? startMs + maxTotalMs
+            : startMs + Math.max(1, effectiveTimeout) * multiple)
+        : Infinity;
+      let deadlineMs = shouldTimeout ? startMs + effectiveTimeout : Infinity;
+      let extensions = 0;
+      let settled = false;
       let timer = null;
+      let heartbeatTimer = null;
       let abortHandler = null;
+      let rejectTimeout = null;
+      const hasProbe = typeof isAlive === "function";
+      const armTimer = (delayMs) => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => void onDeadline(), Math.max(1, delayMs));
+        timer.unref?.();
+      };
+      const onDeadline = async () => {
+        if (settled) return;
+        const now = Date.now();
+        let alive = false;
+        if (hasProbe) {
+          try {
+            alive = !!(await isAlive({ elapsedMs: now - startMs, extensions, sessionId }));
+          } catch { alive = false; }
+        }
+        if (alive && now < absoluteDeadlineMs && extensions < 100) {
+          extensions++;
+          deadlineMs = Math.min(now + effectiveTimeout, absoluteDeadlineMs);
+          try {
+            this.#logger?.info(
+              "prompt_timeout_deferred",
+              `Session ${sessionId} showed progress after ${Math.round((now - startMs) / 1000)}s — deadline extended (${extensions}×, +${Math.round((deadlineMs - now) / 1000)}s of ${Math.round((absoluteDeadlineMs - startMs) / 1000)}s cap)`,
+              { sessionId, elapsedMs: now - startMs, extensions },
+            );
+          } catch {}
+          armTimer(deadlineMs - Date.now());
+          return;
+        }
+        void abortSession();
+        const elapsed = Date.now() - startMs;
+        const error = new Error(
+          `Session prompt timed out after ${elapsed}ms (budget ${effectiveTimeout}ms${extensions ? `, ${extensions} liveness extension(s)` : ""})`,
+        );
+        error.name = "TimeoutError";
+        error.timeoutMs = effectiveTimeout;
+        error.elapsedMs = elapsed;
+        error.livenessExtensions = extensions;
+        settled = true;
+        try { rejectTimeout?.(error); } catch {}
+      };
       const guards = [];
       if (signal) {
         guards.push(new Promise((_, reject) => {
@@ -150,17 +221,30 @@ export class SessionContract {
       }
       if (shouldTimeout) {
         guards.push(new Promise((_, reject) => {
-          timer = setTimeout(() => {
-            void abortSession();
-            const error = new Error(`Session prompt timed out after ${effectiveTimeout}ms`);
-            error.name = "TimeoutError";
-            reject(error);
-          }, effectiveTimeout);
-          timer.unref?.();
+          rejectTimeout = reject;
+          armTimer(deadlineMs - Date.now());
         }));
+        if (tickMs > 0 && typeof onHeartbeat === "function") {
+          heartbeatTimer = setInterval(() => {
+            if (settled) return;
+            try {
+              const r = onHeartbeat({
+                elapsedMs: Date.now() - startMs,
+                extensions,
+                sessionId,
+                deadlineMs,
+                absoluteDeadlineMs,
+              });
+              if (r && typeof r.catch === "function") r.catch(() => {});
+            } catch {}
+          }, tickMs);
+          heartbeatTimer.unref?.();
+        }
       }
       const raced = Promise.race([promptPromise, ...guards]).finally(() => {
+        settled = true;
         if (timer) clearTimeout(timer);
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
         if (signal && abortHandler) {
           try { signal.removeEventListener("abort", abortHandler); } catch {}
         }

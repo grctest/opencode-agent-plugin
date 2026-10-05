@@ -25,8 +25,11 @@ export async function promptChildSession(participant) {
   const fallbackConfig = config.modelFallback;
 
   const baseTimeoutMsRaw = config.agentTimeoutMs;
-  // 0 = no client timeout, rely on provider errors / stall watchdog (P3)
-  const baseTimeoutMs = baseTimeoutMsRaw === 0 ? 0 : (Number.isFinite(baseTimeoutMsRaw) ? Math.max(10000, Math.min(600000, baseTimeoutMsRaw)) : 240000);
+  // 0 = no client timeout, rely on provider errors / stall watchdog (P3).
+  // Ceiling tracks CONFIG_SCHEMA max (1.8M): heavy reasoners with inline loom
+  // tools legitimately run 10-20 minutes, and the sliding-deadline liveness
+  // probe in SessionContract extends the budget while progress is visible.
+  const baseTimeoutMs = baseTimeoutMsRaw === 0 ? 0 : (Number.isFinite(baseTimeoutMsRaw) ? Math.max(10000, Math.min(1800000, baseTimeoutMsRaw)) : 1200000);
   const timeoutMsBase = baseTimeoutMs;
   let timeoutMs = timeoutMsBase;
 
@@ -346,6 +349,9 @@ export async function promptChildSession(participant) {
         tools: synthesisToolsMap,
         toolChoice: Object.keys(synthesisToolsMap).length > 0 ? "auto" : undefined,
         timeoutMs: synthRemaining,
+        // Recovery synthesis offers no loom tools, so no weave-growth probe;
+        // heartbeat still keeps the stall watchdog alive on long recoveries.
+        onHeartbeat: () => { try { this._options.onPromptActivity?.(); } catch {} },
       });
     } finally {
       if (ephemeralSessionId) {

@@ -32,11 +32,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
   const isLoomTool = (name) => name?.startsWith("loom_");
 
   const truncateToolResults = (trs, agentToolsConfig) => {
-    const maxToolCalls = agentToolsConfig?.maxToolCallsPerTurn ?? 200;
     const maxOutputTokens = agentToolsConfig?.maxToolOutputTokens ?? 60000;
-    if (trs.length > maxToolCalls) {
-      this._logger.warn("tool_call_limit", `${participant.config.name} executed ${trs.length} tool calls (limit ${maxToolCalls}) — storing all for audit, synthesis prompt will be bounded`);
-    }
     const totalTokens = trs.reduce((sum, r) => sum + Math.ceil(((r.output ? String(r.output).length : 0) / 4)), 0);
     if (totalTokens > maxOutputTokens) {
       this._logger.warn("tool_output_limit", `${participant.config.name} tool outputs ${totalTokens} tokens exceed ${maxOutputTokens} — storing full outputs for audit, synthesis context will be truncated`);
@@ -83,6 +79,22 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
     const toolsMap = buildToolsMap(effectiveConfig, { activeCount: activeCountExec, omitStatePatch: true });
     const agentToolsConfig = effectiveAgentTools;
 
+    // Liveness: inline loom_* tools persist weave rows server-side while the
+    // prompt is still pending, so weave growth proves the provider is alive
+    // (thinking + acting) rather than hung. The heartbeat touch keeps the
+    // stall watchdog from killing a legal long turn. Fresh baseline per call:
+    // a previous phase's growth must not extend a stuck later phase.
+    const buildPromptLiveness = () => {
+      let baseline = 0;
+      try { baseline = this._stateManager.getWeave().length; } catch { baseline = 0; }
+      return {
+        isAlive: () => {
+          try { return this._stateManager.getWeave().length > baseline; } catch { return false; }
+        },
+        onHeartbeat: () => { try { this._options.onPromptActivity?.(); } catch {} },
+      };
+    };
+
     const offeredTools = Object.keys(toolsMap);
         const result1 = await this._sessionManager.getContract().prompt({
       sessionId: ephemeralSessionId,
@@ -93,6 +105,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
       toolChoice: Object.keys(toolsMap).length > 0 ? "auto" : undefined,
       timeoutMs,
       signal: abortController.signal,
+      ...buildPromptLiveness(),
     });
     const llmMs = Date.now() - llmStart;
     incrementKeyedCounter("llm_calls_by_type", "agent");
@@ -191,6 +204,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
           toolChoice: Object.keys(synthesisToolsMap).length > 0 ? "auto" : undefined,
           timeoutMs,
           signal: abortController.signal,
+          ...buildPromptLiveness(),
         });
         const synthMs = Date.now() - synthStart;
         recordLatency("llm_synthesis_ms", synthMs);
@@ -271,11 +285,13 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
         const tailBudgetMs = (() => {
           try {
             const t = getConfig()?.tuning?.PATCH_TAIL_TIMEOUT_MS
-              ?? getConfig()?.tuning?.FINAL_ROUND_PATCH_GRACE_MS ?? 45000;
+              ?? getConfig()?.tuning?.FINAL_ROUND_PATCH_GRACE_MS ?? 180000;
             const n = Number(t);
-            if (Number.isFinite(n) && n > 0) return Math.min(n, 60000);
+            // Patch-only tail: bounded, but long enough for a thinking model
+            // to emit one tool call (the old 45-60s cut off heavy reasoners).
+            if (Number.isFinite(n) && n > 0) return Math.min(n, 300000);
           } catch {}
-          return 45000;
+          return 180000;
         })();
         const tailTimeout = timeoutMs === 0 ? tailBudgetMs : Math.min(tailBudgetMs, timeoutMs);
         this._callStats.agent_prompts++;
@@ -290,6 +306,9 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
           toolChoice: "auto",
           timeoutMs: tailTimeout,
           signal: abortController.signal,
+          // Tail has no weave-growing tools (single state patch), so the wall
+          // clock applies; heartbeat still keeps the watchdog alive.
+          onHeartbeat: () => { try { this._options.onPromptActivity?.(); } catch {} },
         });
         recordLatency("llm_patch_tail_ms", Date.now() - tailStart);
         incrementKeyedCounter("llm_calls_by_type", "patch_tail");

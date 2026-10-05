@@ -67,13 +67,17 @@ export class SynthesisCoordinator {
     return buildOrchestratorSynthesisSystem(config);
   }
 
-  async run({ transcriptData, participants, model, onStart, onComplete, stateOfPlay = "", userContext = "" }) {
+  async run({ transcriptData, participants, model, onStart, onComplete, stateOfPlay = "", userContext = "", onActivity = null }) {
     if (!model?.providerID || !model?.modelID) {
       throw new LoomError("No orchestrator model available for final synthesis", { phase: "synthesis", recoverable: false });
     }
 
     if (onStart) onStart();
     await this.#sessionManager.postProgress("🔄 Synthesizing final output...");
+    // Heartbeat while synthesis pends: proves the meeting is alive so the
+    // stall watchdog never kills a legal long synthesis (no weave-growth
+    // probe here — synthesis has no inline tools, wall clock + touch apply).
+    const heartbeat = typeof onActivity === "function" ? onActivity : null;
 
     let artifactText;
     let synthSessionId = null;
@@ -86,8 +90,8 @@ export class SynthesisCoordinator {
         ...this.#orchestratorConfig,
         synthesisStyle: getEffectiveSynthesisStyle(this.#orchestratorConfig, transcriptData.question, transcriptData.tags),
       };
-      artifactText = await this.#promptWithRetry(synthSessionId, transcriptData, transcript, model, participants, stateOfPlay, userContext, effectiveConfig);
-      artifactText = await this.#critique(synthSessionId, artifactText, transcript, transcriptData, model, participants, effectiveConfig);
+      artifactText = await this.#promptWithRetry(synthSessionId, transcriptData, transcript, model, participants, stateOfPlay, userContext, effectiveConfig, heartbeat);
+      artifactText = await this.#critique(synthSessionId, artifactText, transcript, transcriptData, model, participants, effectiveConfig, heartbeat);
     } catch (err) {
       const info = extractErrorInfo(err);
       await this.#sessionManager.postProgress(`Synthesis session failed: ${info.message}`, "error");
@@ -106,7 +110,7 @@ export class SynthesisCoordinator {
     return result;
   }
 
-  async #promptWithRetry(sessionId, transcriptData, transcript, model, allParticipants, stateOfPlay = "", userContext = "", effectiveConfig = this.#orchestratorConfig) {
+  async #promptWithRetry(sessionId, transcriptData, transcript, model, allParticipants, stateOfPlay = "", userContext = "", effectiveConfig = this.#orchestratorConfig, onActivity = null) {
     let additionalFeedback = "";
     const rawMaxRetries = getConfig().synthesisMaxRetries;
     const maxRetries = Number.isFinite(rawMaxRetries) ? rawMaxRetries : 1;
@@ -128,6 +132,7 @@ export class SynthesisCoordinator {
           model,
           parts: [{ type: "text", text: userPrompt }],
           timeoutMs: getConfig().synthesisTimeoutMs,
+          ...(typeof onActivity === "function" ? { onHeartbeat: onActivity } : {}),
         });
          if (!r.ok) throw r.error;
          return r;
@@ -159,7 +164,7 @@ export class SynthesisCoordinator {
   }
 
   /** Second-pass audit: the synthesizer reviews its draft for grounding, then fixes. */
-  async #critique(sessionId, text, transcript, transcriptData, model, allParticipants, effectiveConfig = this.#orchestratorConfig) {
+  async #critique(sessionId, text, transcript, transcriptData, model, allParticipants, effectiveConfig = this.#orchestratorConfig, onActivity = null) {
     const chunkText = (t, lim) => {
       if (t.length <= lim) return [t];
       // Prefer splitting at section boundaries; if still >lim, hard chunk
@@ -270,6 +275,7 @@ ${draftForPrompt}`;
             model,
             parts: [{ type: "text", text: critiquePrompt }],
             timeoutMs: getConfig().synthesisTimeoutMs,
+            ...(typeof onActivity === "function" ? { onHeartbeat: onActivity } : {}),
           });
            if (!r.ok) throw r.error;
           return r;

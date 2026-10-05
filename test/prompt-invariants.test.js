@@ -52,7 +52,6 @@ const agentTools = {
     loom_pass: true, loom_state_patch: true,
   },
   builtIn: { websearch: true, webfetch: true, read: true, glob: true, grep: true },
-  maxToolCallsPerTurn: 12,
 };
 
 function fullState(i) {

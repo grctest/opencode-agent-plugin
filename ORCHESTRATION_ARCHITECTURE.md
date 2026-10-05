@@ -299,7 +299,7 @@ Senior doctrine: name the irreversible commitment and its mitigation/rollback...
         - Interaction tools fan out to peers in parallel and return their answers inline within
           this same turn — wait for the result, then cite [#id] from the returned responses
           or tally in your final contribution.
-        - Up to <maxToolCallsPerTurn> loom calls per turn; prefer one focused interaction call. `loom_state_patch` is exempt from that cap (N7).
+        - Make as many tool calls as you need — there is no per-turn tool-call limit.
         - CRITICAL: tool invocations are transmitted through the model's function-calling
           channel, never through response prose. Any function-call notation in text executes
           nothing. Bracket tags like [QUERY: @id], [EVIDENCE: @id], [CALL_VOTE] are obsolete.
@@ -457,7 +457,7 @@ For each agent (in turn order):
 
 1. Sets status to "speaking" (visible in dashboard); a fresh `batchId` is stamped for grouping inline interaction rows.
 2. Checks if the assigned model's circuit breaker is healthy. If open, a healthy fallback model is selected immediately and used from the first attempt (Section 16).
-3. Uses a **fixed timeout**: base `agentTimeoutMs` (240s) — no reduction when agents fail.
+3. Uses a **sliding-deadline timeout**: base `agentTimeoutMs` (20min) — no reduction when agents fail. While the prompt pends, a 30s heartbeat touches the stall watchdog and weave growth (inline loom tools landing server-side) defers the deadline by one more budget, up to 3× the base. A dead call with no progress still times out; `0` disables the guard.
 4. Builds a bounded context from the agent's own `Σⁱ`, the shared state of play, and the current-round live contributions. It does not auto-retrieve prior transcript chunks.
 5. Collects current-round contributions: bounded live context with `vote_response` rows excluded.
 6. If this agent is first in the planned order, consumes any queued **steering hint** (contribution-mix nudge; Section 11/post-phase) and appends it to the user prompt.
@@ -1126,7 +1126,7 @@ Retryable errors (`isRetryableError`): `ECONNREFUSED`, `ETIMEDOUT`, `ENOTFOUND`,
 
 Agent turns are now **retried** — the old "run once and fail" behavior is gone. `#promptChildSession` runs a staged recovery ladder before an agent is marked `failed`:
 
-1. **Fixed timeout:** base `agentTimeoutMs` (240s) per agent call — deliberately NOT reduced when agents fail ("previously punished survivors").
+1. **Sliding-deadline timeout:** base `agentTimeoutMs` (20min) per agent call — deliberately NOT reduced when agents fail ("previously punished survivors"). Weave growth while pending defers the deadline (up to 3× base); no progress still times out.
 2. **Retry on the assigned model** — up to `modelFallback.maxRetriesPerModel` (default 2) retries *after* the first attempt, with exponential backoff (1000ms · 2^attempt + jitter, capped at 8s). Each failure increments the model's circuit-breaker counter.
 3. **Fallback model** — when the primary model's retries are exhausted (and `modelFallback.enabled`, default true), `selectFallbackModel()` picks a healthy model from the discovered pool that is *not* the failing model (random among the healthy candidates) and the turn is attempted on it (up to `modelFallback.maxFallbackAttempts` retries after the first fallback attempt), with the same backoff. A progress message announces the switch ("⚠️ Model X failed — retrying with Y").
 4. **Failure** — only when the primary and fallback attempts are all exhausted does the agent's status become `failed`, an `agent_errors` row is written with type `model_fallback` (`Model: X, No fallback available` or `Original: X, Fallback: Y — <error>`), and the agent is skipped for the rest of the round.
@@ -1180,15 +1180,15 @@ Degraded artifacts are produced when every participant fails or everyone passes 
 
 A watchdog monitors activity. If no state update occurs for the configured interval, the meeting is cancelled and passes through to synthesis.
 
-**Configuration:** `stallTimeoutMs` = 600,000ms (10 min), tick interval `WATCHDOG_TICK_MS` = 30,000ms (30s) via `TUNING.WATCHDOG_TICK_MS` (`getConfig().tuning`).
+**Configuration:** `stallTimeoutMs` = 1,800,000ms (30 min), tick interval `WATCHDOG_TICK_MS` = 30,000ms (30s) via `TUNING.WATCHDOG_TICK_MS` (`getConfig().tuning`). Must exceed `agentTimeoutMs` (20min) so the watchdog never kills a legal long turn.
 
-**Mechanism:** `StallWatchdog.start(getStatus, isCancelled)` is idempotent (`start()` touches if already running); `touch()` on `#notifyUpdate` + contributions resets `lastActivityAt`.
+**Mechanism:** `StallWatchdog.start(getStatus, isCancelled)` is idempotent (`start()` touches if already running); `touch()` on `#notifyUpdate` + contributions + every pending-LLM heartbeat (`SessionContract` `onHeartbeat` every `PROMPT_LIVENESS_TICK_MS`) resets `lastActivityAt`.
 
 **Mechanism:** `StallWatchdog.start(getStatus, isCancelled)` begins a 30s interval. On each tick:
 1. If the process is cancelled or the meeting is in a terminal status, stop the watchdog.
 2. If `Date.now() - lastActivityAt > stallTimeoutMs`, log `stall_detected`, set `stallCancelled = true`, and call `onStall()`.
 
-**Activity touch:** `lastActivityAt` is updated on every state update (`#notifyUpdate()`) via `stallWatchdog.touch()` and on every contribution.
+**Activity touch:** `lastActivityAt` is updated on every state update (`#notifyUpdate()`) via `stallWatchdog.touch()`, on every contribution, and on every pending-prompt heartbeat tick (`onPromptActivity` → `stallWatchdog.touch()`).
 
 **Stall response:** `onStall` sets `#cancelled = true` and posts "⏱️ No activity detected for a while — stopping the deliberation." The weave loop detects the flag and transitions to **"timeout"** (not "cancelled" — this distinguishes inactivity from user action), then proceeds to synthesis.
 
@@ -1353,7 +1353,6 @@ When loom tools are enabled, the system prompt includes:
       "loom_pass": true,
       "loom_state_patch": true
     },
-    "maxToolCallsPerTurn": 12,
     "maxToolOutputTokens": 12000
   }
 }
@@ -1365,8 +1364,14 @@ When loom tools are enabled, the system prompt includes:
 | `builtIn.*` | (see above) | Enable built-in tools for agent turns |
 | `builtIn.bash.allowlist` | `["git","ls","wc","head","tail","grep","find"]` | Only these commands via bash |
 | `loom.*` | all `true` | Enable loom plugin tools (query/vote/summon/request_next/pass/state_patch). `loom_summon` is additionally **capability-gated** on a loaded embedding model — see §20 Embedding model unavailable |
-| `maxToolCallsPerTurn` | `12` | Hard per-turn Loom tool-call limit enforced before execution. **`loom_state_patch` is exempt** (N7): the patch is the agent's memory for the next turn, and a limiter that can evict it discards the work the turn just did. The tool enforces its own at-most-once-per-turn rule, so the exemption cannot be spent on extra calls. A refusal at the cap is recorded as a `meeting_degraded_reasons` entry and an audit row with status `rejected` (N6) |
 | `maxToolOutputTokens` | `12000` | Warning threshold for stored tool-output volume; synthesis context remains bounded |
+
+> Tool-call volume is unlimited by design: there is no per-turn tool-call cap,
+> no per-call `loom_query` target cap, and no per-round/per-agent `loom_summon`
+> cap. The legacy keys `agentTools.maxToolCallsPerTurn`,
+> `agentTools.maxQueryTargetsPerTurn`, `maxSummonsPerRound`, and
+> `maxSummonsPerAgent` are deprecated and ignored. Telemetry still records the
+> per-turn high-water mark (`tool_calls.max_in_a_turn`) with `cap_per_turn: null`.
 
 ### Risk Mitigations
 
@@ -1464,7 +1469,7 @@ Fan-out to **all other active participants** (the source does not ballot; failed
 
 Brings in a **guest expert** from the persona pool (matched by name across all tiers; unknown personas are rejected). The summoned agent is not a registered participant — it contributes once.
 
-- **Rate limits:** `maxSummonsPerRound` (2), `maxSummonsPerAgent` (1) — tracked per round.
+- **Rate limits:** none — agents may summon as many guests as they want.
 - **Model:** the summoning agent's own model.
 - **Tools:** `webfetch`, `websearch`, `read` (no bash/glob/grep — least privilege for guests).
 - **Prompt** (`buildSummonPrompt`): persona expertise, communication style, requester's issue, recent context (last 4 contributions), round context.
@@ -1626,8 +1631,8 @@ On meeting end the orchestrator persists `meeting_metrics` via `saveMeetingMetri
 | `unresolved_objections` / `total_objections` | the objection inventory |
 | `input_tokens` / `output_tokens` / `total_tokens` / `latencies` | real cost accounting |
 | `cost_unmeasurable` | every cost counter is zero — never grade on empty telemetry |
-| `meeting_degraded_reasons` | **named** reasons this meeting ran degraded: `state_patch_rejected`, `tool_call_limit_reached`, `final_round_below_floor`, `final_round_patch_grace_failed`, `cost_unmeasurable`. Recorded at the point of refusal via `recordMeetingDegradedReason` |
-| `tool_calls.max_in_a_turn` / `tool_calls.cap_per_turn` | the cap is per turn and the audit is per round; reporting the per-turn high-water mark beside the cap is what stops a healthy meeting reading as an overrun (N7) |
+| `meeting_degraded_reasons` | **named** reasons this meeting ran degraded: `state_patch_rejected`, `final_round_below_floor`, `final_round_patch_grace_failed`, `cost_unmeasurable`. Recorded at the point of refusal via `recordMeetingDegradedReason` (`tool_call_limit_reached` is retained only as a legacy value — no tool-call cap is enforced) |
+| `tool_calls.max_in_a_turn` / `tool_calls.cap_per_turn` | tool-call volume is unlimited; the per-turn high-water mark is reported with `cap_per_turn: null` |
 | `round_budget` | `{ final_span_ms, median_span_ms, ratio, below_floor }` — the closing round measured against the median of the others (N9) |
 | `final_patch_grace` | `{ attempted, patched, failed }` — the closing round's guaranteed patch opportunity |
 | `mechanism_mix` | argument-shaped vs decision-shaped contributions per round, plus the objection inventory for each round (N12). **Visibility, not a rule**: ballots rose 2 → 16 while unresolved objections fell 15 → 3 in one meeting, and whether that is a good trade is not decidable from a single meeting. The earlier proposal to cap ballot share was withdrawn — it would have punished a legitimate mechanism choice and suppressed the definition-freeze and denominator decisions that meeting's reasoning rests on |
@@ -1685,14 +1690,14 @@ The appendix table lists every model-related configuration key (`fastPathModel`,
 
 Loaded from `.loomrc.json` (project or `<opencode-config-dir>/.loomrc.json`), or the legacy `opencode.json` `"loom"` key. Validated and merged over defaults; unknown keys warn and are ignored. `OPENCODE_CONFIG_DIR` selects the shared Loom data root when no workspace is supplied. `DEFAULT_CONFIG.tuning` is `JSON.parse(JSON.stringify(TUNING))` deep-clone (not ref) — per-meeting `createMeetingConfig()` deep-freezes.
 
-`TUNING` (current constants, `src/config/defaults.js:1`): `MAX_ITERATIONS 100` (weaving loop guard), `WATCHDOG_TICK_MS 30000`, `RING_BUFFER_SIZE 500`, `SKIP_PASSED_*` (3,10,2), `EXTENSION_EXTRA_ROUNDS_FALLBACK 4`, `MAX_CRITIQUE_RETRIES 3`, `SYSTEM_PROMPT_CACHE_MAX 50`, `EMBEDDING_CACHE_MAX 512`, `LATENCY_SAMPLE_LIMIT 100`, `DASHBOARD_IDLE_TIMEOUT_MS 60000`, `MAX_DB_CACHE_SIZE 10`, `VOTE_TIMEOUT_MS 60000`/`SUMMON_TIMEOUT_MS 90000`/`FINAL_ROUND_PATCH_GRACE_MS 45000` (N9 — one bounded, patch-only turn for each participant that did not patch in the closing round; `0` disables), and bounded state/transcript budgets. There is no fabric-RAG tuning or vector search tool in the current agent context path.
+`TUNING` (current constants, `src/config/defaults.js:1`): `MAX_ITERATIONS 100` (weaving loop guard), `WATCHDOG_TICK_MS 30000`, `RING_BUFFER_SIZE 500`, `SKIP_PASSED_*` (3,10,2), `EXTENSION_EXTRA_ROUNDS_FALLBACK 4`, `MAX_CRITIQUE_RETRIES 3`, `SYSTEM_PROMPT_CACHE_MAX 50`, `EMBEDDING_CACHE_MAX 512`, `LATENCY_SAMPLE_LIMIT 100`, `DASHBOARD_IDLE_TIMEOUT_MS 60000`, `MAX_DB_CACHE_SIZE 10`, `VOTE_TIMEOUT_MS 180000`/`SUMMON_TIMEOUT_MS 300000`/`FINAL_ROUND_PATCH_GRACE_MS 180000` (N9 — one bounded, patch-only turn for each participant that did not patch in the closing round; `0` disables), `PATCH_TAIL_TIMEOUT_MS 180000`, `PROMPT_LIVENESS_TICK_MS 30000`/`PROMPT_LIVENESS_MAX_MULTIPLE 3` (sliding-deadline liveness: heartbeat touch + deadline deferral on visible progress), and bounded state/transcript budgets. There is no fabric-RAG tuning or vector search tool in the current agent context path.
 
 DB fresh `meetings`/`participants` enforce `CHECK` + `UNIQUE` + `FK` at `initSchema()`; ordered migrations bring existing databases to the current schema version (13). (Pre-existing DBs may still contain the removed `persona_embeddings`/vec tables; nothing reads them.)
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `agentTimeoutMs` | 240,000 | Per-agent LLM call timeout (fixed — no failure-based reduction) |
-| `synthesisTimeoutMs` | 180,000 | Synthesis draft/critique call timeout |
+| `agentTimeoutMs` | 1,200,000 | Per-agent LLM call budget (20min; sliding deadline defers on visible progress up to 3× — no failure-based reduction) |
+| `synthesisTimeoutMs` | 900,000 | Synthesis draft/critique call timeout (15min, heartbeat-kept) |
 | `defaultMaxRounds` | 4 | Default meeting rounds |
 | `minRounds` | 2 | Minimum rounds before the meeting can end (agents may still pass earlier — the tool accepts; all-passed before this re-opens deliberation instead of terminating) |
 | `fastPathModel` | `""` | Model for cheap orchestrator calls (empty = disabled) |
@@ -1700,14 +1705,10 @@ DB fresh `meetings`/`participants` enforce `CHECK` + `UNIQUE` + `FK` at `initSch
 | `retryBaseDelayMs` | 1,000 | Base retry delay |
 | `retryMaxDelayMs` | 8,000 | Max retry delay |
 | `synthesisMaxRetries` | 1 | Draft section-repair retries |
-| `stallTimeoutMs` | 600,000 | Inactivity stall timeout (watchdog ticks every 30s) |
+| `stallTimeoutMs` | 1,800,000 | Inactivity stall timeout — must exceed agentTimeoutMs; pending-LLM heartbeats touch every 30s (watchdog ticks every 30s) |
 | `modelDiversity` | `true` | Give each agent a distinct model when enough are available |
-| `maxSummonsPerRound` | `2` | Summoned experts per round |
-| `maxQueryTargetsPerTurn` | `3` | Maximum peer targets in one `loom_query` call |
-| `maxToolCallsPerTurn` | `12` | Maximum Loom interaction calls per turn; enforced before execution, **except `loom_state_patch`** (N7) |
 | `agentTools.maxToolOutputTokens` | `12,000` | Warning threshold for stored tool-output volume; synthesis context remains bounded |
 | per-model input ceiling | model's `limit.context` | No meeting-wide token budget exists. Each call is sized against the window of the model it uses (32k–1M) via `utils/context-budget.js`; over-budget prompts are trimmed by block priority, then by a funnel backstop |
-| `maxSummonsPerAgent` | `1` | Summons per agent per round |
 | `circuitBreaker.failureThreshold` | `3` | Consecutive failures before a model is marked unhealthy |
 | `circuitBreaker.resetTimeoutMs` | 300,000 | Half-open test window for an unhealthy model |
 | `modelFallback.enabled` | `true` | Master switch for agent-turn retries + fallback model selection (Section 16) |

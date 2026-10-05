@@ -63,7 +63,7 @@ function hashConfig(cfg, { activeCount, agentTools, contextWindow } = {}) {
     // in the rendered tool list. Omitting it would let a prompt cached while
     // the embedder was still loading pin the "no summon" tool list for the
     // rest of the process.
-    toolsDigest = JSON.stringify({ enabled: t?.enabled, loom: t?.loom, summonAvailable: isSummonAvailable(), builtIn: t?.builtIn, mandatory: t?.mandatory, maxCalls: t?.maxToolCallsPerTurn, sameTurn: t?.sameTurnSynthesis, buildMode: t?.buildMode });
+    toolsDigest = JSON.stringify({ enabled: t?.enabled, loom: t?.loom, summonAvailable: isSummonAvailable(), builtIn: t?.builtIn, mandatory: t?.mandatory, sameTurn: t?.sameTurnSynthesis, buildMode: t?.buildMode });
   } catch {}
   const soloFlag = Number.isFinite(activeCount) && activeCount <= 1 ? "|solo" : "";
   const windowFlag = windowLabel(contextWindow) ? `|win:${windowLabel(contextWindow)}` : "";
@@ -297,7 +297,7 @@ ${modeSection}
   4. Interaction — peer actions happen only through the real loom_* tools in your tool list:
         - loom_query queries peers via \`queries:[{target, question, mode}]\` — modes: 'clarify' (factual), 'perspective' (their stance — Position-tagged), 'evidence' (Finding+Source+Strength), 'critique'/'risks'/'assumptions'/'alternatives' (deep dives); loom_vote polls on lettered options;${summonOffered(agentTools) ? " loom_summon brings guest expert;" : ""} loom_request_next requests priority next round (capped at ${priorityCap}).
         - Interaction tools fan out in parallel and return inline within this same turn — wait for result, then synthesize citing [#id] per block.
-        - Aim for at most ${agentToolsConfig?.maxToolCallsPerTurn ?? 200} tool calls per turn — all tools share one budget, and overages are logged, not hard-stopped; prefer one focused interaction call when specific.
+        - Make as many tool calls as you need — there is no per-turn tool-call limit; prefer focused calls but never skip needed research to save calls.
         - CRITICAL: tool invocations are transmitted through the model's function-calling channel, never through response text. Your prose must NEVER contain function-name() or JSON argument blobs. Bracket tags like [QUERY: @id] are legacy — ignored everywhere except loom_vote ballots, which still require [Vote: A].
         Reference contributions by [#id] from Recent Contributions, e.g. [#12].
   5. Identity — persona and agenda shape framing, not facts. Precedence: OUTPUT CONTRACT > persona/tier guidance > State of Play > Live. Persona voice never overrides budgets or the tool channel.
