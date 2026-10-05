@@ -13,6 +13,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collap
 import { Spinner } from "./ui/spinner.tsx";
 import { Table, TableBody, TableCell, TableRow } from "./ui/table.tsx";
 import { Separator } from "./ui/separator.tsx";
+import { ScrollArea } from "./ui/scroll-area.tsx";
 import { MessageSquareIcon, TriangleAlertIcon, CopyIcon, CheckIcon, ChevronDownIcon, ChevronRightIcon, DownloadIcon } from "lucide-react";
 
 function getToolCallsArray(contribution) {
@@ -717,9 +718,9 @@ const TimelineTabBase = ({
                             {tc.title && <span className="text-xs text-muted-foreground truncate">{tc.title}</span>}
                             <Badge variant={failed ? "destructive" : "secondary"} className="ml-auto text-[10px]">{failed ? "error" : (tc.status ?? "ok")}</Badge>
                           </div>
-                          {hasInput && <div><div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Input</div><pre className="text-xs bg-muted p-2 rounded whitespace-pre-wrap break-words">{prettyJson(tc.input)}</pre></div>}
-                          {hasOutput && <div><div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Output</div><pre className="text-xs bg-muted p-2 rounded whitespace-pre-wrap break-words">{prettyJson(tc.output)}</pre></div>}
-                          {tc.error && <div><div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Error</div><pre className="text-xs bg-destructive/10 text-destructive p-2 rounded whitespace-pre-wrap break-words">{prettyJson(tc.error)}</pre></div>}
+                          {hasInput && <div><div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Input</div><ScrollArea className="max-h-48 rounded-md border bg-muted"><pre className="text-xs p-2 whitespace-pre-wrap break-words font-mono">{prettyJson(tc.input)}</pre></ScrollArea></div>}
+                          {hasOutput && <div><div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Output</div><ScrollArea className="max-h-80 rounded-md border bg-muted"><pre className="text-xs p-2 whitespace-pre-wrap break-words font-mono">{prettyJson(tc.output)}</pre></ScrollArea></div>}
+                          {tc.error && <div><div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Error</div><ScrollArea className="max-h-48 rounded-md border border-destructive/30 bg-destructive/10"><pre className="text-xs p-2 whitespace-pre-wrap break-words font-mono text-destructive">{prettyJson(tc.error)}</pre></ScrollArea></div>}
                           {!hasInput && !hasOutput && !tc.error && <p className="text-xs text-muted-foreground italic">No input/output recorded for this call.</p>}
                         </CardContent>
                       </Card>
