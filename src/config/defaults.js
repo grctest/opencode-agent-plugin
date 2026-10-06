@@ -97,6 +97,10 @@ export const DEFAULT_CONFIG = {
   },
   agentTools: {
     enabled: true,
+    // Deliberation mode. false = PLAN (read-only: agents propose diffs, never
+    // write). true = BUILD (agents may write/edit after reading). Dashboard
+    // meetings set this per-meeting from the Setup-tab mode toggle; the file
+    // key remains as the non-dashboard default.
     buildMode: false,
     builtIn: {
       webfetch: true,
@@ -192,6 +196,7 @@ export const NESTED_SCHEMA = {
   'agentTools.loom.loom_forum': { type: 'boolean' },
   'agentTools.loom.loom_state_patch': { type: 'boolean' },
   'agentTools.sameTurnSynthesis': { type: 'boolean' },
+  'agentTools.buildMode': { type: 'boolean' },
   'agentTools.mandatory.forums': { type: 'boolean' },
   'agentTools.mandatory.skillState': { type: 'boolean' },
   'agentTools.mandatory.agentQueries': { type: 'boolean' },

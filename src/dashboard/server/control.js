@@ -496,6 +496,11 @@ function normalizeFeatures(raw = {}) {
     onlineResearch: normalizeFeatureMode(raw.onlineResearch, onlineFallback),
     agentCommands: raw.agentCommands !== false,
     parallelQueries: raw.parallelQueries !== false,
+    // Deliberation mode: Build lets participant agents write/edit project
+    // files (prompt BUILD wording + write/edit tools offered); anything else
+    // is Plan (read-only). Strict === true so legacy/unknown values fail
+    // closed to Plan — writing must be opt-in, never accidental.
+    buildMode: raw.buildMode === true,
   };
 }
 
@@ -506,8 +511,11 @@ function buildMeetingAgentTools(features, base = getConfig().agentTools) {
   const agentQueriesEnabled = features.agentQueries !== "disabled";
   // Accept legacy "disabled" as off in case unnormalized features slip through.
   const skillStateOn = features.skillState !== "off" && features.skillState !== "disabled";
+  // Deliberation mode from the Setup-tab toggle. Build offers the write/edit
+  // tools and renders BUILD prompt wording; Plan keeps agents read-only.
+  const buildMode = features.buildMode === true;
   tools.enabled = true;
-  tools.buildMode = false;
+  tools.buildMode = buildMode;
   tools.builtIn = {
     ...(tools.builtIn ?? {}),
     read: localSearchEnabled,
@@ -517,8 +525,8 @@ function buildMeetingAgentTools(features, base = getConfig().agentTools) {
     web_search: onlineResearchEnabled,
     websearch: onlineResearchEnabled,
     web_fetch: onlineResearchEnabled,
-    write: false,
-    edit: false,
+    write: buildMode,
+    edit: buildMode,
     lsp: false,
     bash: tools.builtIn?.bash && typeof tools.builtIn.bash === "object"
       ? { ...tools.builtIn.bash, enabled: features.agentCommands }

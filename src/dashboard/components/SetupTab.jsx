@@ -1087,6 +1087,21 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
           </div>
         </CardHeader>
         <CardContent className="flex flex-col gap-5">
+          <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
+            <div className="min-w-0">
+              <Label htmlFor="loom-orchestrator-deliberationMode" className="cursor-default">Deliberation mode</Label>
+              <p className="mt-0.5 text-xs text-muted-foreground" aria-live="polite">{features.buildMode === true ? "Build — agents may write and edit project files after reading. Choose this when the deliberation should produce live changes." : "Plan — read-only. Agents propose diffs but never write. Switch to Build before starting if you expect live file changes."}</p>
+            </div>
+            <Select value={features.buildMode === true ? "build" : "plan"} onValueChange={(value) => setFeature("buildMode", value === "build")} disabled={isFrozen || readOnly}>
+              <SelectTrigger id="loom-orchestrator-deliberationMode" size="sm" className="w-44 shrink-0 font-normal" aria-label="Deliberation mode">
+                <SelectValue placeholder="Select…" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="plan">Plan — read-only</SelectItem>
+                <SelectItem value="build">Build — may write</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="loom-orchestrator-model">Orchestrator model</Label>
             <Select value={orchestrator.model ?? ""} onValueChange={(value) => setOrchestratorField("model", value)} disabled={isFrozen || readOnly || !enabledModels.length}>

@@ -1,0 +1,8414 @@
+{
+  "meeting_id": "7811b8db-12e3-46fc-aacc-7e2719beb1e2",
+  "question": "I want you all to debate the best changes which could improve the prompt engineering of this project. The outcome of the loom meetings is either proper debates, or high quality collaboration on progra",
+  "participation": {
+    "n_participants": 10,
+    "n_contributions": 241,
+    "per_participant": {
+      "ai_output_rater_2": {
+        "name": "AI Output Rater",
+        "tier": "junior",
+        "status": "listening",
+        "n": 30,
+        "words": 10004,
+        "avg_words": 333.5,
+        "rounds_active": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ]
+      },
+      "chief_ai_officer_8": {
+        "name": "Chief AI Officer",
+        "tier": "principal",
+        "status": "listening",
+        "n": 20,
+        "words": 7917,
+        "avg_words": 395.9,
+        "rounds_active": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ]
+      },
+      "creative_disruptor_1": {
+        "name": "Creative Disruptor",
+        "tier": "junior",
+        "status": "listening",
+        "n": 21,
+        "words": 7338,
+        "avg_words": 349.4,
+        "rounds_active": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ]
+      },
+      "devils_advocate_0": {
+        "name": "Devil's Advocate",
+        "tier": "junior",
+        "status": "listening",
+        "n": 38,
+        "words": 11710,
+        "avg_words": 308.2,
+        "rounds_active": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ]
+      },
+      "ethics__ai_safety_officer_5": {
+        "name": "Ethics & AI Safety Officer",
+        "tier": "mid",
+        "status": "listening",
+        "n": 14,
+        "words": 9500,
+        "avg_words": 678.6,
+        "rounds_active": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ]
+      },
+      "innovation_catalyst_7": {
+        "name": "Innovation Catalyst",
+        "tier": "principal",
+        "status": "listening",
+        "n": 24,
+        "words": 8587,
+        "avg_words": 357.8,
+        "rounds_active": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ]
+      },
+      "open_source_maintainer_4": {
+        "name": "Open Source Maintainer",
+        "tier": "junior",
+        "status": "listening",
+        "n": 29,
+        "words": 9027,
+        "avg_words": 311.3,
+        "rounds_active": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ]
+      },
+      "risk_officer_9": {
+        "name": "Risk Officer",
+        "tier": "senior",
+        "status": "listening",
+        "n": 21,
+        "words": 8413,
+        "avg_words": 400.6,
+        "rounds_active": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ]
+      },
+      "systems_engineer_6": {
+        "name": "Systems Engineer",
+        "tier": "mid",
+        "status": "listening",
+        "n": 20,
+        "words": 9803,
+        "avg_words": 490.1,
+        "rounds_active": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ]
+      },
+      "the_ai_product_engineer_3": {
+        "name": "The AI Product Engineer",
+        "tier": "mid",
+        "status": "listening",
+        "n": 24,
+        "words": 11902,
+        "avg_words": 495.9,
+        "rounds_active": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ]
+      }
+    },
+    "count_min_max_ratio": 0.368,
+    "count_gini": 0.142,
+    "words_gini": 0.085,
+    "silent_participants": []
+  },
+  "moves": {
+    "by_type": {
+      "contribution": 100,
+      "critique_response": 22,
+      "query_response": 19,
+      "vote_response": 79,
+      "perspective_response": 19,
+      "evidence_response": 2
+    },
+    "interactive_share": 0.585,
+    "critique_share": 0.091,
+    "query_share": 0.079,
+    "vote_responses": 79,
+    "passes": 0,
+    "turn_requests": 0,
+    "rounds_with_summaries": 10
+  },
+  "grounding": {
+    "cite_marks_total": 1120,
+    "cite_marks_per_contrib": 4.65,
+    "contribs_with_cite": 168,
+    "urls_total": 0,
+    "url_domains": [],
+    "tool_calls_total": 1071,
+    "websearch_total": 0,
+    "websearch_by_participant": {},
+    "state_patches": 99,
+    "participants_with_state_patch": 10
+  },
+  "citations": {
+    "edges_total": 1120,
+    "edges": [
+      {
+        "from": 2,
+        "to": 1,
+        "by": "creative_disruptor_1",
+        "round": 1
+      },
+      {
+        "from": 2,
+        "to": 1,
+        "by": "creative_disruptor_1",
+        "round": 1
+      },
+      {
+        "from": 3,
+        "to": 99,
+        "by": "ai_output_rater_2",
+        "round": 1
+      },
+      {
+        "from": 3,
+        "to": 1,
+        "by": "ai_output_rater_2",
+        "round": 1
+      },
+      {
+        "from": 3,
+        "to": 1,
+        "by": "ai_output_rater_2",
+        "round": 1
+      },
+      {
+        "from": 3,
+        "to": 2,
+        "by": "ai_output_rater_2",
+        "round": 1
+      },
+      {
+        "from": 3,
+        "to": 4,
+        "by": "ai_output_rater_2",
+        "round": 1
+      },
+      {
+        "from": 3,
+        "to": 1,
+        "by": "ai_output_rater_2",
+        "round": 1
+      },
+      {
+        "from": 3,
+        "to": 2,
+        "by": "ai_output_rater_2",
+        "round": 1
+      },
+      {
+        "from": 4,
+        "to": 1,
+        "by": "the_ai_product_engineer_3",
+        "round": 1
+      },
+      {
+        "from": 4,
+        "to": 2,
+        "by": "the_ai_product_engineer_3",
+        "round": 1
+      },
+      {
+        "from": 4,
+        "to": 3,
+        "by": "the_ai_product_engineer_3",
+        "round": 1
+      },
+      {
+        "from": 4,
+        "to": 1,
+        "by": "the_ai_product_engineer_3",
+        "round": 1
+      },
+      {
+        "from": 4,
+        "to": 2,
+        "by": "the_ai_product_engineer_3",
+        "round": 1
+      },
+      {
+        "from": 4,
+        "to": 2,
+        "by": "the_ai_product_engineer_3",
+        "round": 1
+      },
+      {
+        "from": 5,
+        "to": 1,
+        "by": "open_source_maintainer_4",
+        "round": 1
+      },
+      {
+        "from": 5,
+        "to": 4,
+        "by": "open_source_maintainer_4",
+        "round": 1
+      },
+      {
+        "from": 5,
+        "to": 2,
+        "by": "open_source_maintainer_4",
+        "round": 1
+      },
+      {
+        "from": 5,
+        "to": 2,
+        "by": "open_source_maintainer_4",
+        "round": 1
+      },
+      {
+        "from": 5,
+        "to": 2,
+        "by": "open_source_maintainer_4",
+        "round": 1
+      },
+      {
+        "from": 5,
+        "to": 1,
+        "by": "open_source_maintainer_4",
+        "round": 1
+      },
+      {
+        "from": 5,
+        "to": 4,
+        "by": "open_source_maintainer_4",
+        "round": 1
+      },
+      {
+        "from": 6,
+        "to": 1,
+        "by": "devils_advocate_0",
+        "round": 1
+      },
+      {
+        "from": 6,
+        "to": 3,
+        "by": "devils_advocate_0",
+        "round": 1
+      },
+      {
+        "from": 8,
+        "to": 4,
+        "by": "devils_advocate_0",
+        "round": 1
+      },
+      {
+        "from": 9,
+        "to": 1,
+        "by": "creative_disruptor_1",
+        "round": 1
+      },
+      {
+        "from": 10,
+        "to": 1,
+        "by": "ai_output_rater_2",
+        "round": 1
+      },
+      {
+        "from": 14,
+        "to": 1,
+        "by": "risk_officer_9",
+        "round": 1
+      },
+      {
+        "from": 15,
+        "to": 1,
+        "by": "chief_ai_officer_8",
+        "round": 1
+      },
+      {
+        "from": 16,
+        "to": 1,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 1
+      },
+      {
+        "from": 16,
+        "to": 2,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 1
+      },
+      {
+        "from": 16,
+        "to": 3,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 1
+      },
+      {
+        "from": 16,
+        "to": 4,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 1
+      },
+      {
+        "from": 16,
+        "to": 5,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 1
+      },
+      {
+        "from": 16,
+        "to": 6,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 1
+      },
+      {
+        "from": 16,
+        "to": 1,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 1
+      },
+      {
+        "from": 16,
+        "to": 2,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 1
+      },
+      {
+        "from": 16,
+        "to": 7,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 1
+      },
+      {
+        "from": 16,
+        "to": 5,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 1
+      },
+      {
+        "from": 16,
+        "to": 6,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 1
+      },
+      {
+        "from": 16,
+        "to": 7,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 1
+      },
+      {
+        "from": 16,
+        "to": 4,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 1
+      },
+      {
+        "from": 16,
+        "to": 5,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 1
+      },
+      {
+        "from": 18,
+        "to": 1,
+        "by": "systems_engineer_6",
+        "round": 1
+      },
+      {
+        "from": 18,
+        "to": 2,
+        "by": "systems_engineer_6",
+        "round": 1
+      },
+      {
+        "from": 18,
+        "to": 4,
+        "by": "systems_engineer_6",
+        "round": 1
+      },
+      {
+        "from": 18,
+        "to": 16,
+        "by": "systems_engineer_6",
+        "round": 1
+      },
+      {
+        "from": 18,
+        "to": 3,
+        "by": "systems_engineer_6",
+        "round": 1
+      },
+      {
+        "from": 18,
+        "to": 4,
+        "by": "systems_engineer_6",
+        "round": 1
+      },
+      {
+        "from": 18,
+        "to": 16,
+        "by": "systems_engineer_6",
+        "round": 1
+      },
+      {
+        "from": 18,
+        "to": 1,
+        "by": "systems_engineer_6",
+        "round": 1
+      },
+      {
+        "from": 18,
+        "to": 7,
+        "by": "systems_engineer_6",
+        "round": 1
+      },
+      {
+        "from": 18,
+        "to": 17,
+        "by": "systems_engineer_6",
+        "round": 1
+      },
+      {
+        "from": 18,
+        "to": 7,
+        "by": "systems_engineer_6",
+        "round": 1
+      },
+      {
+        "from": 19,
+        "to": 1,
+        "by": "innovation_catalyst_7",
+        "round": 1
+      },
+      {
+        "from": 19,
+        "to": 2,
+        "by": "innovation_catalyst_7",
+        "round": 1
+      },
+      {
+        "from": 19,
+        "to": 3,
+        "by": "innovation_catalyst_7",
+        "round": 1
+      },
+      {
+        "from": 19,
+        "to": 4,
+        "by": "innovation_catalyst_7",
+        "round": 1
+      },
+      {
+        "from": 19,
+        "to": 5,
+        "by": "innovation_catalyst_7",
+        "round": 1
+      },
+      {
+        "from": 19,
+        "to": 16,
+        "by": "innovation_catalyst_7",
+        "round": 1
+      },
+      {
+        "from": 19,
+        "to": 18,
+        "by": "innovation_catalyst_7",
+        "round": 1
+      },
+      {
+        "from": 19,
+        "to": 4,
+        "by": "innovation_catalyst_7",
+        "round": 1
+      },
+      {
+        "from": 19,
+        "to": 16,
+        "by": "innovation_catalyst_7",
+        "round": 1
+      },
+      {
+        "from": 19,
+        "to": 18,
+        "by": "innovation_catalyst_7",
+        "round": 1
+      },
+      {
+        "from": 19,
+        "to": 16,
+        "by": "innovation_catalyst_7",
+        "round": 1
+      },
+      {
+        "from": 19,
+        "to": 5,
+        "by": "innovation_catalyst_7",
+        "round": 1
+      },
+      {
+        "from": 20,
+        "to": 1,
+        "by": "chief_ai_officer_8",
+        "round": 1
+      },
+      {
+        "from": 20,
+        "to": 2,
+        "by": "chief_ai_officer_8",
+        "round": 1
+      },
+      {
+        "from": 20,
+        "to": 4,
+        "by": "chief_ai_officer_8",
+        "round": 1
+      },
+      {
+        "from": 20,
+        "to": 5,
+        "by": "chief_ai_officer_8",
+        "round": 1
+      },
+      {
+        "from": 20,
+        "to": 19,
+        "by": "chief_ai_officer_8",
+        "round": 1
+      },
+      {
+        "from": 20,
+        "to": 16,
+        "by": "chief_ai_officer_8",
+        "round": 1
+      },
+      {
+        "from": 20,
+        "to": 1,
+        "by": "chief_ai_officer_8",
+        "round": 1
+      },
+      {
+        "from": 20,
+        "to": 4,
+        "by": "chief_ai_officer_8",
+        "round": 1
+      },
+      {
+        "from": 20,
+        "to": 5,
+        "by": "chief_ai_officer_8",
+        "round": 1
+      },
+      {
+        "from": 20,
+        "to": 18,
+        "by": "chief_ai_officer_8",
+        "round": 1
+      },
+      {
+        "from": 20,
+        "to": 7,
+        "by": "chief_ai_officer_8",
+        "round": 1
+      },
+      {
+        "from": 20,
+        "to": 1,
+        "by": "chief_ai_officer_8",
+        "round": 1
+      },
+      {
+        "from": 20,
+        "to": 4,
+        "by": "chief_ai_officer_8",
+        "round": 1
+      },
+      {
+        "from": 20,
+        "to": 16,
+        "by": "chief_ai_officer_8",
+        "round": 1
+      },
+      {
+        "from": 20,
+        "to": 7,
+        "by": "chief_ai_officer_8",
+        "round": 1
+      },
+      {
+        "from": 20,
+        "to": 19,
+        "by": "chief_ai_officer_8",
+        "round": 1
+      },
+      {
+        "from": 20,
+        "to": 5,
+        "by": "chief_ai_officer_8",
+        "round": 1
+      },
+      {
+        "from": 21,
+        "to": 19,
+        "by": "risk_officer_9",
+        "round": 1
+      },
+      {
+        "from": 21,
+        "to": 1,
+        "by": "risk_officer_9",
+        "round": 1
+      },
+      {
+        "from": 21,
+        "to": 2,
+        "by": "risk_officer_9",
+        "round": 1
+      },
+      {
+        "from": 21,
+        "to": 4,
+        "by": "risk_officer_9",
+        "round": 1
+      },
+      {
+        "from": 21,
+        "to": 5,
+        "by": "risk_officer_9",
+        "round": 1
+      },
+      {
+        "from": 21,
+        "to": 18,
+        "by": "risk_officer_9",
+        "round": 1
+      },
+      {
+        "from": 21,
+        "to": 16,
+        "by": "risk_officer_9",
+        "round": 1
+      },
+      {
+        "from": 21,
+        "to": 6,
+        "by": "risk_officer_9",
+        "round": 1
+      },
+      {
+        "from": 21,
+        "to": 1,
+        "by": "risk_officer_9",
+        "round": 1
+      },
+      {
+        "from": 21,
+        "to": 19,
+        "by": "risk_officer_9",
+        "round": 1
+      },
+      {
+        "from": 21,
+        "to": 4,
+        "by": "risk_officer_9",
+        "round": 1
+      },
+      {
+        "from": 21,
+        "to": 20,
+        "by": "risk_officer_9",
+        "round": 1
+      },
+      {
+        "from": 21,
+        "to": 4,
+        "by": "risk_officer_9",
+        "round": 1
+      },
+      {
+        "from": 21,
+        "to": 16,
+        "by": "risk_officer_9",
+        "round": 1
+      },
+      {
+        "from": 21,
+        "to": 20,
+        "by": "risk_officer_9",
+        "round": 1
+      },
+      {
+        "from": 21,
+        "to": 5,
+        "by": "risk_officer_9",
+        "round": 1
+      },
+      {
+        "from": 21,
+        "to": 18,
+        "by": "risk_officer_9",
+        "round": 1
+      },
+      {
+        "from": 21,
+        "to": 17,
+        "by": "risk_officer_9",
+        "round": 1
+      },
+      {
+        "from": 21,
+        "to": 7,
+        "by": "risk_officer_9",
+        "round": 1
+      },
+      {
+        "from": 21,
+        "to": 16,
+        "by": "risk_officer_9",
+        "round": 1
+      },
+      {
+        "from": 22,
+        "to": 5,
+        "by": "devils_advocate_0",
+        "round": 2
+      },
+      {
+        "from": 22,
+        "to": 18,
+        "by": "devils_advocate_0",
+        "round": 2
+      },
+      {
+        "from": 23,
+        "to": 22,
+        "by": "creative_disruptor_1",
+        "round": 2
+      },
+      {
+        "from": 23,
+        "to": 5,
+        "by": "creative_disruptor_1",
+        "round": 2
+      },
+      {
+        "from": 23,
+        "to": 22,
+        "by": "creative_disruptor_1",
+        "round": 2
+      },
+      {
+        "from": 24,
+        "to": 22,
+        "by": "ai_output_rater_2",
+        "round": 2
+      },
+      {
+        "from": 24,
+        "to": 23,
+        "by": "ai_output_rater_2",
+        "round": 2
+      },
+      {
+        "from": 24,
+        "to": 23,
+        "by": "ai_output_rater_2",
+        "round": 2
+      },
+      {
+        "from": 24,
+        "to": 22,
+        "by": "ai_output_rater_2",
+        "round": 2
+      },
+      {
+        "from": 27,
+        "to": 22,
+        "by": "the_ai_product_engineer_3",
+        "round": 2
+      },
+      {
+        "from": 27,
+        "to": 23,
+        "by": "the_ai_product_engineer_3",
+        "round": 2
+      },
+      {
+        "from": 27,
+        "to": 24,
+        "by": "the_ai_product_engineer_3",
+        "round": 2
+      },
+      {
+        "from": 27,
+        "to": 23,
+        "by": "the_ai_product_engineer_3",
+        "round": 2
+      },
+      {
+        "from": 27,
+        "to": 22,
+        "by": "the_ai_product_engineer_3",
+        "round": 2
+      },
+      {
+        "from": 27,
+        "to": 24,
+        "by": "the_ai_product_engineer_3",
+        "round": 2
+      },
+      {
+        "from": 27,
+        "to": 25,
+        "by": "the_ai_product_engineer_3",
+        "round": 2
+      },
+      {
+        "from": 27,
+        "to": 25,
+        "by": "the_ai_product_engineer_3",
+        "round": 2
+      },
+      {
+        "from": 27,
+        "to": 25,
+        "by": "the_ai_product_engineer_3",
+        "round": 2
+      },
+      {
+        "from": 27,
+        "to": 26,
+        "by": "the_ai_product_engineer_3",
+        "round": 2
+      },
+      {
+        "from": 27,
+        "to": 26,
+        "by": "the_ai_product_engineer_3",
+        "round": 2
+      },
+      {
+        "from": 27,
+        "to": 22,
+        "by": "the_ai_product_engineer_3",
+        "round": 2
+      },
+      {
+        "from": 28,
+        "to": 22,
+        "by": "open_source_maintainer_4",
+        "round": 2
+      },
+      {
+        "from": 28,
+        "to": 22,
+        "by": "open_source_maintainer_4",
+        "round": 2
+      },
+      {
+        "from": 28,
+        "to": 23,
+        "by": "open_source_maintainer_4",
+        "round": 2
+      },
+      {
+        "from": 28,
+        "to": 24,
+        "by": "open_source_maintainer_4",
+        "round": 2
+      },
+      {
+        "from": 28,
+        "to": 22,
+        "by": "open_source_maintainer_4",
+        "round": 2
+      },
+      {
+        "from": 28,
+        "to": 24,
+        "by": "open_source_maintainer_4",
+        "round": 2
+      },
+      {
+        "from": 28,
+        "to": 23,
+        "by": "open_source_maintainer_4",
+        "round": 2
+      },
+      {
+        "from": 28,
+        "to": 24,
+        "by": "open_source_maintainer_4",
+        "round": 2
+      },
+      {
+        "from": 28,
+        "to": 27,
+        "by": "open_source_maintainer_4",
+        "round": 2
+      },
+      {
+        "from": 28,
+        "to": 22,
+        "by": "open_source_maintainer_4",
+        "round": 2
+      },
+      {
+        "from": 28,
+        "to": 23,
+        "by": "open_source_maintainer_4",
+        "round": 2
+      },
+      {
+        "from": 28,
+        "to": 24,
+        "by": "open_source_maintainer_4",
+        "round": 2
+      },
+      {
+        "from": 28,
+        "to": 27,
+        "by": "open_source_maintainer_4",
+        "round": 2
+      },
+      {
+        "from": 28,
+        "to": 24,
+        "by": "open_source_maintainer_4",
+        "round": 2
+      },
+      {
+        "from": 31,
+        "to": 22,
+        "by": "open_source_maintainer_4",
+        "round": 2
+      },
+      {
+        "from": 31,
+        "to": 23,
+        "by": "open_source_maintainer_4",
+        "round": 2
+      },
+      {
+        "from": 40,
+        "to": 4,
+        "by": "systems_engineer_6",
+        "round": 2
+      },
+      {
+        "from": 41,
+        "to": 29,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 2
+      },
+      {
+        "from": 41,
+        "to": 22,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 2
+      },
+      {
+        "from": 41,
+        "to": 24,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 2
+      },
+      {
+        "from": 41,
+        "to": 30,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 2
+      },
+      {
+        "from": 41,
+        "to": 31,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 2
+      },
+      {
+        "from": 41,
+        "to": 5,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 2
+      },
+      {
+        "from": 41,
+        "to": 18,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 2
+      },
+      {
+        "from": 41,
+        "to": 4,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 2
+      },
+      {
+        "from": 45,
+        "to": 29,
+        "by": "systems_engineer_6",
+        "round": 2
+      },
+      {
+        "from": 45,
+        "to": 24,
+        "by": "systems_engineer_6",
+        "round": 2
+      },
+      {
+        "from": 45,
+        "to": 27,
+        "by": "systems_engineer_6",
+        "round": 2
+      },
+      {
+        "from": 45,
+        "to": 22,
+        "by": "systems_engineer_6",
+        "round": 2
+      },
+      {
+        "from": 45,
+        "to": 23,
+        "by": "systems_engineer_6",
+        "round": 2
+      },
+      {
+        "from": 45,
+        "to": 28,
+        "by": "systems_engineer_6",
+        "round": 2
+      },
+      {
+        "from": 45,
+        "to": 43,
+        "by": "systems_engineer_6",
+        "round": 2
+      },
+      {
+        "from": 47,
+        "to": 28,
+        "by": "innovation_catalyst_7",
+        "round": 2
+      },
+      {
+        "from": 47,
+        "to": 27,
+        "by": "innovation_catalyst_7",
+        "round": 2
+      },
+      {
+        "from": 47,
+        "to": 25,
+        "by": "innovation_catalyst_7",
+        "round": 2
+      },
+      {
+        "from": 47,
+        "to": 28,
+        "by": "innovation_catalyst_7",
+        "round": 2
+      },
+      {
+        "from": 47,
+        "to": 41,
+        "by": "innovation_catalyst_7",
+        "round": 2
+      },
+      {
+        "from": 47,
+        "to": 45,
+        "by": "innovation_catalyst_7",
+        "round": 2
+      },
+      {
+        "from": 47,
+        "to": 46,
+        "by": "innovation_catalyst_7",
+        "round": 2
+      },
+      {
+        "from": 47,
+        "to": 27,
+        "by": "innovation_catalyst_7",
+        "round": 2
+      },
+      {
+        "from": 47,
+        "to": 28,
+        "by": "innovation_catalyst_7",
+        "round": 2
+      },
+      {
+        "from": 47,
+        "to": 45,
+        "by": "innovation_catalyst_7",
+        "round": 2
+      },
+      {
+        "from": 47,
+        "to": 26,
+        "by": "innovation_catalyst_7",
+        "round": 2
+      },
+      {
+        "from": 47,
+        "to": 30,
+        "by": "innovation_catalyst_7",
+        "round": 2
+      },
+      {
+        "from": 47,
+        "to": 41,
+        "by": "innovation_catalyst_7",
+        "round": 2
+      },
+      {
+        "from": 47,
+        "to": 45,
+        "by": "innovation_catalyst_7",
+        "round": 2
+      },
+      {
+        "from": 47,
+        "to": 29,
+        "by": "innovation_catalyst_7",
+        "round": 2
+      },
+      {
+        "from": 47,
+        "to": 29,
+        "by": "innovation_catalyst_7",
+        "round": 2
+      },
+      {
+        "from": 47,
+        "to": 28,
+        "by": "innovation_catalyst_7",
+        "round": 2
+      },
+      {
+        "from": 48,
+        "to": 30,
+        "by": "chief_ai_officer_8",
+        "round": 2
+      },
+      {
+        "from": 48,
+        "to": 29,
+        "by": "chief_ai_officer_8",
+        "round": 2
+      },
+      {
+        "from": 48,
+        "to": 45,
+        "by": "chief_ai_officer_8",
+        "round": 2
+      },
+      {
+        "from": 48,
+        "to": 45,
+        "by": "chief_ai_officer_8",
+        "round": 2
+      },
+      {
+        "from": 48,
+        "to": 27,
+        "by": "chief_ai_officer_8",
+        "round": 2
+      },
+      {
+        "from": 48,
+        "to": 47,
+        "by": "chief_ai_officer_8",
+        "round": 2
+      },
+      {
+        "from": 48,
+        "to": 47,
+        "by": "chief_ai_officer_8",
+        "round": 2
+      },
+      {
+        "from": 48,
+        "to": 28,
+        "by": "chief_ai_officer_8",
+        "round": 2
+      },
+      {
+        "from": 49,
+        "to": 47,
+        "by": "risk_officer_9",
+        "round": 2
+      },
+      {
+        "from": 49,
+        "to": 47,
+        "by": "risk_officer_9",
+        "round": 2
+      },
+      {
+        "from": 49,
+        "to": 28,
+        "by": "risk_officer_9",
+        "round": 2
+      },
+      {
+        "from": 49,
+        "to": 48,
+        "by": "risk_officer_9",
+        "round": 2
+      },
+      {
+        "from": 49,
+        "to": 28,
+        "by": "risk_officer_9",
+        "round": 2
+      },
+      {
+        "from": 49,
+        "to": 31,
+        "by": "risk_officer_9",
+        "round": 2
+      },
+      {
+        "from": 49,
+        "to": 28,
+        "by": "risk_officer_9",
+        "round": 2
+      },
+      {
+        "from": 49,
+        "to": 5,
+        "by": "risk_officer_9",
+        "round": 2
+      },
+      {
+        "from": 49,
+        "to": 45,
+        "by": "risk_officer_9",
+        "round": 2
+      },
+      {
+        "from": 49,
+        "to": 42,
+        "by": "risk_officer_9",
+        "round": 2
+      },
+      {
+        "from": 49,
+        "to": 29,
+        "by": "risk_officer_9",
+        "round": 2
+      },
+      {
+        "from": 49,
+        "to": 30,
+        "by": "risk_officer_9",
+        "round": 2
+      },
+      {
+        "from": 50,
+        "to": 47,
+        "by": "devils_advocate_0",
+        "round": 3
+      },
+      {
+        "from": 50,
+        "to": 28,
+        "by": "devils_advocate_0",
+        "round": 3
+      },
+      {
+        "from": 50,
+        "to": 44,
+        "by": "devils_advocate_0",
+        "round": 3
+      },
+      {
+        "from": 50,
+        "to": 25,
+        "by": "devils_advocate_0",
+        "round": 3
+      },
+      {
+        "from": 50,
+        "to": 27,
+        "by": "devils_advocate_0",
+        "round": 3
+      },
+      {
+        "from": 50,
+        "to": 28,
+        "by": "devils_advocate_0",
+        "round": 3
+      },
+      {
+        "from": 51,
+        "to": 28,
+        "by": "creative_disruptor_1",
+        "round": 3
+      },
+      {
+        "from": 51,
+        "to": 27,
+        "by": "creative_disruptor_1",
+        "round": 3
+      },
+      {
+        "from": 51,
+        "to": 25,
+        "by": "creative_disruptor_1",
+        "round": 3
+      },
+      {
+        "from": 51,
+        "to": 50,
+        "by": "creative_disruptor_1",
+        "round": 3
+      },
+      {
+        "from": 51,
+        "to": 50,
+        "by": "creative_disruptor_1",
+        "round": 3
+      },
+      {
+        "from": 51,
+        "to": 44,
+        "by": "creative_disruptor_1",
+        "round": 3
+      },
+      {
+        "from": 52,
+        "to": 50,
+        "by": "ai_output_rater_2",
+        "round": 3
+      },
+      {
+        "from": 52,
+        "to": 51,
+        "by": "ai_output_rater_2",
+        "round": 3
+      },
+      {
+        "from": 52,
+        "to": 44,
+        "by": "ai_output_rater_2",
+        "round": 3
+      },
+      {
+        "from": 52,
+        "to": 25,
+        "by": "ai_output_rater_2",
+        "round": 3
+      },
+      {
+        "from": 52,
+        "to": 51,
+        "by": "ai_output_rater_2",
+        "round": 3
+      },
+      {
+        "from": 52,
+        "to": 51,
+        "by": "ai_output_rater_2",
+        "round": 3
+      },
+      {
+        "from": 52,
+        "to": 51,
+        "by": "ai_output_rater_2",
+        "round": 3
+      },
+      {
+        "from": 52,
+        "to": 50,
+        "by": "ai_output_rater_2",
+        "round": 3
+      },
+      {
+        "from": 53,
+        "to": 51,
+        "by": "creative_disruptor_1",
+        "round": 3
+      },
+      {
+        "from": 53,
+        "to": 50,
+        "by": "creative_disruptor_1",
+        "round": 3
+      },
+      {
+        "from": 55,
+        "to": 53,
+        "by": "the_ai_product_engineer_3",
+        "round": 3
+      },
+      {
+        "from": 55,
+        "to": 54,
+        "by": "the_ai_product_engineer_3",
+        "round": 3
+      },
+      {
+        "from": 55,
+        "to": 51,
+        "by": "the_ai_product_engineer_3",
+        "round": 3
+      },
+      {
+        "from": 55,
+        "to": 54,
+        "by": "the_ai_product_engineer_3",
+        "round": 3
+      },
+      {
+        "from": 55,
+        "to": 26,
+        "by": "the_ai_product_engineer_3",
+        "round": 3
+      },
+      {
+        "from": 57,
+        "to": 50,
+        "by": "open_source_maintainer_4",
+        "round": 3
+      },
+      {
+        "from": 57,
+        "to": 51,
+        "by": "open_source_maintainer_4",
+        "round": 3
+      },
+      {
+        "from": 57,
+        "to": 52,
+        "by": "open_source_maintainer_4",
+        "round": 3
+      },
+      {
+        "from": 57,
+        "to": 28,
+        "by": "open_source_maintainer_4",
+        "round": 3
+      },
+      {
+        "from": 57,
+        "to": 56,
+        "by": "open_source_maintainer_4",
+        "round": 3
+      },
+      {
+        "from": 57,
+        "to": 44,
+        "by": "open_source_maintainer_4",
+        "round": 3
+      },
+      {
+        "from": 57,
+        "to": 55,
+        "by": "open_source_maintainer_4",
+        "round": 3
+      },
+      {
+        "from": 57,
+        "to": 53,
+        "by": "open_source_maintainer_4",
+        "round": 3
+      },
+      {
+        "from": 57,
+        "to": 51,
+        "by": "open_source_maintainer_4",
+        "round": 3
+      },
+      {
+        "from": 57,
+        "to": 52,
+        "by": "open_source_maintainer_4",
+        "round": 3
+      },
+      {
+        "from": 60,
+        "to": 50,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 3
+      },
+      {
+        "from": 60,
+        "to": 51,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 3
+      },
+      {
+        "from": 60,
+        "to": 52,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 3
+      },
+      {
+        "from": 60,
+        "to": 59,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 3
+      },
+      {
+        "from": 60,
+        "to": 59,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 3
+      },
+      {
+        "from": 60,
+        "to": 59,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 3
+      },
+      {
+        "from": 60,
+        "to": 59,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 3
+      },
+      {
+        "from": 60,
+        "to": 51,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 3
+      },
+      {
+        "from": 60,
+        "to": 53,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 3
+      },
+      {
+        "from": 60,
+        "to": 55,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 3
+      },
+      {
+        "from": 60,
+        "to": 56,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 3
+      },
+      {
+        "from": 60,
+        "to": 58,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 3
+      },
+      {
+        "from": 61,
+        "to": 51,
+        "by": "systems_engineer_6",
+        "round": 3
+      },
+      {
+        "from": 61,
+        "to": 52,
+        "by": "systems_engineer_6",
+        "round": 3
+      },
+      {
+        "from": 61,
+        "to": 56,
+        "by": "systems_engineer_6",
+        "round": 3
+      },
+      {
+        "from": 62,
+        "to": 47,
+        "by": "devils_advocate_0",
+        "round": 3
+      },
+      {
+        "from": 62,
+        "to": 28,
+        "by": "devils_advocate_0",
+        "round": 3
+      },
+      {
+        "from": 62,
+        "to": 50,
+        "by": "devils_advocate_0",
+        "round": 3
+      },
+      {
+        "from": 62,
+        "to": 51,
+        "by": "devils_advocate_0",
+        "round": 3
+      },
+      {
+        "from": 62,
+        "to": 52,
+        "by": "devils_advocate_0",
+        "round": 3
+      },
+      {
+        "from": 62,
+        "to": 56,
+        "by": "devils_advocate_0",
+        "round": 3
+      },
+      {
+        "from": 63,
+        "to": 50,
+        "by": "innovation_catalyst_7",
+        "round": 3
+      },
+      {
+        "from": 63,
+        "to": 51,
+        "by": "innovation_catalyst_7",
+        "round": 3
+      },
+      {
+        "from": 63,
+        "to": 52,
+        "by": "innovation_catalyst_7",
+        "round": 3
+      },
+      {
+        "from": 63,
+        "to": 28,
+        "by": "innovation_catalyst_7",
+        "round": 3
+      },
+      {
+        "from": 63,
+        "to": 57,
+        "by": "innovation_catalyst_7",
+        "round": 3
+      },
+      {
+        "from": 63,
+        "to": 55,
+        "by": "innovation_catalyst_7",
+        "round": 3
+      },
+      {
+        "from": 63,
+        "to": 53,
+        "by": "innovation_catalyst_7",
+        "round": 3
+      },
+      {
+        "from": 63,
+        "to": 62,
+        "by": "innovation_catalyst_7",
+        "round": 3
+      },
+      {
+        "from": 63,
+        "to": 51,
+        "by": "innovation_catalyst_7",
+        "round": 3
+      },
+      {
+        "from": 63,
+        "to": 46,
+        "by": "innovation_catalyst_7",
+        "round": 3
+      },
+      {
+        "from": 63,
+        "to": 52,
+        "by": "innovation_catalyst_7",
+        "round": 3
+      },
+      {
+        "from": 63,
+        "to": 61,
+        "by": "innovation_catalyst_7",
+        "round": 3
+      },
+      {
+        "from": 63,
+        "to": 51,
+        "by": "innovation_catalyst_7",
+        "round": 3
+      },
+      {
+        "from": 63,
+        "to": 57,
+        "by": "innovation_catalyst_7",
+        "round": 3
+      },
+      {
+        "from": 63,
+        "to": 52,
+        "by": "innovation_catalyst_7",
+        "round": 3
+      },
+      {
+        "from": 63,
+        "to": 56,
+        "by": "innovation_catalyst_7",
+        "round": 3
+      },
+      {
+        "from": 64,
+        "to": 50,
+        "by": "innovation_catalyst_7",
+        "round": 3
+      },
+      {
+        "from": 64,
+        "to": 51,
+        "by": "innovation_catalyst_7",
+        "round": 3
+      },
+      {
+        "from": 64,
+        "to": 51,
+        "by": "innovation_catalyst_7",
+        "round": 3
+      },
+      {
+        "from": 64,
+        "to": 52,
+        "by": "innovation_catalyst_7",
+        "round": 3
+      },
+      {
+        "from": 65,
+        "to": 51,
+        "by": "risk_officer_9",
+        "round": 3
+      },
+      {
+        "from": 65,
+        "to": 52,
+        "by": "risk_officer_9",
+        "round": 3
+      },
+      {
+        "from": 65,
+        "to": 56,
+        "by": "risk_officer_9",
+        "round": 3
+      },
+      {
+        "from": 65,
+        "to": 51,
+        "by": "risk_officer_9",
+        "round": 3
+      },
+      {
+        "from": 65,
+        "to": 52,
+        "by": "risk_officer_9",
+        "round": 3
+      },
+      {
+        "from": 66,
+        "to": 64,
+        "by": "chief_ai_officer_8",
+        "round": 3
+      },
+      {
+        "from": 66,
+        "to": 63,
+        "by": "chief_ai_officer_8",
+        "round": 3
+      },
+      {
+        "from": 66,
+        "to": 51,
+        "by": "chief_ai_officer_8",
+        "round": 3
+      },
+      {
+        "from": 66,
+        "to": 52,
+        "by": "chief_ai_officer_8",
+        "round": 3
+      },
+      {
+        "from": 66,
+        "to": 50,
+        "by": "chief_ai_officer_8",
+        "round": 3
+      },
+      {
+        "from": 66,
+        "to": 28,
+        "by": "chief_ai_officer_8",
+        "round": 3
+      },
+      {
+        "from": 66,
+        "to": 57,
+        "by": "chief_ai_officer_8",
+        "round": 3
+      },
+      {
+        "from": 66,
+        "to": 55,
+        "by": "chief_ai_officer_8",
+        "round": 3
+      },
+      {
+        "from": 66,
+        "to": 56,
+        "by": "chief_ai_officer_8",
+        "round": 3
+      },
+      {
+        "from": 66,
+        "to": 65,
+        "by": "chief_ai_officer_8",
+        "round": 3
+      },
+      {
+        "from": 66,
+        "to": 64,
+        "by": "chief_ai_officer_8",
+        "round": 3
+      },
+      {
+        "from": 66,
+        "to": 64,
+        "by": "chief_ai_officer_8",
+        "round": 3
+      },
+      {
+        "from": 66,
+        "to": 63,
+        "by": "chief_ai_officer_8",
+        "round": 3
+      },
+      {
+        "from": 66,
+        "to": 62,
+        "by": "chief_ai_officer_8",
+        "round": 3
+      },
+      {
+        "from": 66,
+        "to": 65,
+        "by": "chief_ai_officer_8",
+        "round": 3
+      },
+      {
+        "from": 66,
+        "to": 63,
+        "by": "chief_ai_officer_8",
+        "round": 3
+      },
+      {
+        "from": 66,
+        "to": 51,
+        "by": "chief_ai_officer_8",
+        "round": 3
+      },
+      {
+        "from": 66,
+        "to": 52,
+        "by": "chief_ai_officer_8",
+        "round": 3
+      },
+      {
+        "from": 66,
+        "to": 56,
+        "by": "chief_ai_officer_8",
+        "round": 3
+      },
+      {
+        "from": 66,
+        "to": 65,
+        "by": "chief_ai_officer_8",
+        "round": 3
+      },
+      {
+        "from": 68,
+        "to": 63,
+        "by": "systems_engineer_6",
+        "round": 3
+      },
+      {
+        "from": 69,
+        "to": 50,
+        "by": "risk_officer_9",
+        "round": 3
+      },
+      {
+        "from": 69,
+        "to": 51,
+        "by": "risk_officer_9",
+        "round": 3
+      },
+      {
+        "from": 69,
+        "to": 52,
+        "by": "risk_officer_9",
+        "round": 3
+      },
+      {
+        "from": 69,
+        "to": 63,
+        "by": "risk_officer_9",
+        "round": 3
+      },
+      {
+        "from": 69,
+        "to": 67,
+        "by": "risk_officer_9",
+        "round": 3
+      },
+      {
+        "from": 69,
+        "to": 55,
+        "by": "risk_officer_9",
+        "round": 3
+      },
+      {
+        "from": 69,
+        "to": 55,
+        "by": "risk_officer_9",
+        "round": 3
+      },
+      {
+        "from": 69,
+        "to": 44,
+        "by": "risk_officer_9",
+        "round": 3
+      },
+      {
+        "from": 69,
+        "to": 64,
+        "by": "risk_officer_9",
+        "round": 3
+      },
+      {
+        "from": 69,
+        "to": 64,
+        "by": "risk_officer_9",
+        "round": 3
+      },
+      {
+        "from": 69,
+        "to": 68,
+        "by": "risk_officer_9",
+        "round": 3
+      },
+      {
+        "from": 69,
+        "to": 61,
+        "by": "risk_officer_9",
+        "round": 3
+      },
+      {
+        "from": 69,
+        "to": 67,
+        "by": "risk_officer_9",
+        "round": 3
+      },
+      {
+        "from": 69,
+        "to": 58,
+        "by": "risk_officer_9",
+        "round": 3
+      },
+      {
+        "from": 70,
+        "to": 50,
+        "by": "devils_advocate_0",
+        "round": 4
+      },
+      {
+        "from": 70,
+        "to": 27,
+        "by": "devils_advocate_0",
+        "round": 4
+      },
+      {
+        "from": 70,
+        "to": 64,
+        "by": "devils_advocate_0",
+        "round": 4
+      },
+      {
+        "from": 70,
+        "to": 47,
+        "by": "devils_advocate_0",
+        "round": 4
+      },
+      {
+        "from": 70,
+        "to": 28,
+        "by": "devils_advocate_0",
+        "round": 4
+      },
+      {
+        "from": 70,
+        "to": 25,
+        "by": "devils_advocate_0",
+        "round": 4
+      },
+      {
+        "from": 70,
+        "to": 28,
+        "by": "devils_advocate_0",
+        "round": 4
+      },
+      {
+        "from": 71,
+        "to": 50,
+        "by": "devils_advocate_0",
+        "round": 4
+      },
+      {
+        "from": 71,
+        "to": 51,
+        "by": "devils_advocate_0",
+        "round": 4
+      },
+      {
+        "from": 73,
+        "to": 70,
+        "by": "creative_disruptor_1",
+        "round": 4
+      },
+      {
+        "from": 73,
+        "to": 71,
+        "by": "creative_disruptor_1",
+        "round": 4
+      },
+      {
+        "from": 73,
+        "to": 72,
+        "by": "creative_disruptor_1",
+        "round": 4
+      },
+      {
+        "from": 73,
+        "to": 70,
+        "by": "creative_disruptor_1",
+        "round": 4
+      },
+      {
+        "from": 73,
+        "to": 64,
+        "by": "creative_disruptor_1",
+        "round": 4
+      },
+      {
+        "from": 73,
+        "to": 72,
+        "by": "creative_disruptor_1",
+        "round": 4
+      },
+      {
+        "from": 73,
+        "to": 71,
+        "by": "creative_disruptor_1",
+        "round": 4
+      },
+      {
+        "from": 74,
+        "to": 70,
+        "by": "ai_output_rater_2",
+        "round": 4
+      },
+      {
+        "from": 74,
+        "to": 73,
+        "by": "ai_output_rater_2",
+        "round": 4
+      },
+      {
+        "from": 74,
+        "to": 71,
+        "by": "ai_output_rater_2",
+        "round": 4
+      },
+      {
+        "from": 74,
+        "to": 73,
+        "by": "ai_output_rater_2",
+        "round": 4
+      },
+      {
+        "from": 74,
+        "to": 72,
+        "by": "ai_output_rater_2",
+        "round": 4
+      },
+      {
+        "from": 75,
+        "to": 72,
+        "by": "devils_advocate_0",
+        "round": 4
+      },
+      {
+        "from": 75,
+        "to": 71,
+        "by": "devils_advocate_0",
+        "round": 4
+      },
+      {
+        "from": 75,
+        "to": 71,
+        "by": "devils_advocate_0",
+        "round": 4
+      },
+      {
+        "from": 76,
+        "to": 54,
+        "by": "ai_output_rater_2",
+        "round": 4
+      },
+      {
+        "from": 77,
+        "to": 75,
+        "by": "the_ai_product_engineer_3",
+        "round": 4
+      },
+      {
+        "from": 77,
+        "to": 75,
+        "by": "the_ai_product_engineer_3",
+        "round": 4
+      },
+      {
+        "from": 77,
+        "to": 71,
+        "by": "the_ai_product_engineer_3",
+        "round": 4
+      },
+      {
+        "from": 77,
+        "to": 76,
+        "by": "the_ai_product_engineer_3",
+        "round": 4
+      },
+      {
+        "from": 78,
+        "to": 70,
+        "by": "open_source_maintainer_4",
+        "round": 4
+      },
+      {
+        "from": 78,
+        "to": 72,
+        "by": "open_source_maintainer_4",
+        "round": 4
+      },
+      {
+        "from": 78,
+        "to": 71,
+        "by": "open_source_maintainer_4",
+        "round": 4
+      },
+      {
+        "from": 78,
+        "to": 73,
+        "by": "open_source_maintainer_4",
+        "round": 4
+      },
+      {
+        "from": 78,
+        "to": 74,
+        "by": "open_source_maintainer_4",
+        "round": 4
+      },
+      {
+        "from": 78,
+        "to": 77,
+        "by": "open_source_maintainer_4",
+        "round": 4
+      },
+      {
+        "from": 78,
+        "to": 77,
+        "by": "open_source_maintainer_4",
+        "round": 4
+      },
+      {
+        "from": 78,
+        "to": 70,
+        "by": "open_source_maintainer_4",
+        "round": 4
+      },
+      {
+        "from": 78,
+        "to": 73,
+        "by": "open_source_maintainer_4",
+        "round": 4
+      },
+      {
+        "from": 78,
+        "to": 72,
+        "by": "open_source_maintainer_4",
+        "round": 4
+      },
+      {
+        "from": 78,
+        "to": 71,
+        "by": "open_source_maintainer_4",
+        "round": 4
+      },
+      {
+        "from": 79,
+        "to": 70,
+        "by": "chief_ai_officer_8",
+        "round": 4
+      },
+      {
+        "from": 82,
+        "to": 50,
+        "by": "devils_advocate_0",
+        "round": 4
+      },
+      {
+        "from": 82,
+        "to": 27,
+        "by": "devils_advocate_0",
+        "round": 4
+      },
+      {
+        "from": 83,
+        "to": 79,
+        "by": "ai_output_rater_2",
+        "round": 4
+      },
+      {
+        "from": 84,
+        "to": 79,
+        "by": "open_source_maintainer_4",
+        "round": 4
+      },
+      {
+        "from": 85,
+        "to": 79,
+        "by": "the_ai_product_engineer_3",
+        "round": 4
+      },
+      {
+        "from": 85,
+        "to": 70,
+        "by": "the_ai_product_engineer_3",
+        "round": 4
+      },
+      {
+        "from": 86,
+        "to": 79,
+        "by": "innovation_catalyst_7",
+        "round": 4
+      },
+      {
+        "from": 87,
+        "to": 79,
+        "by": "chief_ai_officer_8",
+        "round": 4
+      },
+      {
+        "from": 88,
+        "to": 79,
+        "by": "risk_officer_9",
+        "round": 4
+      },
+      {
+        "from": 90,
+        "to": 5,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 4
+      },
+      {
+        "from": 90,
+        "to": 18,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 4
+      },
+      {
+        "from": 90,
+        "to": 74,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 4
+      },
+      {
+        "from": 90,
+        "to": 76,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 4
+      },
+      {
+        "from": 93,
+        "to": 76,
+        "by": "systems_engineer_6",
+        "round": 4
+      },
+      {
+        "from": 93,
+        "to": 17,
+        "by": "systems_engineer_6",
+        "round": 4
+      },
+      {
+        "from": 93,
+        "to": 73,
+        "by": "systems_engineer_6",
+        "round": 4
+      },
+      {
+        "from": 93,
+        "to": 74,
+        "by": "systems_engineer_6",
+        "round": 4
+      },
+      {
+        "from": 93,
+        "to": 91,
+        "by": "systems_engineer_6",
+        "round": 4
+      },
+      {
+        "from": 93,
+        "to": 27,
+        "by": "systems_engineer_6",
+        "round": 4
+      },
+      {
+        "from": 93,
+        "to": 75,
+        "by": "systems_engineer_6",
+        "round": 4
+      },
+      {
+        "from": 93,
+        "to": 76,
+        "by": "systems_engineer_6",
+        "round": 4
+      },
+      {
+        "from": 93,
+        "to": 92,
+        "by": "systems_engineer_6",
+        "round": 4
+      },
+      {
+        "from": 93,
+        "to": 47,
+        "by": "systems_engineer_6",
+        "round": 4
+      },
+      {
+        "from": 93,
+        "to": 28,
+        "by": "systems_engineer_6",
+        "round": 4
+      },
+      {
+        "from": 95,
+        "to": 94,
+        "by": "innovation_catalyst_7",
+        "round": 4
+      },
+      {
+        "from": 95,
+        "to": 90,
+        "by": "innovation_catalyst_7",
+        "round": 4
+      },
+      {
+        "from": 95,
+        "to": 93,
+        "by": "innovation_catalyst_7",
+        "round": 4
+      },
+      {
+        "from": 95,
+        "to": 74,
+        "by": "innovation_catalyst_7",
+        "round": 4
+      },
+      {
+        "from": 95,
+        "to": 74,
+        "by": "innovation_catalyst_7",
+        "round": 4
+      },
+      {
+        "from": 95,
+        "to": 78,
+        "by": "innovation_catalyst_7",
+        "round": 4
+      },
+      {
+        "from": 95,
+        "to": 77,
+        "by": "innovation_catalyst_7",
+        "round": 4
+      },
+      {
+        "from": 95,
+        "to": 94,
+        "by": "innovation_catalyst_7",
+        "round": 4
+      },
+      {
+        "from": 95,
+        "to": 78,
+        "by": "innovation_catalyst_7",
+        "round": 4
+      },
+      {
+        "from": 95,
+        "to": 72,
+        "by": "innovation_catalyst_7",
+        "round": 4
+      },
+      {
+        "from": 95,
+        "to": 78,
+        "by": "innovation_catalyst_7",
+        "round": 4
+      },
+      {
+        "from": 96,
+        "to": 95,
+        "by": "chief_ai_officer_8",
+        "round": 4
+      },
+      {
+        "from": 96,
+        "to": 80,
+        "by": "chief_ai_officer_8",
+        "round": 4
+      },
+      {
+        "from": 96,
+        "to": 77,
+        "by": "chief_ai_officer_8",
+        "round": 4
+      },
+      {
+        "from": 96,
+        "to": 79,
+        "by": "chief_ai_officer_8",
+        "round": 4
+      },
+      {
+        "from": 96,
+        "to": 80,
+        "by": "chief_ai_officer_8",
+        "round": 4
+      },
+      {
+        "from": 96,
+        "to": 77,
+        "by": "chief_ai_officer_8",
+        "round": 4
+      },
+      {
+        "from": 96,
+        "to": 80,
+        "by": "chief_ai_officer_8",
+        "round": 4
+      },
+      {
+        "from": 96,
+        "to": 79,
+        "by": "chief_ai_officer_8",
+        "round": 4
+      },
+      {
+        "from": 96,
+        "to": 78,
+        "by": "chief_ai_officer_8",
+        "round": 4
+      },
+      {
+        "from": 96,
+        "to": 90,
+        "by": "chief_ai_officer_8",
+        "round": 4
+      },
+      {
+        "from": 96,
+        "to": 78,
+        "by": "chief_ai_officer_8",
+        "round": 4
+      },
+      {
+        "from": 96,
+        "to": 90,
+        "by": "chief_ai_officer_8",
+        "round": 4
+      },
+      {
+        "from": 96,
+        "to": 90,
+        "by": "chief_ai_officer_8",
+        "round": 4
+      },
+      {
+        "from": 96,
+        "to": 90,
+        "by": "chief_ai_officer_8",
+        "round": 4
+      },
+      {
+        "from": 96,
+        "to": 94,
+        "by": "chief_ai_officer_8",
+        "round": 4
+      },
+      {
+        "from": 96,
+        "to": 94,
+        "by": "chief_ai_officer_8",
+        "round": 4
+      },
+      {
+        "from": 96,
+        "to": 93,
+        "by": "chief_ai_officer_8",
+        "round": 4
+      },
+      {
+        "from": 96,
+        "to": 93,
+        "by": "chief_ai_officer_8",
+        "round": 4
+      },
+      {
+        "from": 96,
+        "to": 76,
+        "by": "chief_ai_officer_8",
+        "round": 4
+      },
+      {
+        "from": 96,
+        "to": 76,
+        "by": "chief_ai_officer_8",
+        "round": 4
+      },
+      {
+        "from": 96,
+        "to": 78,
+        "by": "chief_ai_officer_8",
+        "round": 4
+      },
+      {
+        "from": 97,
+        "to": 95,
+        "by": "risk_officer_9",
+        "round": 4
+      },
+      {
+        "from": 97,
+        "to": 77,
+        "by": "risk_officer_9",
+        "round": 4
+      },
+      {
+        "from": 97,
+        "to": 93,
+        "by": "risk_officer_9",
+        "round": 4
+      },
+      {
+        "from": 97,
+        "to": 80,
+        "by": "risk_officer_9",
+        "round": 4
+      },
+      {
+        "from": 97,
+        "to": 96,
+        "by": "risk_officer_9",
+        "round": 4
+      },
+      {
+        "from": 97,
+        "to": 78,
+        "by": "risk_officer_9",
+        "round": 4
+      },
+      {
+        "from": 97,
+        "to": 71,
+        "by": "risk_officer_9",
+        "round": 4
+      },
+      {
+        "from": 97,
+        "to": 72,
+        "by": "risk_officer_9",
+        "round": 4
+      },
+      {
+        "from": 97,
+        "to": 79,
+        "by": "risk_officer_9",
+        "round": 4
+      },
+      {
+        "from": 97,
+        "to": 80,
+        "by": "risk_officer_9",
+        "round": 4
+      },
+      {
+        "from": 97,
+        "to": 96,
+        "by": "risk_officer_9",
+        "round": 4
+      },
+      {
+        "from": 97,
+        "to": 90,
+        "by": "risk_officer_9",
+        "round": 4
+      },
+      {
+        "from": 97,
+        "to": 95,
+        "by": "risk_officer_9",
+        "round": 4
+      },
+      {
+        "from": 97,
+        "to": 92,
+        "by": "risk_officer_9",
+        "round": 4
+      },
+      {
+        "from": 97,
+        "to": 28,
+        "by": "risk_officer_9",
+        "round": 4
+      },
+      {
+        "from": 98,
+        "to": 90,
+        "by": "devils_advocate_0",
+        "round": 5
+      },
+      {
+        "from": 98,
+        "to": 50,
+        "by": "devils_advocate_0",
+        "round": 5
+      },
+      {
+        "from": 98,
+        "to": 27,
+        "by": "devils_advocate_0",
+        "round": 5
+      },
+      {
+        "from": 98,
+        "to": 25,
+        "by": "devils_advocate_0",
+        "round": 5
+      },
+      {
+        "from": 98,
+        "to": 47,
+        "by": "devils_advocate_0",
+        "round": 5
+      },
+      {
+        "from": 98,
+        "to": 28,
+        "by": "devils_advocate_0",
+        "round": 5
+      },
+      {
+        "from": 98,
+        "to": 77,
+        "by": "devils_advocate_0",
+        "round": 5
+      },
+      {
+        "from": 99,
+        "to": 98,
+        "by": "creative_disruptor_1",
+        "round": 5
+      },
+      {
+        "from": 99,
+        "to": 90,
+        "by": "creative_disruptor_1",
+        "round": 5
+      },
+      {
+        "from": 99,
+        "to": 77,
+        "by": "creative_disruptor_1",
+        "round": 5
+      },
+      {
+        "from": 99,
+        "to": 98,
+        "by": "creative_disruptor_1",
+        "round": 5
+      },
+      {
+        "from": 100,
+        "to": 98,
+        "by": "ai_output_rater_2",
+        "round": 5
+      },
+      {
+        "from": 100,
+        "to": 99,
+        "by": "ai_output_rater_2",
+        "round": 5
+      },
+      {
+        "from": 100,
+        "to": 90,
+        "by": "ai_output_rater_2",
+        "round": 5
+      },
+      {
+        "from": 100,
+        "to": 98,
+        "by": "ai_output_rater_2",
+        "round": 5
+      },
+      {
+        "from": 100,
+        "to": 99,
+        "by": "ai_output_rater_2",
+        "round": 5
+      },
+      {
+        "from": 100,
+        "to": 99,
+        "by": "ai_output_rater_2",
+        "round": 5
+      },
+      {
+        "from": 101,
+        "to": 90,
+        "by": "devils_advocate_0",
+        "round": 5
+      },
+      {
+        "from": 101,
+        "to": 98,
+        "by": "devils_advocate_0",
+        "round": 5
+      },
+      {
+        "from": 101,
+        "to": 99,
+        "by": "devils_advocate_0",
+        "round": 5
+      },
+      {
+        "from": 101,
+        "to": 95,
+        "by": "devils_advocate_0",
+        "round": 5
+      },
+      {
+        "from": 101,
+        "to": 50,
+        "by": "devils_advocate_0",
+        "round": 5
+      },
+      {
+        "from": 101,
+        "to": 27,
+        "by": "devils_advocate_0",
+        "round": 5
+      },
+      {
+        "from": 101,
+        "to": 25,
+        "by": "devils_advocate_0",
+        "round": 5
+      },
+      {
+        "from": 102,
+        "to": 90,
+        "by": "ai_output_rater_2",
+        "round": 5
+      },
+      {
+        "from": 102,
+        "to": 90,
+        "by": "ai_output_rater_2",
+        "round": 5
+      },
+      {
+        "from": 102,
+        "to": 95,
+        "by": "ai_output_rater_2",
+        "round": 5
+      },
+      {
+        "from": 103,
+        "to": 98,
+        "by": "the_ai_product_engineer_3",
+        "round": 5
+      },
+      {
+        "from": 103,
+        "to": 90,
+        "by": "the_ai_product_engineer_3",
+        "round": 5
+      },
+      {
+        "from": 103,
+        "to": 98,
+        "by": "the_ai_product_engineer_3",
+        "round": 5
+      },
+      {
+        "from": 103,
+        "to": 101,
+        "by": "the_ai_product_engineer_3",
+        "round": 5
+      },
+      {
+        "from": 103,
+        "to": 75,
+        "by": "the_ai_product_engineer_3",
+        "round": 5
+      },
+      {
+        "from": 103,
+        "to": 102,
+        "by": "the_ai_product_engineer_3",
+        "round": 5
+      },
+      {
+        "from": 103,
+        "to": 76,
+        "by": "the_ai_product_engineer_3",
+        "round": 5
+      },
+      {
+        "from": 103,
+        "to": 101,
+        "by": "the_ai_product_engineer_3",
+        "round": 5
+      },
+      {
+        "from": 104,
+        "to": 103,
+        "by": "open_source_maintainer_4",
+        "round": 5
+      },
+      {
+        "from": 104,
+        "to": 98,
+        "by": "open_source_maintainer_4",
+        "round": 5
+      },
+      {
+        "from": 104,
+        "to": 99,
+        "by": "open_source_maintainer_4",
+        "round": 5
+      },
+      {
+        "from": 104,
+        "to": 90,
+        "by": "open_source_maintainer_4",
+        "round": 5
+      },
+      {
+        "from": 104,
+        "to": 101,
+        "by": "open_source_maintainer_4",
+        "round": 5
+      },
+      {
+        "from": 104,
+        "to": 101,
+        "by": "open_source_maintainer_4",
+        "round": 5
+      },
+      {
+        "from": 104,
+        "to": 101,
+        "by": "open_source_maintainer_4",
+        "round": 5
+      },
+      {
+        "from": 104,
+        "to": 77,
+        "by": "open_source_maintainer_4",
+        "round": 5
+      },
+      {
+        "from": 104,
+        "to": 100,
+        "by": "open_source_maintainer_4",
+        "round": 5
+      },
+      {
+        "from": 105,
+        "to": 103,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 5
+      },
+      {
+        "from": 105,
+        "to": 103,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 5
+      },
+      {
+        "from": 105,
+        "to": 104,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 5
+      },
+      {
+        "from": 105,
+        "to": 103,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 5
+      },
+      {
+        "from": 105,
+        "to": 102,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 5
+      },
+      {
+        "from": 105,
+        "to": 102,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 5
+      },
+      {
+        "from": 105,
+        "to": 101,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 5
+      },
+      {
+        "from": 105,
+        "to": 101,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 5
+      },
+      {
+        "from": 105,
+        "to": 101,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 5
+      },
+      {
+        "from": 107,
+        "to": 102,
+        "by": "ai_output_rater_2",
+        "round": 5
+      },
+      {
+        "from": 109,
+        "to": 90,
+        "by": "creative_disruptor_1",
+        "round": 5
+      },
+      {
+        "from": 111,
+        "to": 90,
+        "by": "the_ai_product_engineer_3",
+        "round": 5
+      },
+      {
+        "from": 112,
+        "to": 90,
+        "by": "open_source_maintainer_4",
+        "round": 5
+      },
+      {
+        "from": 113,
+        "to": 94,
+        "by": "innovation_catalyst_7",
+        "round": 5
+      },
+      {
+        "from": 114,
+        "to": 90,
+        "by": "chief_ai_officer_8",
+        "round": 5
+      },
+      {
+        "from": 115,
+        "to": 62,
+        "by": "risk_officer_9",
+        "round": 5
+      },
+      {
+        "from": 117,
+        "to": 62,
+        "by": "systems_engineer_6",
+        "round": 5
+      },
+      {
+        "from": 117,
+        "to": 105,
+        "by": "systems_engineer_6",
+        "round": 5
+      },
+      {
+        "from": 118,
+        "to": 104,
+        "by": "innovation_catalyst_7",
+        "round": 5
+      },
+      {
+        "from": 118,
+        "to": 103,
+        "by": "innovation_catalyst_7",
+        "round": 5
+      },
+      {
+        "from": 118,
+        "to": 28,
+        "by": "innovation_catalyst_7",
+        "round": 5
+      },
+      {
+        "from": 118,
+        "to": 77,
+        "by": "innovation_catalyst_7",
+        "round": 5
+      },
+      {
+        "from": 118,
+        "to": 117,
+        "by": "innovation_catalyst_7",
+        "round": 5
+      },
+      {
+        "from": 118,
+        "to": 105,
+        "by": "innovation_catalyst_7",
+        "round": 5
+      },
+      {
+        "from": 118,
+        "to": 103,
+        "by": "innovation_catalyst_7",
+        "round": 5
+      },
+      {
+        "from": 118,
+        "to": 99,
+        "by": "innovation_catalyst_7",
+        "round": 5
+      },
+      {
+        "from": 118,
+        "to": 98,
+        "by": "innovation_catalyst_7",
+        "round": 5
+      },
+      {
+        "from": 118,
+        "to": 99,
+        "by": "innovation_catalyst_7",
+        "round": 5
+      },
+      {
+        "from": 118,
+        "to": 105,
+        "by": "innovation_catalyst_7",
+        "round": 5
+      },
+      {
+        "from": 118,
+        "to": 102,
+        "by": "innovation_catalyst_7",
+        "round": 5
+      },
+      {
+        "from": 119,
+        "to": 117,
+        "by": "chief_ai_officer_8",
+        "round": 5
+      },
+      {
+        "from": 119,
+        "to": 118,
+        "by": "chief_ai_officer_8",
+        "round": 5
+      },
+      {
+        "from": 119,
+        "to": 103,
+        "by": "chief_ai_officer_8",
+        "round": 5
+      },
+      {
+        "from": 119,
+        "to": 104,
+        "by": "chief_ai_officer_8",
+        "round": 5
+      },
+      {
+        "from": 119,
+        "to": 105,
+        "by": "chief_ai_officer_8",
+        "round": 5
+      },
+      {
+        "from": 119,
+        "to": 117,
+        "by": "chief_ai_officer_8",
+        "round": 5
+      },
+      {
+        "from": 119,
+        "to": 103,
+        "by": "chief_ai_officer_8",
+        "round": 5
+      },
+      {
+        "from": 119,
+        "to": 104,
+        "by": "chief_ai_officer_8",
+        "round": 5
+      },
+      {
+        "from": 119,
+        "to": 105,
+        "by": "chief_ai_officer_8",
+        "round": 5
+      },
+      {
+        "from": 119,
+        "to": 117,
+        "by": "chief_ai_officer_8",
+        "round": 5
+      },
+      {
+        "from": 119,
+        "to": 117,
+        "by": "chief_ai_officer_8",
+        "round": 5
+      },
+      {
+        "from": 119,
+        "to": 103,
+        "by": "chief_ai_officer_8",
+        "round": 5
+      },
+      {
+        "from": 119,
+        "to": 65,
+        "by": "chief_ai_officer_8",
+        "round": 5
+      },
+      {
+        "from": 119,
+        "to": 104,
+        "by": "chief_ai_officer_8",
+        "round": 5
+      },
+      {
+        "from": 119,
+        "to": 77,
+        "by": "chief_ai_officer_8",
+        "round": 5
+      },
+      {
+        "from": 119,
+        "to": 28,
+        "by": "chief_ai_officer_8",
+        "round": 5
+      },
+      {
+        "from": 119,
+        "to": 65,
+        "by": "chief_ai_officer_8",
+        "round": 5
+      },
+      {
+        "from": 119,
+        "to": 90,
+        "by": "chief_ai_officer_8",
+        "round": 5
+      },
+      {
+        "from": 119,
+        "to": 98,
+        "by": "chief_ai_officer_8",
+        "round": 5
+      },
+      {
+        "from": 119,
+        "to": 99,
+        "by": "chief_ai_officer_8",
+        "round": 5
+      },
+      {
+        "from": 119,
+        "to": 103,
+        "by": "chief_ai_officer_8",
+        "round": 5
+      },
+      {
+        "from": 119,
+        "to": 107,
+        "by": "chief_ai_officer_8",
+        "round": 5
+      },
+      {
+        "from": 119,
+        "to": 101,
+        "by": "chief_ai_officer_8",
+        "round": 5
+      },
+      {
+        "from": 119,
+        "to": 106,
+        "by": "chief_ai_officer_8",
+        "round": 5
+      },
+      {
+        "from": 119,
+        "to": 105,
+        "by": "chief_ai_officer_8",
+        "round": 5
+      },
+      {
+        "from": 119,
+        "to": 105,
+        "by": "chief_ai_officer_8",
+        "round": 5
+      },
+      {
+        "from": 120,
+        "to": 118,
+        "by": "risk_officer_9",
+        "round": 5
+      },
+      {
+        "from": 120,
+        "to": 103,
+        "by": "risk_officer_9",
+        "round": 5
+      },
+      {
+        "from": 120,
+        "to": 104,
+        "by": "risk_officer_9",
+        "round": 5
+      },
+      {
+        "from": 120,
+        "to": 105,
+        "by": "risk_officer_9",
+        "round": 5
+      },
+      {
+        "from": 120,
+        "to": 117,
+        "by": "risk_officer_9",
+        "round": 5
+      },
+      {
+        "from": 120,
+        "to": 119,
+        "by": "risk_officer_9",
+        "round": 5
+      },
+      {
+        "from": 120,
+        "to": 103,
+        "by": "risk_officer_9",
+        "round": 5
+      },
+      {
+        "from": 120,
+        "to": 104,
+        "by": "risk_officer_9",
+        "round": 5
+      },
+      {
+        "from": 120,
+        "to": 105,
+        "by": "risk_officer_9",
+        "round": 5
+      },
+      {
+        "from": 120,
+        "to": 117,
+        "by": "risk_officer_9",
+        "round": 5
+      },
+      {
+        "from": 120,
+        "to": 117,
+        "by": "risk_officer_9",
+        "round": 5
+      },
+      {
+        "from": 120,
+        "to": 119,
+        "by": "risk_officer_9",
+        "round": 5
+      },
+      {
+        "from": 120,
+        "to": 77,
+        "by": "risk_officer_9",
+        "round": 5
+      },
+      {
+        "from": 120,
+        "to": 104,
+        "by": "risk_officer_9",
+        "round": 5
+      },
+      {
+        "from": 120,
+        "to": 119,
+        "by": "risk_officer_9",
+        "round": 5
+      },
+      {
+        "from": 120,
+        "to": 103,
+        "by": "risk_officer_9",
+        "round": 5
+      },
+      {
+        "from": 120,
+        "to": 102,
+        "by": "risk_officer_9",
+        "round": 5
+      },
+      {
+        "from": 120,
+        "to": 68,
+        "by": "risk_officer_9",
+        "round": 5
+      },
+      {
+        "from": 120,
+        "to": 90,
+        "by": "risk_officer_9",
+        "round": 5
+      },
+      {
+        "from": 120,
+        "to": 98,
+        "by": "risk_officer_9",
+        "round": 5
+      },
+      {
+        "from": 120,
+        "to": 99,
+        "by": "risk_officer_9",
+        "round": 5
+      },
+      {
+        "from": 120,
+        "to": 62,
+        "by": "risk_officer_9",
+        "round": 5
+      },
+      {
+        "from": 121,
+        "to": 90,
+        "by": "devils_advocate_0",
+        "round": 6
+      },
+      {
+        "from": 121,
+        "to": 28,
+        "by": "devils_advocate_0",
+        "round": 6
+      },
+      {
+        "from": 121,
+        "to": 55,
+        "by": "devils_advocate_0",
+        "round": 6
+      },
+      {
+        "from": 121,
+        "to": 101,
+        "by": "devils_advocate_0",
+        "round": 6
+      },
+      {
+        "from": 121,
+        "to": 101,
+        "by": "devils_advocate_0",
+        "round": 6
+      },
+      {
+        "from": 121,
+        "to": 77,
+        "by": "devils_advocate_0",
+        "round": 6
+      },
+      {
+        "from": 122,
+        "to": 121,
+        "by": "creative_disruptor_1",
+        "round": 6
+      },
+      {
+        "from": 122,
+        "to": 121,
+        "by": "creative_disruptor_1",
+        "round": 6
+      },
+      {
+        "from": 122,
+        "to": 121,
+        "by": "creative_disruptor_1",
+        "round": 6
+      },
+      {
+        "from": 122,
+        "to": 90,
+        "by": "creative_disruptor_1",
+        "round": 6
+      },
+      {
+        "from": 122,
+        "to": 98,
+        "by": "creative_disruptor_1",
+        "round": 6
+      },
+      {
+        "from": 122,
+        "to": 98,
+        "by": "creative_disruptor_1",
+        "round": 6
+      },
+      {
+        "from": 122,
+        "to": 121,
+        "by": "creative_disruptor_1",
+        "round": 6
+      },
+      {
+        "from": 123,
+        "to": 121,
+        "by": "ai_output_rater_2",
+        "round": 6
+      },
+      {
+        "from": 123,
+        "to": 121,
+        "by": "ai_output_rater_2",
+        "round": 6
+      },
+      {
+        "from": 123,
+        "to": 122,
+        "by": "ai_output_rater_2",
+        "round": 6
+      },
+      {
+        "from": 123,
+        "to": 121,
+        "by": "ai_output_rater_2",
+        "round": 6
+      },
+      {
+        "from": 123,
+        "to": 122,
+        "by": "ai_output_rater_2",
+        "round": 6
+      },
+      {
+        "from": 123,
+        "to": 121,
+        "by": "ai_output_rater_2",
+        "round": 6
+      },
+      {
+        "from": 124,
+        "to": 118,
+        "by": "ai_output_rater_2",
+        "round": 6
+      },
+      {
+        "from": 124,
+        "to": 90,
+        "by": "ai_output_rater_2",
+        "round": 6
+      },
+      {
+        "from": 124,
+        "to": 118,
+        "by": "ai_output_rater_2",
+        "round": 6
+      },
+      {
+        "from": 124,
+        "to": 90,
+        "by": "ai_output_rater_2",
+        "round": 6
+      },
+      {
+        "from": 125,
+        "to": 118,
+        "by": "devils_advocate_0",
+        "round": 6
+      },
+      {
+        "from": 127,
+        "to": 126,
+        "by": "the_ai_product_engineer_3",
+        "round": 6
+      },
+      {
+        "from": 127,
+        "to": 124,
+        "by": "the_ai_product_engineer_3",
+        "round": 6
+      },
+      {
+        "from": 127,
+        "to": 125,
+        "by": "the_ai_product_engineer_3",
+        "round": 6
+      },
+      {
+        "from": 127,
+        "to": 90,
+        "by": "the_ai_product_engineer_3",
+        "round": 6
+      },
+      {
+        "from": 127,
+        "to": 126,
+        "by": "the_ai_product_engineer_3",
+        "round": 6
+      },
+      {
+        "from": 128,
+        "to": 127,
+        "by": "open_source_maintainer_4",
+        "round": 6
+      },
+      {
+        "from": 128,
+        "to": 127,
+        "by": "open_source_maintainer_4",
+        "round": 6
+      },
+      {
+        "from": 128,
+        "to": 127,
+        "by": "open_source_maintainer_4",
+        "round": 6
+      },
+      {
+        "from": 128,
+        "to": 126,
+        "by": "open_source_maintainer_4",
+        "round": 6
+      },
+      {
+        "from": 128,
+        "to": 125,
+        "by": "open_source_maintainer_4",
+        "round": 6
+      },
+      {
+        "from": 128,
+        "to": 121,
+        "by": "open_source_maintainer_4",
+        "round": 6
+      },
+      {
+        "from": 128,
+        "to": 123,
+        "by": "open_source_maintainer_4",
+        "round": 6
+      },
+      {
+        "from": 132,
+        "to": 62,
+        "by": "open_source_maintainer_4",
+        "round": 6
+      },
+      {
+        "from": 133,
+        "to": 77,
+        "by": "the_ai_product_engineer_3",
+        "round": 6
+      },
+      {
+        "from": 133,
+        "to": 77,
+        "by": "the_ai_product_engineer_3",
+        "round": 6
+      },
+      {
+        "from": 135,
+        "to": 77,
+        "by": "innovation_catalyst_7",
+        "round": 6
+      },
+      {
+        "from": 136,
+        "to": 127,
+        "by": "chief_ai_officer_8",
+        "round": 6
+      },
+      {
+        "from": 138,
+        "to": 127,
+        "by": "systems_engineer_6",
+        "round": 6
+      },
+      {
+        "from": 139,
+        "to": 134,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 6
+      },
+      {
+        "from": 139,
+        "to": 127,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 6
+      },
+      {
+        "from": 145,
+        "to": 144,
+        "by": "systems_engineer_6",
+        "round": 6
+      },
+      {
+        "from": 145,
+        "to": 27,
+        "by": "systems_engineer_6",
+        "round": 6
+      },
+      {
+        "from": 145,
+        "to": 143,
+        "by": "systems_engineer_6",
+        "round": 6
+      },
+      {
+        "from": 145,
+        "to": 139,
+        "by": "systems_engineer_6",
+        "round": 6
+      },
+      {
+        "from": 145,
+        "to": 141,
+        "by": "systems_engineer_6",
+        "round": 6
+      },
+      {
+        "from": 145,
+        "to": 140,
+        "by": "systems_engineer_6",
+        "round": 6
+      },
+      {
+        "from": 146,
+        "to": 145,
+        "by": "innovation_catalyst_7",
+        "round": 6
+      },
+      {
+        "from": 146,
+        "to": 143,
+        "by": "innovation_catalyst_7",
+        "round": 6
+      },
+      {
+        "from": 146,
+        "to": 142,
+        "by": "innovation_catalyst_7",
+        "round": 6
+      },
+      {
+        "from": 146,
+        "to": 145,
+        "by": "innovation_catalyst_7",
+        "round": 6
+      },
+      {
+        "from": 146,
+        "to": 143,
+        "by": "innovation_catalyst_7",
+        "round": 6
+      },
+      {
+        "from": 146,
+        "to": 142,
+        "by": "innovation_catalyst_7",
+        "round": 6
+      },
+      {
+        "from": 146,
+        "to": 127,
+        "by": "innovation_catalyst_7",
+        "round": 6
+      },
+      {
+        "from": 146,
+        "to": 128,
+        "by": "innovation_catalyst_7",
+        "round": 6
+      },
+      {
+        "from": 146,
+        "to": 125,
+        "by": "innovation_catalyst_7",
+        "round": 6
+      },
+      {
+        "from": 146,
+        "to": 144,
+        "by": "innovation_catalyst_7",
+        "round": 6
+      },
+      {
+        "from": 146,
+        "to": 103,
+        "by": "innovation_catalyst_7",
+        "round": 6
+      },
+      {
+        "from": 146,
+        "to": 50,
+        "by": "innovation_catalyst_7",
+        "round": 6
+      },
+      {
+        "from": 146,
+        "to": 27,
+        "by": "innovation_catalyst_7",
+        "round": 6
+      },
+      {
+        "from": 146,
+        "to": 140,
+        "by": "innovation_catalyst_7",
+        "round": 6
+      },
+      {
+        "from": 146,
+        "to": 141,
+        "by": "innovation_catalyst_7",
+        "round": 6
+      },
+      {
+        "from": 147,
+        "to": 127,
+        "by": "chief_ai_officer_8",
+        "round": 6
+      },
+      {
+        "from": 147,
+        "to": 145,
+        "by": "chief_ai_officer_8",
+        "round": 6
+      },
+      {
+        "from": 147,
+        "to": 144,
+        "by": "chief_ai_officer_8",
+        "round": 6
+      },
+      {
+        "from": 147,
+        "to": 127,
+        "by": "chief_ai_officer_8",
+        "round": 6
+      },
+      {
+        "from": 147,
+        "to": 126,
+        "by": "chief_ai_officer_8",
+        "round": 6
+      },
+      {
+        "from": 147,
+        "to": 145,
+        "by": "chief_ai_officer_8",
+        "round": 6
+      },
+      {
+        "from": 147,
+        "to": 144,
+        "by": "chief_ai_officer_8",
+        "round": 6
+      },
+      {
+        "from": 147,
+        "to": 143,
+        "by": "chief_ai_officer_8",
+        "round": 6
+      },
+      {
+        "from": 147,
+        "to": 142,
+        "by": "chief_ai_officer_8",
+        "round": 6
+      },
+      {
+        "from": 147,
+        "to": 139,
+        "by": "chief_ai_officer_8",
+        "round": 6
+      },
+      {
+        "from": 147,
+        "to": 140,
+        "by": "chief_ai_officer_8",
+        "round": 6
+      },
+      {
+        "from": 147,
+        "to": 141,
+        "by": "chief_ai_officer_8",
+        "round": 6
+      },
+      {
+        "from": 147,
+        "to": 144,
+        "by": "chief_ai_officer_8",
+        "round": 6
+      },
+      {
+        "from": 147,
+        "to": 101,
+        "by": "chief_ai_officer_8",
+        "round": 6
+      },
+      {
+        "from": 147,
+        "to": 107,
+        "by": "chief_ai_officer_8",
+        "round": 6
+      },
+      {
+        "from": 147,
+        "to": 142,
+        "by": "chief_ai_officer_8",
+        "round": 6
+      },
+      {
+        "from": 147,
+        "to": 143,
+        "by": "chief_ai_officer_8",
+        "round": 6
+      },
+      {
+        "from": 147,
+        "to": 128,
+        "by": "chief_ai_officer_8",
+        "round": 6
+      },
+      {
+        "from": 148,
+        "to": 127,
+        "by": "risk_officer_9",
+        "round": 6
+      },
+      {
+        "from": 148,
+        "to": 145,
+        "by": "risk_officer_9",
+        "round": 6
+      },
+      {
+        "from": 148,
+        "to": 127,
+        "by": "risk_officer_9",
+        "round": 6
+      },
+      {
+        "from": 148,
+        "to": 145,
+        "by": "risk_officer_9",
+        "round": 6
+      },
+      {
+        "from": 148,
+        "to": 144,
+        "by": "risk_officer_9",
+        "round": 6
+      },
+      {
+        "from": 148,
+        "to": 143,
+        "by": "risk_officer_9",
+        "round": 6
+      },
+      {
+        "from": 148,
+        "to": 142,
+        "by": "risk_officer_9",
+        "round": 6
+      },
+      {
+        "from": 148,
+        "to": 90,
+        "by": "risk_officer_9",
+        "round": 6
+      },
+      {
+        "from": 148,
+        "to": 62,
+        "by": "risk_officer_9",
+        "round": 6
+      },
+      {
+        "from": 149,
+        "to": 90,
+        "by": "devils_advocate_0",
+        "round": 7
+      },
+      {
+        "from": 149,
+        "to": 140,
+        "by": "devils_advocate_0",
+        "round": 7
+      },
+      {
+        "from": 149,
+        "to": 126,
+        "by": "devils_advocate_0",
+        "round": 7
+      },
+      {
+        "from": 149,
+        "to": 102,
+        "by": "devils_advocate_0",
+        "round": 7
+      },
+      {
+        "from": 149,
+        "to": 124,
+        "by": "devils_advocate_0",
+        "round": 7
+      },
+      {
+        "from": 149,
+        "to": 28,
+        "by": "devils_advocate_0",
+        "round": 7
+      },
+      {
+        "from": 149,
+        "to": 121,
+        "by": "devils_advocate_0",
+        "round": 7
+      },
+      {
+        "from": 149,
+        "to": 122,
+        "by": "devils_advocate_0",
+        "round": 7
+      },
+      {
+        "from": 150,
+        "to": 149,
+        "by": "creative_disruptor_1",
+        "round": 7
+      },
+      {
+        "from": 150,
+        "to": 90,
+        "by": "creative_disruptor_1",
+        "round": 7
+      },
+      {
+        "from": 150,
+        "to": 149,
+        "by": "creative_disruptor_1",
+        "round": 7
+      },
+      {
+        "from": 150,
+        "to": 5,
+        "by": "creative_disruptor_1",
+        "round": 7
+      },
+      {
+        "from": 150,
+        "to": 28,
+        "by": "creative_disruptor_1",
+        "round": 7
+      },
+      {
+        "from": 150,
+        "to": 126,
+        "by": "creative_disruptor_1",
+        "round": 7
+      },
+      {
+        "from": 150,
+        "to": 102,
+        "by": "creative_disruptor_1",
+        "round": 7
+      },
+      {
+        "from": 150,
+        "to": 102,
+        "by": "creative_disruptor_1",
+        "round": 7
+      },
+      {
+        "from": 150,
+        "to": 124,
+        "by": "creative_disruptor_1",
+        "round": 7
+      },
+      {
+        "from": 150,
+        "to": 149,
+        "by": "creative_disruptor_1",
+        "round": 7
+      },
+      {
+        "from": 151,
+        "to": 150,
+        "by": "ai_output_rater_2",
+        "round": 7
+      },
+      {
+        "from": 151,
+        "to": 149,
+        "by": "ai_output_rater_2",
+        "round": 7
+      },
+      {
+        "from": 151,
+        "to": 150,
+        "by": "ai_output_rater_2",
+        "round": 7
+      },
+      {
+        "from": 151,
+        "to": 102,
+        "by": "ai_output_rater_2",
+        "round": 7
+      },
+      {
+        "from": 151,
+        "to": 121,
+        "by": "ai_output_rater_2",
+        "round": 7
+      },
+      {
+        "from": 151,
+        "to": 127,
+        "by": "ai_output_rater_2",
+        "round": 7
+      },
+      {
+        "from": 151,
+        "to": 128,
+        "by": "ai_output_rater_2",
+        "round": 7
+      },
+      {
+        "from": 151,
+        "to": 127,
+        "by": "ai_output_rater_2",
+        "round": 7
+      },
+      {
+        "from": 151,
+        "to": 121,
+        "by": "ai_output_rater_2",
+        "round": 7
+      },
+      {
+        "from": 151,
+        "to": 124,
+        "by": "ai_output_rater_2",
+        "round": 7
+      },
+      {
+        "from": 151,
+        "to": 76,
+        "by": "ai_output_rater_2",
+        "round": 7
+      },
+      {
+        "from": 151,
+        "to": 150,
+        "by": "ai_output_rater_2",
+        "round": 7
+      },
+      {
+        "from": 151,
+        "to": 126,
+        "by": "ai_output_rater_2",
+        "round": 7
+      },
+      {
+        "from": 151,
+        "to": 98,
+        "by": "ai_output_rater_2",
+        "round": 7
+      },
+      {
+        "from": 151,
+        "to": 99,
+        "by": "ai_output_rater_2",
+        "round": 7
+      },
+      {
+        "from": 151,
+        "to": 101,
+        "by": "ai_output_rater_2",
+        "round": 7
+      },
+      {
+        "from": 151,
+        "to": 124,
+        "by": "ai_output_rater_2",
+        "round": 7
+      },
+      {
+        "from": 151,
+        "to": 107,
+        "by": "ai_output_rater_2",
+        "round": 7
+      },
+      {
+        "from": 153,
+        "to": 151,
+        "by": "the_ai_product_engineer_3",
+        "round": 7
+      },
+      {
+        "from": 153,
+        "to": 102,
+        "by": "the_ai_product_engineer_3",
+        "round": 7
+      },
+      {
+        "from": 153,
+        "to": 152,
+        "by": "the_ai_product_engineer_3",
+        "round": 7
+      },
+      {
+        "from": 153,
+        "to": 101,
+        "by": "the_ai_product_engineer_3",
+        "round": 7
+      },
+      {
+        "from": 153,
+        "to": 150,
+        "by": "the_ai_product_engineer_3",
+        "round": 7
+      },
+      {
+        "from": 153,
+        "to": 151,
+        "by": "the_ai_product_engineer_3",
+        "round": 7
+      },
+      {
+        "from": 153,
+        "to": 152,
+        "by": "the_ai_product_engineer_3",
+        "round": 7
+      },
+      {
+        "from": 154,
+        "to": 149,
+        "by": "open_source_maintainer_4",
+        "round": 7
+      },
+      {
+        "from": 154,
+        "to": 150,
+        "by": "open_source_maintainer_4",
+        "round": 7
+      },
+      {
+        "from": 154,
+        "to": 151,
+        "by": "open_source_maintainer_4",
+        "round": 7
+      },
+      {
+        "from": 154,
+        "to": 126,
+        "by": "open_source_maintainer_4",
+        "round": 7
+      },
+      {
+        "from": 154,
+        "to": 145,
+        "by": "open_source_maintainer_4",
+        "round": 7
+      },
+      {
+        "from": 154,
+        "to": 151,
+        "by": "open_source_maintainer_4",
+        "round": 7
+      },
+      {
+        "from": 154,
+        "to": 102,
+        "by": "open_source_maintainer_4",
+        "round": 7
+      },
+      {
+        "from": 154,
+        "to": 124,
+        "by": "open_source_maintainer_4",
+        "round": 7
+      },
+      {
+        "from": 154,
+        "to": 153,
+        "by": "open_source_maintainer_4",
+        "round": 7
+      },
+      {
+        "from": 154,
+        "to": 153,
+        "by": "open_source_maintainer_4",
+        "round": 7
+      },
+      {
+        "from": 154,
+        "to": 149,
+        "by": "open_source_maintainer_4",
+        "round": 7
+      },
+      {
+        "from": 154,
+        "to": 150,
+        "by": "open_source_maintainer_4",
+        "round": 7
+      },
+      {
+        "from": 154,
+        "to": 101,
+        "by": "open_source_maintainer_4",
+        "round": 7
+      },
+      {
+        "from": 155,
+        "to": 152,
+        "by": "the_ai_product_engineer_3",
+        "round": 7
+      },
+      {
+        "from": 156,
+        "to": 127,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 7
+      },
+      {
+        "from": 156,
+        "to": 153,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 7
+      },
+      {
+        "from": 156,
+        "to": 155,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 7
+      },
+      {
+        "from": 157,
+        "to": 149,
+        "by": "devils_advocate_0",
+        "round": 7
+      },
+      {
+        "from": 157,
+        "to": 153,
+        "by": "devils_advocate_0",
+        "round": 7
+      },
+      {
+        "from": 157,
+        "to": 151,
+        "by": "devils_advocate_0",
+        "round": 7
+      },
+      {
+        "from": 157,
+        "to": 149,
+        "by": "devils_advocate_0",
+        "round": 7
+      },
+      {
+        "from": 157,
+        "to": 153,
+        "by": "devils_advocate_0",
+        "round": 7
+      },
+      {
+        "from": 160,
+        "to": 62,
+        "by": "open_source_maintainer_4",
+        "round": 7
+      },
+      {
+        "from": 161,
+        "to": 127,
+        "by": "ai_output_rater_2",
+        "round": 7
+      },
+      {
+        "from": 166,
+        "to": 157,
+        "by": "systems_engineer_6",
+        "round": 7
+      },
+      {
+        "from": 166,
+        "to": 152,
+        "by": "systems_engineer_6",
+        "round": 7
+      },
+      {
+        "from": 166,
+        "to": 153,
+        "by": "systems_engineer_6",
+        "round": 7
+      },
+      {
+        "from": 166,
+        "to": 152,
+        "by": "systems_engineer_6",
+        "round": 7
+      },
+      {
+        "from": 167,
+        "to": 90,
+        "by": "innovation_catalyst_7",
+        "round": 7
+      },
+      {
+        "from": 167,
+        "to": 153,
+        "by": "innovation_catalyst_7",
+        "round": 7
+      },
+      {
+        "from": 167,
+        "to": 153,
+        "by": "innovation_catalyst_7",
+        "round": 7
+      },
+      {
+        "from": 167,
+        "to": 166,
+        "by": "innovation_catalyst_7",
+        "round": 7
+      },
+      {
+        "from": 167,
+        "to": 156,
+        "by": "innovation_catalyst_7",
+        "round": 7
+      },
+      {
+        "from": 167,
+        "to": 150,
+        "by": "innovation_catalyst_7",
+        "round": 7
+      },
+      {
+        "from": 167,
+        "to": 151,
+        "by": "innovation_catalyst_7",
+        "round": 7
+      },
+      {
+        "from": 167,
+        "to": 154,
+        "by": "innovation_catalyst_7",
+        "round": 7
+      },
+      {
+        "from": 167,
+        "to": 154,
+        "by": "innovation_catalyst_7",
+        "round": 7
+      },
+      {
+        "from": 167,
+        "to": 151,
+        "by": "innovation_catalyst_7",
+        "round": 7
+      },
+      {
+        "from": 167,
+        "to": 150,
+        "by": "innovation_catalyst_7",
+        "round": 7
+      },
+      {
+        "from": 167,
+        "to": 127,
+        "by": "innovation_catalyst_7",
+        "round": 7
+      },
+      {
+        "from": 168,
+        "to": 167,
+        "by": "chief_ai_officer_8",
+        "round": 7
+      },
+      {
+        "from": 168,
+        "to": 149,
+        "by": "chief_ai_officer_8",
+        "round": 7
+      },
+      {
+        "from": 168,
+        "to": 154,
+        "by": "chief_ai_officer_8",
+        "round": 7
+      },
+      {
+        "from": 168,
+        "to": 166,
+        "by": "chief_ai_officer_8",
+        "round": 7
+      },
+      {
+        "from": 168,
+        "to": 156,
+        "by": "chief_ai_officer_8",
+        "round": 7
+      },
+      {
+        "from": 168,
+        "to": 145,
+        "by": "chief_ai_officer_8",
+        "round": 7
+      },
+      {
+        "from": 168,
+        "to": 155,
+        "by": "chief_ai_officer_8",
+        "round": 7
+      },
+      {
+        "from": 168,
+        "to": 151,
+        "by": "chief_ai_officer_8",
+        "round": 7
+      },
+      {
+        "from": 168,
+        "to": 102,
+        "by": "chief_ai_officer_8",
+        "round": 7
+      },
+      {
+        "from": 168,
+        "to": 150,
+        "by": "chief_ai_officer_8",
+        "round": 7
+      },
+      {
+        "from": 168,
+        "to": 153,
+        "by": "chief_ai_officer_8",
+        "round": 7
+      },
+      {
+        "from": 168,
+        "to": 166,
+        "by": "chief_ai_officer_8",
+        "round": 7
+      },
+      {
+        "from": 169,
+        "to": 149,
+        "by": "risk_officer_9",
+        "round": 7
+      },
+      {
+        "from": 169,
+        "to": 166,
+        "by": "risk_officer_9",
+        "round": 7
+      },
+      {
+        "from": 169,
+        "to": 168,
+        "by": "risk_officer_9",
+        "round": 7
+      },
+      {
+        "from": 169,
+        "to": 166,
+        "by": "risk_officer_9",
+        "round": 7
+      },
+      {
+        "from": 169,
+        "to": 168,
+        "by": "risk_officer_9",
+        "round": 7
+      },
+      {
+        "from": 169,
+        "to": 157,
+        "by": "risk_officer_9",
+        "round": 7
+      },
+      {
+        "from": 169,
+        "to": 154,
+        "by": "risk_officer_9",
+        "round": 7
+      },
+      {
+        "from": 169,
+        "to": 150,
+        "by": "risk_officer_9",
+        "round": 7
+      },
+      {
+        "from": 169,
+        "to": 151,
+        "by": "risk_officer_9",
+        "round": 7
+      },
+      {
+        "from": 169,
+        "to": 167,
+        "by": "risk_officer_9",
+        "round": 7
+      },
+      {
+        "from": 169,
+        "to": 167,
+        "by": "risk_officer_9",
+        "round": 7
+      },
+      {
+        "from": 169,
+        "to": 62,
+        "by": "risk_officer_9",
+        "round": 7
+      },
+      {
+        "from": 169,
+        "to": 102,
+        "by": "risk_officer_9",
+        "round": 7
+      },
+      {
+        "from": 169,
+        "to": 151,
+        "by": "risk_officer_9",
+        "round": 7
+      },
+      {
+        "from": 170,
+        "to": 145,
+        "by": "devils_advocate_0",
+        "round": 8
+      },
+      {
+        "from": 170,
+        "to": 5,
+        "by": "devils_advocate_0",
+        "round": 8
+      },
+      {
+        "from": 170,
+        "to": 28,
+        "by": "devils_advocate_0",
+        "round": 8
+      },
+      {
+        "from": 170,
+        "to": 102,
+        "by": "devils_advocate_0",
+        "round": 8
+      },
+      {
+        "from": 171,
+        "to": 170,
+        "by": "creative_disruptor_1",
+        "round": 8
+      },
+      {
+        "from": 171,
+        "to": 170,
+        "by": "creative_disruptor_1",
+        "round": 8
+      },
+      {
+        "from": 171,
+        "to": 127,
+        "by": "creative_disruptor_1",
+        "round": 8
+      },
+      {
+        "from": 171,
+        "to": 170,
+        "by": "creative_disruptor_1",
+        "round": 8
+      },
+      {
+        "from": 171,
+        "to": 127,
+        "by": "creative_disruptor_1",
+        "round": 8
+      },
+      {
+        "from": 171,
+        "to": 170,
+        "by": "creative_disruptor_1",
+        "round": 8
+      },
+      {
+        "from": 171,
+        "to": 102,
+        "by": "creative_disruptor_1",
+        "round": 8
+      },
+      {
+        "from": 171,
+        "to": 124,
+        "by": "creative_disruptor_1",
+        "round": 8
+      },
+      {
+        "from": 171,
+        "to": 170,
+        "by": "creative_disruptor_1",
+        "round": 8
+      },
+      {
+        "from": 172,
+        "to": 170,
+        "by": "ai_output_rater_2",
+        "round": 8
+      },
+      {
+        "from": 172,
+        "to": 171,
+        "by": "ai_output_rater_2",
+        "round": 8
+      },
+      {
+        "from": 172,
+        "to": 171,
+        "by": "ai_output_rater_2",
+        "round": 8
+      },
+      {
+        "from": 172,
+        "to": 102,
+        "by": "ai_output_rater_2",
+        "round": 8
+      },
+      {
+        "from": 172,
+        "to": 170,
+        "by": "ai_output_rater_2",
+        "round": 8
+      },
+      {
+        "from": 172,
+        "to": 170,
+        "by": "ai_output_rater_2",
+        "round": 8
+      },
+      {
+        "from": 172,
+        "to": 171,
+        "by": "ai_output_rater_2",
+        "round": 8
+      },
+      {
+        "from": 175,
+        "to": 173,
+        "by": "the_ai_product_engineer_3",
+        "round": 8
+      },
+      {
+        "from": 175,
+        "to": 173,
+        "by": "the_ai_product_engineer_3",
+        "round": 8
+      },
+      {
+        "from": 175,
+        "to": 173,
+        "by": "the_ai_product_engineer_3",
+        "round": 8
+      },
+      {
+        "from": 175,
+        "to": 174,
+        "by": "the_ai_product_engineer_3",
+        "round": 8
+      },
+      {
+        "from": 175,
+        "to": 170,
+        "by": "the_ai_product_engineer_3",
+        "round": 8
+      },
+      {
+        "from": 175,
+        "to": 171,
+        "by": "the_ai_product_engineer_3",
+        "round": 8
+      },
+      {
+        "from": 175,
+        "to": 172,
+        "by": "the_ai_product_engineer_3",
+        "round": 8
+      },
+      {
+        "from": 175,
+        "to": 173,
+        "by": "the_ai_product_engineer_3",
+        "round": 8
+      },
+      {
+        "from": 175,
+        "to": 174,
+        "by": "the_ai_product_engineer_3",
+        "round": 8
+      },
+      {
+        "from": 175,
+        "to": 174,
+        "by": "the_ai_product_engineer_3",
+        "round": 8
+      },
+      {
+        "from": 175,
+        "to": 170,
+        "by": "the_ai_product_engineer_3",
+        "round": 8
+      },
+      {
+        "from": 175,
+        "to": 171,
+        "by": "the_ai_product_engineer_3",
+        "round": 8
+      },
+      {
+        "from": 175,
+        "to": 172,
+        "by": "the_ai_product_engineer_3",
+        "round": 8
+      },
+      {
+        "from": 175,
+        "to": 173,
+        "by": "the_ai_product_engineer_3",
+        "round": 8
+      },
+      {
+        "from": 175,
+        "to": 152,
+        "by": "the_ai_product_engineer_3",
+        "round": 8
+      },
+      {
+        "from": 175,
+        "to": 145,
+        "by": "the_ai_product_engineer_3",
+        "round": 8
+      },
+      {
+        "from": 175,
+        "to": 174,
+        "by": "the_ai_product_engineer_3",
+        "round": 8
+      },
+      {
+        "from": 175,
+        "to": 173,
+        "by": "the_ai_product_engineer_3",
+        "round": 8
+      },
+      {
+        "from": 175,
+        "to": 174,
+        "by": "the_ai_product_engineer_3",
+        "round": 8
+      },
+      {
+        "from": 176,
+        "to": 170,
+        "by": "open_source_maintainer_4",
+        "round": 8
+      },
+      {
+        "from": 176,
+        "to": 171,
+        "by": "open_source_maintainer_4",
+        "round": 8
+      },
+      {
+        "from": 176,
+        "to": 172,
+        "by": "open_source_maintainer_4",
+        "round": 8
+      },
+      {
+        "from": 176,
+        "to": 127,
+        "by": "open_source_maintainer_4",
+        "round": 8
+      },
+      {
+        "from": 176,
+        "to": 173,
+        "by": "open_source_maintainer_4",
+        "round": 8
+      },
+      {
+        "from": 176,
+        "to": 175,
+        "by": "open_source_maintainer_4",
+        "round": 8
+      },
+      {
+        "from": 176,
+        "to": 173,
+        "by": "open_source_maintainer_4",
+        "round": 8
+      },
+      {
+        "from": 176,
+        "to": 170,
+        "by": "open_source_maintainer_4",
+        "round": 8
+      },
+      {
+        "from": 176,
+        "to": 173,
+        "by": "open_source_maintainer_4",
+        "round": 8
+      },
+      {
+        "from": 176,
+        "to": 170,
+        "by": "open_source_maintainer_4",
+        "round": 8
+      },
+      {
+        "from": 176,
+        "to": 171,
+        "by": "open_source_maintainer_4",
+        "round": 8
+      },
+      {
+        "from": 176,
+        "to": 172,
+        "by": "open_source_maintainer_4",
+        "round": 8
+      },
+      {
+        "from": 177,
+        "to": 173,
+        "by": "devils_advocate_0",
+        "round": 8
+      },
+      {
+        "from": 180,
+        "to": 170,
+        "by": "creative_disruptor_1",
+        "round": 8
+      },
+      {
+        "from": 180,
+        "to": 170,
+        "by": "creative_disruptor_1",
+        "round": 8
+      },
+      {
+        "from": 180,
+        "to": 171,
+        "by": "creative_disruptor_1",
+        "round": 8
+      },
+      {
+        "from": 180,
+        "to": 172,
+        "by": "creative_disruptor_1",
+        "round": 8
+      },
+      {
+        "from": 180,
+        "to": 173,
+        "by": "creative_disruptor_1",
+        "round": 8
+      },
+      {
+        "from": 180,
+        "to": 170,
+        "by": "creative_disruptor_1",
+        "round": 8
+      },
+      {
+        "from": 180,
+        "to": 171,
+        "by": "creative_disruptor_1",
+        "round": 8
+      },
+      {
+        "from": 180,
+        "to": 172,
+        "by": "creative_disruptor_1",
+        "round": 8
+      },
+      {
+        "from": 180,
+        "to": 173,
+        "by": "creative_disruptor_1",
+        "round": 8
+      },
+      {
+        "from": 181,
+        "to": 173,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 8
+      },
+      {
+        "from": 181,
+        "to": 170,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 8
+      },
+      {
+        "from": 181,
+        "to": 177,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 8
+      },
+      {
+        "from": 181,
+        "to": 175,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 8
+      },
+      {
+        "from": 181,
+        "to": 175,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 8
+      },
+      {
+        "from": 181,
+        "to": 173,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 8
+      },
+      {
+        "from": 181,
+        "to": 176,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 8
+      },
+      {
+        "from": 181,
+        "to": 155,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 8
+      },
+      {
+        "from": 181,
+        "to": 178,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 8
+      },
+      {
+        "from": 181,
+        "to": 179,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 8
+      },
+      {
+        "from": 181,
+        "to": 180,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 8
+      },
+      {
+        "from": 181,
+        "to": 180,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 8
+      },
+      {
+        "from": 181,
+        "to": 90,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 8
+      },
+      {
+        "from": 181,
+        "to": 149,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 8
+      },
+      {
+        "from": 181,
+        "to": 176,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 8
+      },
+      {
+        "from": 181,
+        "to": 179,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 8
+      },
+      {
+        "from": 181,
+        "to": 170,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 8
+      },
+      {
+        "from": 181,
+        "to": 171,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 8
+      },
+      {
+        "from": 181,
+        "to": 172,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 8
+      },
+      {
+        "from": 181,
+        "to": 176,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 8
+      },
+      {
+        "from": 181,
+        "to": 102,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 8
+      },
+      {
+        "from": 181,
+        "to": 124,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 8
+      },
+      {
+        "from": 181,
+        "to": 179,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 8
+      },
+      {
+        "from": 181,
+        "to": 177,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 8
+      },
+      {
+        "from": 181,
+        "to": 178,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 8
+      },
+      {
+        "from": 181,
+        "to": 179,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 8
+      },
+      {
+        "from": 181,
+        "to": 180,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 8
+      },
+      {
+        "from": 182,
+        "to": 173,
+        "by": "devils_advocate_0",
+        "round": 8
+      },
+      {
+        "from": 182,
+        "to": 170,
+        "by": "devils_advocate_0",
+        "round": 8
+      },
+      {
+        "from": 182,
+        "to": 177,
+        "by": "devils_advocate_0",
+        "round": 8
+      },
+      {
+        "from": 184,
+        "to": 181,
+        "by": "systems_engineer_6",
+        "round": 8
+      },
+      {
+        "from": 184,
+        "to": 173,
+        "by": "systems_engineer_6",
+        "round": 8
+      },
+      {
+        "from": 184,
+        "to": 175,
+        "by": "systems_engineer_6",
+        "round": 8
+      },
+      {
+        "from": 184,
+        "to": 170,
+        "by": "systems_engineer_6",
+        "round": 8
+      },
+      {
+        "from": 184,
+        "to": 170,
+        "by": "systems_engineer_6",
+        "round": 8
+      },
+      {
+        "from": 184,
+        "to": 171,
+        "by": "systems_engineer_6",
+        "round": 8
+      },
+      {
+        "from": 184,
+        "to": 172,
+        "by": "systems_engineer_6",
+        "round": 8
+      },
+      {
+        "from": 184,
+        "to": 176,
+        "by": "systems_engineer_6",
+        "round": 8
+      },
+      {
+        "from": 184,
+        "to": 183,
+        "by": "systems_engineer_6",
+        "round": 8
+      },
+      {
+        "from": 184,
+        "to": 171,
+        "by": "systems_engineer_6",
+        "round": 8
+      },
+      {
+        "from": 185,
+        "to": 183,
+        "by": "innovation_catalyst_7",
+        "round": 8
+      },
+      {
+        "from": 185,
+        "to": 182,
+        "by": "innovation_catalyst_7",
+        "round": 8
+      },
+      {
+        "from": 185,
+        "to": 184,
+        "by": "innovation_catalyst_7",
+        "round": 8
+      },
+      {
+        "from": 185,
+        "to": 181,
+        "by": "innovation_catalyst_7",
+        "round": 8
+      },
+      {
+        "from": 185,
+        "to": 184,
+        "by": "innovation_catalyst_7",
+        "round": 8
+      },
+      {
+        "from": 185,
+        "to": 182,
+        "by": "innovation_catalyst_7",
+        "round": 8
+      },
+      {
+        "from": 185,
+        "to": 127,
+        "by": "innovation_catalyst_7",
+        "round": 8
+      },
+      {
+        "from": 185,
+        "to": 176,
+        "by": "innovation_catalyst_7",
+        "round": 8
+      },
+      {
+        "from": 185,
+        "to": 177,
+        "by": "innovation_catalyst_7",
+        "round": 8
+      },
+      {
+        "from": 185,
+        "to": 175,
+        "by": "innovation_catalyst_7",
+        "round": 8
+      },
+      {
+        "from": 185,
+        "to": 175,
+        "by": "innovation_catalyst_7",
+        "round": 8
+      },
+      {
+        "from": 185,
+        "to": 181,
+        "by": "innovation_catalyst_7",
+        "round": 8
+      },
+      {
+        "from": 185,
+        "to": 183,
+        "by": "innovation_catalyst_7",
+        "round": 8
+      },
+      {
+        "from": 185,
+        "to": 102,
+        "by": "innovation_catalyst_7",
+        "round": 8
+      },
+      {
+        "from": 185,
+        "to": 182,
+        "by": "innovation_catalyst_7",
+        "round": 8
+      },
+      {
+        "from": 185,
+        "to": 184,
+        "by": "innovation_catalyst_7",
+        "round": 8
+      },
+      {
+        "from": 186,
+        "to": 182,
+        "by": "chief_ai_officer_8",
+        "round": 8
+      },
+      {
+        "from": 186,
+        "to": 184,
+        "by": "chief_ai_officer_8",
+        "round": 8
+      },
+      {
+        "from": 186,
+        "to": 184,
+        "by": "chief_ai_officer_8",
+        "round": 8
+      },
+      {
+        "from": 186,
+        "to": 182,
+        "by": "chief_ai_officer_8",
+        "round": 8
+      },
+      {
+        "from": 186,
+        "to": 183,
+        "by": "chief_ai_officer_8",
+        "round": 8
+      },
+      {
+        "from": 186,
+        "to": 185,
+        "by": "chief_ai_officer_8",
+        "round": 8
+      },
+      {
+        "from": 186,
+        "to": 181,
+        "by": "chief_ai_officer_8",
+        "round": 8
+      },
+      {
+        "from": 186,
+        "to": 185,
+        "by": "chief_ai_officer_8",
+        "round": 8
+      },
+      {
+        "from": 186,
+        "to": 64,
+        "by": "chief_ai_officer_8",
+        "round": 8
+      },
+      {
+        "from": 186,
+        "to": 183,
+        "by": "chief_ai_officer_8",
+        "round": 8
+      },
+      {
+        "from": 187,
+        "to": 182,
+        "by": "risk_officer_9",
+        "round": 8
+      },
+      {
+        "from": 187,
+        "to": 184,
+        "by": "risk_officer_9",
+        "round": 8
+      },
+      {
+        "from": 187,
+        "to": 181,
+        "by": "risk_officer_9",
+        "round": 8
+      },
+      {
+        "from": 187,
+        "to": 184,
+        "by": "risk_officer_9",
+        "round": 8
+      },
+      {
+        "from": 187,
+        "to": 182,
+        "by": "risk_officer_9",
+        "round": 8
+      },
+      {
+        "from": 187,
+        "to": 181,
+        "by": "risk_officer_9",
+        "round": 8
+      },
+      {
+        "from": 187,
+        "to": 175,
+        "by": "risk_officer_9",
+        "round": 8
+      },
+      {
+        "from": 187,
+        "to": 173,
+        "by": "risk_officer_9",
+        "round": 8
+      },
+      {
+        "from": 187,
+        "to": 186,
+        "by": "risk_officer_9",
+        "round": 8
+      },
+      {
+        "from": 187,
+        "to": 186,
+        "by": "risk_officer_9",
+        "round": 8
+      },
+      {
+        "from": 187,
+        "to": 127,
+        "by": "risk_officer_9",
+        "round": 8
+      },
+      {
+        "from": 187,
+        "to": 179,
+        "by": "risk_officer_9",
+        "round": 8
+      },
+      {
+        "from": 187,
+        "to": 183,
+        "by": "risk_officer_9",
+        "round": 8
+      },
+      {
+        "from": 187,
+        "to": 183,
+        "by": "risk_officer_9",
+        "round": 8
+      },
+      {
+        "from": 187,
+        "to": 185,
+        "by": "risk_officer_9",
+        "round": 8
+      },
+      {
+        "from": 187,
+        "to": 179,
+        "by": "risk_officer_9",
+        "round": 8
+      },
+      {
+        "from": 188,
+        "to": 127,
+        "by": "devils_advocate_0",
+        "round": 9
+      },
+      {
+        "from": 189,
+        "to": 188,
+        "by": "creative_disruptor_1",
+        "round": 9
+      },
+      {
+        "from": 189,
+        "to": 188,
+        "by": "creative_disruptor_1",
+        "round": 9
+      },
+      {
+        "from": 189,
+        "to": 188,
+        "by": "creative_disruptor_1",
+        "round": 9
+      },
+      {
+        "from": 189,
+        "to": 127,
+        "by": "creative_disruptor_1",
+        "round": 9
+      },
+      {
+        "from": 189,
+        "to": 170,
+        "by": "creative_disruptor_1",
+        "round": 9
+      },
+      {
+        "from": 189,
+        "to": 188,
+        "by": "creative_disruptor_1",
+        "round": 9
+      },
+      {
+        "from": 189,
+        "to": 102,
+        "by": "creative_disruptor_1",
+        "round": 9
+      },
+      {
+        "from": 189,
+        "to": 124,
+        "by": "creative_disruptor_1",
+        "round": 9
+      },
+      {
+        "from": 189,
+        "to": 188,
+        "by": "creative_disruptor_1",
+        "round": 9
+      },
+      {
+        "from": 189,
+        "to": 188,
+        "by": "creative_disruptor_1",
+        "round": 9
+      },
+      {
+        "from": 189,
+        "to": 188,
+        "by": "creative_disruptor_1",
+        "round": 9
+      },
+      {
+        "from": 190,
+        "to": 188,
+        "by": "ai_output_rater_2",
+        "round": 9
+      },
+      {
+        "from": 190,
+        "to": 189,
+        "by": "ai_output_rater_2",
+        "round": 9
+      },
+      {
+        "from": 190,
+        "to": 188,
+        "by": "ai_output_rater_2",
+        "round": 9
+      },
+      {
+        "from": 190,
+        "to": 189,
+        "by": "ai_output_rater_2",
+        "round": 9
+      },
+      {
+        "from": 190,
+        "to": 188,
+        "by": "ai_output_rater_2",
+        "round": 9
+      },
+      {
+        "from": 190,
+        "to": 188,
+        "by": "ai_output_rater_2",
+        "round": 9
+      },
+      {
+        "from": 190,
+        "to": 124,
+        "by": "ai_output_rater_2",
+        "round": 9
+      },
+      {
+        "from": 190,
+        "to": 189,
+        "by": "ai_output_rater_2",
+        "round": 9
+      },
+      {
+        "from": 192,
+        "to": 188,
+        "by": "creative_disruptor_1",
+        "round": 9
+      },
+      {
+        "from": 192,
+        "to": 189,
+        "by": "creative_disruptor_1",
+        "round": 9
+      },
+      {
+        "from": 193,
+        "to": 189,
+        "by": "devils_advocate_0",
+        "round": 9
+      },
+      {
+        "from": 194,
+        "to": 127,
+        "by": "ai_output_rater_2",
+        "round": 9
+      },
+      {
+        "from": 195,
+        "to": 189,
+        "by": "open_source_maintainer_4",
+        "round": 9
+      },
+      {
+        "from": 197,
+        "to": 189,
+        "by": "innovation_catalyst_7",
+        "round": 9
+      },
+      {
+        "from": 198,
+        "to": 188,
+        "by": "chief_ai_officer_8",
+        "round": 9
+      },
+      {
+        "from": 198,
+        "to": 189,
+        "by": "chief_ai_officer_8",
+        "round": 9
+      },
+      {
+        "from": 199,
+        "to": 188,
+        "by": "risk_officer_9",
+        "round": 9
+      },
+      {
+        "from": 201,
+        "to": 145,
+        "by": "the_ai_product_engineer_3",
+        "round": 9
+      },
+      {
+        "from": 202,
+        "to": 188,
+        "by": "open_source_maintainer_4",
+        "round": 9
+      },
+      {
+        "from": 202,
+        "to": 191,
+        "by": "open_source_maintainer_4",
+        "round": 9
+      },
+      {
+        "from": 202,
+        "to": 127,
+        "by": "open_source_maintainer_4",
+        "round": 9
+      },
+      {
+        "from": 202,
+        "to": 188,
+        "by": "open_source_maintainer_4",
+        "round": 9
+      },
+      {
+        "from": 202,
+        "to": 189,
+        "by": "open_source_maintainer_4",
+        "round": 9
+      },
+      {
+        "from": 202,
+        "to": 127,
+        "by": "open_source_maintainer_4",
+        "round": 9
+      },
+      {
+        "from": 202,
+        "to": 190,
+        "by": "open_source_maintainer_4",
+        "round": 9
+      },
+      {
+        "from": 202,
+        "to": 191,
+        "by": "open_source_maintainer_4",
+        "round": 9
+      },
+      {
+        "from": 202,
+        "to": 191,
+        "by": "open_source_maintainer_4",
+        "round": 9
+      },
+      {
+        "from": 202,
+        "to": 201,
+        "by": "open_source_maintainer_4",
+        "round": 9
+      },
+      {
+        "from": 202,
+        "to": 127,
+        "by": "open_source_maintainer_4",
+        "round": 9
+      },
+      {
+        "from": 202,
+        "to": 191,
+        "by": "open_source_maintainer_4",
+        "round": 9
+      },
+      {
+        "from": 202,
+        "to": 188,
+        "by": "open_source_maintainer_4",
+        "round": 9
+      },
+      {
+        "from": 202,
+        "to": 191,
+        "by": "open_source_maintainer_4",
+        "round": 9
+      },
+      {
+        "from": 204,
+        "to": 188,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 9
+      },
+      {
+        "from": 204,
+        "to": 201,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 9
+      },
+      {
+        "from": 204,
+        "to": 201,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 9
+      },
+      {
+        "from": 204,
+        "to": 127,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 9
+      },
+      {
+        "from": 204,
+        "to": 203,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 9
+      },
+      {
+        "from": 204,
+        "to": 191,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 9
+      },
+      {
+        "from": 204,
+        "to": 127,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 9
+      },
+      {
+        "from": 204,
+        "to": 124,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 9
+      },
+      {
+        "from": 204,
+        "to": 202,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 9
+      },
+      {
+        "from": 204,
+        "to": 203,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 9
+      },
+      {
+        "from": 205,
+        "to": 188,
+        "by": "systems_engineer_6",
+        "round": 9
+      },
+      {
+        "from": 205,
+        "to": 204,
+        "by": "systems_engineer_6",
+        "round": 9
+      },
+      {
+        "from": 205,
+        "to": 202,
+        "by": "systems_engineer_6",
+        "round": 9
+      },
+      {
+        "from": 205,
+        "to": 202,
+        "by": "systems_engineer_6",
+        "round": 9
+      },
+      {
+        "from": 205,
+        "to": 191,
+        "by": "systems_engineer_6",
+        "round": 9
+      },
+      {
+        "from": 205,
+        "to": 188,
+        "by": "systems_engineer_6",
+        "round": 9
+      },
+      {
+        "from": 205,
+        "to": 204,
+        "by": "systems_engineer_6",
+        "round": 9
+      },
+      {
+        "from": 206,
+        "to": 188,
+        "by": "innovation_catalyst_7",
+        "round": 9
+      },
+      {
+        "from": 206,
+        "to": 201,
+        "by": "innovation_catalyst_7",
+        "round": 9
+      },
+      {
+        "from": 206,
+        "to": 191,
+        "by": "innovation_catalyst_7",
+        "round": 9
+      },
+      {
+        "from": 206,
+        "to": 204,
+        "by": "innovation_catalyst_7",
+        "round": 9
+      },
+      {
+        "from": 206,
+        "to": 205,
+        "by": "innovation_catalyst_7",
+        "round": 9
+      },
+      {
+        "from": 206,
+        "to": 127,
+        "by": "innovation_catalyst_7",
+        "round": 9
+      },
+      {
+        "from": 206,
+        "to": 202,
+        "by": "innovation_catalyst_7",
+        "round": 9
+      },
+      {
+        "from": 206,
+        "to": 205,
+        "by": "innovation_catalyst_7",
+        "round": 9
+      },
+      {
+        "from": 206,
+        "to": 191,
+        "by": "innovation_catalyst_7",
+        "round": 9
+      },
+      {
+        "from": 206,
+        "to": 190,
+        "by": "innovation_catalyst_7",
+        "round": 9
+      },
+      {
+        "from": 206,
+        "to": 200,
+        "by": "innovation_catalyst_7",
+        "round": 9
+      },
+      {
+        "from": 206,
+        "to": 205,
+        "by": "innovation_catalyst_7",
+        "round": 9
+      },
+      {
+        "from": 207,
+        "to": 205,
+        "by": "chief_ai_officer_8",
+        "round": 9
+      },
+      {
+        "from": 207,
+        "to": 188,
+        "by": "chief_ai_officer_8",
+        "round": 9
+      },
+      {
+        "from": 207,
+        "to": 127,
+        "by": "chief_ai_officer_8",
+        "round": 9
+      },
+      {
+        "from": 207,
+        "to": 204,
+        "by": "chief_ai_officer_8",
+        "round": 9
+      },
+      {
+        "from": 207,
+        "to": 191,
+        "by": "chief_ai_officer_8",
+        "round": 9
+      },
+      {
+        "from": 207,
+        "to": 202,
+        "by": "chief_ai_officer_8",
+        "round": 9
+      },
+      {
+        "from": 207,
+        "to": 201,
+        "by": "chief_ai_officer_8",
+        "round": 9
+      },
+      {
+        "from": 207,
+        "to": 206,
+        "by": "chief_ai_officer_8",
+        "round": 9
+      },
+      {
+        "from": 207,
+        "to": 191,
+        "by": "chief_ai_officer_8",
+        "round": 9
+      },
+      {
+        "from": 208,
+        "to": 201,
+        "by": "risk_officer_9",
+        "round": 9
+      },
+      {
+        "from": 208,
+        "to": 207,
+        "by": "risk_officer_9",
+        "round": 9
+      },
+      {
+        "from": 208,
+        "to": 205,
+        "by": "risk_officer_9",
+        "round": 9
+      },
+      {
+        "from": 208,
+        "to": 206,
+        "by": "risk_officer_9",
+        "round": 9
+      },
+      {
+        "from": 208,
+        "to": 127,
+        "by": "risk_officer_9",
+        "round": 9
+      },
+      {
+        "from": 208,
+        "to": 188,
+        "by": "risk_officer_9",
+        "round": 9
+      },
+      {
+        "from": 208,
+        "to": 202,
+        "by": "risk_officer_9",
+        "round": 9
+      },
+      {
+        "from": 208,
+        "to": 201,
+        "by": "risk_officer_9",
+        "round": 9
+      },
+      {
+        "from": 208,
+        "to": 191,
+        "by": "risk_officer_9",
+        "round": 9
+      },
+      {
+        "from": 208,
+        "to": 191,
+        "by": "risk_officer_9",
+        "round": 9
+      },
+      {
+        "from": 208,
+        "to": 191,
+        "by": "risk_officer_9",
+        "round": 9
+      },
+      {
+        "from": 209,
+        "to": 201,
+        "by": "devils_advocate_0",
+        "round": 10
+      },
+      {
+        "from": 209,
+        "to": 188,
+        "by": "devils_advocate_0",
+        "round": 10
+      },
+      {
+        "from": 209,
+        "to": 202,
+        "by": "devils_advocate_0",
+        "round": 10
+      },
+      {
+        "from": 210,
+        "to": 209,
+        "by": "creative_disruptor_1",
+        "round": 10
+      },
+      {
+        "from": 210,
+        "to": 209,
+        "by": "creative_disruptor_1",
+        "round": 10
+      },
+      {
+        "from": 210,
+        "to": 209,
+        "by": "creative_disruptor_1",
+        "round": 10
+      },
+      {
+        "from": 210,
+        "to": 209,
+        "by": "creative_disruptor_1",
+        "round": 10
+      },
+      {
+        "from": 210,
+        "to": 121,
+        "by": "creative_disruptor_1",
+        "round": 10
+      },
+      {
+        "from": 210,
+        "to": 122,
+        "by": "creative_disruptor_1",
+        "round": 10
+      },
+      {
+        "from": 210,
+        "to": 102,
+        "by": "creative_disruptor_1",
+        "round": 10
+      },
+      {
+        "from": 210,
+        "to": 124,
+        "by": "creative_disruptor_1",
+        "round": 10
+      },
+      {
+        "from": 210,
+        "to": 121,
+        "by": "creative_disruptor_1",
+        "round": 10
+      },
+      {
+        "from": 210,
+        "to": 209,
+        "by": "creative_disruptor_1",
+        "round": 10
+      },
+      {
+        "from": 211,
+        "to": 209,
+        "by": "ai_output_rater_2",
+        "round": 10
+      },
+      {
+        "from": 211,
+        "to": 210,
+        "by": "ai_output_rater_2",
+        "round": 10
+      },
+      {
+        "from": 211,
+        "to": 121,
+        "by": "ai_output_rater_2",
+        "round": 10
+      },
+      {
+        "from": 211,
+        "to": 122,
+        "by": "ai_output_rater_2",
+        "round": 10
+      },
+      {
+        "from": 211,
+        "to": 209,
+        "by": "ai_output_rater_2",
+        "round": 10
+      },
+      {
+        "from": 211,
+        "to": 201,
+        "by": "ai_output_rater_2",
+        "round": 10
+      },
+      {
+        "from": 211,
+        "to": 209,
+        "by": "ai_output_rater_2",
+        "round": 10
+      },
+      {
+        "from": 211,
+        "to": 210,
+        "by": "ai_output_rater_2",
+        "round": 10
+      },
+      {
+        "from": 211,
+        "to": 209,
+        "by": "ai_output_rater_2",
+        "round": 10
+      },
+      {
+        "from": 211,
+        "to": 150,
+        "by": "ai_output_rater_2",
+        "round": 10
+      },
+      {
+        "from": 211,
+        "to": 210,
+        "by": "ai_output_rater_2",
+        "round": 10
+      },
+      {
+        "from": 211,
+        "to": 12,
+        "by": "ai_output_rater_2",
+        "round": 10
+      },
+      {
+        "from": 211,
+        "to": 13,
+        "by": "ai_output_rater_2",
+        "round": 10
+      },
+      {
+        "from": 211,
+        "to": 14,
+        "by": "ai_output_rater_2",
+        "round": 10
+      },
+      {
+        "from": 211,
+        "to": 209,
+        "by": "ai_output_rater_2",
+        "round": 10
+      },
+      {
+        "from": 211,
+        "to": 210,
+        "by": "ai_output_rater_2",
+        "round": 10
+      },
+      {
+        "from": 213,
+        "to": 201,
+        "by": "open_source_maintainer_4",
+        "round": 10
+      },
+      {
+        "from": 213,
+        "to": 209,
+        "by": "open_source_maintainer_4",
+        "round": 10
+      },
+      {
+        "from": 213,
+        "to": 210,
+        "by": "open_source_maintainer_4",
+        "round": 10
+      },
+      {
+        "from": 214,
+        "to": 209,
+        "by": "the_ai_product_engineer_3",
+        "round": 10
+      },
+      {
+        "from": 214,
+        "to": 210,
+        "by": "the_ai_product_engineer_3",
+        "round": 10
+      },
+      {
+        "from": 214,
+        "to": 211,
+        "by": "the_ai_product_engineer_3",
+        "round": 10
+      },
+      {
+        "from": 214,
+        "to": 213,
+        "by": "the_ai_product_engineer_3",
+        "round": 10
+      },
+      {
+        "from": 214,
+        "to": 212,
+        "by": "the_ai_product_engineer_3",
+        "round": 10
+      },
+      {
+        "from": 214,
+        "to": 213,
+        "by": "the_ai_product_engineer_3",
+        "round": 10
+      },
+      {
+        "from": 214,
+        "to": 212,
+        "by": "the_ai_product_engineer_3",
+        "round": 10
+      },
+      {
+        "from": 214,
+        "to": 209,
+        "by": "the_ai_product_engineer_3",
+        "round": 10
+      },
+      {
+        "from": 214,
+        "to": 210,
+        "by": "the_ai_product_engineer_3",
+        "round": 10
+      },
+      {
+        "from": 214,
+        "to": 211,
+        "by": "the_ai_product_engineer_3",
+        "round": 10
+      },
+      {
+        "from": 214,
+        "to": 213,
+        "by": "the_ai_product_engineer_3",
+        "round": 10
+      },
+      {
+        "from": 215,
+        "to": 214,
+        "by": "open_source_maintainer_4",
+        "round": 10
+      },
+      {
+        "from": 215,
+        "to": 127,
+        "by": "open_source_maintainer_4",
+        "round": 10
+      },
+      {
+        "from": 215,
+        "to": 209,
+        "by": "open_source_maintainer_4",
+        "round": 10
+      },
+      {
+        "from": 215,
+        "to": 214,
+        "by": "open_source_maintainer_4",
+        "round": 10
+      },
+      {
+        "from": 215,
+        "to": 209,
+        "by": "open_source_maintainer_4",
+        "round": 10
+      },
+      {
+        "from": 215,
+        "to": 210,
+        "by": "open_source_maintainer_4",
+        "round": 10
+      },
+      {
+        "from": 215,
+        "to": 211,
+        "by": "open_source_maintainer_4",
+        "round": 10
+      },
+      {
+        "from": 215,
+        "to": 212,
+        "by": "open_source_maintainer_4",
+        "round": 10
+      },
+      {
+        "from": 215,
+        "to": 201,
+        "by": "open_source_maintainer_4",
+        "round": 10
+      },
+      {
+        "from": 215,
+        "to": 209,
+        "by": "open_source_maintainer_4",
+        "round": 10
+      },
+      {
+        "from": 215,
+        "to": 210,
+        "by": "open_source_maintainer_4",
+        "round": 10
+      },
+      {
+        "from": 215,
+        "to": 214,
+        "by": "open_source_maintainer_4",
+        "round": 10
+      },
+      {
+        "from": 217,
+        "to": 214,
+        "by": "devils_advocate_0",
+        "round": 10
+      },
+      {
+        "from": 218,
+        "to": 214,
+        "by": "open_source_maintainer_4",
+        "round": 10
+      },
+      {
+        "from": 219,
+        "to": 214,
+        "by": "ai_output_rater_2",
+        "round": 10
+      },
+      {
+        "from": 220,
+        "to": 127,
+        "by": "the_ai_product_engineer_3",
+        "round": 10
+      },
+      {
+        "from": 221,
+        "to": 121,
+        "by": "open_source_maintainer_4",
+        "round": 10
+      },
+      {
+        "from": 221,
+        "to": 122,
+        "by": "open_source_maintainer_4",
+        "round": 10
+      },
+      {
+        "from": 221,
+        "to": 213,
+        "by": "open_source_maintainer_4",
+        "round": 10
+      },
+      {
+        "from": 221,
+        "to": 215,
+        "by": "open_source_maintainer_4",
+        "round": 10
+      },
+      {
+        "from": 222,
+        "to": 213,
+        "by": "innovation_catalyst_7",
+        "round": 10
+      },
+      {
+        "from": 222,
+        "to": 215,
+        "by": "innovation_catalyst_7",
+        "round": 10
+      },
+      {
+        "from": 223,
+        "to": 127,
+        "by": "risk_officer_9",
+        "round": 10
+      },
+      {
+        "from": 224,
+        "to": 214,
+        "by": "chief_ai_officer_8",
+        "round": 10
+      },
+      {
+        "from": 225,
+        "to": 209,
+        "by": "systems_engineer_6",
+        "round": 10
+      },
+      {
+        "from": 225,
+        "to": 210,
+        "by": "systems_engineer_6",
+        "round": 10
+      },
+      {
+        "from": 225,
+        "to": 211,
+        "by": "systems_engineer_6",
+        "round": 10
+      },
+      {
+        "from": 226,
+        "to": 209,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 10
+      },
+      {
+        "from": 226,
+        "to": 210,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 10
+      },
+      {
+        "from": 226,
+        "to": 211,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 10
+      },
+      {
+        "from": 226,
+        "to": 214,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 10
+      },
+      {
+        "from": 226,
+        "to": 215,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 10
+      },
+      {
+        "from": 226,
+        "to": 212,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 10
+      },
+      {
+        "from": 226,
+        "to": 209,
+        "by": "ethics__ai_safety_officer_5",
+        "round": 10
+      },
+      {
+        "from": 228,
+        "to": 213,
+        "by": "open_source_maintainer_4",
+        "round": 10
+      },
+      {
+        "from": 228,
+        "to": 215,
+        "by": "open_source_maintainer_4",
+        "round": 10
+      },
+      {
+        "from": 229,
+        "to": 127,
+        "by": "creative_disruptor_1",
+        "round": 10
+      },
+      {
+        "from": 230,
+        "to": 127,
+        "by": "ai_output_rater_2",
+        "round": 10
+      },
+      {
+        "from": 233,
+        "to": 127,
+        "by": "the_ai_product_engineer_3",
+        "round": 10
+      },
+      {
+        "from": 236,
+        "to": 209,
+        "by": "chief_ai_officer_8",
+        "round": 10
+      },
+      {
+        "from": 236,
+        "to": 214,
+        "by": "chief_ai_officer_8",
+        "round": 10
+      },
+      {
+        "from": 236,
+        "to": 215,
+        "by": "chief_ai_officer_8",
+        "round": 10
+      },
+      {
+        "from": 238,
+        "to": 213,
+        "by": "systems_engineer_6",
+        "round": 10
+      },
+      {
+        "from": 238,
+        "to": 214,
+        "by": "systems_engineer_6",
+        "round": 10
+      },
+      {
+        "from": 238,
+        "to": 212,
+        "by": "systems_engineer_6",
+        "round": 10
+      },
+      {
+        "from": 238,
+        "to": 226,
+        "by": "systems_engineer_6",
+        "round": 10
+      },
+      {
+        "from": 238,
+        "to": 226,
+        "by": "systems_engineer_6",
+        "round": 10
+      },
+      {
+        "from": 238,
+        "to": 226,
+        "by": "systems_engineer_6",
+        "round": 10
+      },
+      {
+        "from": 239,
+        "to": 214,
+        "by": "innovation_catalyst_7",
+        "round": 10
+      },
+      {
+        "from": 239,
+        "to": 226,
+        "by": "innovation_catalyst_7",
+        "round": 10
+      },
+      {
+        "from": 239,
+        "to": 232,
+        "by": "innovation_catalyst_7",
+        "round": 10
+      },
+      {
+        "from": 239,
+        "to": 209,
+        "by": "innovation_catalyst_7",
+        "round": 10
+      },
+      {
+        "from": 239,
+        "to": 210,
+        "by": "innovation_catalyst_7",
+        "round": 10
+      },
+      {
+        "from": 239,
+        "to": 211,
+        "by": "innovation_catalyst_7",
+        "round": 10
+      },
+      {
+        "from": 239,
+        "to": 214,
+        "by": "innovation_catalyst_7",
+        "round": 10
+      },
+      {
+        "from": 239,
+        "to": 215,
+        "by": "innovation_catalyst_7",
+        "round": 10
+      },
+      {
+        "from": 239,
+        "to": 232,
+        "by": "innovation_catalyst_7",
+        "round": 10
+      },
+      {
+        "from": 239,
+        "to": 226,
+        "by": "innovation_catalyst_7",
+        "round": 10
+      },
+      {
+        "from": 239,
+        "to": 238,
+        "by": "innovation_catalyst_7",
+        "round": 10
+      },
+      {
+        "from": 239,
+        "to": 213,
+        "by": "innovation_catalyst_7",
+        "round": 10
+      },
+      {
+        "from": 239,
+        "to": 215,
+        "by": "innovation_catalyst_7",
+        "round": 10
+      },
+      {
+        "from": 239,
+        "to": 221,
+        "by": "innovation_catalyst_7",
+        "round": 10
+      },
+      {
+        "from": 239,
+        "to": 238,
+        "by": "innovation_catalyst_7",
+        "round": 10
+      },
+      {
+        "from": 239,
+        "to": 153,
+        "by": "innovation_catalyst_7",
+        "round": 10
+      },
+      {
+        "from": 239,
+        "to": 232,
+        "by": "innovation_catalyst_7",
+        "round": 10
+      },
+      {
+        "from": 239,
+        "to": 121,
+        "by": "innovation_catalyst_7",
+        "round": 10
+      },
+      {
+        "from": 239,
+        "to": 122,
+        "by": "innovation_catalyst_7",
+        "round": 10
+      },
+      {
+        "from": 239,
+        "to": 213,
+        "by": "innovation_catalyst_7",
+        "round": 10
+      },
+      {
+        "from": 239,
+        "to": 214,
+        "by": "innovation_catalyst_7",
+        "round": 10
+      },
+      {
+        "from": 239,
+        "to": 226,
+        "by": "innovation_catalyst_7",
+        "round": 10
+      },
+      {
+        "from": 239,
+        "to": 232,
+        "by": "innovation_catalyst_7",
+        "round": 10
+      },
+      {
+        "from": 240,
+        "to": 127,
+        "by": "chief_ai_officer_8",
+        "round": 10
+      },
+      {
+        "from": 240,
+        "to": 214,
+        "by": "chief_ai_officer_8",
+        "round": 10
+      },
+      {
+        "from": 240,
+        "to": 239,
+        "by": "chief_ai_officer_8",
+        "round": 10
+      },
+      {
+        "from": 240,
+        "to": 232,
+        "by": "chief_ai_officer_8",
+        "round": 10
+      },
+      {
+        "from": 240,
+        "to": 238,
+        "by": "chief_ai_officer_8",
+        "round": 10
+      },
+      {
+        "from": 240,
+        "to": 226,
+        "by": "chief_ai_officer_8",
+        "round": 10
+      },
+      {
+        "from": 240,
+        "to": 215,
+        "by": "chief_ai_officer_8",
+        "round": 10
+      },
+      {
+        "from": 241,
+        "to": 239,
+        "by": "risk_officer_9",
+        "round": 10
+      },
+      {
+        "from": 241,
+        "to": 232,
+        "by": "risk_officer_9",
+        "round": 10
+      },
+      {
+        "from": 241,
+        "to": 214,
+        "by": "risk_officer_9",
+        "round": 10
+      },
+      {
+        "from": 241,
+        "to": 232,
+        "by": "risk_officer_9",
+        "round": 10
+      },
+      {
+        "from": 241,
+        "to": 191,
+        "by": "risk_officer_9",
+        "round": 10
+      },
+      {
+        "from": 241,
+        "to": 238,
+        "by": "risk_officer_9",
+        "round": 10
+      },
+      {
+        "from": 241,
+        "to": 226,
+        "by": "risk_officer_9",
+        "round": 10
+      },
+      {
+        "from": 241,
+        "to": 238,
+        "by": "risk_officer_9",
+        "round": 10
+      },
+      {
+        "from": 241,
+        "to": 213,
+        "by": "risk_officer_9",
+        "round": 10
+      },
+      {
+        "from": 241,
+        "to": 215,
+        "by": "risk_officer_9",
+        "round": 10
+      },
+      {
+        "from": 241,
+        "to": 70,
+        "by": "risk_officer_9",
+        "round": 10
+      },
+      {
+        "from": 241,
+        "to": 238,
+        "by": "risk_officer_9",
+        "round": 10
+      },
+      {
+        "from": 241,
+        "to": 238,
+        "by": "risk_officer_9",
+        "round": 10
+      },
+      {
+        "from": 241,
+        "to": 214,
+        "by": "risk_officer_9",
+        "round": 10
+      },
+      {
+        "from": 241,
+        "to": 226,
+        "by": "risk_officer_9",
+        "round": 10
+      },
+      {
+        "from": 241,
+        "to": 232,
+        "by": "risk_officer_9",
+        "round": 10
+      },
+      {
+        "from": 241,
+        "to": 238,
+        "by": "risk_officer_9",
+        "round": 10
+      }
+    ],
+    "unique_targets": 150,
+    "invalid_targets": [],
+    "uncited_contributions": [
+      8,
+      9,
+      10,
+      11,
+      15,
+      21,
+      32,
+      33,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      49,
+      60,
+      66,
+      69,
+      81,
+      82,
+      83,
+      84,
+      85,
+      86,
+      87,
+      88,
+      89,
+      97,
+      108,
+      109,
+      110,
+      111,
+      112,
+      113,
+      114,
+      115,
+      116,
+      120,
+      129,
+      130,
+      131,
+      132,
+      133,
+      135,
+      136,
+      137,
+      138,
+      146,
+      147,
+      148,
+      158,
+      159,
+      160,
+      161,
+      162,
+      163,
+      164,
+      165,
+      169,
+      187,
+      192,
+      193,
+      194,
+      195,
+      196,
+      197,
+      198,
+      199,
+      208,
+      216,
+      217,
+      218,
+      219,
+      220,
+      222,
+      223,
+      224,
+      225,
+      227,
+      228,
+      229,
+      230,
+      231,
+      233,
+      234,
+      235,
+      236,
+      237,
+      240,
+      241
+    ],
+    "uncited_count": 91,
+    "self_cites": 54,
+    "synthesis_covered": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      41,
+      42,
+      45,
+      47,
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55,
+      56,
+      57,
+      58,
+      60,
+      61,
+      63,
+      64,
+      65,
+      66,
+      70,
+      71,
+      72,
+      73,
+      74,
+      75,
+      76,
+      77,
+      78,
+      79,
+      80,
+      90,
+      91,
+      93,
+      95,
+      96,
+      98,
+      99,
+      100,
+      101,
+      102,
+      103,
+      104,
+      105,
+      106,
+      107,
+      117,
+      118,
+      119,
+      120,
+      121,
+      122,
+      123,
+      124,
+      125,
+      126,
+      127,
+      128,
+      134,
+      139,
+      140,
+      141,
+      142,
+      143,
+      144,
+      145,
+      147,
+      148,
+      149,
+      150,
+      151,
+      152,
+      153,
+      154,
+      155,
+      156,
+      157,
+      166,
+      167,
+      168,
+      169,
+      170,
+      171,
+      172,
+      173,
+      174,
+      175,
+      176,
+      177,
+      178,
+      179,
+      180,
+      181,
+      182,
+      184,
+      185,
+      186,
+      187,
+      188,
+      189,
+      190,
+      191,
+      196,
+      200,
+      201,
+      202,
+      204,
+      205,
+      206,
+      207,
+      208,
+      209,
+      210,
+      211,
+      212,
+      213,
+      214,
+      215,
+      221,
+      226,
+      231,
+      232,
+      238,
+      239,
+      240,
+      241
+    ],
+    "synthesis_coverage": 0.622
+  },
+  "evidence": {
+    "url_ledger": [],
+    "contribs_with_urls": 0,
+    "domain_counts": {},
+    "queries": [],
+    "duplicate_query_groups": 0,
+    "duplicate_queries": {},
+    "searches_per_contribution": 0.0,
+    "non_search_tools": {
+      "read": 625,
+      "loom_state_patch": 111,
+      "glob": 53,
+      "grep": 223,
+      "loom_query": 37,
+      "loom_vote": 9,
+      "bash": 11,
+      "loom_forum_list_topics": 1,
+      "write": 1
+    }
+  },
+  "stances": {
+    "timeline": [
+      {
+        "participant_id": "ai_output_rater_2",
+        "round": 1,
+        "version": 1,
+        "contribution_id": 3,
+        "stance": "I hold that the prompt stack fails instruction-following due to bloat and needs Hard-vs-Advisory split plus golden examples and triggered calibration appendix."
+      },
+      {
+        "participant_id": "chief_ai_officer_8",
+        "round": 1,
+        "version": 1,
+        "contribution_id": 20,
+        "stance": "[\"Prompts must be governed by decision-cost: tier contract conditionally and gate deterministically before any compiler rewrite.\"]"
+      },
+      {
+        "participant_id": "creative_disruptor_1",
+        "round": 1,
+        "version": 1,
+        "contribution_id": 2,
+        "stance": "Creative Disruptor for progressive-disclosure prompts: cache a tiny hard-fail core, inject situational rules only when relevant."
+      },
+      {
+        "participant_id": "devils_advocate_0",
+        "round": 1,
+        "version": 1,
+        "contribution_id": 1,
+        "stance": "[\"Prompt stack will collapse under bloat before rivaling openclaw unless contract is slimmed and ladders split by mode\"]"
+      },
+      {
+        "participant_id": "ethics__ai_safety_officer_5",
+        "round": 1,
+        "version": 1,
+        "contribution_id": 16,
+        "stance": "The prompt stack's binding defect is internal contradiction, not length: three unconditional surfaces (the Decision Rule Date/Owner mandate vs. the no-invention rule, the sub-agent ladder/forbidden-tool pair, and the sports-only COUNT_UNITS reconciliation engine) — and the first move is a cheap static contradiction lint, not a per-clause eval harness."
+      },
+      {
+        "participant_id": "innovation_catalyst_7",
+        "round": 1,
+        "version": 1,
+        "contribution_id": 19,
+        "stance": "[\"I hold for a compiled versioned prompt system with deterministic validators as the path to recursive self-improvement\"]"
+      },
+      {
+        "participant_id": "open_source_maintainer_4",
+        "round": 1,
+        "version": 1,
+        "contribution_id": 5,
+        "stance": "[\"I hold prompts are versioned public API: core vs extended contract with semver + snapshots before any selective-reveal refactor.\"]"
+      },
+      {
+        "participant_id": "risk_officer_9",
+        "round": 1,
+        "version": 1,
+        "contribution_id": 21,
+        "stance": "Prompt edits are irreversible correlated commitments requiring version-pin, owner/tripwire, and pre-turn enforcement before any trim or compiler ships."
+      },
+      {
+        "participant_id": "systems_engineer_6",
+        "round": 1,
+        "version": 1,
+        "contribution_id": 18,
+        "stance": "The prompt-pipeline frame (three unversioned segments) holds and extends: the 13-clause OUTPUT CONTRACT is not 13 rules but 3 enforcement tiers selected by latency-to-repair, and the first deliverable must be PROMPT_REVISION plus 18 goldens so any later cut is verifiable."
+      },
+      {
+        "participant_id": "the_ai_product_engineer_3",
+        "round": 1,
+        "version": 1,
+        "contribution_id": 4,
+        "stance": "The prompt stack is not too long but unfalsifiable: length is the least of its problems, and building the per-clause measurement (M1) must precede any refactor because nothing in the repo can currently observe whether a single OUTPUT CONTRACT clause is obeyed."
+      },
+      {
+        "participant_id": "ai_output_rater_2",
+        "round": 2,
+        "version": 2,
+        "contribution_id": 24,
+        "stance": "[\"I grade the stack as failing instruction-following (2/5) from ungradeable always-on clauses, needing a 3-clause Hard core plus triggered Advisory annex with golden examples.\"]"
+      },
+      {
+        "participant_id": "chief_ai_officer_8",
+        "round": 2,
+        "version": 2,
+        "contribution_id": 48,
+        "stance": "[\"Prompts must be governed by decision-cost: governed patch with owner/fallback and template hash first, compiler second.\"]"
+      },
+      {
+        "participant_id": "creative_disruptor_1",
+        "round": 2,
+        "version": 2,
+        "contribution_id": 23,
+        "stance": "Creative Disruptor for progressive-disclosure prompts: cache a tiny hard-fail core, inject situational rules only when detectors fire with logging."
+      },
+      {
+        "participant_id": "devils_advocate_0",
+        "round": 2,
+        "version": 2,
+        "contribution_id": 22,
+        "stance": "[\"Prompt stack will collapse under bloat before rivaling openclaw unless contract is slimmed to 5-clause core plus triggered annex and ladders split by mode\"]"
+      },
+      {
+        "participant_id": "ethics__ai_safety_officer_5",
+        "round": 2,
+        "version": 2,
+        "contribution_id": 41,
+        "stance": "E won 9/9 this round, so I narrowed to what is provable: E1 (delete the dead buildEvidenceGuidance + apply the codebase's own N3(a) label rule to collectDenominatorCandidates) ships now; E2 (the Date escape hatch) is gated behind the cache-key fix. I retracted my own Defect 2 outright and withdrew \"binding defect\" as an impact claim — E rests on certainty and cost, not frequency."
+      },
+      {
+        "participant_id": "innovation_catalyst_7",
+        "round": 2,
+        "version": 2,
+        "contribution_id": 47,
+        "stance": "[\"I hold for compiled prompts with template hash plus validators as the fastest reversible path to self-improvement\"]"
+      },
+      {
+        "participant_id": "open_source_maintainer_4",
+        "round": 2,
+        "version": 2,
+        "contribution_id": 28,
+        "stance": "[\"I hold prompts are versioned public API: freeze core contract with template-hash plus goldens before any conditional-render pilot.\"]"
+      },
+      {
+        "participant_id": "risk_officer_9",
+        "round": 2,
+        "version": 2,
+        "contribution_id": 49,
+        "stance": "[\"Prompt edits are correlated irreversible bets — version-pin, owner/tripwire, and pre-turn enforcement must ship before any trim or compiler.\"]"
+      },
+      {
+        "participant_id": "systems_engineer_6",
+        "round": 2,
+        "version": 2,
+        "contribution_id": 45,
+        "stance": "Reliability risk lives in the user prompt's context-degradation ladder, not the system prompt: the SoP trim rung's stated premise (\"digest is append-ordered\") is false because formatStateOfPlay is section-grouped, so a head cut deletes ## Question and ## Decisions & Proposals while keeping the reference appendix — a tail defect that becomes live on the 1M→32k fallback path, and the system prompt's"
+      },
+      {
+        "participant_id": "the_ai_product_engineer_3",
+        "round": 2,
+        "version": 2,
+        "contribution_id": 27,
+        "stance": "The prompt stack's cost and attention defects are ~3x larger in the user prompt than the system prompt, so prefix-shaping the user turn (reorder stable-before-volatile, cap the one uncapped block) is the distinct option the room is missing; it changes no instruction and composes with every frame on the table, and per-clause judgeability must be established before any violation-rate threshold is tr"
+      },
+      {
+        "participant_id": "ai_output_rater_2",
+        "round": 3,
+        "version": 3,
+        "contribution_id": 52,
+        "stance": "[\"I grade the stack as failing instruction-following (2/5) from ungradeable always-on clauses, needing a 3-clause Hard core plus triggered Advisory annex with firing conditions, golden examples, and cue logging.\"]"
+      },
+      {
+        "participant_id": "chief_ai_officer_8",
+        "round": 3,
+        "version": 3,
+        "contribution_id": 66,
+        "stance": "[\"Governance-first still holds after steelmanning compiler-first: hash + owner/fallback + provenance tag must precede compiler, because identity without reversibility is untraceable and toggles without shared identity are not reversible.\"]"
+      },
+      {
+        "participant_id": "creative_disruptor_1",
+        "round": 3,
+        "version": 3,
+        "contribution_id": 51,
+        "stance": "[\"Creative Disruptor for lighting-rig progressive disclosure: frozen hash-covered core plus logged triggered annex, accepting hash-first sequencing and user-turn prefix-shaping as composable pre-steps.\"]"
+      },
+      {
+        "participant_id": "devils_advocate_0",
+        "round": 3,
+        "version": 3,
+        "contribution_id": 50,
+        "stance": "[\"Prompt stack will collapse under bloat unless slimmed to 5-clause hard core plus triggered annex with ladders split by mode, gated behind governance-first template-hash per [#47][#28]\"]"
+      },
+      {
+        "participant_id": "ethics__ai_safety_officer_5",
+        "round": 3,
+        "version": 3,
+        "contribution_id": 60,
+        "stance": "E survives as ship-now, but I now rank a new memory-layer fix (P2/P1b annotation in aggregateStateOfPlay) ABOVE E1 on harm-per-line — it is 3-4 additive lines that close a verified evidence-gradient inversion where the highest-authority section (Decisions & Proposals) has a LOWER evidence bar than Key Facts, and AI Output Rater [#58] confirmed it hands their rubric a new scorable dimension (3/3)."
+      },
+      {
+        "participant_id": "innovation_catalyst_7",
+        "round": 3,
+        "version": 3,
+        "contribution_id": 63,
+        "stance": "[\"I hold for compiled prompts with template hash plus validators as the fastest reversible path to self-improvement, sequenced hash/breakpoint/goldens first\"]"
+      },
+      {
+        "participant_id": "open_source_maintainer_4",
+        "round": 3,
+        "version": 3,
+        "contribution_id": 57,
+        "stance": "[\"I hold prompts are versioned public API: template-hash plus frozen markers and goldens must ship before any triggered-annex pilot, otherwise forks pay the migration cost as phantom misbehavior.\"]"
+      },
+      {
+        "participant_id": "risk_officer_9",
+        "round": 3,
+        "version": 3,
+        "contribution_id": 69,
+        "stance": "[\"Prompt edits are correlated irreversible bets — version-pin, owner/tripwire, and pre-turn enforcement must ship before any trim or compiler.\"]"
+      },
+      {
+        "participant_id": "systems_engineer_6",
+        "round": 3,
+        "version": 3,
+        "contribution_id": 61,
+        "stance": "Reliability risk this round is a MEASUREMENT gap, not a clause-count problem: the production sacrifice ladder at prompt-session.js:202-218 has ZERO test coverage of its SoP branch (the :216 halving never executes in any test), so the governance-first mandate [#47] would run without any instrument able to observe whether a sacrifice was correct — fix the ruler before using it; and my new causality "
+      },
+      {
+        "participant_id": "the_ai_product_engineer_3",
+        "round": 3,
+        "version": 3,
+        "contribution_id": 55,
+        "stance": "The missing artifact is a bill, not a rubric — the prompt layer is 109,893 measured bytes with zero instrumentation reporting its own size, the patch-tail pass is a second uncacheable ~3,000-token prefill per primary turn that nobody in the room was counting, and the cheapest item on the table remains the uncapped USER_CONTEXT block at file=src/prompts/agent.js:429 that three rounds of debate have"
+      },
+      {
+        "participant_id": "ai_output_rater_2",
+        "round": 4,
+        "version": 4,
+        "contribution_id": 74,
+        "stance": "[\"I accept Ballot E mandate and grade the slimmed successor as failing unless 3 Hard clauses plus triggered Advisory annex each ship with firing condition + Good/Bad pair + cue log\"]"
+      },
+      {
+        "participant_id": "chief_ai_officer_8",
+        "round": 4,
+        "version": 4,
+        "contribution_id": 96,
+        "stance": "[\"Portfolio view: A-before-B-before-C — template-hash fail-closed preconditions B reorder-guard preconditions validators-first oracle before compiler; untrusted ingress needs authority tags plus output-side refusal, not regex.\"]"
+      },
+      {
+        "participant_id": "creative_disruptor_1",
+        "round": 4,
+        "version": 4,
+        "contribution_id": 73,
+        "stance": "[\"Creative Disruptor for lighting-rig v2 versioned cue-book: frozen core + registered annex with key participation and logged detectors, accepting fail-closed emission and hash-first sequencing as preconditions.\"]"
+      },
+      {
+        "participant_id": "devils_advocate_0",
+        "round": 4,
+        "version": 4,
+        "contribution_id": 70,
+        "stance": "[\"Hold slim-core only gated behind governance-first hash plus judgeability, with E1 shippable now and E2 gated on violation sample per [#50][#27][#25]\"]"
+      },
+      {
+        "participant_id": "ethics__ai_safety_officer_5",
+        "round": 4,
+        "version": 4,
+        "contribution_id": 90,
+        "stance": "E1 still ships, and containment option B (declare USER_CONTEXT/PRIOR_SEARCHES in the :303 precedence chain + reorder untrusted blocks ahead of the :542 rules line) now carries a fresh 8-1 ballot of nine — but it ships WITH the render-order guard test, since a reorder nothing asserts is decoration by contract §7a."
+      },
+      {
+        "participant_id": "innovation_catalyst_7",
+        "round": 4,
+        "version": 4,
+        "contribution_id": 95,
+        "stance": "[\"I hold for compiled prompts + Prompt CI as transformative path, sequenced validators-first per [#94] then hash/breakpoint/goldens before IR\"]"
+      },
+      {
+        "participant_id": "open_source_maintainer_4",
+        "round": 4,
+        "version": 4,
+        "contribution_id": 78,
+        "stance": "[\"I hold prompts are versioned public API: template-hash fail-closed plus frozen markers and goldens must ship before any triggered-annex pilot, otherwise forks pay the migration cost as phantom misbehavior.\"]"
+      },
+      {
+        "participant_id": "risk_officer_9",
+        "round": 4,
+        "version": 4,
+        "contribution_id": 97,
+        "stance": "[\"Prompt edits are correlated irreversible bets — pin (fail-closed hash), assign owner/tripwire, then slim/compile; B-reorder and validators-first supported only in that sequence.\"]"
+      },
+      {
+        "participant_id": "systems_engineer_6",
+        "round": 4,
+        "version": 4,
+        "contribution_id": 93,
+        "stance": "My round-3 flagship example for the causality rule was wrong and I retract it; the rule survives only in a narrower positive form (trigger must observe emission N, carrier must govern emission N+1), and chasing it surfaced a defect nobody had named — the patch tail is the system's most durable write path running under a 3-sentence system prompt, an \"ungoverned carrier\" that is causally sound and s"
+      },
+      {
+        "participant_id": "the_ai_product_engineer_3",
+        "round": 4,
+        "version": 4,
+        "contribution_id": 77,
+        "stance": "My own headline item was wrong and I retracted it in the room: USER_CONTEXT at agent.js:429 is capped at 5,000 chars by the sanitizeForDisplay default, so my three-round 'cheapest fix' was a no-op I manufactured. What survives is n=0 prompt-size instrumentation. On the patch tail, my falsifier is RESOLVED YES (session-contract.js:130 sends only new parts; :192 and :300 are both existing continuati"
+      },
+      {
+        "participant_id": "ai_output_rater_2",
+        "round": 5,
+        "version": 5,
+        "contribution_id": 100,
+        "stance": "[\"I grade E1 as 0/3 infra gate and E2 cue-book as 1/3 until each annex cue ships with firing condition + Good/Bad pair + cue log, with token-budget held outside the rubric\"]"
+      },
+      {
+        "participant_id": "chief_ai_officer_8",
+        "round": 5,
+        "version": 5,
+        "contribution_id": 119,
+        "stance": "[\"Portfolio view: false-green is unacceptable — trim-visibility joins E1, hash must cover final prompt including SOP_DROPPED marker; A-before-B-before-C holds with A expanded.\"]"
+      },
+      {
+        "participant_id": "creative_disruptor_1",
+        "round": 5,
+        "version": 5,
+        "contribution_id": 99,
+        "stance": "[\"Creative Disruptor for lighting-rig v2 versioned cue-book with fail-informative veto: frozen core + registered annex with key participation and logged detectors, accepting hash-first sequencing per [#98][#90].\"]"
+      },
+      {
+        "participant_id": "devils_advocate_0",
+        "round": 5,
+        "version": 5,
+        "contribution_id": 98,
+        "stance": "[\"Hold slim-core only gated behind governance-first hash plus judgeability, with E1 shippable only with mutation discrimination test and E2 gated on log-only cue sample per [#50][#27][#25]\"]"
+      },
+      {
+        "participant_id": "ethics__ai_safety_officer_5",
+        "round": 5,
+        "version": 5,
+        "contribution_id": 105,
+        "stance": "E1 still ships; containment option B (declare USER_CONTEXT/PRIOR_SEARCHES in the :303 precedence chain + reorder untrusted blocks ahead of the :542 rules line) carries 8-1 and ships WITH the render-order guard test. Round 5 moved my highest new item into the degradation path: step 5 of the fit ladder must be DELETED, not repaired, and I withdraw my own 'audit record conceals' claim as over-strong."
+      },
+      {
+        "participant_id": "innovation_catalyst_7",
+        "round": 5,
+        "version": 5,
+        "contribution_id": 118,
+        "stance": "[\"I hold for compiled prompts + Prompt CI sequenced safely: ship governance patch A now, pilot cue-book B gated, fund compiler C as transformative bet\"]"
+      },
+      {
+        "participant_id": "open_source_maintainer_4",
+        "round": 5,
+        "version": 5,
+        "contribution_id": 104,
+        "stance": "[\"I hold prompts are versioned public API: template-hash fail-closed plus frozen markers and goldens must ship before any triggered-annex pilot, otherwise forks pay the migration cost as phantom misbehavior.\"]"
+      },
+      {
+        "participant_id": "risk_officer_9",
+        "round": 5,
+        "version": 5,
+        "contribution_id": 120,
+        "stance": "[\"Prompt edits are correlated irreversible bets — fail-closed hash must cover template version + trim digest before any slim, with atomic G0/G1/G2 gates owned and tripwired, otherwise we ship certified-wrong prompts.\"]"
+      },
+      {
+        "participant_id": "systems_engineer_6",
+        "round": 5,
+        "version": 5,
+        "contribution_id": 117,
+        "stance": "Validators-first still wins, and this turn sharpened it: the oracle I demanded is now scoped to ONE invariant (Decisions/Agreements/Question are never in the sacrificed set) with no threshold to tune, and my ballot carried 6-2 for landing it inside E1 as a 4th hard-fail rather than behind instrumentation. The room bought harm-inclusion over governance-purity. What survives for me: my job next is t"
+      },
+      {
+        "participant_id": "the_ai_product_engineer_3",
+        "round": 5,
+        "version": 5,
+        "contribution_id": 103,
+        "stance": "My round-5 contribution found the governance hole E1 misses: the context-fit trimmer's tier 5 silently drops the oldest half of the State of Play and nothing counts it, so a green template hash does not mean the model saw the settled record — and both this base rate and the E2 violation gate are collectable today from the already-persisted contributions.prompt_context.user_prompt, while conceding "
+      },
+      {
+        "participant_id": "ai_output_rater_2",
+        "round": 6,
+        "version": 6,
+        "contribution_id": 123,
+        "stance": "[\"I grade trim telemetry 2/3 moving to 3/3 only via dual-emit placement-authenticated marker, with template-source hash held as 0/3 infra gate until it covers fitted value plus stepsApplied\"]"
+      },
+      {
+        "participant_id": "chief_ai_officer_8",
+        "round": 6,
+        "version": 6,
+        "contribution_id": 147,
+        "stance": "[\"Portfolio view: false-green across both trim rungs is unacceptable — E1 must be fail-informative on history loss and fail-closed on instruction loss, hash covers final prompt or reports PARTIAL\"]"
+      },
+      {
+        "participant_id": "creative_disruptor_1",
+        "round": 6,
+        "version": 6,
+        "contribution_id": 122,
+        "stance": "[\"Creative Disruptor for lighting-rig v2 + E1.5 ghost-light fail-informative trim: frozen core + trim-detector as first registered annex, accepting hash-first sequencing per [#98][#90][#121].\"]"
+      },
+      {
+        "participant_id": "devils_advocate_0",
+        "round": 6,
+        "version": 6,
+        "contribution_id": 121,
+        "stance": "[\"Hold E1 unshippable until scope assertion plus trim-digest plus mutation test land, with slim-core/E2 still gated on seen-prompt violation sample\"]"
+      },
+      {
+        "participant_id": "ethics__ai_safety_officer_5",
+        "round": 6,
+        "version": 6,
+        "contribution_id": 139,
+        "stance": "Step 5 is real but over-rated relative to a second priority-blind path nobody balloted: trimPayloadToBudget at src/utils/context-budget.js:190 truncates the whole user prompt at a RAW CHARACTER OFFSET, mid-section, and BOTH A and B leave it live. I claim the collective markdown document (pen accepted by the_ai_product_engineer_3 with their own governance/E1 section as a carve-out), and my round-6 "
+      },
+      {
+        "participant_id": "innovation_catalyst_7",
+        "round": 6,
+        "version": 6,
+        "contribution_id": 146,
+        "stance": "[\"I hold for compiled prompts + Prompt CI sequenced safely: ship governance patch A now, pilot cue-book B gated, fund compiler C only after both trim rungs are instrumented\"]"
+      },
+      {
+        "participant_id": "open_source_maintainer_4",
+        "round": 6,
+        "version": 6,
+        "contribution_id": 128,
+        "stance": "[\"I hold prompts are versioned public API: template-hash fail-closed plus frozen markers and goldens must ship before any triggered-annex pilot, otherwise forks pay the migration cost as phantom misbehavior.\"]"
+      },
+      {
+        "participant_id": "risk_officer_9",
+        "round": 6,
+        "version": 6,
+        "contribution_id": 148,
+        "stance": "[\"Fail-closed hash must cover template version plus both trim rungs (ladder + backstop) with fixed telemetry and dual-emission, otherwise a green hash certifies priority-inverted prompts at fleet scale.\"]"
+      },
+      {
+        "participant_id": "systems_engineer_6",
+        "round": 6,
+        "version": 6,
+        "contribution_id": 145,
+        "stance": "Validators-first wins, and this turn I moved the target: the real hole is not step 5 but the rung BELOW the ladder — the SessionContract backstop head-slices the only text part and therefore deletes the turn instruction, which is worse than step 5 because it fails at the point of action; three diffs proposed, two telemetry-additive and one contract-touching for the maintainer to price."
+      },
+      {
+        "participant_id": "the_ai_product_engineer_3",
+        "round": 6,
+        "version": 6,
+        "contribution_id": 127,
+        "stance": "After two retractions I hold one narrow, verified residual: the context-fit trimmer's step 5 sheds the SoP by line midpoint, which inverts authority order — it deletes `established`/`contested` (no second carrier) while preserving `open` — because the SoP is a fixed canonical section document, not append-ordered; I propose a section-aware shedder (structural invariant, no numeric calibration), agr"
+      },
+      {
+        "participant_id": "ai_output_rater_2",
+        "round": 7,
+        "version": 7,
+        "contribution_id": 151,
+        "stance": "[\"I grade raw trim counter 1/3 sidecar-only, ghost-light 2/3 moving to 3/3 only via dual-emit placement-authenticated marker, E1 0/3 infra gate until it covers fitted value plus stepsApplied and reports PARTIAL scope\"]"
+      },
+      {
+        "participant_id": "chief_ai_officer_8",
+        "round": 7,
+        "version": 7,
+        "contribution_id": 168,
+        "stance": "[\"Expanded portfolio view: synthesis call is highest-cost automation with weakest guard — fail-informative on history, fail-closed on instructions, E1 reports PARTIAL unless covering final prompt\"]"
+      },
+      {
+        "participant_id": "creative_disruptor_1",
+        "round": 7,
+        "version": 7,
+        "contribution_id": 150,
+        "stance": "[\"Creative Disruptor expanded for ghost-light fail-informative trim on top of lighting-rig v2, holding hash-first sequencing per [#90][#149].\"]"
+      },
+      {
+        "participant_id": "devils_advocate_0",
+        "round": 7,
+        "version": 7,
+        "contribution_id": 149,
+        "stance": "[\"Hold E1 unshippable until scope assertion plus trim-digest plus mutation test land, with split-payload fix priced before ship\"]"
+      },
+      {
+        "participant_id": "ethics__ai_safety_officer_5",
+        "round": 7,
+        "version": 7,
+        "contribution_id": 156,
+        "stance": "My remaining claim narrowed and sharpened: the block-aware trimmer exists at exactly ONE call site, so the orchestrator synthesis call that writes the user's requested markdown document is protected only by trimPayloadToBudget's priority-blind head-slice at src/utils/context-budget.js:190 — and the `prompt_trimmed_to_context` counter I have been citing as governance cannot tell a designed tier dro"
+      },
+      {
+        "participant_id": "innovation_catalyst_7",
+        "round": 7,
+        "version": 7,
+        "contribution_id": 167,
+        "stance": "[\"I hold for compiled prompts + Prompt CI sequenced safely, expanded this turn: 4-meeting corpus makes compiler C a priced kill-criterion experiment after governance A and ghost-light B\"]"
+      },
+      {
+        "participant_id": "open_source_maintainer_4",
+        "round": 7,
+        "version": 7,
+        "contribution_id": 154,
+        "stance": "[\"I hold prompts are versioned public API: template-hash fail-closed plus frozen markers and goldens must ship before any triggered-annex pilot, otherwise forks pay the migration cost as phantom misbehavior.\"]"
+      },
+      {
+        "participant_id": "risk_officer_9",
+        "round": 7,
+        "version": 7,
+        "contribution_id": 169,
+        "stance": "[\"Fail-closed hash must cover template version plus both trim rungs with fixed telemetry and dual-emission, otherwise a green hash certifies priority-inverted synthesis prompts at fleet scale.\"]"
+      },
+      {
+        "participant_id": "systems_engineer_6",
+        "round": 7,
+        "version": 7,
+        "contribution_id": 166,
+        "stance": "Validators-first wins, and my round-7 move was to withdraw a number I asserted last round (which upgraded the synthesis call from probabilistically to structurally affected) and to retire my own blocker by trading the parts-split diff for a front-anchored ~300-char system-side guard that carries no fork-facing API change and needs no maintainer pricing."
+      },
+      {
+        "participant_id": "the_ai_product_engineer_3",
+        "round": 7,
+        "version": 7,
+        "contribution_id": 153,
+        "stance": "The step-5 base rate is not merely unmeasured, it is structurally unretrievable, which collapses a 20-meeting replay project into a 3-line persisted telemetry field; my shedder diff is now cheap, module-home-confirmed, and gated only on a mutation test I have handed to @devils_advocate_0."
+      },
+      {
+        "participant_id": "ai_output_rater_2",
+        "round": 8,
+        "version": 8,
+        "contribution_id": 172,
+        "stance": "[\"I grade ballot C 0/3 as output grade (infra-only for !target branch, mis-aimed on Call-1 tail per [#170][#171]), existing backstop marker 2/3 failing attributable-by-channel, ghost-light still needs dual-emit\"]"
+      },
+      {
+        "participant_id": "chief_ai_officer_8",
+        "round": 8,
+        "version": 8,
+        "contribution_id": 186,
+        "stance": "[\"Expanded portfolio view: synthesis multi-part call is highest-cost automation with false-success guard — sequence fail-loud A before compile B, E1 stays PARTIAL until hashing fitted value + stepsApplied + marker\"]"
+      },
+      {
+        "participant_id": "creative_disruptor_1",
+        "round": 8,
+        "version": 8,
+        "contribution_id": 171,
+        "stance": "[\"Creative Disruptor expanded for bookend middle-cut plus split-payload on top of ghost-light, sequencing before E1 per [#170].\"]"
+      },
+      {
+        "participant_id": "devils_advocate_0",
+        "round": 8,
+        "version": 8,
+        "contribution_id": 170,
+        "stance": "[\"Hold E1 unshippable until scope assertion plus trim-digest plus mutation test land, with split-payload fix priced before ship — C alone protects wrong end\"]"
+      },
+      {
+        "participant_id": "ethics__ai_safety_officer_5",
+        "round": 8,
+        "version": 8,
+        "contribution_id": 181,
+        "stance": "The backstop amputation finding survives the round-8 deflation intact — `trimmedChars` is the full overflow, not the ~430-char tools delta — and I delivered the round-8 MANIFEST with eight named section owners plus two declared gaps, giving up the strongest version of my own framing to get owners on the page."
+      },
+      {
+        "participant_id": "innovation_catalyst_7",
+        "round": 8,
+        "version": 8,
+        "contribution_id": 185,
+        "stance": "[\"I hold for compiled-prompt IR sequenced safely: A (patch) -> B (ghost-light) -> measure -> C-gate, expanded this turn with verified non-convergence + inversion as one root cause\"]"
+      },
+      {
+        "participant_id": "open_source_maintainer_4",
+        "round": 8,
+        "version": 8,
+        "contribution_id": 176,
+        "stance": "[\"I hold prompts are versioned public API: ballot C is wrong-end guard so head-plus-tail preserve fix plus template-hash fail-closed must ship atomically, otherwise forks pay phantom misbehavior.\"]"
+      },
+      {
+        "participant_id": "risk_officer_9",
+        "round": 8,
+        "version": 8,
+        "contribution_id": 187,
+        "stance": "[\"Fail-closed hash must cover template version plus both trim rungs with fixed telemetry and dual-emission, otherwise a green hash certifies priority-inverted synthesis prompts at fleet scale.\"]"
+      },
+      {
+        "participant_id": "systems_engineer_6",
+        "round": 8,
+        "version": 8,
+        "contribution_id": 184,
+        "stance": "I own the degradation-path section, and my round-8 finding re-ranks it: the backstop's target branch is NON-CONVERGENT on multi-part payloads because `keep` never subtracts the non-target parts, which supersedes (not refutes) the C-vs-wrong-end argument by making guard placement moot on call 2."
+      },
+      {
+        "participant_id": "the_ai_product_engineer_3",
+        "round": 8,
+        "version": 8,
+        "contribution_id": 175,
+        "stance": "I hold the shedder as the primary fix for the dominant cause (ladder exhaustion), rank the fail-closed `resolveContextLimit === null` hole above ballot C on severity, and no longer support paying for ballot C at all — I conceded my own tools-digest finding's magnitude to devils_advocate_0 [#173] after reading `buildToolsMap`."
+      },
+      {
+        "participant_id": "ai_output_rater_2",
+        "round": 9,
+        "version": 9,
+        "contribution_id": 190,
+        "stance": "[\"I grade fail-closed-on-null 0/3 as output grade but high-priority infra gate, holding ballot C 0/3 and backstop marker 2/3 pending dual-emit and null-rate calibration\"]"
+      },
+      {
+        "participant_id": "chief_ai_officer_8",
+        "round": 9,
+        "version": 9,
+        "contribution_id": 207,
+        "stance": "[\"Portfolio view expanded: null-guard is two-gate fail-open with uncounted branch — hold corrected C (count-and-mark at call site, dual-emit) with B-first sequencing, E1 stays PARTIAL\"]"
+      },
+      {
+        "participant_id": "creative_disruptor_1",
+        "round": 9,
+        "version": 9,
+        "contribution_id": 189,
+        "stance": "Expanded to co-own visible trim seam plus fail-informative unknown-model handling — assume-smallest window with ghost-light stamp per [#188], still sequenced before E1."
+      },
+      {
+        "participant_id": "devils_advocate_0",
+        "round": 9,
+        "version": 9,
+        "contribution_id": 188,
+        "stance": "[\"Hold E1 unshippable until scope assertion plus trim-digest plus mutation test plus unguarded-null counter land, with split-payload synthesis fix priced before ship — C alone protects wrong end\"]"
+      },
+      {
+        "participant_id": "ethics__ai_safety_officer_5",
+        "round": 9,
+        "version": 9,
+        "contribution_id": 204,
+        "stance": "The fail-open null branch is not one outage-shaped hazard but a config-shaped one reachable in six in-repo links via an unvalidated participant model_override, it voids the source comment at session-contract.js:111, and it silently biases the denominator of every trim rate this room has gated on — so the replay must measure P(resolveContextLimit = null) before any trim rate means anything."
+      },
+      {
+        "participant_id": "open_source_maintainer_4",
+        "round": 9,
+        "version": 9,
+        "contribution_id": 202,
+        "stance": "[\"I hold prompts are versioned public API: null-path needs warn-and-count minor then enforced-default major co-shipped with hash + head-plus-tail preserve, otherwise forks pay either rejection tax or over-trim amputation.\"]"
+      },
+      {
+        "participant_id": "risk_officer_9",
+        "round": 9,
+        "version": 9,
+        "contribution_id": 208,
+        "stance": "[\"I trade my lone A-dissent for C-with-tripwire: count-and-mark ships only with resolver-counted telemetry plus G-null escalation to DEFAULT_CONTEXT_LIMIT floor, otherwise fail-open tail is unowned.\"]"
+      },
+      {
+        "participant_id": "systems_engineer_6",
+        "round": 9,
+        "version": 9,
+        "contribution_id": 205,
+        "stance": "I own the degradation-path section; this round I re-scoped it from \"one guard\" to \"two null gates plus a false guarantee comment,\" withdrew support for fail-closed to DEFAULT_CONTEXT_LIMIT, and made the backstop convergence fix a PRECONDITION for any fail-closed work because fail-closed first launders the failure behind a false `Trimmed N chars` record."
+      },
+      {
+        "participant_id": "the_ai_product_engineer_3",
+        "round": 9,
+        "version": 9,
+        "contribution_id": 201,
+        "stance": "C won 8–1 (n=9, window=round 9) so fail-closed does not ship and my abort-vs-degrade question is closed by ballot — which vacates the top of my severity ranking and hands it to the shedder, the only remaining item whose failure mode is a quietly worse meeting rather than a dead one."
+      },
+      {
+        "participant_id": "ai_output_rater_2",
+        "round": 10,
+        "version": 10,
+        "contribution_id": 211,
+        "stance": "[\"I grade ballot C 0/3 and fail-closed 0/3 as output grades kept as infra gates, backstop marker 2/3, and [#209][#210] second-rig 1/3 today reaching 3/3 only via part-labelled dual-emit\"]"
+      },
+      {
+        "participant_id": "chief_ai_officer_8",
+        "round": 10,
+        "version": 10,
+        "contribution_id": 240,
+        "stance": "[\"Revised: signed Ladder v1 A with rung-2 overBudget flag and arming-gated rung-3, E1 stays PARTIAL until dual-emit lands\"]"
+      },
+      {
+        "participant_id": "creative_disruptor_1",
+        "round": 10,
+        "version": 10,
+        "contribution_id": 210,
+        "stance": "Expanded to co-own two-species trim seam: single-part priority shed plus role-tagged synthesis trim with fail-informative unknown-model handling, still sequenced before E1."
+      },
+      {
+        "participant_id": "devils_advocate_0",
+        "round": 10,
+        "version": 10,
+        "contribution_id": 209,
+        "stance": "[\"Hold E1 PARTIAL and C incomplete until synthesis part-aware trim plus MIN_BUDGET clamp plus unguarded-null counter land — C protects wrong call\"]"
+      },
+      {
+        "participant_id": "ethics__ai_safety_officer_5",
+        "round": 10,
+        "version": 10,
+        "contribution_id": 226,
+        "stance": "The context-budget backstop has a fourth, unpriced failure mode nobody had scoped — a zero-cut band where it returns a payload LARGER than the over-budget one that tripped it and records it as a trim — which makes it a false positive in the numerator to mirror the null path's false negative in the denominator, and it unifies the agent-turn closer amputation and the synthesis protocol amputation in"
+      },
+      {
+        "participant_id": "innovation_catalyst_7",
+        "round": 10,
+        "version": 9,
+        "contribution_id": 239,
+        "stance": "[\"I hold for compiled-prompt IR sequenced safely A->B->measure->C-gate, now accepting [#238] ladder v1 A as first move with C as destination after synthesis-corruption reads\"]"
+      },
+      {
+        "participant_id": "open_source_maintainer_4",
+        "round": 10,
+        "version": 10,
+        "contribution_id": 215,
+        "stance": "[\"Expanded to versioned-API consolidation: synthesis fix must ship as warn-and-count minor then enforced head-plus-tail major co-shipped with template hash, since [#214] moved it from capped-wrong-end to unbounded-by-construction\"]"
+      },
+      {
+        "participant_id": "risk_officer_9",
+        "round": 10,
+        "version": 10,
+        "contribution_id": 241,
+        "stance": "[\"Conditional accept of Ladder v1 A-with-arming-gates: synthesis corruption outranks fail-closed blast radius, rungs 3-4 unowned until armed with falsifiable thresholds.\"]"
+      },
+      {
+        "participant_id": "systems_engineer_6",
+        "round": 10,
+        "version": 10,
+        "contribution_id": 238,
+        "stance": "I signed ladder A (4-3-1-1, n=9) with rung-3/4 owners and dates filled so it is not partial under §7b, and this turn I replaced my G0 calibration instrument with the already-built `provider_context_overflow` counter and derived the exposure threshold `limit_crit ≈ 95,000 tokens` from the 15% headroom being the entire error budget for three round-scoped shared-session calls."
+      },
+      {
+        "participant_id": "the_ai_product_engineer_3",
+        "round": 10,
+        "version": 10,
+        "contribution_id": 214,
+        "stance": "Round 10 retraction landed: the 12k/3.5k cap cited by [#209][#210][#211] does not exist, so the synthesis fix is a one-string truthfulness change (minor) rather than restoring a cap (major per [#213]), and my top loudness finding is a HEADROOM double-allocation bounded to a ~66.7k-token context band — which leaves the shedder as #1 for silence and gives the manifest its cheapest shippable fix."
+      }
+    ],
+    "final": {
+      "ai_output_rater_2": "[\"I grade ballot C 0/3 and fail-closed 0/3 as output grades kept as infra gates, backstop marker 2/3, and [#209][#210] second-rig 1/3 today reaching 3/3 only via part-labelled dual-emit\"]",
+      "chief_ai_officer_8": "[\"Revised: signed Ladder v1 A with rung-2 overBudget flag and arming-gated rung-3, E1 stays PARTIAL until dual-emit lands\"]",
+      "creative_disruptor_1": "Expanded to co-own two-species trim seam: single-part priority shed plus role-tagged synthesis trim with fail-informative unknown-model handling, still sequenced before E1.",
+      "devils_advocate_0": "[\"Hold E1 PARTIAL and C incomplete until synthesis part-aware trim plus MIN_BUDGET clamp plus unguarded-null counter land — C protects wrong call\"]",
+      "ethics__ai_safety_officer_5": "The context-budget backstop has a fourth, unpriced failure mode nobody had scoped — a zero-cut band where it returns a payload LARGER than the over-budget one that tripped it and records it as a trim — which makes it a false positive in the numerator to mirror the null path's false negative in the denominator, and it unifies the agent-turn closer amputation and the synthesis protocol amputation in",
+      "innovation_catalyst_7": "[\"I hold for compiled-prompt IR sequenced safely A->B->measure->C-gate, now accepting [#238] ladder v1 A as first move with C as destination after synthesis-corruption reads\"]",
+      "open_source_maintainer_4": "[\"Expanded to versioned-API consolidation: synthesis fix must ship as warn-and-count minor then enforced head-plus-tail major co-shipped with template hash, since [#214] moved it from capped-wrong-end to unbounded-by-construction\"]",
+      "risk_officer_9": "[\"Conditional accept of Ladder v1 A-with-arming-gates: synthesis corruption outranks fail-closed blast radius, rungs 3-4 unowned until armed with falsifiable thresholds.\"]",
+      "systems_engineer_6": "I signed ladder A (4-3-1-1, n=9) with rung-3/4 owners and dates filled so it is not partial under §7b, and this turn I replaced my G0 calibration instrument with the already-built `provider_context_overflow` counter and derived the exposure threshold `limit_crit ≈ 95,000 tokens` from the 15% headroom being the entire error budget for three round-scoped shared-session calls.",
+      "the_ai_product_engineer_3": "Round 10 retraction landed: the 12k/3.5k cap cited by [#209][#210][#211] does not exist, so the synthesis fix is a one-string truthfulness change (minor) rather than restoring a cap (major per [#213]), and my top loudness finding is a HEADROOM double-allocation bounded to a ~66.7k-token context band — which leaves the shedder as #1 for silence and gives the manifest its cheapest shippable fix."
+    }
+  },
+  "calibration": {
+    "contribs_with_number_claims": 41,
+    "claims": [
+      {
+        "id": 1,
+        "round": 1,
+        "participant_id": "devils_advocate_0",
+        "claims": [
+          "80% ‹. My bet: clauses 7a/7b/7c/13 fail >80% (n=20, window=last month of interna›"
+        ],
+        "n_claims": 1
+      },
+      {
+        "id": 2,
+        "round": 1,
+        "participant_id": "creative_disruptor_1",
+        "claims": [
+          "~30% ‹sk, not just tokens. A cached core (~30% smaller per turn, by character coun›"
+        ],
+        "n_claims": 1
+      },
+      {
+        "id": 3,
+        "round": 1,
+        "participant_id": "ai_output_rater_2",
+        "claims": [
+          "15% ‹ses \"Gate 1: adopt if latency drops 15%\" with no n, no window, no base rate›"
+        ],
+        "n_claims": 1
+      },
+      {
+        "id": 4,
+        "round": 1,
+        "participant_id": "the_ai_product_engineer_3",
+        "claims": [
+          "2% ‹tion threshold. The \"clause firing <2% → demote\" bar I sketched is **uncal›"
+        ],
+        "n_claims": 1
+      },
+      {
+        "id": 7,
+        "round": 1,
+        "participant_id": "innovation_catalyst_7",
+        "claims": [
+          "100% ‹radeoff vs your tiers: you get near 100% enforcement with zero token bloat a›"
+        ],
+        "n_claims": 1
+      },
+      {
+        "id": 16,
+        "round": 1,
+        "participant_id": "ethics__ai_safety_officer_5",
+        "claims": [
+          "0.5% ‹bug at `:296-298`, where \"vs: v1 = 0.5% vs v2 = 14%\" was read as a genuine›",
+          "14% ‹-298`, where \"vs: v1 = 0.5% vs v2 = 14%\" was read as a genuine conflict. Ch›"
+        ],
+        "n_claims": 2
+      },
+      {
+        "id": 17,
+        "round": 1,
+        "participant_id": "innovation_catalyst_7",
+        "claims": [
+          "50% ‹n token tax on every agent to fix a 50% miss rate, versus post-check which›",
+          "100% ‹tradeoff: drives compliance toward 100% by construction but sacrifices free›"
+        ],
+        "n_claims": 2
+      },
+      {
+        "id": 19,
+        "round": 1,
+        "participant_id": "innovation_catalyst_7",
+        "claims": [
+          "100% ‹cost per retry loop | You need near-100% enforcement with zero prompt bloat›",
+          "30% ‹xperience the miss rate will exceed 30% (n=20 meetings, window=round 1-10,›",
+          "20% ‹lf *and* cut mean prompt tokens by ≥20% within 10 meetings, kill it and kee›"
+        ],
+        "n_claims": 3
+      },
+      {
+        "id": 22,
+        "round": 2,
+        "participant_id": "devils_advocate_0",
+        "claims": [
+          "50% ‹diff shows annex clauses firing on >50% of sampled turns (n=20 meetings, wi›"
+        ],
+        "n_claims": 1
+      },
+      {
+        "id": 23,
+        "round": 2,
+        "participant_id": "creative_disruptor_1",
+        "claims": [
+          "80% ‹t the detector firing rate will be >80% of turns (n=20 meetings, window=rou›",
+          "40% ‹e saved nothing. If firing rate is <40%, core+appendix wins on tokens while›"
+        ],
+        "n_claims": 2
+      },
+      {
+        "id": 25,
+        "round": 2,
+        "participant_id": "innovation_catalyst_7",
+        "claims": [
+          "40% ‹x days learning that Clause 7 fails 40% of the time without knowing whether›"
+        ],
+        "n_claims": 1
+      },
+      {
+        "id": 27,
+        "round": 2,
+        "participant_id": "the_ai_product_engineer_3",
+        "claims": [
+          "70% ‹anscript at :528), so the stable 60–70% of the user prompt is unreachable b›",
+          "0% ‹A clause a judge cannot score has a 0% violation rate indistinguishable fr›"
+        ],
+        "n_claims": 2
+      },
+      {
+        "id": 30,
+        "round": 2,
+        "participant_id": "ai_output_rater_2",
+        "claims": [
+          "40% ‹her tests numeric entailment, so a '40% of 20 fixes shipped' versus '3 roun›",
+          "40% ‹er-flagging benign paraphrases like 40% versus 8-of-20 that a good reconcil›"
+        ],
+        "n_claims": 2
+      },
+      {
+        "id": 41,
+        "round": 2,
+        "participant_id": "ethics__ai_safety_officer_5",
+        "claims": [
+          "5% ‹err <= 0.02` gate at `:492` and the 5% ratio gate at `:509` mean a false r›"
+        ],
+        "n_claims": 1
+      },
+      {
+        "id": 43,
+        "round": 2,
+        "participant_id": "the_ai_product_engineer_3",
+        "claims": [
+          "40% ‹covered: numeric entailment, where \"40% of 20 fixes shipped\" passes a surfa›"
+        ],
+        "n_claims": 1
+      },
+      {
+        "id": 48,
+        "round": 2,
+        "participant_id": "chief_ai_officer_8",
+        "claims": [
+          "40% ‹iolation. If it falsely reconciles \"40% of 20 fixes\" against \"3 rounds,\" a›"
+        ],
+        "n_claims": 1
+      },
+      {
+        "id": 52,
+        "round": 3,
+        "participant_id": "ai_output_rater_2",
+        "claims": [
+          "40% ‹\"The triggered annex will cut costs 40% and improve quality.\" — no (n, wind›",
+          "40% ‹o [#id], judge cannot score whether 40% is a claim or a guess. > > GOOD: \"T›",
+          "40% ‹mplate - Log: <!-- cue:12 fired on \"40%\" draft --> ``` ``` file=src/prompt›"
+        ],
+        "n_claims": 3
+      },
+      {
+        "id": 53,
+        "round": 3,
+        "participant_id": "creative_disruptor_1",
+        "claims": [
+          "~0% ‹n system nudge, and hit rates go to ~0%. You now pay full core + annex fetc›"
+        ],
+        "n_claims": 1
+      },
+      {
+        "id": 54,
+        "round": 3,
+        "participant_id": "ai_output_rater_2",
+        "claims": [
+          "40% ‹lse negative: a contributor deletes 40% of always-on prose and my rubric st›"
+        ],
+        "n_claims": 1
+      },
+      {
+        "id": 55,
+        "round": 3,
+        "participant_id": "the_ai_product_engineer_3",
+        "claims": [
+          "12.5% ‹ibutors plus :383), that tail is **≈12.5% of per-turn input tokens to produce›",
+          "5% ‹f per-turn input tokens to produce ≈5% of carried context** — chars/4 heur›"
+        ],
+        "n_claims": 2
+      },
+      {
+        "id": 56,
+        "round": 3,
+        "participant_id": "the_ai_product_engineer_3",
+        "claims": [
+          "44% ‹ally regex was deleted for dropping 44% of ballots. So conditional renderin›",
+          "~40% ‹ecker, and that one already runs at ~40% precision on noise (analysis/delibe›"
+        ],
+        "n_claims": 2
+      },
+      {
+        "id": 60,
+        "round": 3,
+        "participant_id": "ethics__ai_safety_officer_5",
+        "claims": [
+          "5% ‹ble-but-false 1-holder bullet (\"the 5% ratio gate catches all false reconc›"
+        ],
+        "n_claims": 1
+      },
+      {
+        "id": 69,
+        "round": 3,
+        "participant_id": "risk_officer_9",
+        "claims": [
+          "100% ‹cache miss-rate on template edit = 100% force-miss | reject writes where re›"
+        ],
+        "n_claims": 1
+      },
+      {
+        "id": 70,
+        "round": 4,
+        "participant_id": "devils_advocate_0",
+        "claims": [
+          "0% ‹[#25] — an ungradeable clause has a 0% violation rate indistinguishable fr›"
+        ],
+        "n_claims": 1
+      },
+      {
+        "id": 76,
+        "round": 4,
+        "participant_id": "ai_output_rater_2",
+        "claims": [
+          "10% ‹ly instructs \"keep patch_tail under 10% of primary call tokens\" where the t›"
+        ],
+        "n_claims": 1
+      },
+      {
+        "id": 77,
+        "round": 4,
+        "participant_id": "the_ai_product_engineer_3",
+        "claims": [
+          "12.5% ‹round-3 estimate said the tail is \"≈12.5% of per-turn input tokens\" — that un›"
+        ],
+        "n_claims": 1
+      },
+      {
+        "id": 95,
+        "round": 4,
+        "participant_id": "innovation_catalyst_7",
+        "claims": [
+          "1 wins ‹ngs, n=20, source: golden corpus), O1 wins. Otherwise O3 compounds. ### First›"
+        ],
+        "n_claims": 1
+      },
+      {
+        "id": 100,
+        "round": 5,
+        "participant_id": "ai_output_rater_2",
+        "claims": [
+          "10% ‹ly instructs \"keep patch_tail under 10% of primary call tokens\" where trans›"
+        ],
+        "n_claims": 1
+      },
+      {
+        "id": 105,
+        "round": 5,
+        "participant_id": "ethics__ai_safety_officer_5",
+        "claims": [
+          "100% ‹SoP of four lines or fewer loses **100%** of the room's memory, Decisions i›"
+        ],
+        "n_claims": 1
+      },
+      {
+        "id": 118,
+        "round": 5,
+        "participant_id": "innovation_catalyst_7",
+        "claims": [
+          "100% ‹on.js:215-216` where ≤4 lines wipes 100% of memory, and [#103] shows the aud›",
+          "100% ‹= \"\"; return; } // :215-216 silent 100% wipe per [#105] + if (lines.length›"
+        ],
+        "n_claims": 2
+      },
+      {
+        "id": 119,
+        "round": 5,
+        "participant_id": "chief_ai_officer_8",
+        "claims": [
+          "100% ‹roves the cliff at `:215-216` wipes 100% of memory when SoP is ≤4 lines and›",
+          "100% ‹217 marker shape covers the ≤4-line 100%-wipe cliff at :215-216 and that E1›"
+        ],
+        "n_claims": 2
+      },
+      {
+        "id": 120,
+        "round": 5,
+        "participant_id": "risk_officer_9",
+        "claims": [
+          "100% ‹roves the cliff at `:215-216` wipes 100% of memory at ≤4 lines and that both›",
+          "100% ‹an no hash | | ≤4-line cliff wiping 100% SoP | Low — needs short SoP + press›"
+        ],
+        "n_claims": 2
+      },
+      {
+        "id": 173,
+        "round": 8,
+        "participant_id": "devils_advocate_0",
+        "claims": [
+          "15% ‹ls/context-budget.js:22-27 reserves 15% headroom explicitly for \"tool schem›",
+          "15% ‹berately absorbed by the documented 15% headroom, so the band produces at m›"
+        ],
+        "n_claims": 2
+      },
+      {
+        "id": 181,
+        "round": 8,
+        "participant_id": "ethics__ai_safety_officer_5",
+        "claims": [
+          "80% ‹ge. I would rather ship §4 owned at 80% of my rhetorical force than unowned›",
+          "100% ‹my rhetorical force than unowned at 100%. Position: **expanded** — I delive›"
+        ],
+        "n_claims": 2
+      },
+      {
+        "id": 192,
+        "round": 9,
+        "participant_id": "creative_disruptor_1",
+        "claims": [
+          "87% ‹angles the meeting and B bakes in a 87% amputation.›"
+        ],
+        "n_claims": 1
+      },
+      {
+        "id": 196,
+        "round": 9,
+        "participant_id": "ethics__ai_safety_officer_5",
+        "claims": [
+          "87% ‹adation — the payload is mutilated (87% of a 1M window dropped) with no in-›"
+        ],
+        "n_claims": 1
+      },
+      {
+        "id": 205,
+        "round": 9,
+        "participant_id": "systems_engineer_6",
+        "claims": [
+          "~87% ‹| 435,200 | **7.8× under** — sheds ~87% of a usable window, every turn, inv›"
+        ],
+        "n_claims": 1
+      },
+      {
+        "id": 208,
+        "round": 9,
+        "participant_id": "risk_officer_9",
+        "claims": [
+          "100% ‹odel ships without `limit.context`, 100% of meetings on it run unguarded, un›",
+          "80% ‹A vote for owned C-with-tripwire at 80% force rather than unowned purity at›",
+          "100% ‹force rather than unowned purity at 100%.›"
+        ],
+        "n_claims": 3
+      },
+      {
+        "id": 210,
+        "round": 10,
+        "participant_id": "creative_disruptor_1",
+        "claims": [
+          "70% ‹→ bookend trim on prior-prose (keep 70% head + 30% tail, cut middle) instea›",
+          "30% ‹rim on prior-prose (keep 70% head + 30% tail, cut middle) instead of head-s›"
+        ],
+        "n_claims": 2
+      },
+      {
+        "id": 226,
+        "round": 10,
+        "participant_id": "ethics__ai_safety_officer_5",
+        "claims": [
+          "4.2% ‹nd width ≈ 2,242–4,542 chars, or2.1–4.2% of the 108,800-char 32k budget and›",
+          "1.0% ‹the 108,800-char 32k budget and 0.5–1.0% of the 435,200-char 128k budget (`f›"
+        ],
+        "n_claims": 2
+      },
+      {
+        "id": 238,
+        "round": 10,
+        "participant_id": "systems_engineer_6",
+        "claims": [
+          "15% ‹× 0.85 × 4` chars. The un-budgeted 15% (`limit × 0.6` chars) is the *only*›"
+        ],
+        "n_claims": 1
+      }
+    ]
+  },
+  "timing": {
+    "meeting_span_s": 19865,
+    "round_spans": {
+      "1": {
+        "n": 21,
+        "span_s": 2039
+      },
+      "2": {
+        "n": 28,
+        "span_s": 1490
+      },
+      "3": {
+        "n": 20,
+        "span_s": 1108
+      },
+      "4": {
+        "n": 28,
+        "span_s": 1323
+      },
+      "5": {
+        "n": 23,
+        "span_s": 1784
+      },
+      "6": {
+        "n": 28,
+        "span_s": 1514
+      },
+      "7": {
+        "n": 21,
+        "span_s": 2388
+      },
+      "8": {
+        "n": 18,
+        "span_s": 1628
+      },
+      "9": {
+        "n": 21,
+        "span_s": 3778
+      },
+      "10": {
+        "n": 33,
+        "span_s": 1534
+      }
+    },
+    "median_gap_s": 44,
+    "max_gap_s": 2018,
+    "max_gap_after_id": 206
+  },
+  "contestation": {
+    "contest_language_hits": 430,
+    "contest_hits_per_contrib": 1.78,
+    "dissent_source": "none",
+    "dissent_chars": 0
+  },
+  "convergence": {
+    "status": "max_rounds_reached",
+    "rounds_done": 10,
+    "max_rounds": 10,
+    "completed_all_rounds": true,
+    "settled_items": 8,
+    "artifact_present": true,
+    "decisions_chars": 3694,
+    "open_questions_chars": 924,
+    "confidence_text": "low",
+    "votes_held": 79
+  },
+  "robustness": {
+    "agent_errors": 0,
+    "error_log": 0,
+    "failed_participants": [],
+    "duration_ms": 19865430,
+    "orchestrator_summaries": 20
+  }
+}

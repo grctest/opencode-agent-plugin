@@ -13,6 +13,16 @@ export function buildToolsMap(config, { activeCount, omitStatePatch = false } = 
     if (t.glob) toolsMap.glob = true;
     if (t.grep) toolsMap.grep = true;
     if (t.lsp) toolsMap.lsp = true;
+    // BUILD offers live file edits. Predicate mirrors the Available-tools
+    // prose in prompts/agent.js exactly (audit P1-F): the prompt must never
+    // name a tool the map withholds, nor withhold one it names. Synthesis /
+    // recovery map below stays write-free (prose composition only, like loom).
+    const isBuildMode = agentToolsConfig?.buildMode === true ||
+      (agentToolsConfig?.buildMode === undefined && (agentToolsConfig?.builtIn?.write === true || agentToolsConfig?.builtIn?.edit === true));
+    if (isBuildMode) {
+      toolsMap.write = true;
+      toolsMap.edit = true;
+    }
     const loom = resolveLoomTools(agentToolsConfig);
     const isSolo = Number.isFinite(activeCount) && activeCount <= 1;
     if (loom.loom_query && !isSolo) toolsMap.loom_query = true;

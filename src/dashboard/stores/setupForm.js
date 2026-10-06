@@ -11,7 +11,7 @@ import { persistentAtom } from "@nanostores/persistent";
  * dialogs, catalog/LLM snapshots) stays in useState and is refetched.
  */
 
-const FORM_VERSION = 7;
+const FORM_VERSION = 8;
 const KNOWN_TIERS = new Set(["junior", "mid", "senior", "principal", "civilian", "nonhuman"]);
 const FEATURE_MODES = new Set(["disabled", "optional", "mandatory"]);
 // SKILL.state is an off/on toggle (not a 3-state mode): on = every non-pass
@@ -42,6 +42,9 @@ const DEFAULT_FEATURES = {
   onlineResearch: "optional",
   agentCommands: true,
   parallelQueries: true,
+  // Deliberation mode: false = Plan (read-only), true = Build (agents may
+  // write/edit project files). Defaults to Plan — writing is opt-in.
+  buildMode: false,
 };
 
 export const DEFAULT_SETUP_FORM = {
@@ -167,6 +170,7 @@ function sanitizeForm(raw) {
     onlineResearch: normalizeMode(rawFeatures.onlineResearch, normalizeMode(legacyAgentTools, DEFAULT_FEATURES.onlineResearch)),
     agentCommands: typeof rawFeatures.agentCommands === "boolean" ? rawFeatures.agentCommands : DEFAULT_FEATURES.agentCommands,
     parallelQueries: typeof rawFeatures.parallelQueries === "boolean" ? rawFeatures.parallelQueries : DEFAULT_FEATURES.parallelQueries,
+    buildMode: rawFeatures.buildMode === true,
   };
   return {
     version: FORM_VERSION,
