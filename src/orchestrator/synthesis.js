@@ -308,7 +308,6 @@ export function _saveMeetingMetrics() {
     try {
       const stats = this._getMergedStats();
       const weave = this._stateManager.getWeave();
-      const allTurnRequests = this._stateManager.getRounds().flatMap((r) => r.turn_requests);
       // Durable degradation/observability counters (audit 07 EH3): the process-wide
       // degrade/retry/breaker events are snapshotted into the per-meeting row so
       // they survive restart and are visible in trend queries.
@@ -336,7 +335,7 @@ export function _saveMeetingMetrics() {
          duration_ms: Date.now() - this._startTime,
          rounds: this._stateManager.getCurrentRound(),
          contributions: weave.length,
-         turn_requests: allTurnRequests.length,
+         turn_requests: 0,
       });
     } catch { /* non-critical */ }
   }

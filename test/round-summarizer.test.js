@@ -109,7 +109,6 @@ test("round summary prompt receives current attributed states and evidence rules
   const round = {
     number: 2,
     contributions: [{ id: 1, participant_id: "agent", type: "contribution", content: "A current position." }],
-    turn_requests: [],
   };
   await summarizeRound(
     round,
@@ -154,7 +153,6 @@ test("round service snapshots state after prompt execution, not from the pre-rou
   const round = {
     number: 1,
     contributions: [{ id: 1, participant_id: "agent", type: "contribution", content: "Fresh answer." }],
-    turn_requests: [],
   };
   const roundExecutor = {
     resetRoundStats() {},

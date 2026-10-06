@@ -31,7 +31,6 @@ export function buildToolsMap(config, { activeCount, omitStatePatch = false } = 
     // there is no persona index to rank the issue against, so the tool is not
     // offered at all rather than offered and refused.
     if (loom.loom_summon && isSummonAvailable()) toolsMap.loom_summon = true;
-    if (loom.loom_request_next && !isSolo) toolsMap.loom_request_next = true;
     if (loom.loom_pass) toolsMap.loom_pass = true;
     // State patch is hidden from primary/synthesis by design
     // (omitStatePatch:true in the primary call, excluded from the synthesis
@@ -62,7 +61,6 @@ export function buildToolsMapWithoutLoom(config, { activeCount } = {}) {
     if (t.lsp) toolsMap.lsp = true;
     const loom = resolveLoomTools(agentToolsConfig);
     const isSolo = Number.isFinite(activeCount) && activeCount <= 1;
-    if (loom.loom_request_next && !isSolo) toolsMap.loom_request_next = true;
     if (loom.loom_forum) {
       toolsMap.loom_forum_create_topic = true;
       toolsMap.loom_forum_list_topics = true;
@@ -71,9 +69,9 @@ export function buildToolsMapWithoutLoom(config, { activeCount } = {}) {
     }
     // loom_query/vote/summon stay out of this map: synthesis and recovery
     // passes must not open a new peer interaction with no further pass to
-    // fold the answers in (audit B8). loom_request_next (fire-and-forget)
-    // and the forum tools stay available. loom_state_patch stays out too:
-    // only the dedicated patch tail may write the agent's notes.
+    // fold the answers in (audit B8). The forum tools stay available.
+    // loom_state_patch stays out too: only the dedicated patch tail may
+    // write the agent's notes.
   }
   return toolsMap;
 }

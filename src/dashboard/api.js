@@ -15,21 +15,6 @@ const DB_REFRESH_INTERVAL_MS = 500;
 
 const DB_TTL_MS = 5 * 60 * 1000;
 
-/**
- * Single mapper so fetch and SSE emit identically-shaped turn-request rows (audit 11 UF2/UF3).
- */
-function mapTurnRequest(r) {
-  return {
-    id: r.id,
-    participant_id: r.participant_id,
-    target_participant_id: r.target_participant_id,
-    round: r.round,
-    reason: r.content,
-    priority: r.priority,
-    created_at: r.created_at,
-  };
-}
-
 export class DashboardApi {
   /** @type {Database} */
   _db;
@@ -211,39 +196,6 @@ export class DashboardApi {
   }
   getContributionsSince(...args) {
     return this._withRecovery(() => queriesHelpers.getContributionsSince.apply(this, args));
-  }
-
-  getTurnRequests(limit = 500) {
-    return this._withRecovery(() => {
-      const n = Math.min(Math.max(limit ?? 500, 0), 500);
-      return this._db
-        .prepare(
-          `SELECT id, participant_id, target_participant_id, round, content, priority, created_at
-           FROM turn_requests ORDER BY id ASC LIMIT ?`,
-        )
-        .all(n)
-        .map(mapTurnRequest);
-    });
-  }
-
-  getMaxTurnRequestId() {
-    return this._withRecovery(() => {
-      const row = this._db.prepare(`SELECT MAX(id) as max_id FROM turn_requests`).get();
-      return row?.max_id ?? 0;
-    });
-  }
-
-  getTurnRequestsSince(sinceId, limit = 500) {
-    return this._withRecovery(() => {
-      const n = Math.min(Math.max(limit ?? 500, 0), 500);
-      return this._db
-        .prepare(
-          `SELECT id, participant_id, target_participant_id, round, content, priority, created_at
-           FROM turn_requests WHERE id > ? ORDER BY id ASC LIMIT ?`,
-        )
-        .all(sinceId, n)
-        .map(mapTurnRequest);
-    });
   }
 
   getOrchestratorMessagesSince(sinceId, meetingId) {

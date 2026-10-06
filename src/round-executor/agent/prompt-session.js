@@ -1,6 +1,6 @@
 import { buildAgentSystemPrompt, buildAgentUserPrompt } from "../../prompts/agent.js";
 import { getConfig, resolveBuiltInTools, resolveLoomTools } from "../../config.js";
-import { extractAgentResponse, mapToolResults, extractFileBlockTools, getPriorityCap } from "../../shared.js";
+import { extractAgentResponse, mapToolResults, extractFileBlockTools } from "../../shared.js";
 import { parseAgentResponse } from "../../validation.js";
 import { sanitizeAgentOutput } from "../../utils/sanitize.js";
 import { withRetry, isRetryableError } from "../../utils/retry.js";
@@ -366,7 +366,6 @@ export async function promptChildSession(participant) {
           // Reuse already-imported helpers (avoid dynamic import overhead in recovery path)
       const ear = extractAgentResponse;
       const mtr = mapToolResults;
-      const gpc = getPriorityCap;
       const sanitize = sanitizeAgentOutput;
       const parseResp = parseAgentResponse;
       const { text: agentText2, toolResults: toolResults2 } = ear(result2.data);
@@ -387,24 +386,9 @@ export async function promptChildSession(participant) {
       const safeContent = sanitize(agentText2);
       let response = parseResp(participant.config.id, safeContent, participant.config.tier);
       if (!response) {
-        response = { participant_id: participant.config.id, content: safeContent.slice(0,5000) || "[No content after sanitization]", type: "contribution", request_next: null, query: null, evidence: null, summon: null, vote: null };
+        response = { participant_id: participant.config.id, content: safeContent.slice(0,5000) || "[No content after sanitization]", type: "contribution", query: null, evidence: null, summon: null, vote: null };
       }
       response.tool_calls = [...existingToolCalls, ...(effective2 ?? [])];
-      // Extract loom_request_next if present in synthesis tool results
-      try {
-        for (const t of response.tool_calls) {
-          if (t.tool === "loom_request_next" && t.status !== "error") {
-            const inp = typeof t.input === "object" ? t.input : (t.input ? JSON.parse(t.input) : {});
-            const priority = typeof inp.priority === "number" ? inp.priority : parseInt(inp.priority, 10);
-            const reason = typeof inp.reason === "string" ? inp.reason : "";
-            if (Number.isFinite(priority) && reason.trim().length > 0) {
-              const cap = gpc(participant.config.tier);
-              response.request_next = { priority: Math.min(10, Math.max(1, priority), cap), reason: reason.slice(0,200) };
-              break;
-            }
-          }
-        }
-      } catch {}
       response.prompt_context = promptContext;
       this._recordModelSuccess(synthesisModel);
       this._options.onAgentComplete?.(participant.config.id, response.content);

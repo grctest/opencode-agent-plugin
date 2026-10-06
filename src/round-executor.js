@@ -2,10 +2,10 @@ import { buildQueryPrompt, buildEvidencePrompt, buildSummonPrompt, buildVoteProm
 import { buildAgentSystemPrompt, buildAgentUserPrompt } from "./prompts/agent.js";
 import { parseAgentResponse } from "./validation.js";
 import { getConfig, resolveBuiltInTools, resolveLoomTools } from "./config.js";
-import { extractAgentResponse, mapToolResults, truncate, extractFileBlockTools, getPriorityCap } from "./shared.js";
+import { extractAgentResponse, mapToolResults, truncate, extractFileBlockTools } from "./shared.js";
 import { getPersonas } from "./composer.js";
 import { Logger, extractErrorInfo } from "./logger.js";
-import { sanitizeForPrompt, sanitizeForDisplay, sanitizeAgentOutput } from "./utils/sanitize.js";
+import { sanitizeForDisplay, sanitizeAgentOutput } from "./utils/sanitize.js";
 import { CircuitBreaker } from "./utils/retry.js";
 import { selectFallbackModel } from "./services/model-service.js";
 import { loadGlobalHealth, markGlobalUnhealthy } from "./services/global-model-health.js";
@@ -290,7 +290,7 @@ export class RoundExecutor {
         this._stateManager.addContribution(passContribution);
         round.contributions.push(passContribution);
         try {
-          this._db.addContributionWithTurnRequest(this._stateManager.getMeetingId(), { ...passContribution, round: this._stateManager.getCurrentRound() }, null);
+          this._db.addContributionWithStatePatch(this._stateManager.getMeetingId(), { ...passContribution, round: this._stateManager.getCurrentRound() });
         } catch (err) {
           this._logger.warn("pass_contribution_db_failed", `Failed to persist pass tool evidence for ${p.config.name}`, extractErrorInfo(err));
         }
@@ -349,25 +349,12 @@ export class RoundExecutor {
     participant.status = "listening";
     this._db.setParticipantStatus(participant.config.id, "listening");
 
-    // Store turn order request (replaces interjection)
-    let turnRequest = null;
-    if (result.request_next) {
-      turnRequest = {
-        participant_id: result.participant_id,
-        round: this._stateManager.getCurrentRound(),
-        priority: result.request_next.priority,
-        reason: sanitizeForPrompt(result.request_next.reason),
-      };
-      if (!round.turn_requests) round.turn_requests = [];
-      round.turn_requests.push(turnRequest);
-    }
-
     let contributionPersisted = false;
     try {
-      this._db.addContributionWithTurnRequest(this._stateManager.getMeetingId(), {
+      this._db.addContributionWithStatePatch(this._stateManager.getMeetingId(), {
         ...contribution,
         round: this._stateManager.getCurrentRound(),
-      }, turnRequest, atomicStatePatch);
+      }, atomicStatePatch);
       contributionPersisted = true;
       if (atomicStatePatch) {
         this._stateManager.setParticipantState(participant.config.id, atomicStatePatch.state);

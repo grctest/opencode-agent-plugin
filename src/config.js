@@ -120,14 +120,13 @@ export function resolveBuiltInTools(agentToolsConfig) {
 
 export function resolveLoomTools(agentToolsConfig) {
   if (!agentToolsConfig?.enabled) return {
-    loom_query: false, loom_vote: false, loom_summon: false, loom_request_next: false, loom_pass: false, loom_forum: false, loom_state_patch: false,
+    loom_query: false, loom_vote: false, loom_summon: false, loom_pass: false, loom_forum: false, loom_state_patch: false,
   };
   const loom = agentToolsConfig.loom ?? {};
   return {
     loom_query: !!loom.loom_query,
     loom_vote: !!loom.loom_vote,
     loom_summon: !!loom.loom_summon,
-    loom_request_next: !!loom.loom_request_next,
     loom_pass: !!loom.loom_pass,
     loom_forum: !!loom.loom_forum,
     loom_state_patch: !!loom.loom_state_patch,

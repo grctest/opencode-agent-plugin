@@ -97,7 +97,7 @@ If a tool returns error or 0 hits, write "evidence unavailable — searched X" a
 
 ${base}
 
-- You do NOT have loom_query, loom_vote, loom_summon, loom_forum, loom_request_next, loom_pass, or any state tool. Do not attempt them and do not mention them.
+- You do NOT have loom_query, loom_vote, loom_summon, loom_forum, loom_pass, or any state tool. Do not attempt them and do not mention them.
 - Your prose IS the contribution. Never write about patching or state in place of the answer.
 - ${CITATION_LINE}`;
 }

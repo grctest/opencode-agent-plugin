@@ -20,7 +20,7 @@
 
 import { parseSplitConfidence } from "../utils/confidence.js";
 
-export const LATEST_SCHEMA_VERSION = 14;
+export const LATEST_SCHEMA_VERSION = 15;
 
 /**
  * Ordered migrations. MIGRATIONS[n] upgrades a DB at user_version n to n+1.
@@ -229,7 +229,7 @@ export const MIGRATIONS = [
   //
   // The details that matter, because getting one wrong silently orphans rows:
   //  - foreign_keys=OFF is what lets the parent be dropped without cascading
-  //    away the contributions/turn_requests/agent_errors that point at it.
+  //    away the contributions/agent_errors that point at it.
   //  - the new table is created under a TEMP name and renamed last, so the
   //    rename rewrites no child REFERENCES clause (renaming a name children
   //    already reference is what corrupts their FK targets).
@@ -266,8 +266,8 @@ export const MIGRATIONS = [
     //     no longer exists once the rename completes.
     //  2. dropping the old parent is safe only because runMigrations() has
     //     turned foreign_keys OFF for the run — with enforcement on, the drop
-    //     cascades and silently deletes every contribution, turn_request and
-    //     agent_error pointing at the participants.
+  //     cascades and silently deletes every contribution and
+  //     agent_error pointing at the participants.
     //  3. the final rename retargets nothing, because nothing references the
     //     temp name.
     //  4. foreign_key_check runs before COMMIT, so a rebuild that left a
@@ -289,6 +289,12 @@ export const MIGRATIONS = [
         `v13→v14 participants rebuild left ${violations.length} dangling foreign key(s): ${JSON.stringify(violations.slice(0, 3))}`,
       );
     }
+  },
+  // v14 → v15: drop the turn_requests table. The loom_request_next tool is
+  // removed and turn order is orchestrator-decided, so nothing writes or
+  // reads turn requests. Indexes on the table die with it.
+  (db) => {
+    db.exec("DROP TABLE IF EXISTS turn_requests");
   },
 ];
 
@@ -373,17 +379,6 @@ export function initSchema(db) {
       created_at TEXT NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS turn_requests (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
-      participant_id TEXT NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
-      target_participant_id TEXT REFERENCES participants(id) ON DELETE SET NULL,
-      round INTEGER CHECK(round >= 0),
-      content TEXT NOT NULL,
-      priority INTEGER NOT NULL DEFAULT 1 CHECK(priority >= 1 AND priority <= 10),
-      created_at TEXT NOT NULL
-    );
-
     CREATE TABLE IF NOT EXISTS agent_errors (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
@@ -442,8 +437,6 @@ export function initSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_contributions_meeting ON contributions(meeting_id);
     CREATE INDEX IF NOT EXISTS idx_contributions_participant ON contributions(participant_id);
     CREATE INDEX IF NOT EXISTS idx_contributions_batch ON contributions(batch_id);
-    CREATE INDEX IF NOT EXISTS idx_turn_requests_meeting ON turn_requests(meeting_id);
-    CREATE INDEX IF NOT EXISTS idx_turn_requests_participant ON turn_requests(participant_id);
     CREATE INDEX IF NOT EXISTS idx_agent_errors_meeting ON agent_errors(meeting_id);
     CREATE INDEX IF NOT EXISTS idx_agent_errors_created ON agent_errors(created_at);
     CREATE INDEX IF NOT EXISTS idx_participants_meeting ON participants(meeting_id);

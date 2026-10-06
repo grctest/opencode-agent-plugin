@@ -33,7 +33,6 @@ export class RoundInitializer {
     const round = {
       number: stateManager.getCurrentRound(),
       contributions: [],
-      turn_requests: [],
       token_path: [],
       summary: "",
     };

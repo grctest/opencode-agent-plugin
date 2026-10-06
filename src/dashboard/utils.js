@@ -19,7 +19,6 @@ const TYPE_COLORS = {
   support: "loom-badge-support",
   synthesize: "loom-badge-synthesize",
   question: "loom-badge-question",
-  turn_request: "loom-badge-turn-request",
   reflection: "loom-badge-reflection",
   query_response: "loom-badge-query_response",
   evidence_response: "loom-badge-evidence_response",

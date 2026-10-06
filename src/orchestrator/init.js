@@ -34,9 +34,12 @@ import { extractErrorInfo } from "../logger.js";
        this._sessionManager.getContract().onPromptTrimmed = (charsTrimmed, model) => {
          this._recordPromptTrim(charsTrimmed, model);
        };
-       this._sessionManager.getContract().onInputRejected = (classification, model) => {
-         this._recordInputRejection(classification, model);
-       };
+        this._sessionManager.getContract().onInputRejected = (classification, model) => {
+          this._recordInputRejection(classification, model);
+        };
+        this._sessionManager.getContract().onGuardSkipped = (reason, model) => {
+          this._recordGuardSkip(reason, model);
+        };
         this._sessionManager.setCallRecorder((type) => {
          if (!type) return;
          this._callStats[type] = (this._callStats[type] ?? 0) + 1;

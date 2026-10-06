@@ -345,12 +345,48 @@ export function mapToolResults(toolResults) {
   });
 }
 
-/** Passes loom synthesis outputs through LOSSLESS (no truncation): the synthesis
- * prompt receives complete tool outputs so the AI parses full evidence.
- * Budget params are accepted for backward compatibility and ignored.
+/** Truncates loom synthesis tool outputs to fit within budget constraints.
+ * Defaults are intentionally large — they bound pathological cases (a single
+ * tool returning megabytes) without throwing away content in normal operation.
+ * Calibrate via the call site once real output sizes are measured.
+ * @param {Array} loomCalls - Array of tool result objects with .output field
+ * @param {number} maxTotal - Maximum total characters across all outputs (default 200000)
+ * @param {number} maxPerOutput - Maximum characters per individual output (default 50000)
+ * @returns {Array} New array with truncated .output fields
  */
-export function truncateLoomOutputs(loomCalls) {
-  return loomCalls ?? [];
+export function truncateLoomOutputs(loomCalls, maxTotal = 200000, maxPerOutput = 50000) {
+  if (!loomCalls || loomCalls.length === 0) return [];
+
+  const truncated = loomCalls.map(call => {
+    if (!call.output || typeof call.output !== "string" || call.output.length <= maxPerOutput) {
+      return call;
+    }
+    const marker = "\n...[truncated]";
+    const sliceLen = Math.max(0, maxPerOutput - marker.length);
+    return { ...call, output: call.output.slice(0, sliceLen) + marker };
+  });
+
+  let total = truncated.reduce((sum, c) => sum + (c.output?.length ?? 0), 0);
+  if (total <= maxTotal) return truncated;
+
+  const indices = truncated.map((_, i) => i).sort((a, b) =>
+    (truncated[b].output?.length ?? 0) - (truncated[a].output?.length ?? 0)
+  );
+
+  for (const i of indices) {
+    if (total <= maxTotal) break;
+    const call = truncated[i];
+    if (!call.output) continue;
+    const currentLen = call.output.length;
+    const excess = total - maxTotal;
+    const newLen = Math.max(0, currentLen - excess);
+    if (newLen < currentLen) {
+      truncated[i] = { ...call, output: newLen > 0 ? call.output.slice(0, newLen) + "\n...[truncated]" : "" };
+      total -= (currentLen - newLen);
+    }
+  }
+
+  return truncated;
 }
 
 /** Wraps a promise with a timeout. Rejects with TimeoutError if the promise doesn't resolve in time. */

@@ -207,10 +207,8 @@ export class MeetingDatabase {
   getContributions(meetingId) { return contribOps.getContributions(this.#db, meetingId); }
   getRecentContributions(meetingId, count) { return contribOps.getRecentContributions(this.#db, meetingId, count); }
   getContributionContext(contributionId) { return contribOps.getContributionContext(this.#db, contributionId); }
-  addTurnRequest(meetingId, turnRequest) { const r = contribOps.addTurnRequest(this.#db, meetingId, turnRequest); this.#notify("turn_requests"); return r; }
   ensureParticipantRow(participantId, name = participantId, tier = "mid") { const r = contribOps.ensureParticipantRow(this.#db, this.#meetingId, participantId, name, tier); this.#notify("participants"); return r; }
-  addContributionWithTurnRequest(meetingId, contribution, turnRequest, statePatch = null) { const r = contribOps.addContributionWithTurnRequest(this.#db, meetingId, contribution, turnRequest, () => this.getRound(), statePatch); this.#notify("contributions"); if (statePatch) this.#notify("state_patches"); return r; }
-  getTurnRequests(meetingId) { return contribOps.getTurnRequests(this.#db, meetingId); }
+  addContributionWithStatePatch(meetingId, contribution, statePatch = null) { const r = contribOps.addContributionWithStatePatch(this.#db, meetingId, contribution, () => this.getRound(), statePatch); this.#notify("contributions"); if (statePatch) this.#notify("state_patches"); return r; }
   getMaxContributionId() { return contribOps.getMaxContributionId(this.#db, this.#meetingId); }
   setParticipantSessionId(participantId, sessionId) { const r = contribOps.setParticipantSessionId(this.#db, this.#meetingId, participantId, sessionId); this.#notify("participants"); return r; }
   setParticipantStatus(participantId, status) { const r = contribOps.setParticipantStatus(this.#db, this.#meetingId, participantId, status); this.#notify("participants"); return r; }

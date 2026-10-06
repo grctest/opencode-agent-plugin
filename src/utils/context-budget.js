@@ -182,12 +182,9 @@ export function trimPayloadToBudget(payload, model, availableModels, opts) {
 
   const keep = Math.max(1, maxChars - systemLen - toolsLen);
   const before = target.len;
-  // The marker is part of the payload, so it is charged against the budget
-  // rather than appended past it — otherwise the trim would leave the prompt
-  // over the very limit it was fitting to.
   const marker = `\n\n[...trimmed to fit this model's ${resolveContextLimit(model, availableModels) ?? "?"}-token input window]`;
   const room = Math.max(1, keep - marker.length);
   const trimmedText = String(list[target.i].text).slice(0, room);
   list[target.i] = { ...list[target.i], text: `${trimmedText}${marker}` };
-  return { system, parts: list, trimmedChars: before - room };
+  return { system, parts: list, trimmedChars: before - room, trimmed: true, marker };
 }

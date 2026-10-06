@@ -25,7 +25,6 @@ export function buildFlatItems(groupedContributions, opts) {
     collapsedRounds = [],
     activeRound,
     agentErrors = [],
-    turnRequests = [],
     extensions = [],
     maxRounds,
     isWeaving = false,
@@ -89,15 +88,6 @@ export function buildFlatItems(groupedContributions, opts) {
     });
 
     if (!isCollapsed) {
-      const roundTurnRequests = turnRequests.filter((tr) => {
-        if (contribs.length === 0) return false;
-        const contribTimes = contribs.map((c) => c.created_at ? new Date(c.created_at).getTime() : 0).filter(Boolean);
-        if (contribTimes.length === 0) return true;
-        const roundStart = Math.min(...contribTimes);
-        const trTime = tr.created_at ? new Date(tr.created_at).getTime() : 0;
-        return trTime >= roundStart;
-      });
-
       const regularByAgent = new Map();
       const reflectionsByTarget = new Map();
       const consumedReflectionIds = new Set();
@@ -590,7 +580,6 @@ export function buildFlatItems(groupedContributions, opts) {
         }
       }
 
-      for (const tr of roundTurnRequests) segItems.push({ type: "turn_request", turnRequest: tr });
       for (const err of roundErrors) if (err.error_type === "model_fallback") segItems.push({ type: "model_fallback", error: err, round });
 
       const roundOrchestratorMessages = orchestratorMessages

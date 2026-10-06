@@ -13,7 +13,7 @@ const TOOL_REQUIRED_OVERRIDES = {
   loom_forum_read_topic: ["topic_id"],
   loom_forum_add_comment: ["topic_id", "body"],
   loom_state_patch: [], // all fields optional; at-least-one enforced by Zod refine at execute time
-  // loom_query, loom_evidence, loom_vote, loom_summon, loom_request_next, loom_status, loom_cancel etc. already correct
+  // loom_query, loom_evidence, loom_vote, loom_summon, loom_status, loom_cancel etc. already correct
 };
 
 export function createEventHandlers({ directory, activeLooms = null, resolveMeeting = null }) {

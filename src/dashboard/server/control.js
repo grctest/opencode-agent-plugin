@@ -539,7 +539,6 @@ function buildMeetingAgentTools(features, base = getConfig().agentTools) {
     loom_query: agentQueriesEnabled,
     loom_vote: agentQueriesEnabled,
     loom_summon: agentQueriesEnabled,
-    loom_request_next: agentQueriesEnabled,
     loom_pass: true,
   };
   tools.mandatory = {

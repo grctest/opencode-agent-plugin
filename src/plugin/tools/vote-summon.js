@@ -224,7 +224,7 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
               voterResults.push({ voter: voter.config.id, name: voter.config.name, content: text.trim() });
               // O(1) increment instead of an O(N) weave scan (audit 11 PF5)
               stateManager.incrementParticipantContributions(voter.config.id);
-              degrade("vote_response_db_failed", "Failed to persist vote_response — visible in memory only this session", () => db.addContributionWithTurnRequest(stateManager.getState().id, contrib, null), null);
+              degrade("vote_response_db_failed", "Failed to persist vote_response — visible in memory only this session", () => db.addContributionWithStatePatch(stateManager.getState().id, contrib), null);
                if (context.abort?.aborted || context.signal?.aborted) {
                  restoreVoterStatus();
                  return;
@@ -412,7 +412,7 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
               // FK on contributions.participant_id (audit 12 PD9): summoned guests
               // need a participants row before their response can be persisted.
               db2.ensureParticipantRow?.(contrib2.participant_id, found.name, found.tier);
-              db2.addContributionWithTurnRequest(stateManager2.getState().id, contrib2, null);
+              db2.addContributionWithStatePatch(stateManager2.getState().id, contrib2);
             }, null);
           } catch {}
           const payload = { inline: true, persona_name: args.persona_name, issue: args.issue, guest: found.name, content, note: "Inline summon — guest perspective returned for synthesis and stored as indented summoned_response row." };

@@ -11,7 +11,6 @@ export function createPollSystem(directory) {
   const sseClients = new Map();
   const lastContributionId = new Map();
   const lastOrchestratorMsgId = new Map();
-  const lastInterjectionId = new Map();
   const lastErrorId = new Map();
   const participantStatusCache = new Map();
   const lastRoundSummariesHash = new Map();
@@ -28,7 +27,7 @@ export function createPollSystem(directory) {
   // A newer copy fully supersedes an older one, so a stalled client's backlog
   // can collapse to one entry per type instead of growing without bound — and
   // a stale `state` can never overwrite a newer one. Delta events
-  // (contributions, orchestrator_messages, turn_requests, agent_error, …) are
+  // (contributions, orchestrator_messages, agent_error, …) are
   // NOT listed here: every row must be delivered, so they stay queued as-is.
   const SNAPSHOT_EVENT_TYPES = new Set([
     "state",
@@ -163,13 +162,6 @@ export function createPollSystem(directory) {
         lastOrchestratorMsgId.set(meetingId, maxMsgId);
         const newMessages = api.getOrchestratorMessagesSince(prevMsgId, meetingId);
         if (newMessages.length > 0) broadcast(meetingId, { type: "orchestrator_messages", data: newMessages, timestamp: new Date().toISOString() });
-      }
-      const maxIjId = api.getMaxTurnRequestId();
-      const prevIjId = lastInterjectionId.get(meetingId) ?? 0;
-      if (maxIjId > prevIjId) {
-        lastInterjectionId.set(meetingId, maxIjId);
-        const newTurnRequests = api.getTurnRequestsSince(prevIjId);
-        if (newTurnRequests.length > 0) broadcast(meetingId, { type: "turn_requests", data: newTurnRequests, timestamp: new Date().toISOString() });
       }
       const state = currentState;
       if (state) {
@@ -352,21 +344,6 @@ export function createPollSystem(directory) {
           hadActivity = true;
         }
 
-        const maxIjId = api.getMaxTurnRequestId();
-        const prevIjId = lastInterjectionId.get(meetingId) ?? 0;
-        if (maxIjId > prevIjId) {
-          lastInterjectionId.set(meetingId, maxIjId);
-          const newTurnRequests = api.getTurnRequestsSince(prevIjId);
-          if (newTurnRequests.length > 0) {
-            broadcast(meetingId, {
-              type: "turn_requests",
-              data: newTurnRequests,
-              timestamp: new Date().toISOString(),
-            });
-          }
-          hadActivity = true;
-        }
-
         const state = currentState;
         if (state) {
           const prevState = participantStatusCache.get(`state:${meetingId}`);
@@ -463,7 +440,6 @@ export function createPollSystem(directory) {
         if (clients) sseClients.delete(meetingId);
         lastContributionId.delete(meetingId);
         lastOrchestratorMsgId.delete(meetingId);
-        lastInterjectionId.delete(meetingId);
         lastErrorId.delete(meetingId);
         participantStatusCache.delete(meetingId);
         participantStatusCache.delete(`state:${meetingId}`);
@@ -499,7 +475,6 @@ export function createPollSystem(directory) {
     sseClients,
     lastContributionId,
     lastOrchestratorMsgId,
-    lastInterjectionId,
     lastErrorId,
     participantStatusCache,
     broadcast,

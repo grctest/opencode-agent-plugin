@@ -65,10 +65,10 @@ const EXPECTED_SYS = {
   // Tail-pass design: loom_state_patch is hidden from the primary Available
   // list and contract (the patch-only tail owns it), and WHEN TO PASS is
   // tool-agnostic. Hashes below reflect the hidden-patch wording.
-  "Research Tools — Tool Ladder": "f4d836564552",
+  "Research Tools — Tool Ladder": "e600daede5fa",
   "WHEN TO PASS": "4013ac9d695b",
   // Tool calls are unlimited: the contract states no per-turn tool-call limit.
-  "OUTPUT CONTRACT — read last, it governs; in conflict it wins": "b055e265c2b8",
+  "OUTPUT CONTRACT — read last, it governs; in conflict it wins": "e3067b79181f",
 };
 
 const EXPECTED_USER = {

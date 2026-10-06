@@ -4,8 +4,6 @@
 export { extractText, extractAgentResponse, mapToolResults, truncate, withTimeout, extractFileBlockTools } from "./utils/text.js";
 export {
   LOOKBACK,
-  TURN_REQUEST_PRIORITY_CAP,
-  getPriorityCap,
   getTierConfig,
   splitModel,
   getRightsForTier,

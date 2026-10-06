@@ -5,7 +5,7 @@ import { Badge } from "./ui/badge.tsx";
 // "secondary" (no named variant) — a non-human seat still has to be labelled,
 // not rendered as a blank.
 const validTier = new Set(["junior", "mid", "senior", "principal", "civilian", "nonhuman"]);
-const validType = new Set(["propose", "challenge", "refine", "support", "dissent", "synthesize", "question", "turn_request", "reflection", "query_response", "evidence_response", "summoned_response", "vote_response"]);
+const validType = new Set(["propose", "challenge", "refine", "support", "dissent", "synthesize", "question", "reflection", "query_response", "evidence_response", "summoned_response", "vote_response"]);
 const validStatus = new Set(["weaving", "converged", "max_rounds_reached", "initializing", "aborted", "failed", "cancelled", "timeout"]);
 
 export const StatusBadge = memo(({ status }) => {

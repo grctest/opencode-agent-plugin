@@ -122,19 +122,12 @@ export function getTranscriptData(db, meetingId, getRoundSummariesFn) {
     )
     .all(meetingId);
 
-  const turnRequests = db
-    .prepare(
-      `SELECT id, participant_id, target_participant_id, round, content as reason, priority, created_at
-         FROM turn_requests WHERE meeting_id = ? ORDER BY id ASC`,
-    )
-    .all(meetingId);
-
   const summaries = getRoundSummariesFn(meetingId);
 
   const roundMap = new Map();
   for (const c of contributions) {
     if (!roundMap.has(c.round)) {
-      roundMap.set(c.round, { number: c.round, contributions: [], turn_requests: [], summary: summaries[c.round] ?? "" });
+      roundMap.set(c.round, { number: c.round, contributions: [], summary: summaries[c.round] ?? "" });
     }
     let toolCalls = null;
     if (c.tool_calls) { try { toolCalls = JSON.parse(c.tool_calls); } catch { toolCalls = null; } }
@@ -148,19 +141,6 @@ export function getTranscriptData(db, meetingId, getRoundSummariesFn) {
       batch_id: c.batch_id ?? null,
       tool_calls: toolCalls,
       created_at: c.created_at,
-    });
-  }
-
-  for (const tr of turnRequests) {
-    const roundNum = tr.round ?? 1;
-    if (!roundMap.has(roundNum)) {
-      roundMap.set(roundNum, { number: roundNum, contributions: [], turn_requests: [], summary: summaries[roundNum] ?? "" });
-    }
-    roundMap.get(roundNum).turn_requests.push({
-      participant_id: tr.participant_id,
-      target: tr.target_participant_id ?? "",
-      priority: tr.priority,
-      reason: tr.reason,
     });
   }
 

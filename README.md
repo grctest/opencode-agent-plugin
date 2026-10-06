@@ -2,13 +2,13 @@
 
 > A multi-agent deliberation protocol for opencode — a knitting machine for AI agents.
 
-The Loom lets you convene a circle of AI agents with different expertise, seniority levels, and agendas. Each agent runs in its own child session. They take structured turns, request turns with priority, challenge each other, and collaboratively weave complex artifacts through deliberation.
+The Loom lets you convene a circle of AI agents with different expertise, seniority levels, and agendas. Each agent runs in its own child session. They take structured turns, challenge each other, and collaboratively weave complex artifacts through deliberation. The orchestrator decides the speaking order for each round.
 
 ## How It Works
 
 You ask a question. The Loom uses embedding-based similarity search (no LLM domain detection) to compose a team of AI agents with relevant expertise — every persona's description is embedded, your question is embedded, and the closest match per role tier wins via `PersonaIndex` cosine similarity. Each agent runs in its own ephemeral session with its own model.
 
-Agents deliberate in structured rounds. During a turn an agent isn't limited to writing prose — it interacts with peers directly through real tool calls: `loom_query` queries specific peers (with seven answer modes: factual clarify, stance-taking perspective, forced-research evidence, adversarial critique, risk analysis, assumption surfacing, alternatives), `loom_vote` polls everyone on lettered options, `loom_summon` brings in a guest expert persona, and `loom_request_next` claims speaking priority for the next round. Peer answers and ballots are returned **inline within the same turn**, so the speaker synthesizes them into their contribution immediately instead of waiting for future rounds. Ballots come back verbatim and the invoker is the declared interpreter of them — nothing counts them behind the speaker's back, because a tally that drops a ballot the room actually cast is worse than no tally at all.
+Agents deliberate in structured rounds. During a turn an agent isn't limited to writing prose — it interacts with peers directly through real tool calls: `loom_query` queries specific peers (with seven answer modes: factual clarify, stance-taking perspective, forced-research evidence, adversarial critique, risk analysis, assumption surfacing, alternatives), `loom_vote` polls everyone on lettered options, and `loom_summon` brings in a guest expert persona. Peer answers and ballots are returned **inline within the same turn**, so the speaker synthesizes them into their contribution immediately instead of waiting for future rounds. Ballots come back verbatim and the invoker is the declared interpreter of them — nothing counts them behind the speaker's back, because a tally that drops a ballot the room actually cast is worse than no tally at all.
 
 Termination is deterministic: after the configured minimum rounds, everyone passes or fails, the round limit is reached, or a hard timeout fires. Agents pass by calling the `loom_pass` tool — the meeting ends when all active participants have passed. Once the meeting ends, a neutral **synthesizer** produces the final artifact: decisions, action items, unresolved dissent, and a confidence level, then self-critiques its draft against the transcript.
 
@@ -17,7 +17,7 @@ A real-time web dashboard is the sole control plane: you preview the suggested r
 ## Features
 
 - **Auto-composed expert rooms** — personas embedded and matched to your question via local embedding similarity; custom rooms also supported
-- **Structured rounds** — sequential turn-taking with tier-based expectations and priority turn requests
+- **Structured rounds** — sequential turn-taking with tier-based expectations; the orchestrator sets the speaking order each round
 - **Inline peer interactions** — query peers in seven modes, call votes, summon guest experts; results return within the same turn
 - **Tool-using agents** — web search/fetch, project file inspection, forum sub-discussions, and structured pass via `loom_pass`
 - **Per-agent carried state** — every turn projects stance + key bullets via `loom_state_patch`, so prompts stay flat and stance flips land in one turn
@@ -307,7 +307,7 @@ Run `/loom_viz` to start the real-time web dashboard. It auto-detects the most r
 
 - **Setup** — preview the suggested room, approve personas (or pick manually), approve per-tier models, then start; extend a finished deliberation with new input
 - **Overview** — stats, participation matrix, contribution types, and timeline chart
-- **Timeline** — per-round contributions, turn requests, and orchestrator decisions (moderation, turn ordering, summaries) interleaved; click any item to view full details in a dialog
+- **Timeline** — per-round contributions and orchestrator decisions (moderation, turn ordering, summaries) interleaved; click any item to view full details in a dialog
 - **Output** — the final synthesis artifact: decisions, action items, open questions, dissent, a confidence **split** (name vs number, with the stored level rolled up to the weaker one), and full text. Each artifact carries the measured engagement ledger (which contributions engaged no peer, how many self-cites, what fraction of the weave it cites). Automated `Needs Verification` / `Citation Warnings` detectors compute and count their candidates but do not write into the deliverable unless explicitly enabled — a detector that cannot state its precision stays advisory.
 
 Agents own the meaning; code owns the plumbing. Loom does not read an agent's prose to decide what it meant: ballots are returned verbatim for the invoker to interpret, a turn's positions come from the `loom_state_patch` buckets the agent itself declared, and nothing infers that a claim was withdrawn by matching English phrases. Rendering (reading the artifact's own markdown headings back for the dashboard) and integrity checks (does `[#12]` resolve to a real contribution) stay in code, because they are facts about data rather than judgements about meaning.

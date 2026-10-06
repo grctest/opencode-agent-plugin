@@ -122,7 +122,6 @@ const ROUTE_MAP = new Map([
   ["/api/logs", ["GET"]],
   ["/api/participants", ["GET"]],
   ["/api/contributions", ["GET"]],
-  ["/api/turn_requests", ["GET"]],
   ["/api/agent_errors", ["GET"]],
   ["/api/agent_contexts", ["GET"]],
   ["/api/agent_context", ["GET"]],
@@ -217,7 +216,7 @@ export function startDashboard(directory, port, runtimeOpts = null) {
     : `${resolveLoomBaseDir(directory)}:${port}`;
   const capabilityToken = Buffer.from(sha256(new TextEncoder().encode(stableId))).toString("hex");
   const pollSystem = createPollSystem(directory);
-  const { sseClients, lastContributionId, lastOrchestratorMsgId, lastInterjectionId, lastErrorId, participantStatusCache, broadcast, subscribeToWrites, unsubscribeFromWrites, pingTimer, restartPollTimer } = pollSystem;
+  const { sseClients, lastContributionId, lastOrchestratorMsgId, lastErrorId, participantStatusCache, broadcast, subscribeToWrites, unsubscribeFromWrites, pingTimer, restartPollTimer } = pollSystem;
   let pollTimer = pollSystem.getPollTimer();
   let currentPollInterval = pollSystem.getCurrentPollInterval();
 
@@ -371,7 +370,6 @@ export function startDashboard(directory, port, runtimeOpts = null) {
             state: api.getState(),
             participants: api.getParticipants(),
             contributions,
-            turn_requests: api.getTurnRequests(),
             orchestrator_messages: api.getOrchestratorMessages(meetingId),
             round_summaries: api.getRoundSummaries(meetingId),
             state_patch_summary: api.getStatePatchSummary(),
@@ -586,12 +584,6 @@ export function startDashboard(directory, port, runtimeOpts = null) {
           return Response.json({ contributions, total, limit, offset });
         }
 
-        if (url.pathname === "/api/turn_requests") {
-          const { api, error } = getMeetingApi(url, directory);
-          if (error) return error;
-          return Response.json(api.getTurnRequests());
-        }
-
         if (url.pathname === "/api/agent_errors") {
           const { api, error } = getMeetingApi(url, directory);
           if (error) return error;
@@ -734,7 +726,6 @@ export function startDashboard(directory, port, runtimeOpts = null) {
                 } catch {}
                 // Also seed other deltas to avoid replaying full history on first poll
                 try { lastOrchestratorMsgId.set(meetingId, api.getMaxOrchestratorMessageId()); } catch {}
-                try { lastInterjectionId.set(meetingId, api.getMaxTurnRequestId()); } catch {}
                 try { lastErrorId.set(meetingId, api.getMaxErrorId()); } catch {}
               }
               clientEntry = { controller, slowSince: null };
@@ -831,7 +822,6 @@ export function startDashboard(directory, port, runtimeOpts = null) {
       sseClients.clear();
       lastContributionId.clear();
       lastOrchestratorMsgId.clear();
-      lastInterjectionId.clear();
       lastErrorId.clear();
       participantStatusCache.clear();
       DashboardApi.closeAll();

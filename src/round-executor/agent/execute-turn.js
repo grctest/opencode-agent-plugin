@@ -1,6 +1,6 @@
 import { buildAgentSystemPrompt, buildAgentUserPrompt, buildPatchTailPrompt, buildPatchTailSystem } from "../../prompts/agent.js";
 import { getConfig, resolveBuiltInTools, resolveLoomTools } from "../../config.js";
-import { extractAgentResponse, mapToolResults, extractFileBlockTools, getPriorityCap } from "../../shared.js";
+import { extractAgentResponse, mapToolResults, extractFileBlockTools } from "../../shared.js";
 import { parseAgentResponse } from "../../validation.js";
 import { sanitizeAgentOutput } from "../../utils/sanitize.js";
 import { isRetryableError } from "../../utils/retry.js";
@@ -38,30 +38,6 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
       this._logger.warn("tool_output_limit", `${participant.config.name} tool outputs ${totalTokens} tokens exceed ${maxOutputTokens} — storing full outputs for audit, synthesis context will be truncated`);
     }
     return trs;
-  };
-
-  const extractRequestNextFromToolResults = (trs) => {
-    for (const t of trs) {
-      const name = t.tool ?? t.attempted_tool;
-      if (name === "loom_request_next" && t.status !== "error") {
-        try {
-          const inp = typeof t.input === "object" ? t.input : (t.input ? JSON.parse(t.input) : {});
-          const priority = typeof inp.priority === "number" ? inp.priority : parseInt(inp.priority, 10);
-          const reason = typeof inp.reason === "string" ? inp.reason : "";
-          if (Number.isFinite(priority) && reason.trim().length > 0) {
-            const pr = Math.min(10, Math.max(1, priority));
-            return { priority: pr, reason: reason.slice(0,200) };
-          }
-        } catch {}
-        try {
-          const out = typeof t.output === "string" ? JSON.parse(t.output) : t.output;
-          if (out && Number.isFinite(out.priority) && typeof out.reason === "string") {
-            return { priority: Math.min(10, Math.max(1, out.priority)), reason: out.reason.slice(0,200) };
-          }
-        } catch {}
-      }
-    }
-    return null;
   };
 
   try {
@@ -168,7 +144,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
     const loomPassCall = effective1.find(t => t.tool === "loom_pass" && t.status !== "error");
     const sameTurnEnabled = !!agentToolsConfig?.sameTurnSynthesis;
     const needsSynthesis = sameTurnEnabled && loomSynthesisCalls.length > 0 && !loomPassCall && agentText1 != null && String(agentText1).trim().length > 0;
-    const cappedLoomCalls = truncateLoomOutputs(loomSynthesisCalls, 12000, 3500);
+    const cappedLoomCalls = truncateLoomOutputs(loomSynthesisCalls, 200000, 50000);
 
     let finalText = agentText1;
     let finalToolResults = effective1;
@@ -347,7 +323,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
     // reports applied/missed separately below.)
     const missingMandatory = [];
     if (mandatoryCapabilities.forums && !hasSuccessfulOneOf(["loom_forum_create_topic", "loom_forum_list_topics", "loom_forum_read_topic", "loom_forum_add_comment"])) missingMandatory.push("Forums: call loom_forum_list_topics, loom_forum_read_topic, loom_forum_create_topic, or loom_forum_add_comment");
-    if (mandatoryCapabilities.agentQueries && Number.isFinite(activeCountExec) && activeCountExec > 1 && !hasSuccessfulOneOf(["loom_query", "loom_vote", "loom_summon", "loom_request_next"])) missingMandatory.push("Agent-to-agent: call loom_query, loom_vote, loom_summon, or loom_request_next with an eligible peer");
+    if (mandatoryCapabilities.agentQueries && Number.isFinite(activeCountExec) && activeCountExec > 1 && !hasSuccessfulOneOf(["loom_query", "loom_vote", "loom_summon"])) missingMandatory.push("Agent-to-agent: call loom_query, loom_vote, or loom_summon with an eligible peer");
     if (mandatoryCapabilities.localSearch && !hasSuccessfulOneOf(["read", "glob", "grep"])) missingMandatory.push("Local search: call read, glob, or grep");
     if (mandatoryCapabilities.onlineResearch && !hasSuccessfulOneOf(["websearch", "webfetch"])) missingMandatory.push("Online research: call websearch or webfetch");
     if (!loomPassCall && missingMandatory.length > 0) {
@@ -401,8 +377,6 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
           round: currentRound,
           tools: mappedTools.map(t => ({ tool: t.tool, status: t.status ?? null })),
         });
-        const cap = getPriorityCap(participant.config.tier);
-        const reqNext = extractRequestNextFromToolResults(finalToolResults);
         this._recordModelSuccess(model);
         ephemeralSessionIdToDelete = null;
         const toolOnlyCtx = { ...(promptContext ?? {}), state_patch_outcome: patchOutcome };
@@ -411,7 +385,6 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
           participant_id: participant.config.id,
           content: "[TOOL-ONLY TURN — no text produced; tool evidence preserved]",
           type: "contribution",
-          request_next: reqNext ? { priority: Math.min(reqNext.priority, cap), reason: reqNext.reason } : null,
           query: null,
           evidence: null,
           summon: null,
@@ -444,7 +417,6 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
         participant_id: participant.config.id,
         content: safeContent.slice(0, 5000) || "[No content after sanitization]",
         type: "contribution",
-        request_next: null,
         query: null,
         evidence: null,
         summon: null,
@@ -454,15 +426,6 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
 
     response.tool_calls = mapToolResults(finalToolResults);
     if (!response.tool_calls) response.tool_calls = [];
-
-        const requestNextFromTools = extractRequestNextFromToolResults(finalToolResults);
-    if (requestNextFromTools && !response.request_next) {
-              const cap = getPriorityCap(participant.config.tier);
-      response.request_next = {
-        priority: Math.min(requestNextFromTools.priority, cap),
-        reason: requestNextFromTools.reason,
-      };
-    }
 
     this._recordModelSuccess(model);
     response.prompt_context = promptContext;

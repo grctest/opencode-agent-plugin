@@ -257,7 +257,7 @@ export function formatStateOfPlay(sections, question, tags) {
   return lines.join("\n\n");
 }
 
-/** Formats a single round's contributions and turn requests into markdown lines. */
+/** Formats a single round's contributions into markdown lines. */
 function formatRoundLines(round, participants) {
   const lines = [];
   const isFinal = round.number === undefined;
@@ -273,15 +273,6 @@ function formatRoundLines(round, participants) {
     // The [#id] is the citation key the synthesis doctrine requires (audit A1):
     // every contribution line must carry the id finalizeSynthesis validates against.
     lines.push(`- **[#${c.id ?? "?"}] ${name}** (${tier}, ${c.type}): ${c.content}`);
-  }
-
-  if (round.turn_requests && round.turn_requests.length > 0) {
-    lines.push(`  **Turn Requests:**`);
-    for (const tr of round.turn_requests) {
-      const name = participants.find((p) => p.config.id === tr.participant_id)?.config.name ?? tr.participant_id;
-      const target = tr.target ?? tr.target_participant_id ?? tr.targetId ?? "next";
-      lines.push(`  - [${name}] P${tr.priority} → ${target}: ${tr.reason}`);
-    }
   }
 
   if (round.summary) {

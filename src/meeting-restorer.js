@@ -19,7 +19,6 @@ export function ensureCurrentRoundShell(roundMap, currentRound, summaries = {}) 
   roundMap.set(n, {
     number: n,
     contributions: [],
-    turn_requests: [],
     summary: summaries?.[n] ?? "",
   });
   return true;
@@ -142,7 +141,7 @@ export function restoreStateFromDb({ db, stateManager, meetingId, options }) {
   const roundMap = new Map();
   for (const c of contributions) {
     if (!roundMap.has(c.round)) {
-      roundMap.set(c.round, { number: c.round, contributions: [], turn_requests: [], summary: summaries[c.round] ?? "" });
+      roundMap.set(c.round, { number: c.round, contributions: [], summary: summaries[c.round] ?? "" });
     }
     roundMap.get(c.round).contributions.push({
       id: c.id,
@@ -158,23 +157,9 @@ export function restoreStateFromDb({ db, stateManager, meetingId, options }) {
     });
   }
 
-  const turnRequests = db.getTurnRequests(meetingId);
-  for (const tr of turnRequests) {
-    const roundNum = tr.round ?? 1;
-    if (!roundMap.has(roundNum)) {
-      roundMap.set(roundNum, { number: roundNum, contributions: [], turn_requests: [], summary: summaries[roundNum] ?? "" });
-    }
-    roundMap.get(roundNum).turn_requests.push({
-      participant_id: tr.participant_id,
-      target: tr.target_participant_id ?? "",
-      priority: tr.priority,
-      reason: tr.reason,
-    });
-  }
-
   // Crash-durability: initializeRound commits meetings.round=N BEFORE any turn
   // runs, so a kill at the start of round N leaves zero durable rows for N
-  // (no contributions, turn-requests, or summary). Without a shell,
+  // (no contributions or summary). Without a shell,
   // _continueInterruptedRound sees "no partial round" and the next runRound
   // increments to N+1, skipping N forever. Recreate the shell IN MEMORY ONLY —
   // no rounds-table write here, so no empty persisted row is ever kept.

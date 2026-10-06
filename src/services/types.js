@@ -28,7 +28,6 @@
  * @typedef {Object} TierConfig
  * @property {Object} rights
  * @property {boolean} rights.contribute
- * @property {boolean} rights.request_turn
  * @property {boolean} rights.call_vote
  */
 
@@ -55,18 +54,9 @@
  */
 
 /**
- * @typedef {Object} TurnRequest
- * @property {string} participant_id
- * @property {string} target - Target participant ID or "Self"
- * @property {number} priority
- * @property {string} reason
- */
-
-/**
  * @typedef {Object} Round
  * @property {number} number
  * @property {Contribution[]} contributions
- * @property {TurnRequest[]} turn_requests
  * @property {string[]} token_path
  * @property {string} summary
  */

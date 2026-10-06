@@ -220,15 +220,28 @@ test("tool.execute.after preserves large websearch outputs losslessly (>12000 ch
   assert.equal(auditLog[0].output.length, 25000);
 });
 
-test("truncateLoomOutputs passes large outputs through without truncation", () => {
+test("truncateLoomOutputs truncates outputs exceeding per-output and total budgets", () => {
   const calls = [
-    { tool: "loom_query", callID: "a", output: "x".repeat(20000) },
-    { tool: "loom_vote", callID: "b", output: "y".repeat(20000) },
+    { tool: "loom_query", callID: "a", output: "x".repeat(60000) },
+    { tool: "loom_vote", callID: "b", output: "y".repeat(60000) },
   ];
-  const out = truncateLoomOutputs(calls, 12000, 3500);
+  const out = truncateLoomOutputs(calls, 200000, 50000);
   assert.equal(out.length, 2);
-  assert.equal(out[0].output.length, 20000);
-  assert.equal(out[1].output.length, 20000);
+  assert.ok(out[0].output.length <= 50000);
+  assert.ok(out[1].output.length <= 50000);
+  const total = out[0].output.length + out[1].output.length;
+  assert.ok(total <= 200000);
+});
+
+test("truncateLoomOutputs passes normal-sized outputs through without truncation", () => {
+  const calls = [
+    { tool: "loom_query", callID: "a", output: "x".repeat(10000) },
+    { tool: "loom_vote", callID: "b", output: "y".repeat(10000) },
+  ];
+  const out = truncateLoomOutputs(calls, 200000, 50000);
+  assert.equal(out.length, 2);
+  assert.equal(out[0].output.length, 10000);
+  assert.equal(out[1].output.length, 10000);
 });
 
 test("boundToolCallsForStorage preserves large outputs without truncation", () => {

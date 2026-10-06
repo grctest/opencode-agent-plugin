@@ -140,7 +140,7 @@ test("the nonhuman tier is admitted everywhere a tier is named", async () => {
   assert.match(tierMetaSrc, /TIER_ORDER\s*=\s*\[[^\]]*"nonhuman"/, "the dashboard tier order must list nonhuman");
   assert.match(tierMetaSrc, /nonhuman:\s*\{\s*label:/, "the dashboard needs a label for the tier");
   assert.match(tierMetaSrc, /nonhuman:[\s\S]*?blurb:/, "the dashboard needs a blurb for the tier");
-  assert.equal(LATEST_SCHEMA_VERSION, 14);
+  assert.equal(LATEST_SCHEMA_VERSION, 15);
   assert.equal(MIGRATIONS.length, LATEST_SCHEMA_VERSION);
 
   // And every surface that decides whether a seat is legal, renderable, or
@@ -178,9 +178,9 @@ test("a fresh database accepts a nonhuman participant", () => {
 });
 
 test("the v13→v14 migration widens the CHECK and preserves participants and their children", () => {
-  // The rebuild drops and recreates a parent table that three child tables
+  // The rebuild drops and recreates a parent table that child tables
   // reference. Get this wrong and a migration silently cascades away every
-  // contribution, turn request and error for every existing meeting.
+  // contribution and error for every existing meeting.
   const db = new DatabaseSync(":memory:");
   initSchema(db);
   db.exec("INSERT INTO meetings (id,question,status,max_rounds,convergence,created_at,updated_at) VALUES ('m1','q','initializing',4,0,'t','t')");
@@ -200,7 +200,6 @@ test("the v13→v14 migration widens the CHECK and preserves participants and th
   db.exec("PRAGMA user_version = 13");
   db.exec("INSERT INTO participants (id,meeting_id,name,persona,agenda,tier,session_version) VALUES ('old1','m1','Old','x','y','mid',3)");
   db.exec("INSERT INTO contributions (meeting_id,participant_id,round,type,content,created_at) VALUES ('m1','old1',0,'contribution','hello','t')");
-  db.exec("INSERT INTO turn_requests (meeting_id,participant_id,round,content,created_at) VALUES ('m1','old1',0,'plz','t')");
   db.exec("INSERT INTO agent_errors (meeting_id,participant_id,round,error_type,created_at) VALUES ('m1','old1',0,'boom','t')");
 
   assert.equal(runMigrations(db), LATEST_SCHEMA_VERSION);
@@ -214,7 +213,6 @@ test("the v13→v14 migration widens the CHECK and preserves participants and th
   assert.equal(db.prepare("SELECT session_version FROM participants WHERE id='old1'").get().session_version, 3);
   // The children did NOT cascade away — this is the failure the rebuild risks.
   assert.equal(db.prepare("SELECT count(*) c FROM contributions").get().c, 1);
-  assert.equal(db.prepare("SELECT count(*) c FROM turn_requests").get().c, 1);
   assert.equal(db.prepare("SELECT count(*) c FROM agent_errors").get().c, 1);
   assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
   // Indexes are dropped with the old table and must come back.

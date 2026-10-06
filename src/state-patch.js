@@ -475,10 +475,11 @@ export function aggregateStateOfPlay(allStates, question, tags) {
   const established = collect((s) => s.established);
   const contested = collect((s) => s.contested);
   const open = collect((s) => s.open);
-  // Decisions & Proposals carries established positions (never empty on the
-  // primary path); Agreements is the true-consensus subset held by ≥2 agents,
-  // which is also what the vote-ballot menu parses (audit A4).
-  const decisions = established;
+  // Decisions & Proposals and Agreements both require ≥2 holders — a single
+  // agent's self-assertion must not render with the visual authority of
+  // consensus. Single-holder established items remain in the agent's private
+  // state but are excluded from the shared SoP (audit A4, P11 fix).
+  const decisions = collect((s) => s.established, { minHolders: 2 });
   const agreements = collect((s) => s.established, { minHolders: 2 });
 
   // Key Facts: stances ranked alongside evidence with an evidence floor, never

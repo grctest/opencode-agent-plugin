@@ -3,8 +3,8 @@ import { z } from 'zod';
 /**
  * Zod schemas for validating all agent I/O and internal data structures.
  * Provides runtime validation with clear error messages.
- * Bracket-tag directives (QUERY/EVIDENCE/SUMMON/CALL_VOTE/REQUEST_NEXT) have been removed.
- * All peer interactions now use real loom_* tools (loom_query, loom_evidence, loom_vote, loom_summon, loom_request_next).
+ * Bracket-tag directives (QUERY/EVIDENCE/SUMMON/CALL_VOTE) have been removed.
+ * All peer interactions now use real loom_* tools (loom_query, loom_evidence, loom_vote, loom_summon).
  */
 
 // Contribution types — primary agent turns are now untyped ("contribution");
@@ -26,10 +26,6 @@ export const AgentResponseSchema = z.object({
   participant_id: z.string(),
   content: z.string().max(20000),
   type: ContributionTypeSchema,
-  request_next: z.object({
-    priority: z.number().int().min(1).max(10),
-    reason: z.string().min(1).max(500),
-  }).nullable(),
   query: z.object({
     queries: z.array(z.object({
       target: z.string().min(1),
@@ -96,7 +92,6 @@ export function parseAgentResponseRaw(response, tier) {
   return {
     content,
     type: 'contribution',
-    request_next: null,
     query: null,
     evidence: null,
     summon: null,

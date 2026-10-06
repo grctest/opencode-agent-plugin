@@ -21,6 +21,8 @@ export class SessionContract {
   onPromptTrimmed = null;
   /** Set by the orchestrator; called with (classification, model) on context/token rejection. */
   onInputRejected = null;
+  /** Set by the orchestrator; called with (reason, model) when the guard is skipped due to unknown model. */
+  onGuardSkipped = null;
 
   /**
    * @param {import("./opencode.js").Client} client Raw opencode SDK client.
@@ -124,8 +126,14 @@ export class SessionContract {
             outParts = trimmed.parts;
             try { this.onPromptTrimmed?.(trimmed.trimmedChars, model); } catch { /* reporting must never break a prompt */ }
           }
+        } else {
+          try { this.onGuardSkipped?.("unknown_model", model); } catch { /* reporting must never break a prompt */ }
         }
       }
+
+      const promptBytes = (typeof outSystem === "string" ? outSystem.length : 0) +
+        outParts.reduce((sum, p) => sum + (typeof p?.text === "string" ? p.text.length : 0), 0);
+      try { this.#logger?.info("prompt_byte_bill", `Prompt payload: ${promptBytes} chars (~${Math.ceil(promptBytes / 4)} tokens)`, { promptBytes }); } catch {}
 
       const promptPromise = this.#client.session.prompt({
         path: { id: sessionId },

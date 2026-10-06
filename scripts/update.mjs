@@ -47,7 +47,6 @@ function verifyToolRegistration() {
     "loom_query",
     "loom_vote",
     "loom_summon",
-    "loom_request_next",
     "loom_pass",
     "loom_state_patch",
   ];

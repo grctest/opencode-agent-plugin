@@ -45,7 +45,7 @@ function makeManager(participants) {
 
 function fakeDatabase(capture) {
   return {
-    addContributionWithTurnRequest(_meetingId, contribution, _turnRequest, statePatch = null) {
+    addContributionWithStatePatch(_meetingId, contribution, statePatch = null) {
       capture.contributions.push({ contribution, statePatch });
     },
     setParticipantStatus() {},
@@ -101,7 +101,6 @@ test("an accepted primary state patch commits its full next state atomically", a
     participant_id: target.config.id,
     content: "Committed contribution",
     type: "contribution",
-    request_next: null,
     tool_calls: [],
     prompt_context: { state_patch_outcome: "applied" },
   }, round, pending);
@@ -153,12 +152,12 @@ test("committed unique state is used in the next primary prompt and collective S
   const stateOfPlay = aggregateStateOfPlay(manager.getAllParticipantStates(), "Question", []);
   for (const marker of [
     "Unique next-turn stance",
-    "Unique established item",
     "Unique contested item",
     "Unique open item",
     "Unique grounded fact",
     "src/unique-context.ts",
   ]) assert.match(stateOfPlay, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.doesNotMatch(stateOfPlay, /Unique established item/);
 });
 
 test("a same-round peer query receives the target's complete committed state", async () => {

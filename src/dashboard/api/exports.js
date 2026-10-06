@@ -14,7 +14,7 @@ import { parseReflections, safeParseJson } from "../../utils/db-parsing.js";
  *   tool-use details (tool_calls with input/output/error/status), and the
  *   full prompt context window (system_prompt, user_prompt, state_of_play,
  *   recent contributions used, reflection, patch outcome).
- * - Supporting evaluation tables: turn_requests, agent_errors,
+ * - Supporting evaluation tables: agent_errors,
  *   orchestrator_messages, artifact, forum, tool_audit, state_patches,
  *   state_patch_summary.
  * - agent_states: per-agent skill.state final projection (replayed from
@@ -80,7 +80,6 @@ export function exportTimeline(meetingId) {
   // getContributions() orders by round ASC, id ASC — the canonical turn sequence.
   contributions.sort((a, b) => (a.round - b.round) || ((a.id ?? 0) - (b.id ?? 0)));
 
-  const turnRequests = this.getTurnRequests();
   const errors = this.getAgentErrors();
   const artifact = this.getArtifact();
   const orchestratorMessages = this.getOrchestratorMessages(meetingId);
@@ -267,7 +266,6 @@ export function exportTimeline(meetingId) {
     round_summaries: roundSummaries ?? {},
     rounds: roundRows,
     orchestrator_messages: orchestratorMessages,
-    turn_requests: turnRequests,
     agent_errors: errors,
     artifact,
     state_patch_summary: statePatchSummary,
@@ -290,7 +288,6 @@ export function exportMarkdown(meetingId) {
     for (let offset = 0; offset < totalCount; offset += 500) {
       contributions.push(...this.getContributions(500, offset));
     }
-    const turnRequests = this.getTurnRequests();
     const errors = this.getAgentErrors();
     const artifact = this.getArtifact();
 
@@ -349,17 +346,6 @@ export function exportMarkdown(meetingId) {
       lines.push("");
     }
 
-    if (turnRequests.length > 0) {
-      lines.push(`## Turn Requests`);
-      lines.push("");
-      for (const tr of turnRequests) {
-        const participant = participants.find((p) => p.id === tr.participant_id);
-        const name = participant?.name ?? tr.participant_id;
-        lines.push(`- **[${name}]** P${tr.priority}: ${tr.reason ?? tr.content}`);
-      }
-      lines.push("");
-    }
-
     if (errors.length > 0) {
       lines.push(`## Errors`);
       lines.push("");
@@ -389,7 +375,6 @@ export function exportJSON(meetingId) {
     for (let offset = 0; offset < totalCount; offset += 500) {
       contributions.push(...this.getContributions(500, offset));
     }
-    const turnRequests = this.getTurnRequests();
     const errors = this.getAgentErrors();
     const artifact = this.getArtifact();
     const orchestratorMessages = this.getOrchestratorMessages(meetingId);
@@ -426,15 +411,6 @@ export function exportJSON(meetingId) {
         toolCalls: c.tool_calls ?? null,
         createdAt: c.created_at,
       })),
-      turn_requests: turnRequests.map(tr => ({
-        id: tr.id,
-        participantId: tr.participant_id,
-        targetParticipantId: tr.target_participant_id,
-        round: tr.round,
-        priority: tr.priority,
-        content: tr.reason ?? tr.content,
-        createdAt: tr.created_at,
-      })),
       errors: errors.map(e => ({
         id: e.id,
         participantId: e.participant_id,
@@ -463,7 +439,6 @@ export function exportJSON(meetingId) {
   export function* exportMarkdownStream(meetingId) {
     const meeting = this.getState();
     const participants = this.getParticipants();
-    const turnRequests = this.getTurnRequests();
     const errors = this.getAgentErrors();
     const artifact = this.getArtifact();
 
@@ -501,16 +476,6 @@ export function exportJSON(meetingId) {
       }
     }
     if (currentRound !== null) yield `\n`;
-
-    if (turnRequests.length > 0) {
-      yield `## Turn Requests\n\n`;
-      for (const tr of turnRequests) {
-        const participant = participants.find((p) => p.id === tr.participant_id);
-        const name = participant?.name ?? tr.participant_id;
-        yield `- **[${name}]** P${tr.priority}: ${tr.reason ?? tr.content}\n`;
-      }
-      yield `\n`;
-    }
 
     if (errors.length > 0) {
       yield `## Errors\n\n`;

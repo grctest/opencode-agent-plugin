@@ -8,7 +8,7 @@
  * round until the next state change. Resetting the snapshot-gated caches
  * before a resumed run starts makes the next poll rebroadcast unconditionally.
  *
- * Delta cursors (contributions, orchestrator messages, turn requests, errors)
+ * Delta cursors (contributions, orchestrator messages, errors)
  * are deliberately NOT reset: replaying them would rebroadcast up to 500 rows
  * per stream and risk skipping rows past the replay cap on large meetings.
  */

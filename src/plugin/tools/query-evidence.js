@@ -272,7 +272,7 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
                };
                stateManager.addContribution(contrib);
                if (roundObj) roundObj.contributions.push(contrib);
-               degrade("contribution_db_failed", "Failed to persist contribution — visible in memory only this session", () => db.addContributionWithTurnRequest(stateManager.getState().id, contrib, null), null);
+               degrade("contribution_db_failed", "Failed to persist contribution — visible in memory only this session", () => db.addContributionWithStatePatch(stateManager.getState().id, contrib), null);
 
                // Perspective answers update the responder's stored reflection — this path
                // is replacing automatic challenge/dissent reflections long-term.

@@ -34,14 +34,14 @@ export async function _continueInterruptedRound() {
   if (round && round.summary && String(round.summary).trim()) return null; // already finalized
 
   // Crash landed between initializeRound's number commit (meetings.round=N)
-  // and the first durable row for N — zero contributions, turn-requests, and
-  // no summary. Restart N from scratch UNDER THE SAME NUMBER (never
-  // increment): recreate the shell in memory only, so no empty rounds-table
-  // row is ever persisted. The normal path below then drives the full
-  // speaker list and finalizes, exactly like a fresh round N.
+  // and the first durable row for N — zero contributions and no summary.
+  // Restart N from scratch UNDER THE SAME NUMBER (never increment): recreate
+  // the shell in memory only, so no empty rounds-table row is ever persisted.
+  // The normal path below then drives the full speaker list and finalizes,
+  // exactly like a fresh round N.
   let freshRestart = false;
   if (!round) {
-    round = { number: roundNum, contributions: [], turn_requests: [], token_path: [], summary: "" };
+    round = { number: roundNum, contributions: [], token_path: [], summary: "" };
     this._stateManager.addRound(round);
     freshRestart = true;
     this._logger.info("resume_round_restart_empty", `Round ${roundNum} had no durable rows — restarting it from scratch under the same number`);
@@ -205,10 +205,9 @@ export async function _finalizeRound(updatedRound) {
       });
 
       const contribCount = updatedRound.contributions.length;
-      const turnRequestCount = (updatedRound.turn_requests || []).length;
       const summaryText = updatedRound.summary ? ` | ${truncate(updatedRound.summary, SUMMARY_TRUNCATE_LEN)}` : "";
       await this._sessionManager.postProgress(
-        `📋 Round ${this._stateManager.getCurrentRound()} complete — ${contribCount} contribution${contribCount !== 1 ? "s" : ""}, ${turnRequestCount} turn request${turnRequestCount !== 1 ? "s" : ""}${summaryText}`
+        `📋 Round ${this._stateManager.getCurrentRound()} complete — ${contribCount} contribution${contribCount !== 1 ? "s" : ""}${summaryText}`
       );
 
       if (this._options.onRoundComplete) {
@@ -216,26 +215,24 @@ export async function _finalizeRound(updatedRound) {
       }
       this._notifyUpdate();
 
-      // Plan turn order for next round
-      const turnRequests = updatedRound.turn_requests || [];
-      if (turnRequests.length > 0) {
-        const { planTurnOrder } = await import("../moderation.js");
-        const orderedParticipants = await planTurnOrder({
-          stateOfPlay: this._stateManager.getStateOfPlay(),
-          roundSummary: updatedRound.summary || "",
-          turnRequests,
-          participants: this._stateManager.getParticipants(),
-          promptFn: async (system, model, message) => this._promptOrchestrator(system, model, message, "turn_order", updatedRound.number),
-             ...(this._options.orchestratorModel ? { getOrchestratorModel: () => this._getOrchestratorModel() } : {}),
-             orchestratorConfig: this._options.orchestratorConfig,
-             getHighestTierModel: () => this._getOrchestratorModel(),
-        });
-        
-        // Store planned order for next round
-        if (orderedParticipants.length > 0) {
-          this._stateManager.setNextSpeakerId(orderedParticipants[0]);
-          this._stateManager.setPlannedTurnOrder(orderedParticipants);
-        }
+      // Plan turn order for next round — the orchestrator decides the order
+      // from the state of play and round summary. Agents no longer request
+      // speaking priority.
+      const { planTurnOrder } = await import("../moderation.js");
+      const orderedParticipants = await planTurnOrder({
+        stateOfPlay: this._stateManager.getStateOfPlay(),
+        roundSummary: updatedRound.summary || "",
+        participants: this._stateManager.getParticipants(),
+        promptFn: async (system, model, message) => this._promptOrchestrator(system, model, message, "turn_order", updatedRound.number),
+           ...(this._options.orchestratorModel ? { getOrchestratorModel: () => this._getOrchestratorModel() } : {}),
+           orchestratorConfig: this._options.orchestratorConfig,
+           getHighestTierModel: () => this._getOrchestratorModel(),
+      });
+
+      // Store planned order for next round
+      if (orderedParticipants.length > 0) {
+        this._stateManager.setNextSpeakerId(orderedParticipants[0]);
+        this._stateManager.setPlannedTurnOrder(orderedParticipants);
       }
 
       const participants = this._stateManager.getParticipants();

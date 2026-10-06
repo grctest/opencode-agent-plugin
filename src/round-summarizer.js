@@ -240,12 +240,6 @@ export function buildRoundSummaryUser(round, state, participantStates = [], orch
   const sopExcerpt = opts.stateOfPlay
     ? `\n## State of Play (prior rounds — what was already established)\n${delimitContext(sanitizeForDisplay(String(opts.stateOfPlay), 600), "PRIOR_STATE_OF_PLAY")}\n`
     : "";
-  // Turn requests with priorities: the clerk should note pending procedural
-  // state, not just substantive positions (audit O9/Step 5).
-  const turnRequests = Array.isArray(opts.turnRequests) ? opts.turnRequests : [];
-  const requestsBlock = turnRequests.length > 0
-    ? `\n## Turn Requests (for next round)\n${turnRequests.slice(0, 8).map((r) => `- ${sanitizeForDisplay(String(r.participant_id ?? "?"), 60)} P${Number(r.priority) || "?"}: ${sanitizeForDisplay(String(r.reason ?? ""), 120)}`).join("\n")}\n`
-    : "";
   // P7 — Citation engagement: report plain contributions that have no peer
   // [#id] citation so the clerk can flag isolated contributions.
   const uncitedPlains = findUncitedPlainContributions(round.contributions);
@@ -264,7 +258,7 @@ ${state.question || "(no question provided)"}
 ${roundContextLine}${rosterBlock}${sopExcerpt}
 ## Round ${round.number || "?"} Contributions
 ${formattedContributions}
-${uncitedBlock}${evidenceHint}${requestsBlock}${stateHint}
+${uncitedBlock}${evidenceHint}${stateHint}
 
 ## Output — 5-6 bullets, each 1-3 sentences (human-readable, then auditable):
 
@@ -283,11 +277,10 @@ ${state.question || "(no question provided)"}
 ${roundContextLine}${rosterBlock}
 ## Round ${round.number || "?"}
 Contribution types: ${round.contributions.map((c) => c.type).join(", ")}
-Turn requests: ${round.turn_requests.length}
 ${evidenceHint}${stateHint}
 
 ## Instructions
-Provide ${band.words} word summary with 4-5 bullets (Established / Contested / Evidence / Open / Code if applicable) noting no substantive deliberation but mentioning contribution types and any turn requests. Agent States are remembered positions and standing context, not independent evidence; attribute them to their named holder and do not add a separate Agent States bullet. Use uncited state only as context, and place it under Evidence only when an explicit Source: or [#id] resolves to a listed contribution or tool signal. Sentence style, human-readable. Preserve numbers verbatim.`;
+Provide ${band.words} word summary with 4-5 bullets (Established / Contested / Evidence / Open / Code if applicable) noting no substantive deliberation but mentioning contribution types. Agent States are remembered positions and standing context, not independent evidence; attribute them to their named holder and do not add a separate Agent States bullet. Use uncited state only as context, and place it under Evidence only when an explicit Source: or [#id] resolves to a listed contribution or tool signal. Sentence style, human-readable. Preserve numbers verbatim.`;
 }
 
 /**
@@ -314,19 +307,17 @@ export async function summarizeRound(round, state, promptOrchestrator, getHighes
 
   // Degrade gracefully: keep the round auditable with a deterministic digest
   // rather than failing the meeting over a transient empty LLM response.
-  const turnRequestCount = Array.isArray(round.turn_requests) ? round.turn_requests.length : 0;
   const digestBullets = summaryContributions.slice(0, 10).map((c) =>
     `- [#${c.id}] ${c.participant_id} [${String(c.type).toUpperCase()}]: ${truncate(c.content ?? "", 300)}`
   );
   if (digestBullets.length === 0) {
     digestBullets.push(`- No substantive positions staked (${contribCount} contribution(s): ${round.contributions.map((c) => c.type).join(", ")})`);
   }
-  digestBullets.push(`- Turn requests: ${turnRequestCount}`);
 
   summarizerLogger.warn(
     "summary_degraded",
     `Round ${round.number || "?"} LLM summary empty after retries — using deterministic digest`,
-    { round: round.number, contribCount, turnRequests: turnRequestCount },
+    { round: round.number, contribCount },
   );
 
   return ["(Degraded summary — LLM returned empty response)", ...digestBullets].join("\n");

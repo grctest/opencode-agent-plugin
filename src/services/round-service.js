@@ -54,8 +54,8 @@ export class RoundService {
       this.#logger.warn("round_summary_state_snapshot_failed", `Round ${round.number} agent state snapshot unavailable`, { error: err?.message ?? String(err) });
     }
 
-    // Clerk context (audit O9/Step 5): round position, tier-free roster, prior
-    // SoP excerpt, and turn requests — all already in memory at this call site.
+    // Clerk context (audit O9/Step 5): round position, tier-free roster, and
+    // prior SoP excerpt — all already in memory at this call site.
     let summaryOpts = {};
     try {
       const sm = this.#stateManager;
@@ -66,7 +66,6 @@ export class RoundService {
               id: p?.config?.id, contributions_count: p?.contributions_count ?? 0, status: p?.status,
             }))
           : [],
-        turnRequests: Array.isArray(round.turn_requests) ? round.turn_requests : [],
         stateOfPlay: typeof sm?.getStateOfPlay === "function" ? sm.getStateOfPlay() : "",
       };
     } catch {}

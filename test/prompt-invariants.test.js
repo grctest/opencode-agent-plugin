@@ -48,7 +48,7 @@ function participant(id = "p0") {
 const agentTools = {
   enabled: true,
   loom: {
-    loom_query: true, loom_vote: true, loom_summon: true, loom_request_next: true,
+    loom_query: true, loom_vote: true, loom_summon: true,
     loom_pass: true, loom_state_patch: true,
   },
   builtIn: { websearch: true, webfetch: true, read: true, glob: true, grep: true },
@@ -116,10 +116,16 @@ test("key facts keep an evidence floor beside stances", () => {
   assert.ok((sop.match(/Source: https/g) || []).length >= 3, "fewer than 3 grounded facts survived");
 });
 
-// 4. A4 — Decisions section is populated on the primary path.
-test("primary aggregation populates Decisions & Proposals", () => {
-  const sop = aggregateStateOfPlay(sevenStates(), "Q", []);
-  assert.match(sop, /## Decisions & Proposals/);
+// 4. A4 — Decisions section requires ≥2 holders (P11 fix).
+test("primary aggregation populates Decisions & Proposals only with multi-holder items", () => {
+  const singleHolderSop = aggregateStateOfPlay(sevenStates(), "Q", []);
+  assert.doesNotMatch(singleHolderSop, /## Decisions & Proposals/);
+  const multiHolderStates = sevenStates().map((e, i) => ({
+    ...e,
+    state: { ...e.state, established: [`shared decision ${i % 3}`] },
+  }));
+  const multiHolderSop = aggregateStateOfPlay(multiHolderStates, "Q", []);
+  assert.match(multiHolderSop, /## Decisions & Proposals/);
 });
 
 // 5. A6 — merge keeps the most recent fallback items, not the oldest.
@@ -192,7 +198,6 @@ test("round summary prompt stays within budget", () => {
       type: "contribution",
       content: `substantive analysis sentence with numbers 12% and 4ms. `.repeat(60),
     })),
-    turn_requests: [],
   };
   const states = sevenStates().map((e) => ({
     id: e.id, name: e.name, tier: e.tier, status: "listening", state: e.state,
@@ -243,7 +248,6 @@ test("loom-free tool map excludes query/vote/summon/pass/state_patch", () => {
   for (const t of ["loom_query", "loom_vote", "loom_summon", "loom_pass", "loom_state_patch"]) {
     assert.ok(!(t in map), `${t} present in loom-free map`);
   }
-  assert.ok("loom_request_next" in map, "fire-and-forget request_next must stay");
 });
 
 // 16. D11 — over-budget transcript preserves the final round, cuts digests first.

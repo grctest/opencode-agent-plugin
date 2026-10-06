@@ -120,7 +120,6 @@ export const DEFAULT_CONFIG = {
       loom_query: true,
       loom_vote: true,
       loom_summon: true,
-      loom_request_next: true,
       loom_pass: true,
       loom_forum: true,
       loom_state_patch: true,
@@ -191,7 +190,6 @@ export const NESTED_SCHEMA = {
   'agentTools.loom.loom_query': { type: 'boolean' },
   'agentTools.loom.loom_vote': { type: 'boolean' },
   'agentTools.loom.loom_summon': { type: 'boolean' },
-  'agentTools.loom.loom_request_next': { type: 'boolean' },
   'agentTools.loom.loom_pass': { type: 'boolean' },
   'agentTools.loom.loom_forum': { type: 'boolean' },
   'agentTools.loom.loom_state_patch': { type: 'boolean' },
@@ -214,8 +212,8 @@ export const NESTED_SCHEMA = {
 
 export const DEPRECATED_KEYS = {
   maxTurnRequestWords: 'never enforced — turn-request length is governed by prompts; key removed',
-  maxTurnRequestsPerRound: 'never enforced — ordering is planTurnOrder; key removed',
-  'turnRequestThresholds.autoGrant': 'dormant by design — ordering is planTurnOrder, not autoGrant; key removed',
+  maxTurnRequestsPerRound: 'never enforced — turn order is orchestrator-decided; key removed',
+  'turnRequestThresholds.autoGrant': 'dormant by design — turn order is orchestrator-decided, not autoGrant; key removed',
   'agentTools.loom.loom_evidence': 'merged into loom_query with mode evidence — use loom_query with mode evidence instead',
   'agentTools.loom.loom_type': 'removed — primary agent turns are no longer typed, following agents interpret content directly',
   'agentTools.loom.loom_vector_search': 'removed — use loom_forum or loom_query for prior context; fabric RAG deleted',

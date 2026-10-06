@@ -50,7 +50,7 @@ function mergeToolCalls(prev, next) {
   return prev;
 }
 
-export function useSSEHandlers({ setContributions, setTurnRequests, setState, setParticipants, setAgentErrors, setArtifact, setOrchestratorMessages, setRoundSummaries, setForumUpdateTrigger }) {
+export function useSSEHandlers({ setContributions, setState, setParticipants, setAgentErrors, setArtifact, setOrchestratorMessages, setRoundSummaries, setForumUpdateTrigger }) {
   useEffect(() => {
     const handleContributions = (e) => {
       const newContribs = e.detail;
@@ -87,22 +87,6 @@ export function useSSEHandlers({ setContributions, setTurnRequests, setState, se
           if (fresh.length === 0) return prev;
         }
         return Array.from(byId.values()).sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
-      });
-    };
-
-    const handleTurnRequests = (e) => {
-      const newTrs = e.detail;
-      if (!newTrs || newTrs.length === 0) return;
-      setTurnRequests((prev) => {
-        // Dedup on stable row id when present; fall back to the normalized composite
-        // key (participant_id + target_participant_id + round) — the old key used
-        // `tr.target`, which is always undefined and collapsed every request from
-        // the same participant (audit 11 UF2).
-        const keyOf = (tr) =>
-          tr.id != null ? `id:${tr.id}` : `${tr.participant_id}:${tr.target_participant_id}:${tr.round ?? ""}`;
-        const seen = new Set(prev.map(keyOf));
-        const fresh = newTrs.filter((tr) => tr && !seen.has(keyOf(tr)));
-        return fresh.length > 0 ? [...prev, ...fresh] : prev;
       });
     };
 
@@ -168,7 +152,6 @@ export function useSSEHandlers({ setContributions, setTurnRequests, setState, se
     };
 
     window.addEventListener("loom-new-contributions", handleContributions);
-    window.addEventListener("loom-new-turn-requests", handleTurnRequests);
     window.addEventListener("loom-state-update", handleState);
     window.addEventListener("loom-participants-update", handleParticipants);
     window.addEventListener("loom-agent-error", handleAgentError);
@@ -180,7 +163,6 @@ export function useSSEHandlers({ setContributions, setTurnRequests, setState, se
 
     return () => {
       window.removeEventListener("loom-new-contributions", handleContributions);
-      window.removeEventListener("loom-new-turn-requests", handleTurnRequests);
       window.removeEventListener("loom-state-update", handleState);
       window.removeEventListener("loom-participants-update", handleParticipants);
       window.removeEventListener("loom-agent-error", handleAgentError);
@@ -236,7 +218,6 @@ export function useMeetingApi(meetingId, resetKey, meetings = [], onSelectMeetin
   const [state, setState] = useState(null);
   const [participants, setParticipants] = useState([]);
   const [contributions, setContributions] = useState([]);
-  const [turnRequests, setTurnRequests] = useState([]);
   const [orchestratorMessages, setOrchestratorMessages] = useState([]);
   const [roundSummaries, setRoundSummaries] = useState({});
   const [statePatchSummary, setStatePatchSummary] = useState(null);
@@ -369,7 +350,6 @@ export function useMeetingApi(meetingId, resetKey, meetings = [], onSelectMeetin
       if (signal.aborted) return;
       setState(data.state);
       setParticipants(data.participants);
-      setTurnRequests(data.turn_requests ?? []);
       setOrchestratorMessages(data.orchestrator_messages ?? []);
       setRoundSummaries(data.round_summaries ?? {});
       setStatePatchSummary(data.state_patch_summary ?? null);
@@ -475,13 +455,12 @@ export function useMeetingApi(meetingId, resetKey, meetings = [], onSelectMeetin
     return () => controller.abort();
   }, [meetingId, forumUpdateTrigger, state?.features?.forums]);
 
-  useSSEHandlers({ setContributions, setTurnRequests, setState, setParticipants, setAgentErrors, setArtifact, setOrchestratorMessages, setRoundSummaries, setForumUpdateTrigger });
+  useSSEHandlers({ setContributions, setState, setParticipants, setAgentErrors, setArtifact, setOrchestratorMessages, setRoundSummaries, setForumUpdateTrigger });
 
   return {
     state,
     participants,
     contributions,
-    turnRequests,
     orchestratorMessages,
     roundSummaries,
     statePatchSummary,

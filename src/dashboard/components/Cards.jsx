@@ -172,23 +172,6 @@ export const ContributionItem = memo(({ contribution, participantName, onDialogO
   );
 });
 
-export const TurnRequestItem = memo(({ turnRequest, participantName }) => {
-  const target = turnRequest.target_participant_id ?? turnRequest.target;
-  return (
-    <Card className="border-dashed bg-card/50 py-3">
-      <div className="flex flex-wrap gap-2 items-center mb-1">
-        <span className="text-sm font-semibold">{participantName}</span>
-        <Badge variant="turn_request">turn request</Badge>
-        <span className="text-xs text-muted-foreground">priority {turnRequest.priority}</span>
-        {target && (
-          <span className="text-xs text-muted-foreground">→ {target}</span>
-        )}
-      </div>
-      <p className="text-sm text-muted-foreground">{turnRequest.reason}</p>
-    </Card>
-  );
-});
-
 export const ReflectionInline = memo(({ reflection, contributions, participantName }) => {
   const trigger = useMemo(() => {
     if (!reflection.targets_which) return null;

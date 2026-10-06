@@ -182,6 +182,24 @@ export class MeetingOrchestrator {
   }
 
   /**
+   * The per-model context guard was skipped because the model's window is
+   * unknown (resolveContextLimit returned null). This is the fail-open branch
+   * — the prompt ships unguarded. Recorded as a degradation so the skip is
+   * visible in metrics and can be counted across meetings.
+   */
+  _recordGuardSkip(reason, model) {
+    try {
+      recordMeetingDegradedReason(this._meetingId, `guard_skipped_${reason}`);
+      this._callStats.guard_skips = (this._callStats.guard_skips ?? 0) + 1;
+      this._logger.warn("context_guard_skipped", `Context guard skipped: ${reason} (model ${model?.providerID}/${model?.modelID})`, {
+        model: `${model?.providerID}/${model?.modelID}`,
+        reason,
+      });
+      this._scheduleStatsFlush?.();
+    } catch { /* telemetry must never break a prompt */ }
+  }
+
+  /**
    * Persist the merged call counters so the dashboard's "LLM Calls" stat
    * tracks real call volume DURING a round.
    *

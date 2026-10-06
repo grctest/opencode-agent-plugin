@@ -23,7 +23,7 @@ const researchTools = () => ({
 /**
  * Ephemeral sub-agent tool map for loom_query targets (all modes except
  * summoned guests). Research tools only — no nested
- * loom_query/loom_vote/loom_summon/loom_forum/loom_request_next/loom_pass
+ * loom_query/loom_vote/loom_summon/loom_forum/loom_pass
  * and no loom_state_patch (patching is primary-tail-only; the asker's tail
  * projects what survives).
  */

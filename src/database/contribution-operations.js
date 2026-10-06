@@ -111,22 +111,6 @@ export function getContributionContext(db, contributionId) {
   return safeJsonParse(row?.prompt_context, null);
 }
 
-export function addTurnRequest(db, meetingId, turnRequest) {
-  qq(db,
-      `INSERT INTO turn_requests (meeting_id, participant_id, target_participant_id, round, content, priority, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      meetingId,
-      turnRequest.participant_id,
-      turnRequest.target_participant_id ?? null,
-      turnRequest.round ?? null,
-      turnRequest.reason,
-      turnRequest.priority,
-      isoNow(),
-    );
-}
-
 export function ensureParticipantRow(db, meetingId, participantId, name = participantId, tier = "mid") {
   try {
     const result = qq(db,
@@ -141,19 +125,13 @@ export function ensureParticipantRow(db, meetingId, participantId, name = partic
   }
 }
 
-export function addContributionWithTurnRequest(db, meetingId, contribution, turnRequest, getRoundFn, statePatch = null) {
+export function addContributionWithStatePatch(db, meetingId, contribution, getRoundFn, statePatch = null) {
   db.exec('BEGIN IMMEDIATE');
 
   try {
     const exists = qq(db,`SELECT 1 FROM participants WHERE id = ? AND meeting_id = ?`).get(contribution.participant_id, meetingId);
     if (!exists) {
       dbLogger.warn("orphan_contribution", `Contribution participant_id ${contribution.participant_id} not in participants for meeting ${meetingId}`);
-    }
-    if (turnRequest?.target_participant_id) {
-      const targetExists = qq(db,`SELECT 1 FROM participants WHERE id = ? AND meeting_id = ?`).get(turnRequest.target_participant_id, meetingId);
-      if (!targetExists) {
-        dbLogger.warn("orphan_turn_request", `Turn request target ${turnRequest.target_participant_id} not in participants for meeting ${meetingId}`);
-      }
     }
 
     const insertResult = qq(db,
@@ -200,47 +178,11 @@ export function addContributionWithTurnRequest(db, meetingId, contribution, turn
       );
     }
 
-    if (turnRequest) {
-      db
-        .prepare(
-          `INSERT INTO turn_requests (meeting_id, participant_id, target_participant_id, round, content, priority, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          meetingId,
-          turnRequest.participant_id,
-          turnRequest.target_participant_id ?? null,
-          turnRequest.round ?? null,
-          turnRequest.reason,
-          turnRequest.priority,
-          isoNow(),
-        );
-    }
-
     db.exec('COMMIT');
   } catch (err) {
     try { db.exec('ROLLBACK'); } catch {}
     throw err;
   }
-}
-
-export function getTurnRequests(db, meetingId) {
-  const rows = db
-    .prepare(
-      `SELECT id, participant_id, target_participant_id, round, content as reason, priority, created_at
-         FROM turn_requests WHERE meeting_id = ? ORDER BY id ASC`,
-    )
-    .all(meetingId);
-  return rows.map((r) => ({
-    id: r.id,
-    participant_id: r.participant_id,
-    target_participant_id: r.target_participant_id,
-    round: r.round,
-    priority: r.priority,
-    content: r.reason,
-    reason: r.reason,
-    created_at: r.created_at,
-  }));
 }
 
 export function getMaxContributionId(db, meetingId) {

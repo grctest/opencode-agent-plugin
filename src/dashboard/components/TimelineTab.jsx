@@ -1,6 +1,6 @@
 import { useRef, useMemo, useCallback, useState, useEffect, memo } from "react";
 import { cn, relativeTime } from "../utils.js";
-import { ContributionItem, TurnRequestItem, ThinkingCard, ReflectionRow, QueryResponseRow, EvidenceResponseRow, SummonedResponseRow, VoteResponseRow, OrchestratorItem, ORCHESTRATOR_TYPE_META, ContentDialog, renderMarkdown } from "./Cards.jsx";
+import { ContributionItem, ThinkingCard, ReflectionRow, QueryResponseRow, EvidenceResponseRow, SummonedResponseRow, VoteResponseRow, OrchestratorItem, ORCHESTRATOR_TYPE_META, ContentDialog, renderMarkdown } from "./Cards.jsx";
 import { buildFlatItems, pairOrchestratorMessages } from "../utils/timeline.js";
 import { List } from "react-window";
 import { Card, CardContent } from "./ui/card.tsx";
@@ -107,7 +107,6 @@ function getRowHeight(item) {
     return HEADER_HEIGHT + (item.showExtensionMarker ? EXTENSION_MARKER_HEIGHT : 0);
   }
   if (item.type === "round_summary") return ROUND_SUMMARY_HEIGHT;
-  if (item.type === "turn_request") return INTERJECTION_HEIGHT;
   if (item.type === "model_fallback") return INTERJECTION_HEIGHT;
   if (item.type === "reflection") return REFLECTION_HEIGHT;
   if (item.type === "query_response") return QUERY_RESPONSE_HEIGHT;
@@ -181,8 +180,6 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
         detail = (input.question ?? "").slice(0,80);
       } else if (toolName === "loom_summon") {
         detail = `${input.persona_name ?? input.personaName ?? ""}: ${(input.issue ?? "").slice(0,60)}`;
-      } else if (toolName === "loom_request_next") {
-        detail = `P${input.priority} ${input.reason ?? ""}`.slice(0,80);
       } else if (input && typeof input === "object") detail = JSON.stringify(input).slice(0,80);
     } catch { detail = invocation.input ? String(invocation.input).slice(0,80) : ""; }
     const openInvokerDialog = (e) => {
@@ -374,11 +371,7 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
       </div>
     );
   }
-  return (
-    <div style={style} className="overflow-hidden py-0.5">
-      <TurnRequestItem turnRequest={item.turnRequest} participantName={participantName(item.turnRequest.participant_id)} />
-    </div>
-  );
+  return null;
 });
 
 const TimelineTabBase = ({
@@ -394,7 +387,6 @@ const TimelineTabBase = ({
   onToggleCollapse,
   agentErrors,
   participantName,
-  turnRequests,
   extensions,
   activeRound,
   maxRounds,
@@ -509,10 +501,10 @@ const TimelineTabBase = ({
 
   // Extracted pure function — see src/dashboard/utils/timeline.js
   const flatItems = useMemo(() => buildFlatItems(groupedContributions, {
-    collapsedRounds, activeRound, agentErrors, turnRequests, extensions, maxRounds, isWeaving,
+    collapsedRounds, activeRound, agentErrors, extensions, maxRounds, isWeaving,
     thinkingParticipants, reflectingParticipants, queryingParticipants, evidenceParticipants, summoningParticipants,
     participantName, orchestratorMessages, roundSummaries
-  }), [groupedContributions, collapsedRounds, activeRound, agentErrors, turnRequests, extensions, maxRounds, isWeaving, thinkingParticipants, reflectingParticipants, queryingParticipants, evidenceParticipants, summoningParticipants, participantName, orchestratorMessages, roundSummaries]);
+  }), [groupedContributions, collapsedRounds, activeRound, agentErrors, extensions, maxRounds, isWeaving, thinkingParticipants, reflectingParticipants, queryingParticipants, evidenceParticipants, summoningParticipants, participantName, orchestratorMessages, roundSummaries]);
 
   // Wire poll error handler to setPollError (exposed via aria-live)
   const [pollError, setPollError] = useState(null);

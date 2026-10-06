@@ -62,10 +62,9 @@ function useSSE(meetingId, onEvent) {
               onEventRef.current({ type: "contributions", data: arr, timestamp });
             }
           }
-          const [sRes, pRes, trRes, errRes, omRes, artRes] = await Promise.all([
+          const [sRes, pRes, errRes, omRes, artRes] = await Promise.all([
             fetch(`/api/state?meeting=${meetingId}`, { signal: controller.signal }),
             fetch(`/api/participants?meeting=${meetingId}`, { signal: controller.signal }),
-            fetch(`/api/turn_requests?meeting=${meetingId}`, { signal: controller.signal }),
             fetch(`/api/agent_errors?meeting=${meetingId}`, { signal: controller.signal }),
             fetch(`/api/orchestrator_messages?meeting=${meetingId}`, { signal: controller.signal }),
             fetch(`/api/artifact?meeting=${meetingId}`, { signal: controller.signal }),
@@ -77,10 +76,6 @@ function useSSE(meetingId, onEvent) {
           if (pRes.ok) {
             const pData = await pRes.json();
             onEventRef.current({ type: "participants", data: pData, timestamp });
-          }
-          if (trRes.ok) {
-            const trData = await trRes.json();
-            if (Array.isArray(trData) && trData.length > 0) onEventRef.current({ type: "turn_requests", data: trData, timestamp });
           }
           if (errRes.ok) {
             const eData = await errRes.json();
@@ -279,7 +274,7 @@ export function App() {
   const meetings = useMeetingsList();
   const { resetKey } = useSSEReset(selectedMeeting);
   const embeddingStatus = useEmbeddingStatus();
-  const { state, participants, contributions, turnRequests, orchestratorMessages, roundSummaries, agentErrors, artifact, forumTopics, error } = useMeetingApi(selectedMeeting, resetKey, meetings, setSelectedMeeting);
+  const { state, participants, contributions, orchestratorMessages, roundSummaries, agentErrors, artifact, forumTopics, error } = useMeetingApi(selectedMeeting, resetKey, meetings, setSelectedMeeting);
    const { rateLimit, dismiss: dismissRateLimit } = useRateLimit();
    useEffect(() => {
      if (state?.rate_limit_state) {
@@ -295,11 +290,8 @@ export function App() {
      else if (data.type === "participants") window.dispatchEvent(new CustomEvent("loom-participants-update", { detail: data.data }));
      else if (data.type === "agent_error") window.dispatchEvent(new CustomEvent("loom-agent-error", { detail: data.data }));
      else if (data.type === "agent_errors_cleared") window.dispatchEvent(new CustomEvent("loom-agent-errors-cleared", { detail: data }));
-     else if (data.type === "artifact") window.dispatchEvent(new CustomEvent("loom-artifact", { detail: data.data }));
-     else if (data.type === "turn_requests") {
-      const newTrs = data.data;
-      if (newTrs && newTrs.length > 0) window.dispatchEvent(new CustomEvent("loom-new-turn-requests", { detail: newTrs }));
-    } else if (data.type === "orchestrator_messages") window.dispatchEvent(new CustomEvent("loom-orchestrator-messages", { detail: data.data }));
+      else if (data.type === "artifact") window.dispatchEvent(new CustomEvent("loom-artifact", { detail: data.data }));
+      else if (data.type === "orchestrator_messages") window.dispatchEvent(new CustomEvent("loom-orchestrator-messages", { detail: data.data }));
      else if (data.type === "round_summaries") window.dispatchEvent(new CustomEvent("loom-round-summaries", { detail: data.data }));
      else if (data.type === "forum_update") window.dispatchEvent(new CustomEvent("loom-forum-update", { detail: data.data }));
      else if (data.type === "rate_limit") window.dispatchEvent(new CustomEvent("loom-rate-limit", { detail: data.data }));
@@ -463,7 +455,6 @@ export function App() {
                     onToggleCollapse={toggleRoundCollapse}
                     agentErrors={agentErrors}
                     participantName={participantName}
-                    turnRequests={turnRequests}
                     extensions={extensions}
                     activeRound={activeRound}
                     maxRounds={state?.max_rounds}

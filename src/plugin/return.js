@@ -236,7 +236,6 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
               result.rounds = state.rounds.map(r => ({
                 number: r.number,
                 contributionCount: r.contributions.length,
-                turnRequestCount: r.turn_requests.length,
                 summary: r.summary,
               }));
             }
@@ -256,7 +255,7 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
                 const cfg = config.get();
                 const warnings = config.getWarnings();
                 const source = config.getSource();
-                result.config = { values: cfg, warnings, source, dormantNote: "maxTurnRequestsPerRound/maxTurnRequestWords/turnRequestThresholds.autoGrant/agentTools.loom.loom_evidence/agentTools.loom.loom_type/agentTools.patchRetry removed — ordering is planTurnOrder, primary turns are untyped, loom_query mode evidence covers evidence, no enforcement follow-up call exists" };
+                result.config = { values: cfg, warnings, source, dormantNote: "maxTurnRequestsPerRound/maxTurnRequestWords/turnRequestThresholds.autoGrant/agentTools.loom.loom_evidence/agentTools.loom.loom_type/agentTools.patchRetry removed — turn order is orchestrator-decided, primary turns are untyped, loom_query mode evidence covers evidence, no enforcement follow-up call exists" };
               } catch {}
             }
             return JSON.stringify(result, null, 2);
@@ -269,7 +268,7 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
               const state = api.getState();
               const participants = api.getParticipants();
               const contributions = api.getContributions(500, 0);
-              const rounds = state ? [{ number: state.round, contributions, turn_requests: api.getTurnRequests(), summary: "" }] : [];
+              const rounds = state ? [{ number: state.round, contributions, summary: "" }] : [];
               const orchestratorMessages = api.getOrchestratorMessages(args.loom_id);
               const result = {};
               if (include.includes('state') && state) {
@@ -319,7 +318,7 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
               if (include.includes('config')) {
                 try {
                                     const cfgInst = createConfig(directory);
-                  result.config = { values: cfgInst.get(), warnings: cfgInst.getWarnings(), source: cfgInst.getSource(), dormantNote: "maxTurnRequestsPerRound/maxTurnRequestWords/turnRequestThresholds.autoGrant/agentTools.loom.loom_evidence/agentTools.loom.loom_type removed — ordering is planTurnOrder, primary turns are untyped" };
+                  result.config = { values: cfgInst.get(), warnings: cfgInst.getWarnings(), source: cfgInst.getSource(), dormantNote: "maxTurnRequestsPerRound/maxTurnRequestWords/turnRequestThresholds.autoGrant/agentTools.loom.loom_evidence/agentTools.loom.loom_type removed — turn order is orchestrator-decided, primary turns are untyped" };
                 } catch {}
               }
               result._source = "db-fallback";

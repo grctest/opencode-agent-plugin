@@ -31,17 +31,17 @@ function contrib(id, participantId, round) {
 
 test("ensureCurrentRoundShell recreates the persisted round when it has no rows", () => {
   const roundMap = new Map([
-    [4, { number: 4, contributions: [contrib(1, "a", 4)], turn_requests: [], summary: "s4" }],
+    [4, { number: 4, contributions: [contrib(1, "a", 4)], summary: "s4" }],
   ]);
   const created = ensureCurrentRoundShell(roundMap, 5, {});
   assert.equal(created, true);
   const shell = roundMap.get(5);
-  assert.deepEqual(shell, { number: 5, contributions: [], turn_requests: [], summary: "" });
+  assert.deepEqual(shell, { number: 5, contributions: [], summary: "" });
 });
 
 test("ensureCurrentRoundShell leaves existing rounds and invalid input alone", () => {
   const roundMap = new Map([
-    [5, { number: 5, contributions: [contrib(9, "a", 5)], turn_requests: [], summary: "" }],
+    [5, { number: 5, contributions: [contrib(9, "a", 5)], summary: "" }],
   ]);
   assert.equal(ensureCurrentRoundShell(roundMap, 5, {}), false);
   assert.equal(roundMap.get(5).contributions.length, 1);
@@ -104,7 +104,7 @@ function makeContinueCtx({ currentRound, rounds }) {
 
 test("_continueInterruptedRound restarts an empty round under the same number", async () => {
   const rounds = [
-    { number: 4, contributions: [contrib(1, "a", 4)], turn_requests: [], summary: "s4" },
+    { number: 4, contributions: [contrib(1, "a", 4)], summary: "s4" },
   ];
   const t = makeContinueCtx({ currentRound: 5, rounds });
   const out = await _continueInterruptedRound.call(t.ctx);
@@ -121,7 +121,6 @@ test("_continueInterruptedRound still continues a partial round with only missin
     {
       number: 5,
       contributions: [contrib(10, "a", 5)],
-      turn_requests: [],
       summary: "",
     },
   ];
@@ -135,7 +134,7 @@ test("_continueInterruptedRound still continues a partial round with only missin
 
 test("_continueInterruptedRound returns null for an already-finalized round", async () => {
   const rounds = [
-    { number: 5, contributions: [contrib(10, "a", 5)], turn_requests: [], summary: "done" },
+    { number: 5, contributions: [contrib(10, "a", 5)], summary: "done" },
   ];
   const t = makeContinueCtx({ currentRound: 5, rounds });
   assert.equal(await _continueInterruptedRound.call(t.ctx), null);
