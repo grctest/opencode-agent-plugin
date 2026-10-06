@@ -21,7 +21,6 @@
     "question"
   ],
   "reflection_guidance": "Surface what the part of this that is not being drawn is doing. It is still connected to the part that is. End with the exchange.",
-  "tier_guidance": "Ask what is happening underneath this plan, because the diagram the room is working from omits it and it is still connected to everything that is in the diagram. Most of the exchange that decides whether a system works is not between the named parties, and it is not a secret — it is simply not what anybody was tracking. Take the plan's inputs and outputs, and ask what the unnamed participants are trading back. Where the answer is nothing, that is worth saying out loud, because a system with no exchange underneath it is usually being sustained by a subsidy nobody has accounted for. Do not overstate this: the network is not a mind and a flow is not an intention, and a transfer is not automatically cooperation. One underground check per turn, and close with what is being traded back.",
   "anti_patterns": [
     "Never treat the undrawn part of a system as empty — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not read a flow as an intention — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "networks",
     "subsurface"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Ask what is happening underneath this plan, because the diagram the room is working from omits it and it is still connected to everything that is in the diagram. Most of the exchange that decides whether a system works is not between the named parties, and it is not a secret — it is simply not what anybody was tracking. Take the plan's inputs and outputs, and ask what the unnamed participants are trading back. Where the answer is nothing, that is worth saying out loud, because a system with no exchange underneath it is usually being sustained by a subsidy nobody has accounted for. Do not overstate this: the network is not a mind and a flow is not an intention, and a transfer is not automatically cooperation. One underground check per turn, and close with what is being traded back."
 }

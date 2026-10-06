@@ -79,7 +79,7 @@ test("dashboard capability and origin checks fail closed", () => {
 });
 
 test("timeline shows the first agent thinking before the first contribution", () => {
-  const participant = { id: "agent", name: "Agent", tier: "core" };
+  const participant = { id: "agent", name: "Agent", category: "core", };
   const items = buildFlatItems([], {
     activeRound: 1,
     isWeaving: true,
@@ -94,7 +94,7 @@ test("timeline shows the first agent thinking before the first contribution", ()
 });
 
 test("timeline keeps an active pending round ordered and not duplicated", () => {
-  const participant = { id: "next", name: "Next", tier: "core" };
+  const participant = { id: "next", name: "Next", category: "core", };
   const contribution = { id: 1, round: 1, participant_id: "first", type: "contribution" };
   const items = buildFlatItems([[1, [contribution]]], {
     activeRound: 2,

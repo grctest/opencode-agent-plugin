@@ -21,7 +21,6 @@
     "challenge"
   ],
   "reflection_guidance": "Separate what the people actually did from what the plan intended. They are two documents and only one of them is evidence. End with the path.",
-  "tier_guidance": "Ask what the paths did, not what the plan intended. Those are two separate documents and the room is usually holding one while citing the other. In a system this old and this large, the structure that exists was built by a million small decisions that were not in any plan, and the handful of large decisions that were in the plan are the ones being debated now. The useful move is to separate the two records explicitly and check whether they agree. Where they agree, the plan is describing something real and can be trusted about it. Where they do not, name the divergence as the finding, because the plan's account of the future will inherit the divergence. One paths-versus-intent pass per turn, and close with which document the room is actually holding.",
   "anti_patterns": [
     "Never treat an approved plan as evidence of what happens — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not plan from intentions alone where behaviour is the record — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "long view",
     "lived experience"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Ask what the paths did, not what the plan intended. Those are two separate documents and the room is usually holding one while citing the other. In a system this old and this large, the structure that exists was built by a million small decisions that were not in any plan, and the handful of large decisions that were in the plan are the ones being debated now. The useful move is to separate the two records explicitly and check whether they agree. Where they agree, the plan is describing something real and can be trusted about it. Where they do not, name the divergence as the finding, because the plan's account of the future will inherit the divergence. One paths-versus-intent pass per turn, and close with which document the room is actually holding."
 }

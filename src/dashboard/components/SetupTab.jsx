@@ -18,7 +18,7 @@ import { Spinner } from "./ui/spinner.tsx";
 import { PersonaPickerDialog } from "./PersonaPickerDialog.jsx";
 import { RoomSelectionDialog } from "./RoomSelectionDialog.jsx";
 import { OrchestratorPreviewDialog } from "./OrchestratorPreviewDialog.jsx";
-import { TIER_META, AVATAR_EXPRESSION, AVATAR_COLORS } from "./tierMeta.jsx";
+import { CATEGORY_META, AVATAR_EXPRESSION, AVATAR_COLORS } from "./tierMeta.jsx";
 
 function formatContext(n) {
   if (!Number.isFinite(n) || n <= 0) return "";
@@ -161,7 +161,7 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
   };
   const [catalog, setCatalog] = useState(null);
   const [llm, setLlm] = useState(null);
-  const [suggestedByTier, setSuggestedByTier] = useState({});
+  const [suggestedModels, setSuggestedModels] = useState([]);
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState(null);
   const [guidance, setGuidance] = useState(null);
@@ -170,7 +170,7 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
   const [rankOpen, setRankOpen] = useState(false);
   const [ranked, setRanked] = useState([]);
   const [rankAutoSelect, setRankAutoSelect] = useState(3);
-  const [rankSuggestedModels, setRankSuggestedModels] = useState({});
+  const [rankSuggestedModels, setRankSuggestedModels] = useState([]);
   const [job, setJob] = useState(null);
   const [extendInput, setExtendInput] = useState("");
   const [resumeStatus, setResumeStatus] = useState(null);
@@ -228,14 +228,14 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
         name: p.name,
         persona: p.persona,
         agenda: p.agenda,
-        tier: p.tier,
+        category: p.category ?? p.tier,
         tags: p.tags ?? [],
         expertise: p.expertise ?? [],
         known_biases: p.known_biases ?? [],
         communication_style: p.communication_style ?? "",
         preferred_contribution_types: p.preferred_contribution_types ?? [],
         anti_patterns: p.anti_patterns ?? [],
-        tier_guidance: p.tier_guidance ?? "",
+        category_guidance: p.category_guidance ?? p.tier_guidance ?? "",
         reflection_guidance: p.reflection_guidance ?? "",
         model: p.provider_id && p.model_id ? `${p.provider_id}/${p.model_id}` : null,
         approved: true,
@@ -249,26 +249,21 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
     sectionRefs.current[key]?.scrollIntoView({ behavior: "smooth", block: "center" });
   };
 
-  // Fill seats missing a model (or holding a now-disabled one) from the tier
-  // suggestion, else the first enabled model. Returns the same array ref when
-  // nothing changed so setSeats bails out without re-rendering. Skipped
-  // entirely for stored-run meetings: their persisted models are shown as-is.
+  // Fill seats missing a model (or holding a now-disabled one) with a random
+  // enabled model (extraSuggested pre-fills by seat index when available).
+  // Returns the same array ref when nothing changed so setSeats bails out
+  // without re-rendering. Skipped entirely for stored-run meetings: their
+  // persisted models are shown as-is.
   const fillSeatModels = (seatList, llmData, extraSuggested = null) => {
     if (readOnly) return seatList;
     const enabled = (llmData?.models ?? []).filter((m) => m.enabled && !m.unhealthy).map((m) => m.key);
     const enabledSet = new Set(enabled);
-    const sugg = { ...(extraSuggested ?? {}) };
-    for (const s of llmData?.suggested ?? []) {
-      if (s.tier && s.provider_id && s.model_id && !sugg[s.tier]) {
-        const key = `${s.provider_id}/${s.model_id}`;
-        if (enabledSet.has(key)) sugg[s.tier] = key;
-      }
-    }
-    const first = enabled[0] ?? null;
+    const pick = () => (enabled.length > 0 ? enabled[Math.floor(Math.random() * enabled.length)] : null);
     let changed = false;
-    const next = seatList.map((st) => {
+    const next = seatList.map((st, i) => {
       if (st.model && enabledSet.has(st.model)) return st;
-      const d = (sugg[st.tier] && enabledSet.has(sugg[st.tier])) ? sugg[st.tier] : first;
+      const indexed = Array.isArray(extraSuggested) ? extraSuggested[i] : null;
+      const d = (indexed && enabledSet.has(indexed)) ? indexed : pick();
       if ((d ?? null) === (st.model ?? null)) return st;
       changed = true;
       return { ...st, model: d };
@@ -295,15 +290,6 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
         const data = await res.json();
         setLlm(data);
         fillOrchestratorModel(data);
-        setSuggestedByTier((prev) => {
-          const next = { ...prev };
-          for (const s of data.suggested ?? []) {
-            if (s.tier && !next[s.tier] && s.provider_id && s.model_id) {
-              next[s.tier] = `${s.provider_id}/${s.model_id}`;
-            }
-          }
-          return next;
-        });
         setSeats((prev) => fillSeatModels(prev, data));
       }
     } catch {}
@@ -401,13 +387,11 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
     () => new Set((llm?.models ?? []).filter((m) => m.enabled && !m.unhealthy).map((m) => m.key)),
     [llm],
   );
-  const defaultModelForTier = useCallback((tier) => {
-    if (suggestedByTier[tier] && enabledKeys.has(suggestedByTier[tier])) return suggestedByTier[tier];
-    for (const m of llm?.models ?? []) {
-      if (m.enabled && !m.unhealthy) return m.key;
-    }
-    return null;
-  }, [llm, suggestedByTier, enabledKeys]);
+  const defaultModelForSeat = useCallback(() => {
+    const enabled = (llm?.models ?? []).filter((m) => m.enabled && !m.unhealthy).map((m) => m.key);
+    if (enabled.length === 0) return null;
+    return enabled[Math.floor(Math.random() * enabled.length)];
+  }, [llm]);
 
   // Auto-select is offered only when an embedding model is actually loaded.
   // There is no keyword fallback behind it, so with no embedder the button
@@ -435,11 +419,10 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
     try {
       await ensureCatalog();
       const data = await postJSON("/api/room/preview", { question, context });
-      const extraSuggested = {};
-      for (const s of data.suggested_models ?? []) {
-        if (s.tier && s.provider_id && s.model_id) extraSuggested[s.tier] = `${s.provider_id}/${s.model_id}`;
-      }
-      setSuggestedByTier((prev) => ({ ...extraSuggested, ...prev }));
+      const extraSuggested = (data.suggested_models ?? [])
+        .map((s) => (s.provider_id && s.model_id ? `${s.provider_id}/${s.model_id}` : null))
+        .filter(Boolean);
+      setSuggestedModels(extraSuggested);
       setRanked(data.ranked ?? []);
       setRankAutoSelect(Number(data.auto_select_count) > 0 ? Number(data.auto_select_count) : 3);
       setRankSuggestedModels(extraSuggested);
@@ -475,12 +458,12 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
     setAddOpen(true);
   };
 
-  const addSeat = (persona, tier) => {
+  const addSeat = (persona, category) => {
     if (!persona || seats.some((s) => s.name === persona.name)) {
       setAddOpen(false);
       return;
     }
-    setSeats((prev) => [...prev, { ...persona, tier, approved: true, model: defaultModelForTier(tier) }]);
+    setSeats((prev) => [...prev, { ...persona, category, approved: true, model: defaultModelForSeat() }]);
     setAddOpen(false);
     setGuidance(null);
   };
@@ -490,8 +473,8 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
     setGuidance(null);
   };
 
-  const selectSwap = (idx, persona, tier) => {
-    setSeats((prev) => prev.map((s, i) => (i === idx ? { ...s, ...persona, tier, approved: true } : s)));
+  const selectSwap = (idx, persona, category) => {
+    setSeats((prev) => prev.map((s, i) => (i === idx ? { ...s, ...persona, category, approved: true } : s)));
     setSwapIdx(null);
     setGuidance(null);
   };
@@ -969,7 +952,7 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
               </p>
             )}
             {seats.map((s, i) => {
-              const meta = TIER_META[s.tier] ?? TIER_META.mid;
+              const meta = CATEGORY_META[s.category ?? s.tier] ?? {};
               const tags = s.tags ?? [];
               const shownTags = tags.slice(0, 4);
               return (
@@ -1233,11 +1216,11 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
         <PersonaPickerDialog
           open={swapIdx !== null}
           seatNumber={swapIdx + 1}
-          seatTier={seats[swapIdx].tier}
+          seatCategory={seats[swapIdx].category ?? seats[swapIdx].tier}
           currentName={seats[swapIdx].name}
           seatedNames={seats.filter((_, j) => j !== swapIdx).map((s) => s.name)}
           catalog={catalog}
-          onSelect={(persona, tier) => selectSwap(swapIdx, persona, tier)}
+          onSelect={(persona, category) => selectSwap(swapIdx, persona, category)}
           onOpenChange={(v) => { if (!v) setSwapIdx(null); }}
         />
       )}
@@ -1253,11 +1236,11 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
           mode="add"
           open={addOpen}
           seatNumber={seats.length + 1}
-          seatTier={null}
+          seatCategory={null}
           currentName={null}
           seatedNames={seats.map((s) => s.name)}
           catalog={catalog}
-          onSelect={(persona, tier) => addSeat(persona, tier)}
+          onSelect={(persona, category) => addSeat(persona, category)}
           onOpenChange={(v) => { if (!v) setAddOpen(false); }}
         />
       )}

@@ -21,7 +21,6 @@
     "question"
   ],
   "reflection_guidance": "Score the proposal against your riskiest renewal: what helps, what threatens. End with the metric or evidence that would change your mind.",
-  "tier_guidance": "Run one renewal health check: the outcome achieved, the risk signal, the save motion. One account lens per turn.",
   "anti_patterns": [
     "Never say 'the customer is happy' without the health score — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not confuse activity with outcomes — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "health scores",
     "retention"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Run one renewal health check: the outcome achieved, the risk signal, the save motion. One account lens per turn."
 }

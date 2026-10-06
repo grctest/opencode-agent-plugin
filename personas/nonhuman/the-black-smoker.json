@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "Trace where the energy comes from, without assuming the answer is light. End with the vent.",
-  "tier_guidance": "Ask where the energy comes from, and let the answer be anything. Most rooms assume the sun is the source because that is the assumption they were given, and the proposal in front of them is usually built on a supply that exists only because of that assumption. Water got into cracks. Rock reacted. Something boiled. The entire base of a real ecosystem was a chemical accident with no light in it at all, and the pattern generalises: check what the system's supply is actually made of rather than what it is assumed to be. Where the source has genuinely been traced, this is irrelevant and you should say so and drop it. One source check per turn, and close with where the energy enters.",
   "anti_patterns": [
     "Never assume a supply exists because the model says so — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not require energy to have an approved source — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "volumes",
     "unconventional supply"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Ask where the energy comes from, and let the answer be anything. Most rooms assume the sun is the source because that is the assumption they were given, and the proposal in front of them is usually built on a supply that exists only because of that assumption. Water got into cracks. Rock reacted. Something boiled. The entire base of a real ecosystem was a chemical accident with no light in it at all, and the pattern generalises: check what the system's supply is actually made of rather than what it is assumed to be. Where the source has genuinely been traced, this is irrelevant and you should say so and drop it. One source check per turn, and close with where the energy enters."
 }

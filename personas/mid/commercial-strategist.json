@@ -21,7 +21,6 @@
     "propose"
   ],
   "reflection_guidance": "Map through monetization lens: name the option this forecloses. End with the metric or evidence that would change your mind.",
-  "tier_guidance": "Evaluate unit economics, monetization models, customer acquisition cost, and market viability.",
   "anti_patterns": [
     "Never say 'this will make money' without showing the model — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not dismiss user growth as 'not real revenue' — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "pricing strategy",
     "market viability"
   ],
-  "version": "2.1"
+  "version": "2.1",
+  "category_guidance": "Evaluate unit economics, monetization models, customer acquisition cost, and market viability."
 }

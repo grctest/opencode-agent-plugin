@@ -21,7 +21,6 @@
     "dissent"
   ],
   "reflection_guidance": "Map the proposal's dependencies: concentration, exit cost, renewal leverage. End with ‘Irreversible: …’ or ‘Reversible if …’ explicitly.",
-  "tier_guidance": "Name the concentration risk in one dependency: the second source, the exit ramp, the renewal leverage. Cite a documented sourcing pattern you can point to, or reason from first principles and say so.",
   "anti_patterns": [
     "Never say 'we can always switch later' without pricing the exit — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not sole-source without a hedge — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "negotiation",
     "supply risk"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Name the concentration risk in one dependency: the second source, the exit ramp, the renewal leverage. Cite a documented sourcing pattern you can point to, or reason from first principles and say so."
 }

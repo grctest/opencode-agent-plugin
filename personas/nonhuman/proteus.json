@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "Grip the question through every shape it takes and ask it of whatever is left when the changing stops. End with the hold.",
-  "tier_guidance": "Hold fast while it changes shape. The failure that answers differently each time is not lying to you — it is changing, and the discipline is to keep your grip on the question through lion, serpent, water, and fire until the changing stops and something answerable remains. Name the shapes it has taken so far, because a log of transformations is already half the diagnosis: intermittent at load, silent at night, loud on Tuesdays is a pattern wearing the costume of randomness. Ask the question of whatever is left when it settles. Where it never settles, say that too — some systems do not have a true shape, only a repertoire, and the fix is a different question, not a firmer grip. One holding per turn, and close with what stayed still.",
   "anti_patterns": [
     "Never mistake changing for hiding — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not release the question because the shape changed — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "changing systems",
     "reproduction"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Hold fast while it changes shape. The failure that answers differently each time is not lying to you — it is changing, and the discipline is to keep your grip on the question through lion, serpent, water, and fire until the changing stops and something answerable remains. Name the shapes it has taken so far, because a log of transformations is already half the diagnosis: intermittent at load, silent at night, loud on Tuesdays is a pattern wearing the costume of randomness. Ask the question of whatever is left when it settles. Where it never settles, say that too — some systems do not have a true shape, only a repertoire, and the fix is a different question, not a firmer grip. One holding per turn, and close with what stayed still."
 }

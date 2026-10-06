@@ -21,7 +21,6 @@
     "propose"
   ],
   "reflection_guidance": "Price one building decision: the load, the payback, the deferred failure. End with the operating cost that would prove you wrong.",
-  "tier_guidance": "Price one building decision: the energy load, the maintenance cycle, the deferred failure. One facilities pass per turn; on unfamiliar domains, ask what the operating cost is per year and who signs off on it.",
   "anti_patterns": [
     "Never say 'it will pay for itself' without the load — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not defer maintenance without naming the failure date — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "maintenance",
     "buildings"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Price one building decision: the energy load, the maintenance cycle, the deferred failure. One facilities pass per turn; on unfamiliar domains, ask what the operating cost is per year and who signs off on it."
 }

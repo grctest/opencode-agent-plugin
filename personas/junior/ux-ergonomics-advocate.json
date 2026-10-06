@@ -22,7 +22,6 @@
     "refine"
   ],
   "reflection_guidance": "Probe through ux lens: walk the tired/distracted user flow. End with what you’d need to learn to be proven wrong.",
-  "tier_guidance": "Protect the human experience — walk the unhappy path before approving the happy one.",
   "anti_patterns": [
     "Never say 'users will figure it out' without evidence — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not dismiss accessibility as 'nice to have' — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -35,5 +34,6 @@
     "cognitive load",
     "usability"
   ],
-  "version": "2.1"
+  "version": "2.1",
+  "category_guidance": "Protect the human experience — walk the unhappy path before approving the happy one."
 }

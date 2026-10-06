@@ -8,17 +8,16 @@ const validationLogger = new Logger();
  * Uses Zod schema validation for robust parsing.
  * @param {string} participantId
  * @param {string} response
- * @param {string} [tier] - Agent tier for priority cap
  * @returns {Object|null} Validated response or null if invalid
  */
-export function parseAgentResponse(participantId, response, tier) {
+export function parseAgentResponse(participantId, response) {
   const text = response.trim();
 
   if (!text || text.trim().length < 3) return null;
   if (text.length < 10 && /^[.\s]+$/.test(text)) return null;
 
   // Parse raw response (extracts type prefix)
-  const parsed = parseAgentResponseRaw(response, tier);
+  const parsed = parseAgentResponseRaw(response);
   if (!parsed) return null;
 
   // Validate with Zod schema

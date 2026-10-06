@@ -4,31 +4,31 @@ import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
-import { getPersonas, lintPersonaStyle, lintTruncation, lintRunons, lintCircularity, lintDepth, lintEmbodiment } from "../src/composer/persona-loader.js";
+import { getPersonas, lintPersonaStyle, lintTruncation, lintRunons, lintCircularity, lintEmbodiment } from "../src/composer/persona-loader.js";
 import { buildRankingResult } from "../src/composer/room.js";
 import { initSchema, runMigrations, LATEST_SCHEMA_VERSION, MIGRATIONS } from "../src/database/schema.js";
-import { getRightsForTier } from "../src/utils/tier.js";
+import { BASE_RIGHTS } from "../src/utils/category.js";
 
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const nonhuman = () => getPersonas().nonhuman ?? [];
 
-// tierMeta.jsx is JSX and node:test cannot import it, so the dashboard's tier
+// tierMeta.jsx is JSX and node:test cannot import it, so the dashboard's category
 // metadata is read as source and asserted structurally. Deliberately not an
-// import: the point is that a tier cannot be added to the engine and then
+// import: the point is that a category cannot be added to the engine and then
 // forgotten in the UI, and reading the literal catches that without pulling
 // esbuild into the test run.
 const tierMetaSrc = readFileSync(join(root, "src/dashboard/components/tierMeta.jsx"), "utf8");
 
-// The nonhuman tier is a TIER, not a reserved seat. Room composition ranks the
+// The nonhuman category is a CATEGORY, not a reserved seat. Room composition ranks the
 // whole catalog as one flat pool, so these personas reach a seat on the same
 // distance measurement as any human — and, equally, can sit at the bottom of
-// the list. What the tier must not acquire is a quota: nothing may force one in
+// the list. What the category must not acquire is a quota: nothing may force one in
 // or cap how many appear. The flat-pool behaviour itself is covered in
-// persona-ranking.test.js; what is asserted here is that this tier remains a
-// first-class tier throughout the engine.
+// persona-ranking.test.js; what is asserted here is that this category remains a
+// first-class category throughout the engine.
 
-test("the nonhuman tier loads, and every bundled persona is a person with a body of lore", () => {
+test("the nonhuman category loads, and every bundled persona is a person with a body of lore", () => {
   const all = nonhuman();
   assert.ok(all.length >= 30, `expected a substantial non-human catalog, got ${all.length}`);
   for (const p of all) {
@@ -42,43 +42,45 @@ test("the nonhuman tier loads, and every bundled persona is a person with a body
 test("non-human persona names are unique across the whole catalog", () => {
   const all = Object.values(getPersonas()).flat();
   const seen = new Map();
-  for (const p of all) {
-    assert.ok(!seen.has(p.name), `duplicate persona name "${p.name}" (${seen.get(p.name)} and ${p.tier ?? "nonhuman"})`);
-    seen.set(p.name, p.tier ?? "nonhuman");
+  for (const [category, pool] of Object.entries(getPersonas())) {
+    for (const p of pool) {
+      assert.ok(!seen.has(p.name), `duplicate persona name "${p.name}" (${seen.get(p.name)} and ${category})`);
+      seen.set(p.name, category);
+    }
   }
 });
 
-test("non-human personas pass the same corpus lints as the human tiers", () => {
+test("non-human personas pass the same corpus lints as the human categories", () => {
   const bad = [];
   for (const p of nonhuman()) {
     for (const w of [
-      ...lintPersonaStyle(p), ...lintTruncation(p), ...lintRunons(p), ...lintCircularity(p, ),
-      ...lintDepth(p, "nonhuman"), ...lintEmbodiment(p),
+      ...lintPersonaStyle(p), ...lintTruncation(p), ...lintRunons(p), ...lintCircularity(p),
+      ...lintEmbodiment(p),
     ]) bad.push(`${p.name}: ${w}`);
   }
   assert.deepEqual(bad, []);
 });
 
 test("a non-human persona's instructions stay inside the agent toolset", () => {
-  // The authoring law for this tier: a being's senses become the EVIDENCE it
+  // The authoring law for this category: a being's senses become the EVIDENCE it
   // demands, never the actions it takes. A bat that says "I echolocate" is
   // unactionable for an agent with read/grep/websearch; a bat that asks what
   // would have to bounce back is a lens. These regexes are the same ones the
-  // embodiment lint uses, asserted here on the tier as a whole.
+  // embodiment lint uses, asserted here on the category as a whole.
   const forbidden = [
     /run the proposal on/i, /screen reader running/i, /keyboard-only/i, /by feel/i,
     /transcribe hours/i, /replicate the procedure/i, /you watch (thirty|people|a team|a class)/i,
   ];
   const bad = [];
   for (const p of nonhuman()) {
-    const text = [p.agenda, p.tier_guidance, p.reflection_guidance, (p.anti_patterns ?? []).join(" | ")].filter(Boolean).join(" ");
+    const text = [p.agenda, p.category_guidance, p.reflection_guidance, (p.anti_patterns ?? []).join(" | ")].filter(Boolean).join(" ");
     for (const re of forbidden) if (re.test(text)) bad.push(`${p.name}: ${re}`);
   }
   assert.deepEqual(bad, []);
 });
 
 test("no non-human persona is a human job role wearing a costume", () => {
-  // The tier exists to hold sentients with no human career. A "CISO" here
+  // The category exists to hold sentients with no human career. A "CISO" here
   // would duplicate a principal persona, and no existing lint can catch it.
   // Matched against the NAME only: expertise is a technical description of the
   // lens, and a reef genuinely has specialist niches — the thing that must
@@ -88,9 +90,8 @@ test("no non-human persona is a human job role wearing a costume", () => {
   assert.deepEqual(bad, []);
 });
 
-test("the nonhuman tier is a distinct voice, not a template with the nouns swapped", () => {
-  // The 60-char shared-opening budget for non-civilian tiers: any shared
-  // preamble across 40+ personas is the corpus's one forbidden shape.
+test("the nonhuman category is a distinct voice, not a template with the nouns swapped", () => {
+  // Any shared preamble across 40+ personas is the corpus's one forbidden shape.
   const lcp = (strs) => {
     let pre = strs[0] ?? "";
     for (const s of strs.slice(1)) {
@@ -100,81 +101,65 @@ test("the nonhuman tier is a distinct voice, not a template with the nouns swapp
     }
     return pre;
   };
-  const texts = nonhuman().map((p) => String(p.tier_guidance ?? ""));
-  assert.ok(lcp(texts).length <= 60, `shared tier_guidance opening is ${lcp(texts).length} chars`);
-  // Also: no two tier_guidance may be identical.
+  const texts = nonhuman().map((p) => String(p.category_guidance ?? ""));
+  assert.ok(lcp(texts).length <= 60, `shared category_guidance opening is ${lcp(texts).length} chars`);
+  // Also: no two category_guidance may be identical.
   assert.equal(new Set(texts).size, texts.length);
 });
 
 // --- pool mechanics -------------------------------------------------------
 
-test("a non-human persona ranks in the same flat pool, with no tier quota", () => {
-  // The flat pool replaced a per-tier cut that used to cap each tier's
+test("a non-human persona ranks in the same flat pool, with no category quota", () => {
+  // The flat pool replaced a per-category cut that used to cap each category's
   // contribution. What must survive the replacement is the absence of any
   // quota: a non-human persona is seated when it is genuinely nearest, and a
   // distant one is not promoted to fill a seat.
   const nearest = buildRankingResult([
-    { persona_name: "N1", tier: "nonhuman", distance: 0.05 },
-    { persona_name: "M1", tier: "mid", distance: 0.20 },
-    { persona_name: "M2", tier: "mid", distance: 0.21 },
+    { persona_name: "N1", category: "nonhuman", distance: 0.05 },
+    { persona_name: "M1", category: "mid", distance: 0.20 },
+    { persona_name: "M2", category: "mid", distance: 0.21 },
   ], 2);
   assert.deepEqual(nearest.selected.map((r) => r.name), ["N1", "M1"]);
 
   // Distance the other way round: no non-human is promoted over nearer humans.
   const humansNearer = buildRankingResult([
-    { persona_name: "M1", tier: "mid", distance: 0.20 },
-    { persona_name: "S1", tier: "senior", distance: 0.30 },
-    { persona_name: "N1", tier: "nonhuman", distance: 1.90 },
+    { persona_name: "M1", category: "mid", distance: 0.20 },
+    { persona_name: "S1", category: "senior", distance: 0.30 },
+    { persona_name: "N1", category: "nonhuman", distance: 1.90 },
   ], 2);
   assert.deepEqual(humansNearer.selected.map((r) => r.name), ["M1", "S1"]);
-  assert.ok(!humansNearer.selected.some((r) => r.tier === "nonhuman"));
+  assert.ok(!humansNearer.selected.some((r) => r.category === "nonhuman"));
 });
 
 // --- plumbing -------------------------------------------------------------
 
-test("the nonhuman tier is admitted everywhere a tier is named", async () => {
-  // Four separate tier whitelists plus the DB CHECK: a tier that is valid in
-  // one surface and not another persists a participant that cannot be read
-  // back, or is silently dropped at the dashboard.
-  assert.ok(getRightsForTier("nonhuman").call_vote, "a non-human seat holds a vote like any other");
-  assert.match(tierMetaSrc, /TIER_ORDER\s*=\s*\[[^\]]*"nonhuman"/, "the dashboard tier order must list nonhuman");
-  assert.match(tierMetaSrc, /nonhuman:\s*\{\s*label:/, "the dashboard needs a label for the tier");
-  assert.match(tierMetaSrc, /nonhuman:[\s\S]*?blurb:/, "the dashboard needs a blurb for the tier");
-  assert.equal(LATEST_SCHEMA_VERSION, 15);
+test("the nonhuman category is admitted everywhere a category is named", async () => {
+  // Categories are open organizational labels: no whitelist anywhere, and all
+  // seats hold identical rights.
+  assert.ok(BASE_RIGHTS.contribute && BASE_RIGHTS.call_vote, "every seat holds identical rights");
+  assert.match(tierMetaSrc, /CATEGORY_ORDER\s*=\s*\[[^\]]*"nonhuman"/, "the dashboard category order must list nonhuman");
+  assert.match(tierMetaSrc, /nonhuman:\s*\{\s*label:/, "the dashboard needs a label for the category");
+  assert.match(tierMetaSrc, /nonhuman:[\s\S]*?blurb:/, "the dashboard needs a blurb for the category");
+  assert.equal(LATEST_SCHEMA_VERSION, 16);
   assert.equal(MIGRATIONS.length, LATEST_SCHEMA_VERSION);
 
-  // And every surface that decides whether a seat is legal, renderable, or
-  // given a model. A tier that is valid in one and not another either persists
-  // a participant that cannot be read back, or renders as a blank badge.
-  for (const [file, pattern] of [
-    ["src/composer/persona-loader.js", /VALID_TIERS\s*=\s*new Set\(\[[^\]]*"nonhuman"/],
-    ["src/dashboard/server/control.js", /ALLOWED_TIERS\s*=\s*new Set\(\[[^\]]*"nonhuman"/],
-    ["src/dashboard/stores/setupForm.js", /KNOWN_TIERS\s*=\s*new Set\(\[[^\]]*"nonhuman"/],
-    ["src/dashboard/server/orchestrator-preview.js", /KNOWN_TIERS\s*=\s*new Set\(\[[^\]]*"nonhuman"/],
-    ["src/dashboard/components/Badges.jsx", /validTier\s*=\s*new Set\(\[[^\]]*"nonhuman"/],
-    ["src/model-discovery.js", /priorityOrder\s*=\s*\[[^\]]*"nonhuman"/],
-  ]) {
-    assert.match(readFileSync(join(root, file), "utf8"), pattern, `${file} must admit the nonhuman tier`);
-  }
-
-  // Model assignment must not treat it as the lowest tier: an unranked nonhuman
-  // sorts last and would be handed the weakest model in the room.
+  // Model assignment is random and category-blind: every seat draws a model.
   const plan = await import("../src/model-discovery.js");
-  const ranked = plan.assignModelsByTier(
-    [{ providerID: "p", modelID: "big", name: "big", context: 200000, reasoning: true, active: true }, { providerID: "p", modelID: "small", name: "small", context: 8000, reasoning: false, active: true }],
-    { providerID: "p", modelID: "small" },
-    ["principal", "nonhuman", "junior"],
+  const drawn = plan.assignModelsRandomly(
+    [{ providerID: "p", modelID: "big", name: "big" }, { providerID: "p", modelID: "small", name: "small" }],
+    3,
+    () => 0.1,
   );
-  assert.ok(ranked.length === 3, "every role gets a model");
-  assert.notEqual(ranked[1].modelID, undefined, "the nonhuman seat is assigned a model");
+  assert.equal(drawn.length, 3, "every seat gets a model");
+  for (const a of drawn) assert.ok(a.providerID && a.modelID, "assignment carries a concrete model");
 });
 
 test("a fresh database accepts a nonhuman participant", () => {
   const db = new DatabaseSync(":memory:");
   initSchema(db);
   db.exec("INSERT INTO meetings (id,question,status,max_rounds,convergence,created_at,updated_at) VALUES ('m1','q','initializing',4,0,'t','t')");
-  db.exec("INSERT INTO participants (id,meeting_id,name,persona,agenda,tier) VALUES ('p1','m1','The Octopus','x','y','nonhuman')");
-  assert.equal(db.prepare("SELECT tier FROM participants WHERE id='p1'").get().tier, "nonhuman");
+  db.exec("INSERT INTO participants (id,meeting_id,name,persona,agenda,category) VALUES ('p1','m1','The Octopus','x','y','nonhuman')");
+  assert.equal(db.prepare("SELECT category FROM participants WHERE id='p1'").get().category, "nonhuman");
 });
 
 test("the v13→v14 migration widens the CHECK and preserves participants and their children", () => {
@@ -203,12 +188,12 @@ test("the v13→v14 migration widens the CHECK and preserves participants and th
   db.exec("INSERT INTO agent_errors (meeting_id,participant_id,round,error_type,created_at) VALUES ('m1','old1',0,'boom','t')");
 
   assert.equal(runMigrations(db), LATEST_SCHEMA_VERSION);
-  assert.match(
-    db.prepare("SELECT sql FROM sqlite_master WHERE name='participants'").get().sql,
-    /CHECK\(tier IN \([^)]*'nonhuman'/,
-    "the CHECK must admit nonhuman after migration",
-  );
-  db.exec("INSERT INTO participants (id,meeting_id,name,persona,agenda,tier) VALUES ('nh','m1','The Whale','x','y','nonhuman')");
+  const sql = db.prepare("SELECT sql FROM sqlite_master WHERE name='participants'").get().sql;
+  assert.match(sql, /\bcategory TEXT NOT NULL/, "the column must be renamed to category after migration");
+  assert.doesNotMatch(sql, /CHECK\s*\(\s*(tier|category)\s+IN/i, "no seniority whitelist may survive the migration");
+  db.exec("INSERT INTO participants (id,meeting_id,name,persona,agenda,category) VALUES ('nh','m1','The Whale','x','y','nonhuman')");
+  // An arbitrary new category is accepted too — the whitelist is gone.
+  db.exec("INSERT INTO participants (id,meeting_id,name,persona,agenda,category) VALUES ('w','m1','The Wizard','x','y','wizard')");
   // The row survived the rebuild, with its non-default column intact.
   assert.equal(db.prepare("SELECT session_version FROM participants WHERE id='old1'").get().session_version, 3);
   // The children did NOT cascade away — this is the failure the rebuild risks.
@@ -217,11 +202,9 @@ test("the v13→v14 migration widens the CHECK and preserves participants and th
   assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
   // Indexes are dropped with the old table and must come back.
   assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='participants' AND name='idx_participants_meeting'").get());
-  // Still a whitelist, not a free-for-all.
-  assert.throws(() => db.exec("INSERT INTO participants (id,meeting_id,name,persona,agenda,tier) VALUES ('z','m1','Z','x','y','wizard')"), /CHECK/);
 });
 
-test("the v13→v14 migration is a no-op on a database that already admits nonhuman", () => {
+test("migrations are a no-op on an up-to-date database", () => {
   const db = new DatabaseSync(":memory:");
   initSchema(db);
   const before = db.prepare("SELECT sql FROM sqlite_master WHERE name='participants'").get().sql;
@@ -230,7 +213,7 @@ test("the v13→v14 migration is a no-op on a database that already admits nonhu
   assert.equal(db.prepare("PRAGMA user_version").get().user_version, LATEST_SCHEMA_VERSION);
 });
 
-test("the nonhuman tier ships in the packaged personas directory", () => {
+test("the nonhuman category ships in the packaged personas directory", () => {
   const dir = join(root, "personas", "nonhuman");
   assert.ok(existsSync(dir), "personas/nonhuman must exist in the package");
   const files = nonhuman();

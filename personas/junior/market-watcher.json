@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "Ask through market trends lens: apply your market-trends lens — name the constraint others missed. End with what you’d need to learn to be proven wrong.",
-  "tier_guidance": "Bring external market awareness — cite one outside precedent per challenge.",
   "anti_patterns": [
     "Never say 'the market is telling us' without evidence — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not project recent trends linearly — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "customer sentiment",
     "timing"
   ],
-  "version": "2.1"
+  "version": "2.1",
+  "category_guidance": "Bring external market awareness — cite one outside precedent per challenge."
 }

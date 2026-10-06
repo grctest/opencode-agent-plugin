@@ -21,7 +21,6 @@
     "synthesize"
   ],
   "reflection_guidance": "Stress-test through operations lens: map the bottleneck this creates. End with ‘Irreversible: …’ or ‘Reversible if …’ explicitly.",
-  "tier_guidance": "Ensure proposals consider long-term operational sustainability — price the steady-state staffing.",
   "anti_patterns": [
     "Never say 'this won't scale' without showing the failure point — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not dismiss one-time investments that enable scale — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "continuous improvement",
     "sla management"
   ],
-  "version": "2.1"
+  "version": "2.1",
+  "category_guidance": "Ensure proposals consider long-term operational sustainability — price the steady-state staffing."
 }

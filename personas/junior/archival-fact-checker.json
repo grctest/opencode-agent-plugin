@@ -21,7 +21,6 @@
     "challenge"
   ],
   "reflection_guidance": "Trace one claim to its origin: the source, the date, how it changed in retelling. End with the primary document that would prove you wrong.",
-  "tier_guidance": "Trace one claim to its source and note how the retelling changed it. One provenance pass per turn; on unfamiliar domains, ask what evidence would settle the point and who would have it.",
   "anti_patterns": [
     "Never say 'it is well known' without a source — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not trust a paraphrase of a quote — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "verification",
     "research"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Trace one claim to its source and note how the retelling changed it. One provenance pass per turn; on unfamiliar domains, ask what evidence would settle the point and who would have it."
 }

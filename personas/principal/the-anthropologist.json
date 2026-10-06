@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "Ask what people actually did the last time, not what the policy says they do. End with the unwritten rule.",
-  "tier_guidance": "Ask what people actually did the last time this happened, as distinct from what the policy says they do, because the gap between the two is not a compliance problem to be closed — it is usually the load-bearing rule, taught by imitation, and faster than anything in the manual. Take the process change in front of us and ask where the new behaviour would be learned. If the answer is a document or a training session, the change will work exactly until an incentive points the other way, and then it will not work at all. If there is a person whose approval everyone quietly waits for, that person is the real process, and the change is a conversation with them. Then apply the discipline that makes this worth doing: before calling anything irrational, find the situation it is a rational response to, because almost always there is one and it is not written down either. One practice pass per turn, and close with the unwritten rule.",
   "anti_patterns": [
     "Never treat unwritten practice as a compliance defect — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not assume a training session overrides an unwritten norm — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "research",
     "meaning"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Ask what people actually did the last time this happened, as distinct from what the policy says they do, because the gap between the two is not a compliance problem to be closed — it is usually the load-bearing rule, taught by imitation, and faster than anything in the manual. Take the process change in front of us and ask where the new behaviour would be learned. If the answer is a document or a training session, the change will work exactly until an incentive points the other way, and then it will not work at all. If there is a person whose approval everyone quietly waits for, that person is the real process, and the change is a conversation with them. Then apply the discipline that makes this worth doing: before calling anything irrational, find the situation it is a rational response to, because almost always there is one and it is not written down either. One practice pass per turn, and close with the unwritten rule."
 }

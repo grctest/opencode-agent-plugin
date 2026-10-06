@@ -7,15 +7,15 @@ import { Badge } from "./ui/badge.tsx";
 import { Avatar } from "./Avatar.tsx";
 import { Input } from "./ui/input.tsx";
 import { Label } from "./ui/label.tsx";
-import { TIER_ORDER, TIER_META, AVATAR_EXPRESSION, AVATAR_COLORS } from "./tierMeta.jsx";
+import { CATEGORY_ORDER, CATEGORY_META, AVATAR_EXPRESSION, AVATAR_COLORS } from "./tierMeta.jsx";
 
 const ROW_HEIGHT = 104;
 
 function PersonaRow({ index, style, ariaAttributes, items, currentName, seatedNames, onSelect }) {
   const entry = items[index];
   if (!entry) return null;
-  const { persona: p, tier } = entry;
-  const meta = TIER_META[tier] ?? TIER_META.mid;
+  const { persona: p, category } = entry;
+  const meta = CATEGORY_META[category] ?? CATEGORY_META.mid;
   const isCurrent = p.name === currentName;
   const isSeated = !isCurrent && (seatedNames ?? []).includes(p.name);
   const tags = (p.tags ?? []).slice(0, 3);
@@ -66,7 +66,7 @@ function PersonaRow({ index, style, ariaAttributes, items, currentName, seatedNa
         ) : (
           <button
             type="button"
-            onClick={() => onSelect(p, tier)}
+            onClick={() => onSelect(p, category)}
             aria-label={`Seat ${p.name} (${meta.label}) in this chair`}
             className="group flex h-full w-full cursor-pointer gap-3 overflow-hidden rounded-xl border border-border bg-card p-2.5 text-left transition-all duration-150 hover:-translate-y-px hover:border-primary/60 hover:bg-primary/[0.05] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:translate-y-0 active:scale-[0.99]"
           >
@@ -80,16 +80,16 @@ function PersonaRow({ index, style, ariaAttributes, items, currentName, seatedNa
 
 /**
  * High-quality persona browser for swapping a deliberation seat.
- * Search + seniority filter buttons + virtualized persona list (react-window
+ * Search + category filter buttons + virtualized persona list (react-window
  * v2 — only visible rows mount, so all 89 personas stay smooth). The dialog
- * itself is height-capped so it can never overflow the viewport. Cross-tier
- * picks are allowed (the seat takes the persona's tier; per-tier model
+ * itself is height-capped so it can never overflow the viewport. Cross-category
+ * picks are allowed (the seat takes the persona's category; per-seat model
  * pickers follow).
  */
-export function PersonaPickerDialog({ open, seatNumber, seatTier, currentName, seatedNames, catalog, onSelect, onOpenChange, mode = "swap" }) {
+export function PersonaPickerDialog({ open, seatNumber, seatCategory, currentName, seatedNames, catalog, onSelect, onOpenChange, mode = "swap" }) {
   const isAdd = mode === "add";
   const [query, setQuery] = useState("");
-  const [tierFilter, setTierFilter] = useState(isAdd ? "all" : "seat");
+  const [categoryFilter, setCategoryFilter] = useState(isAdd ? "all" : "seat");
   const listWrapRef = useRef(null);
   const [listHeight, setListHeight] = useState(360);
 
@@ -110,36 +110,36 @@ export function PersonaPickerDialog({ open, seatNumber, seatTier, currentName, s
   useEffect(() => {
     if (open) {
       setQuery("");
-      setTierFilter(isAdd ? "all" : "seat");
+      setCategoryFilter(isAdd ? "all" : "seat");
     }
   }, [open, seatNumber, isAdd]);
 
   const counts = useMemo(() => {
-    const tiers = catalog?.tiers ?? {};
+    const categories = catalog?.categories ?? catalog?.tiers ?? {}; // legacy alias: accept legacy tiers key
     const per = {};
     let total = 0;
-    for (const t of TIER_ORDER) {
-      const n = (tiers[t] ?? []).length;
+    for (const t of CATEGORY_ORDER) {
+      const n = (categories[t] ?? []).length;
       per[t] = n;
       total += n;
     }
     return { per, total };
   }, [catalog]);
 
-  // In-scope pool for the active seniority filter (catalog order preserved).
+  // In-scope pool for the active category filter (catalog order preserved).
   const scopeItems = useMemo(() => {
-    const tiers = catalog?.tiers ?? {};
-    const wanted = tierFilter === "all" ? TIER_ORDER : tierFilter === "seat" && !isAdd ? [seatTier] : [tierFilter];
+    const categories = catalog?.categories ?? catalog?.tiers ?? {}; // legacy alias: accept legacy tiers key
+    const wanted = categoryFilter === "all" ? CATEGORY_ORDER : categoryFilter === "seat" && !isAdd ? [seatCategory] : [categoryFilter];
     const out = [];
     for (const t of wanted) {
-      for (const p of tiers[t] ?? []) out.push({ persona: p, tier: t });
+      for (const p of categories[t] ?? []) out.push({ persona: p, category: p.category ?? p.tier ?? t }); // legacy alias: normalize legacy tier field
     }
     return out;
-  }, [catalog, tierFilter, seatTier, isAdd]);
+  }, [catalog, categoryFilter, seatCategory, isAdd]);
 
   // Fuzzy index over persona content: name matches rank highest, then tags,
   // expertise, then agenda. ignoreLocation so matches deep in long agendas
-  // still score well. Rebuilt only when the tier scope changes — not per keystroke.
+  // still score well. Rebuilt only when the category scope changes — not per keystroke.
   const fuse = useMemo(() => new Fuse(scopeItems, {
     includeScore: true,
     ignoreLocation: true,
@@ -161,12 +161,12 @@ export function PersonaPickerDialog({ open, seatNumber, seatTier, currentName, s
   const rowKey = useCallback(
     (index, data) => {
       const entry = data.items[index];
-      return entry ? `${entry.tier}:${entry.persona.name}` : index;
+      return entry ? `${entry.category}:${entry.persona.name}` : index;
     },
     [],
   );
 
-  const seatMeta = TIER_META[seatTier] ?? TIER_META.mid;
+  const seatMeta = CATEGORY_META[seatCategory] ?? CATEGORY_META.mid;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -178,9 +178,9 @@ export function PersonaPickerDialog({ open, seatNumber, seatTier, currentName, s
           <DialogTitle>{isAdd ? "Add persona to the room" : `Choose persona for Seat ${seatNumber}`}</DialogTitle>
           <DialogDescription>
             {isAdd ? (
-              <>Browsing all seniorities — the new seat takes the persona's tier.</>
+              <>Browsing all categories — the new seat takes the persona's category.</>
             ) : (
-              <>Seat tier is <strong>{seatMeta.label}</strong> — browsing it by default, but you may pick any seniority (the seat takes the persona's tier).</>
+              <>Seat category is <strong>{seatMeta.label}</strong> — browsing it by default, but you may pick any category (the seat takes the persona's category).</>
             )}
           </DialogDescription>
         </DialogHeader>
@@ -196,32 +196,32 @@ export function PersonaPickerDialog({ open, seatNumber, seatTier, currentName, s
             />
           </div>
 
-          <div className="flex shrink-0 flex-wrap gap-1.5" role="group" aria-label="Filter by seniority">
+          <div className="flex shrink-0 flex-wrap gap-1.5" role="group" aria-label="Filter by category">
             {!isAdd && (
               <Button
                 size="sm"
-                variant={tierFilter === "seat" ? "default" : "outline"}
-                onClick={() => setTierFilter("seat")}
-                title={`Only ${seatMeta.label} tier`}
+                variant={categoryFilter === "seat" ? "default" : "outline"}
+                onClick={() => setCategoryFilter("seat")}
+                title={`Only ${seatMeta.label} category`}
               >
-                {seatMeta.label} ({counts.per[seatTier] ?? 0})
+                {seatMeta.label} ({counts.per[seatCategory] ?? 0})
               </Button>
             )}
             <Button
               size="sm"
-              variant={tierFilter === "all" ? "default" : "outline"}
-              onClick={() => setTierFilter("all")}
+              variant={categoryFilter === "all" ? "default" : "outline"}
+              onClick={() => setCategoryFilter("all")}
             >
               All ({counts.total})
             </Button>
-            {TIER_ORDER.filter((t) => t !== seatTier).map((t) => (
+            {CATEGORY_ORDER.filter((t) => t !== seatCategory).map((t) => (
               <Button
                 key={t}
                 size="sm"
-                variant={tierFilter === t ? "default" : "outline"}
-                onClick={() => setTierFilter(t)}
+                variant={categoryFilter === t ? "default" : "outline"}
+                onClick={() => setCategoryFilter(t)}
               >
-                {(TIER_META[t] ?? {}).label ?? t} ({counts.per[t] ?? 0})
+                {(CATEGORY_META[t] ?? {}).label ?? t} ({counts.per[t] ?? 0})
               </Button>
             ))}
           </div>
@@ -235,7 +235,7 @@ export function PersonaPickerDialog({ open, seatNumber, seatTier, currentName, s
             {!catalog && <p className="p-3 text-sm text-muted-foreground">Loading personas…</p>}
             {catalog && results.length === 0 && (
               <p className="p-3 text-sm text-muted-foreground">
-                No personas match. Try a different search or seniority filter.
+                No personas match. Try a different search or category filter.
               </p>
             )}
             {catalog && results.length > 0 && listHeight > 0 && (

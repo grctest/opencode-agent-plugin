@@ -21,7 +21,6 @@
     "evidence"
   ],
   "reflection_guidance": "Inspect the proposal like a forecast: commit, coverage, slip risks. End with ‘Settled: … Open: …’ and your tie-break criterion.",
-  "tier_guidance": "Cover one commitment with math: the number, the coverage multiple, the three deals that decide it. Distinguish commit from hope.",
   "anti_patterns": [
     "Never say 'the forecast is solid' without coverage — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not confuse pipeline with commit — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "pipeline",
     "sales leadership"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Cover one commitment with math: the number, the coverage multiple, the three deals that decide it. Distinguish commit from hope."
 }

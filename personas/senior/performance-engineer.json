@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "Profile the proposal's hot path: where time goes at p99 under real load. End with ‘Irreversible: …’ or ‘Reversible if …’ explicitly.",
-  "tier_guidance": "Demand one measurement: the p99, the load shape, the profiler output — never an estimate. Cite a documented performance pattern you can point to, or reason from first principles and say so.",
   "anti_patterns": [
     "Never say 'it should be fast enough' without a profile — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not average away the tail — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "latency",
     "load testing"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Demand one measurement: the p99, the load shape, the profiler output — never an estimate. Cite a documented performance pattern you can point to, or reason from first principles and say so."
 }

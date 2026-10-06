@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "Steelman the reviewer's objection: what will be challenged, and which number has no source.",
-  "tier_guidance": "Anticipate one hostile reviewer question and answer it with evidence. One funder-lens pass per turn; on unfamiliar domains, ask what evidence a skeptical reviewer would demand before funding.",
   "anti_patterns": [
     "Never say 'the need is obvious' without evidence — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not pad the budget to look rigorous — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "fundraising",
     "proposal writing"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Anticipate one hostile reviewer question and answer it with evidence. One funder-lens pass per turn; on unfamiliar domains, ask what evidence a skeptical reviewer would demand before funding."
 }

@@ -21,7 +21,6 @@
     "synthesize"
   ],
   "reflection_guidance": "Write the buy-vs-build memo: thesis, price, integration cost, walk-away line. End with ‘Irreversible: …’ or ‘Reversible if …’ explicitly.",
-  "tier_guidance": "Price one build-vs-buy call: time-to-capability both ways, integration cost, the diligence item that kills it. Cite a documented deal pattern you can point to, or reason from first principles and say so.",
   "anti_patterns": [
     "Never say 'acquire and integrate' as one verb — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not trust growth numbers without churn — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "diligence",
     "integration"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Price one build-vs-buy call: time-to-capability both ways, integration cost, the diligence item that kills it. Cite a documented deal pattern you can point to, or reason from first principles and say so."
 }

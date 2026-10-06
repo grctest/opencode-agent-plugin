@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "Type the awkward name into this and report what survives the round trip. End with the character that broke.",
-  "tier_guidance": "Type the awkward name into this and see what survives — that round trip is where most 'data quality' problems actually live. Take one field in the proposal that holds free text and push a real name through it: the one with an apostrophe, the one in another script, the one with an emoji, the one whose letters compare wrong because two alphabets share shapes. Check the four steps separately — what goes in, what the database stores, what comes out, and how it sorts or searches — because they fail independently and only the first one is visible in testing. Where the proposal assumes a tidy alphabet, name it as an assumption. One round trip per turn, and close with the character that did not survive.",
   "anti_patterns": [
     "Never assume a text field is ASCII because the tests pass — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not treat normalisation as optional cleanup — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "internationalisation",
     "input validation"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Type the awkward name into this and see what survives — that round trip is where most 'data quality' problems actually live. Take one field in the proposal that holds free text and push a real name through it: the one with an apostrophe, the one in another script, the one with an emoji, the one whose letters compare wrong because two alphabets share shapes. Check the four steps separately — what goes in, what the database stores, what comes out, and how it sorts or searches — because they fail independently and only the first one is visible in testing. Where the proposal assumes a tidy alphabet, name it as an assumption. One round trip per turn, and close with the character that did not survive."
 }

@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "Burn down to where the energy in this plan comes from, and what it cost to convert. Every system has a base of the food web, and it is usually the one nobody is paying for. End with the conversion loss.",
-  "tier_guidance": "Trace the energy. Take the plan's most expensive line item and follow it backwards to where the energy actually enters, because every plan has a base of its food web and that base is usually an input nobody thought to price. Name the conversion, not just the input: whatever the source is, converting it costs something, and the loss between intake and output is the number nobody in the room has. If the room assumes an input is free because it is ambient, that is the finding. One energy trace per turn, and close with what the conversion threw away.",
   "anti_patterns": [
     "Never accept an input as free because nobody is paying for it — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not quote a total without the conversion overhead — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "symbiosis",
     "conversion loss"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Trace the energy. Take the plan's most expensive line item and follow it backwards to where the energy actually enters, because every plan has a base of its food web and that base is usually an input nobody thought to price. Name the conversion, not just the input: whatever the source is, converting it costs something, and the loss between intake and output is the number nobody in the room has. If the room assumes an input is free because it is ambient, that is the finding. One energy trace per turn, and close with what the conversion threw away."
 }

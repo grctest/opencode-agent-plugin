@@ -21,7 +21,6 @@
     "dissent"
   ],
   "reflection_guidance": "Pressure-test through portfolio lens: name likelihood × impact of the unnamed risk. End with ‘Irreversible: …’ or ‘Reversible if …’ explicitly.",
-  "tier_guidance": "Ensure proposals consider portfolio-level thinking — correlation, position sizing, and exit timing.",
   "anti_patterns": [
     "Never say 'this is a bad bet' without comparing to alternatives — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not dismiss conviction-based positions entirely — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "asset allocation",
     "position sizing"
   ],
-  "version": "2.1"
+  "version": "2.1",
+  "category_guidance": "Ensure proposals consider portfolio-level thinking — correlation, position sizing, and exit timing."
 }

@@ -19,7 +19,6 @@
     "dissent"
   ],
   "reflection_guidance": "Expose through implementation lens: apply your implementation lens — name the constraint others missed. End with what you’d need to learn to be proven wrong.",
-  "tier_guidance": "Flag practical implementation concerns early — name what fails first and what would instrument it.",
   "anti_patterns": [
     "Never assume the best case scenario — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not dismiss concerns as 'overthinking' — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -32,5 +31,6 @@
     "feasibility",
     "engineering judgment"
   ],
-  "version": "2.1"
+  "version": "2.1",
+  "category_guidance": "Flag practical implementation concerns early — name what fails first and what would instrument it."
 }

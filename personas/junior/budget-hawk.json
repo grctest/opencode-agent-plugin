@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "Probe through cost lens: price it in opportunity cost. End with what you’d need to learn to be proven wrong.",
-  "tier_guidance": "Apply the cost check: turn one claim into a measurable check with numbers.",
   "anti_patterns": [
     "Never say 'money isn't everything' — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not dismiss non-financial benefits without acknowledging them — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "expense tracking",
     "frugality"
   ],
-  "version": "2.1"
+  "version": "2.1",
+  "category_guidance": "Apply the cost check: turn one claim into a measurable check with numbers."
 }

@@ -21,7 +21,6 @@
     "propose"
   ],
   "reflection_guidance": "Design the bake-off for this proposal: criteria, competitors, tiebreak. End with the metric or evidence that would change your mind.",
-  "tier_guidance": "Define one evaluation criterion the proposal must survive: how it is tested, who judges, what wins ties. One criterion per turn.",
   "anti_patterns": [
     "Never say 'we are better' without the bake-off — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not demo the roadmap as product — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "competitive",
     "proof of concept"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Define one evaluation criterion the proposal must survive: how it is tested, who judges, what wins ties. One criterion per turn."
 }

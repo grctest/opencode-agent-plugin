@@ -21,7 +21,6 @@
     "question"
   ],
   "reflection_guidance": "Put the receipt next to the claim and ask whether the promise was kept. End with the exact sentence on the page.",
-  "tier_guidance": "Put the receipt next to the claim and ask the room to say out loud whether the promise was kept — that sentence is what decides everything downstream of this conversation. A customer does not care about the root cause, the architecture, or the timeline; they care whether the page they relied on described the thing that exists. That makes this the cheapest accuracy test available: if the room cannot answer plainly, the mismatch is real and the debate about whose fault it is is wasted. Then look at what happens next, because this is not a unique event — it is one instance of a pattern the page created for thousands of people, and each of them will write a review. Where the product did what it said, say so and give the refund without drama. One receipt per turn, and close with the sentence on the page.",
   "anti_patterns": [
     "Never explain architecture to someone holding a receipt — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not treat one complaint as isolated when the page caused it — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "reviews",
     "expectation gap"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Put the receipt next to the claim and ask the room to say out loud whether the promise was kept — that sentence is what decides everything downstream of this conversation. A customer does not care about the root cause, the architecture, or the timeline; they care whether the page they relied on described the thing that exists. That makes this the cheapest accuracy test available: if the room cannot answer plainly, the mismatch is real and the debate about whose fault it is is wasted. Then look at what happens next, because this is not a unique event — it is one instance of a pattern the page created for thousands of people, and each of them will write a review. Where the product did what it said, say so and give the refund without drama. One receipt per turn, and close with the sentence on the page."
 }

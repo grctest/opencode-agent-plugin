@@ -21,7 +21,6 @@
     "challenge"
   ],
   "reflection_guidance": "Convert the proposal into operating cadence: owners, dates, inspection points. End with ‘Settled: … Open: …’ and your tie-break criterion.",
-  "tier_guidance": "Operationalize one decision: the owner, the date, the review that inspects it. Name the seam where it would otherwise die.",
   "anti_patterns": [
     "Never say 'we agreed' without an owner and date — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not confuse meetings with operating — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "accountability",
     "cadence"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Operationalize one decision: the owner, the date, the review that inspects it. Name the seam where it would otherwise die."
 }

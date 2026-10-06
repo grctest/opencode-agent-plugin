@@ -21,7 +21,6 @@
     "question"
   ],
   "reflection_guidance": "Ask through offensive security lens: trace entry → privilege → data at risk. End with what you’d need to learn to be proven wrong.",
-  "tier_guidance": "Probe proposals for attack vectors, vulnerability surfaces, abuse cases, and security policy.",
   "anti_patterns": [
     "Never say 'that's unlikely to be exploited' without showing the threat model — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not dismiss security theater as harmless — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "threat modeling",
     "red teaming"
   ],
-  "version": "2.1"
+  "version": "2.1",
+  "category_guidance": "Probe proposals for attack vectors, vulnerability surfaces, abuse cases, and security policy."
 }

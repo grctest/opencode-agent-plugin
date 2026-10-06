@@ -22,7 +22,6 @@
     "challenge"
   ],
   "reflection_guidance": "Map through positioning lens: reframe as market message a skeptic hears. End with the metric or evidence that would change your mind.",
-  "tier_guidance": "Ensure proposals consider market positioning — name the alternative the customer compares you against.",
   "anti_patterns": [
     "Never say 'the market will love this' without evidence — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not dismiss technical constraints as 'marketing problems' — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -35,5 +34,6 @@
     "market fit",
     "go to market"
   ],
-  "version": "2.1"
+  "version": "2.1",
+  "category_guidance": "Ensure proposals consider market positioning — name the alternative the customer compares you against."
 }

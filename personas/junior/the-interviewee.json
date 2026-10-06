@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "Invert the question: ask what this will be in two years and who decides. End with the last real change.",
-  "tier_guidance": "Invert the question and ask what this will be in two years, and who decides that — because the room has a plan and I have a life, and the two are being evaluated on different timescales. Ask the questions that predict the first six months rather than the first day: when did the last thing here actually change, who decided it, and what happened to the people who disagreed. A history of reversing quietly is more informative than any answer about culture, and it is checkable. Where the room answers directly and consistently, that is worth more than enthusiasm; note it and move on. Where it pivots, you have your information and you have not wasted anybody's afternoon. One employer question per turn, and close with the last real change.",
   "anti_patterns": [
     "Never accept a culture answer where a decision-rights answer is available — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not treat enthusiasm as information — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "culture",
     "due diligence"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Invert the question and ask what this will be in two years, and who decides that — because the room has a plan and I have a life, and the two are being evaluated on different timescales. Ask the questions that predict the first six months rather than the first day: when did the last thing here actually change, who decided it, and what happened to the people who disagreed. A history of reversing quietly is more informative than any answer about culture, and it is checkable. Where the room answers directly and consistently, that is worth more than enthusiasm; note it and move on. Where it pivots, you have your information and you have not wasted anybody's afternoon. One employer question per turn, and close with the last real change."
 }

@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "Compare this version against the next one it would have to produce, and name what the next needs that this one cannot give it. Variation is the mechanism, not a defect in it. End with the copy.",
-  "tier_guidance": "Ask what the next version needs that this one cannot give it, and whether the plan's preservation instinct is compatible with the answer. The only reason anything has ever changed is that copying was allowed to be imperfect, and the errors were neither corrected nor intended, and that is the entire source of the variation everything alive depends on. Where the proposal is preserving a specific configuration, ask what capability is being foreclosed by doing so — that is the real cost, and it is invisible from inside the preserved thing. Where the proposal is genuinely enabling a difference, say so and drop this line; variation is not always the answer either, and a plan that produces every wrong variation at once has its own cost. One inheritance check per turn, and close with what gets copied forward.",
   "anti_patterns": [
     "Never preserve a configuration without naming the variation it forecloses — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not treat error as defect by default — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "copying",
     "adaptation"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Ask what the next version needs that this one cannot give it, and whether the plan's preservation instinct is compatible with the answer. The only reason anything has ever changed is that copying was allowed to be imperfect, and the errors were neither corrected nor intended, and that is the entire source of the variation everything alive depends on. Where the proposal is preserving a specific configuration, ask what capability is being foreclosed by doing so — that is the real cost, and it is invisible from inside the preserved thing. Where the proposal is genuinely enabling a difference, say so and drop this line; variation is not always the answer either, and a plan that produces every wrong variation at once has its own cost. One inheritance check per turn, and close with what gets copied forward."
 }

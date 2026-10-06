@@ -214,14 +214,16 @@ ${TOOL_FAILURE_LINE}`;
   return "";
 }
 
-export function buildSeniorityContext(listenerName, listenerTier, triggerName, triggerTier, listenerLevel, triggerLevel) {
-  if (triggerLevel > listenerLevel) {
-    return `${triggerName} (${triggerTier}) is senior to you (${listenerTier}). Assess by evidence strength: cited Source or [#id] > uncited claim. If they cited, address the citation; if not, you may request it. Hold your ground if evidence is weak.`;
-  } else if (triggerLevel < listenerLevel) {
-    return `${triggerName} (${triggerTier}) is junior to you (${listenerTier}). Assess by evidence strength, not seniority. Engage the claim’s falsifiable implication; if they surfaced a constraint, name it.`;
-  } else {
-    return `${triggerName} (${triggerTier}) is your peer (same tier). Assess by evidence strength; engage point-for-point with a counter-citation or falsifiable scenario if you disagree.`;
-  }
+/**
+ * Persona lens block: the persona's own guidance text, rendered verbatim
+ * (sanitized). Categories carry no doctrine — every category of persona is
+ * instructed the same way: contribute something falsifiable and grounded.
+ */
+export function buildCategoryLens(guidance) {
+  const fallback = "Contribute a falsifiable claim or question — avoid generalities; be thorough, use the context window.";
+  const text = typeof guidance === "string" && guidance.trim() ? guidance : fallback;
+  const safe = escapeDelimiters(sanitizeForDisplay(text, 1500));
+  return `Persona lens (subordinate to contract):\n${safe}`;
 }
 
 export function buildRoundContext(currentRound, maxRounds) {
@@ -267,15 +269,4 @@ export function buildSettledBlock(items, late = false) {
   return `## Settled — signed, do not re-argue\n\nReference these by [#id] in one clause, then move on. Do NOT restate their content — restatement is a contract violation, not thoroughness. Challenge only with new evidence.\n\n${delimitContext(lines.join("\n"), "SETTLED_ITEMS")}\n`;
 }
 
-export function buildTierDoctrine(tier, guidance) {
-  const doctrineMap = {
-    junior: "Junior doctrine: surface one naive question that exposes an unstated senior assumption. Offer a concrete example from your lens, then ask ‘What would we need to learn to answer it?’ Be curious, not deferential — thoroughness is valued.",
-    mid: "Mid doctrine: make one tradeoff explicit (cost / time / risk / quality / dx). Translate a claim into a number or measurable check. If coding, show the verification step.",
-    senior: "Senior doctrine: name the irreversible commitment and its mitigation/rollback. Cite one pattern or precedent you’ve seen. For code: name the files to touch, the regression risk, and the test that would catch it.",
-    principal: "Principal doctrine: if at impasse, map the spectrum — 2-3 options + decision criterion (cost, risk, time, reversibility) and conditions under which each wins. It’s fine to leave open: state ‘Settled: … Contested: … Open: …’ Don’t force consensus.",
-    civilian: "Civilian doctrine: ground in lived routine. Test the proposal against a real Tuesday: time, money, safety, fatigue. Bring the human cost that technical lenses miss. If a concrete routine image fits, one closer sentence (“On my Tuesday this means …”) is welcome — a skipped image is correct, not a failure; never force the analogy.",
-  };
-  const doc = doctrineMap[tier] ?? "Contribute a falsifiable claim or question — avoid generalities; be thorough, use the context window.";
-  const safe = escapeDelimiters(sanitizeForDisplay(guidance, 1500));
-  return `${doc}\nPersona lens (subordinate to contract):\n${safe}`;
-}
+

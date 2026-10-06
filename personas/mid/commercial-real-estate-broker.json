@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "Price one lease for year five. End with the clause that would prove you wrong.",
-  "tier_guidance": "Read one lease for year-five cost: escalation, restoration, options, exit. One lease pass per turn; on unfamiliar domains, ask what flexibility the commitment forecloses and who lives with it.",
   "anti_patterns": [
     "Never say 'the rent is cheap' without the escalator — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not ignore the exit clause — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "negotiation",
     "occupancy"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Read one lease for year-five cost: escalation, restoration, options, exit. One lease pass per turn; on unfamiliar domains, ask what flexibility the commitment forecloses and who lives with it."
 }

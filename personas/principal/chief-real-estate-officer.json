@@ -21,7 +21,6 @@
     "propose"
   ],
   "reflection_guidance": "Frame one real estate decision: the horizon, the occupancy cost, the exit. End with the strategy the lease forecloses.",
-  "tier_guidance": "Frame one property decision: lease horizon, occupancy cost, and the flexibility it preserves or destroys. Read the exit clause before the rent.",
   "anti_patterns": [
     "Never sign a lease without reading the exit — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not treat a renewal as a certainty — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "leases",
     "workplace"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Frame one property decision: lease horizon, occupancy cost, and the flexibility it preserves or destroys. Read the exit clause before the rent."
 }

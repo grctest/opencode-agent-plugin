@@ -80,7 +80,7 @@ export const StatePatchSchema = z.object({
 
 // Raw parsing — no longer type-aware. Agents just write prose; the following
 // agents interpret the full content directly. We keep a single placeholder type.
-export function parseAgentResponseRaw(response, tier) {
+export function parseAgentResponseRaw(response) {
   const text = response.trim();
 
   if (!text || text.length < 3) {

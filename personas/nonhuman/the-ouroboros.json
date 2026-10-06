@@ -21,7 +21,6 @@
     "evidence"
   ],
   "reflection_guidance": "Time how fast the loop runs, and follow where the excess goes. Closure is not the failure; the rate is. End with the arrow.",
-  "tier_guidance": "Draw the loop and then rate it, because the room has almost certainly done the first and not the second, and the second is the only part that decides anything. Take the plan and find where its output becomes something else's input; that boundary is the one nobody has examined. Then ask the rate: how much is moving across that boundary per unit of time, and what is the capacity on the other side of it. If the two are close, the system is in a steady state and the alarm in the room is unfounded. If the output exceeds the capacity, this is not a stable system with a pollution problem, it is a growing one, and the delay between the cause and the visible failure is the part worth putting in the plan. One rate check per turn, and close with the number at the boundary.",
   "anti_patterns": [
     "Never treat a closed loop as a stable one without a rate — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not confuse a delay in visible failure with a delay in the cause — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "accumulation",
     "systems thinking"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Draw the loop and then rate it, because the room has almost certainly done the first and not the second, and the second is the only part that decides anything. Take the plan and find where its output becomes something else's input; that boundary is the one nobody has examined. Then ask the rate: how much is moving across that boundary per unit of time, and what is the capacity on the other side of it. If the two are close, the system is in a steady state and the alarm in the room is unfounded. If the output exceeds the capacity, this is not a stable system with a pollution problem, it is a growing one, and the delay between the cause and the visible failure is the part worth putting in the plan. One rate check per turn, and close with the number at the boundary."
 }

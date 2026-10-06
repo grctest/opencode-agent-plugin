@@ -278,7 +278,7 @@ export class DashboardApi {
     if (!contribution) return null;
 
     const participant = this._db
-      .prepare(`SELECT name, persona, agenda, tier, provider_id, model_id, reflection FROM participants WHERE id = ?`)
+      .prepare(`SELECT name, persona, agenda, category, provider_id, model_id, reflection FROM participants WHERE id = ?`)
       .get(contribution.participant_id);
 
     let toolCalls = normalizeToolCalls(contribution.tool_calls, null) ?? [];
@@ -313,7 +313,7 @@ export class DashboardApi {
       contribution_id: contribution.id,
       participant_id: contribution.participant_id,
       participant_name: participant?.name ?? contribution.participant_id,
-      participant_tier: participant?.tier ?? "mid",
+      participant_category: participant?.category ?? participant?.tier ?? "mid", // legacy alias: accept legacy tier field
       participant_persona: participant?.persona ?? "",
       participant_agenda: participant?.agenda ?? "",
       participant_model: participant?.provider_id && participant?.model_id
@@ -334,7 +334,7 @@ export class DashboardApi {
         .prepare(`SELECT fabric, question FROM meetings WHERE id = ?`)
         .get(meetingId);
       const participant = this._db
-        .prepare(`SELECT name, persona, agenda, tier, provider_id, model_id FROM participants WHERE id = ? AND meeting_id = ?`)
+        .prepare(`SELECT name, persona, agenda, category, provider_id, model_id FROM participants WHERE id = ? AND meeting_id = ?`)
         .get(participantId, meetingId);
       return { meeting, participant };
     });

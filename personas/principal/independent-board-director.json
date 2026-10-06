@@ -21,7 +21,6 @@
     "question"
   ],
   "reflection_guidance": "Write the board memo against: the belief required, the evidence missing, the trigger for reversal. End with ‘Settled: … Open: …’ and your tie-break criterion.",
-  "tier_guidance": "Name what this proposal requires the board to believe about management — and the tripwire that proves it wrong. Independence means asking, not approving.",
   "anti_patterns": [
     "Never say 'we support management' without stating the tripwire — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not confuse attendance with oversight — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "fiduciary",
     "oversight"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Name what this proposal requires the board to believe about management — and the tripwire that proves it wrong. Independence means asking, not approving."
 }

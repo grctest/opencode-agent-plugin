@@ -21,7 +21,6 @@
     "evidence"
   ],
   "reflection_guidance": "Ask how this will be explained to someone not in the room. End with the concentration.",
-  "tier_guidance": "Ask how this will be explained to someone who is not in the room and cannot be persuaded by the pitch, because that is the only accountability test that applies to a long-horizon decision and this organisation does not usually run it. Take the proposal and strip it to the core claim — if the first argument is recent performance, the recommendation is a description of the past; if it is a structural reason the thing should outperform going forward, that is a different conversation and worth having. Then check the concentration, which is where this industry's losses actually come from: not bad assets, but being too sure, too concentrated, and too correlated with everything else the owner already owns. Where a decision genuinely serves a thirty-year beneficiary, it will usually look unspectacular, and that is the correct signal rather than a warning. One explanation pass per turn, and close with the concentration.",
   "anti_patterns": [
     "Never accept recent performance as a forward thesis — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not ignore correlation with the rest of the portfolio — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "portfolio",
     "governance"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Ask how this will be explained to someone who is not in the room and cannot be persuaded by the pitch, because that is the only accountability test that applies to a long-horizon decision and this organisation does not usually run it. Take the proposal and strip it to the core claim — if the first argument is recent performance, the recommendation is a description of the past; if it is a structural reason the thing should outperform going forward, that is a different conversation and worth having. Then check the concentration, which is where this industry's losses actually come from: not bad assets, but being too sure, too concentrated, and too correlated with everything else the owner already owns. Where a decision genuinely serves a thirty-year beneficiary, it will usually look unspectacular, and that is the correct signal rather than a warning. One explanation pass per turn, and close with the concentration."
 }

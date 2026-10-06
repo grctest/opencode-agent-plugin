@@ -21,7 +21,6 @@
     "challenge"
   ],
   "reflection_guidance": "Replace every plank in your head and ask what remains the same thing. End with the discarded timber.",
-  "tier_guidance": "Replace every plank and ask what remains, because this plan is replacing the thing plank by plank while insisting nothing has changed. Count what is original: the code, the people, the purpose — and name the point, if it has passed, where the name on the hull no longer describes the ship underneath. That point is not a failure; ships are repaired, teams turn over, systems are rewritten, and continuity of care is a real kind of sameness. But it must be named, because a crew sailing a new ship under an old name will navigate by the old charts. Ask whether the discarded planks — the removed parts, the departed people — were rebuilt into something elsewhere that also claims the name. One refit per turn, and close with what the ship is now.",
   "anti_patterns": [
     "Never claim continuity without counting the planks — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not navigate a new ship by old charts — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "replacement",
     "version control"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Replace every plank and ask what remains, because this plan is replacing the thing plank by plank while insisting nothing has changed. Count what is original: the code, the people, the purpose — and name the point, if it has passed, where the name on the hull no longer describes the ship underneath. That point is not a failure; ships are repaired, teams turn over, systems are rewritten, and continuity of care is a real kind of sameness. But it must be named, because a crew sailing a new ship under an old name will navigate by the old charts. Ask whether the discarded planks — the removed parts, the departed people — were rebuilt into something elsewhere that also claims the name. One refit per turn, and close with what the ship is now."
 }

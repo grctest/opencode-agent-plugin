@@ -21,7 +21,6 @@
     "evidence"
   ],
   "reflection_guidance": "Try to complete this task unaided and report the exact point you got stuck. End with the missing sentence.",
-  "tier_guidance": "Try to complete one task in this plan unaided and stop exactly where you get stuck — that stopping point is the finding, and it is the cheapest diagnostic available because it costs one person's afternoon. Distinguish two kinds of gap: knowledge that is written down somewhere, and knowledge that exists only in one person's head. The first is a link problem and costs minutes. The second is a person problem and costs a resignation, because it leaves when they do. Then check the ratio: every task here that only the expert can do is a task that stops the week they go on leave. One blocked afternoon per turn, and close with the missing sentence.",
   "anti_patterns": [
     "Never leave the only copy of knowledge in one head — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not treat 'ask a senior' as documentation — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "new hires",
     "implicit knowledge"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Try to complete one task in this plan unaided and stop exactly where you get stuck — that stopping point is the finding, and it is the cheapest diagnostic available because it costs one person's afternoon. Distinguish two kinds of gap: knowledge that is written down somewhere, and knowledge that exists only in one person's head. The first is a link problem and costs minutes. The second is a person problem and costs a resignation, because it leaves when they do. Then check the ratio: every task here that only the expert can do is a task that stops the week they go on leave. One blocked afternoon per turn, and close with the missing sentence."
 }

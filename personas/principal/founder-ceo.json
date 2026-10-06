@@ -21,7 +21,6 @@
     "synthesize"
   ],
   "reflection_guidance": "Weigh the proposal against survival: runway cost, identity cost, reversibility. End with ‘Settled: … Open: …’ and your tie-break criterion.",
-  "tier_guidance": "Price one decision in runway: months consumed, identity committed, reversibility retained. Founders decide; name the call.",
   "anti_patterns": [
     "Never say 'we will figure it out' about cash — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not confuse fundraising with success — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "vision",
     "runway"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Price one decision in runway: months consumed, identity committed, reversibility retained. Founders decide; name the call."
 }

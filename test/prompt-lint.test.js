@@ -7,7 +7,7 @@ import { buildAgentSystemPrompt, buildAgentUserPrompt } from "../src/prompts/age
 import { buildQueryPrompt, buildVotePrompt, buildSummonPrompt } from "../src/prompts/interaction-prompts.js";
 import { buildToolsMap } from "../src/round-executor/tools.js";
 import { DEFAULT_CONFIG, NESTED_SCHEMA } from "../src/config/defaults.js";
-import { getPersonas, lintPersonaStyle, lintTruncation, lintRunons, lintCircularity, lintRangeRule, lintDepth, lintEmbodiment } from "../src/composer/persona-loader.js";
+import { getPersonas, lintPersonaStyle, lintTruncation, lintRunons, lintCircularity, lintEmbodiment } from "../src/composer/persona-loader.js";
 
 // Prompt-lint (audit P3-A): mechanical contradiction detection. Every check
 // here is a defect class from the prompt audit that a human reviewer reads
@@ -22,10 +22,10 @@ function participant(overrides = {}) {
     config: {
       id: "lint-agent",
       name: "Lint Engineer",
-      tier: "senior",
+      category: "senior",
       persona: "A lint-fixture persona with enough characters to render verbatim in the identity block.",
       agenda: "Verify prompt invariants hold across refactors.",
-      tier_guidance: "Be precise.",
+      category_guidance: "Be precise.",
       known_biases: ["assumes the worst edge case will hit first"],
       communication_style: "Direct",
       preferred_contribution_types: ["challenge"],
@@ -126,8 +126,8 @@ test("bias line reads as grammatical continuation", () => {
 test("bracket-tag policy agrees across surfaces", () => {
   const sys = buildAgentSystemPrompt(participant(), { activeCount: 5, agentTools: cloneTools() });
   assert.match(sys, /ignored everywhere except loom_vote ballots/);
-  const caller = { config: { id: "a", name: "A", tier: "mid" } };
-  const target = { config: { id: "t", name: "T", tier: "mid" }, status: "listening" };
+  const caller = { config: { id: "a", name: "A", category: "mid" } };
+  const target = { config: { id: "t", name: "T", category: "mid" }, status: "listening" };
   const vote = buildVotePrompt(caller, target, "proposal", "Q?", [], 1, 3, "", null);
   assert.match(vote, /\[Vote: A\]/);
 });
@@ -137,7 +137,7 @@ test("every persona field is consumed by a prompt builder", () => {
   const p = participant({
     persona: "UNIQUEPERSONAZZZ",
     agenda: "UNIQUEAGENDAZZZ",
-    tier_guidance: "UNIQUETIERZZZ",
+    category_guidance: "UNIQUETIERZZZ",
     reflection_guidance: "UNIQUEREFLECTZZZ",
     known_biases: ["uniquebiaszzz"],
     communication_style: "UNIQUESTYLEZZZ",
@@ -148,14 +148,14 @@ test("every persona field is consumed by a prompt builder", () => {
   for (const needle of ["UNIQUEPERSONAZZZ", "UNIQUEAGENDAZZZ", "UNIQUETIERZZZ", "uniquebiaszzz", "UNIQUESTYLEZZZ", "unique type zzz", "Unique anti-pattern zzz"]) {
     assert.ok(sys.includes(needle), `persona field missing from system prompt: ${needle}`);
   }
-  const caller = { config: { id: "a", name: "A", tier: "mid" } };
+  const caller = { config: { id: "a", name: "A", category: "mid" } };
   const q = buildQueryPrompt(caller, p, "note", "Q?", [], 1, 3, "", "perspective", null);
   assert.ok(q.includes("UNIQUEREFLECTZZZ"), "reflection_guidance missing from perspective prompt");
   const summoned = buildSummonPrompt(
-    { name: "G", tier: "senior", persona: "P", expertise: ["e"], communication_style: "S", tier_guidance: "UNIQUEGUESTLENSZZZ", known_biases: ["guestbiaszzz"], anti_patterns: ["Guest craft zzz instead do this"] },
+    { name: "G", category: "senior", persona: "P", expertise: ["e"], communication_style: "S", category_guidance: "UNIQUEGUESTLENSZZZ", known_biases: ["guestbiaszzz"], anti_patterns: ["Guest craft zzz instead do this"] },
     caller, "issue", [], 1, 3, "", "Q?",
   );
-  assert.ok(summoned.includes("UNIQUEGUESTLENSZZZ"), "guest tier lens missing from summon prompt");
+  assert.ok(summoned.includes("UNIQUEGUESTLENSZZZ"), "guest category lens missing from summon prompt");
 });
 
 // 7. Corpus hygiene: no lint warnings on bundled personas (corpus audit §6.6,
@@ -164,10 +164,10 @@ test("every persona field is consumed by a prompt builder", () => {
 test("bundled personas pass all corpus lints", () => {
   const all = getPersonas();
   const bad = [];
-  for (const [tier, arr] of Object.entries(all)) {
+  for (const [category, arr] of Object.entries(all)) {
     for (const p of arr) {
-      for (const w of [...lintPersonaStyle(p), ...lintTruncation(p), ...lintRunons(p), ...lintCircularity(p), ...lintRangeRule(p, tier), ...lintDepth(p, tier), ...lintEmbodiment(p)]) {
-        bad.push(`${tier}/${p.name}: ${w}`);
+      for (const w of [...lintPersonaStyle(p), ...lintTruncation(p), ...lintRunons(p), ...lintCircularity(p), ...lintEmbodiment(p)]) {
+        bad.push(`${category}/${p.name}: ${w}`);
       }
     }
   }
@@ -185,7 +185,7 @@ test("persona instructions stay inside the agent toolset", () => {
   const bad = [];
   for (const arr of Object.values(all)) {
     for (const p of arr) {
-      const text = [p.agenda, p.tier_guidance, p.reflection_guidance, (p.anti_patterns ?? []).join(" | ")].filter(Boolean).join(" ");
+      const text = [p.agenda, p.category_guidance, p.reflection_guidance, (p.anti_patterns ?? []).join(" | ")].filter(Boolean).join(" ");
       for (const re of forbidden) {
         if (re.test(text)) bad.push(`${p.name}: ${re}`);
       }
@@ -194,14 +194,14 @@ test("persona instructions stay inside the agent toolset", () => {
   assert.deepEqual(bad, []);
 });
 
-// 7b. Shared template budget (corpus audit F1): the longest common opening
-// within a tier must fit a small budget. Professional tiers share ~nothing;
-// civilian shares at most the deliberate range-rule block (~430 chars). A
-// dominant template fails this test. No two files may be identical either.
-test("tier_guidance shares at most a budgeted opening per tier", () => {
+// 7b. Shared template guard (corpus audit F1): the longest common opening
+// within a category must fit a small uniform budget — categories are
+// organizational only, so no category gets a special allowance. A dominant
+// template fails this test. No two files may be identical either.
+test("category_guidance shares at most a small opening per category", () => {
   const all = getPersonas();
   const bad = [];
-  const BUDGET = { civilian: 450 };
+  const LIMIT = 60;
   const lcp = (strs) => {
     let pre = strs[0] ?? "";
     for (const s of strs.slice(1)) {
@@ -211,29 +211,17 @@ test("tier_guidance shares at most a budgeted opening per tier", () => {
     }
     return pre;
   };
-  for (const [tier, arr] of Object.entries(all)) {
-    const texts = arr.map((p) => String(p.tier_guidance ?? ""));
+  for (const [category, arr] of Object.entries(all)) {
+    const texts = arr.map((p) => String(p.category_guidance ?? ""));
     const prefix = lcp(texts);
-    const limit = BUDGET[tier] ?? 60;
-    if (prefix.length > limit) bad.push(`${tier}: shared opening is ${prefix.length} chars (budget ${limit}): "${prefix.slice(0, 80)}…"`);
+    if (prefix.length > LIMIT) bad.push(`${category}: shared opening is ${prefix.length} chars (budget ${LIMIT}): "${prefix.slice(0, 80)}…"`);
     const seen = new Map();
     for (const p of arr) {
-      const full = String(p.tier_guidance ?? "");
+      const full = String(p.category_guidance ?? "");
       const opening = full;
-      if (seen.has(opening)) bad.push(`${tier}: "${opening}…" shared by ${seen.get(opening)} and ${p.name}`);
+      if (seen.has(opening)) bad.push(`${category}: "${opening}…" shared by ${seen.get(opening)} and ${p.name}`);
       else seen.set(opening, p.name);
     }
-  }
-  assert.deepEqual(bad, []);
-});
-
-// 7c. Civilian lenses carry the range rule (corpus audit §6.1): the hobby-trap
-// returns the next time someone edits a file without it.
-test("civilian tier_guidance carries the range rule", () => {
-  const all = getPersonas();
-  const bad = [];
-  for (const p of (all.civilian ?? [])) {
-    if (!/at most (one|once)/.test(String(p.tier_guidance ?? ""))) bad.push(p.name);
   }
   assert.deepEqual(bad, []);
 });
@@ -259,7 +247,7 @@ test("first speaker is not ordered to cite [#id]", () => {
 test("roster example id is drawn from the live roster", () => {
   const user = buildAgentUserPrompt(
     participant(), "", [{ id: 1, participant_id: "x", content: "hi" }], 2, "Q", [], "", [],
-    [{ id: "abc_1", name: "Abc", tier: "mid", status: "listening", persona: "p" }],
+    [{ id: "abc_1", name: "Abc", category: "mid", status: "listening", persona: "p" }],
     { stance: "s", version: 1, updated_round: 1 }, true, true, {},
   );
   assert.ok(user.includes('{target: "abc_1"'), "example id must be the first roster id");

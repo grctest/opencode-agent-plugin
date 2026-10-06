@@ -11,8 +11,8 @@ import { persistentAtom } from "@nanostores/persistent";
  * dialogs, catalog/LLM snapshots) stays in useState and is refetched.
  */
 
-const FORM_VERSION = 8;
-const KNOWN_TIERS = new Set(["junior", "mid", "senior", "principal", "civilian", "nonhuman"]);
+const FORM_VERSION = 9;
+const CATEGORY_SLUG = /^[a-z0-9][a-z0-9-]*$/;
 const FEATURE_MODES = new Set(["disabled", "optional", "mandatory"]);
 // SKILL.state is an off/on toggle (not a 3-state mode): on = every non-pass
 // turn must end with loom_state_patch as the agent's absolutely-last inline
@@ -118,7 +118,9 @@ function sanitizeOrchestrator(raw, legacyModel) {
 
 function sanitizeSeat(raw) {
   if (!raw || typeof raw !== "object") return null;
-  if (!raw.name || !raw.persona || !raw.agenda || !KNOWN_TIERS.has(raw.tier)) return null;
+  const category = raw.category ?? raw.tier; // legacy alias: accept legacy tier
+  const categoryGuidance = raw.category_guidance ?? raw.tier_guidance; // legacy alias: accept legacy tier_guidance
+  if (!raw.name || !raw.persona || !raw.agenda || typeof category !== "string" || !CATEGORY_SLUG.test(category)) return null;
   const tags = Array.isArray(raw.tags) ? raw.tags.filter((t) => typeof t === "string") : [];
   const expertise = Array.isArray(raw.expertise) ? raw.expertise.filter((t) => typeof t === "string") : [];
   return {
@@ -126,14 +128,14 @@ function sanitizeSeat(raw) {
     name: String(raw.name),
     persona: String(raw.persona),
     agenda: String(raw.agenda),
-    tier: raw.tier,
+    category,
     tags,
     expertise,
     known_biases: Array.isArray(raw.known_biases) ? raw.known_biases.filter((v) => typeof v === "string") : [],
     communication_style: asString(raw.communication_style),
     preferred_contribution_types: Array.isArray(raw.preferred_contribution_types) ? raw.preferred_contribution_types.filter((v) => typeof v === "string") : [],
     anti_patterns: Array.isArray(raw.anti_patterns) ? raw.anti_patterns.filter((v) => typeof v === "string") : [],
-    tier_guidance: asString(raw.tier_guidance),
+    category_guidance: asString(categoryGuidance),
     reflection_guidance: asString(raw.reflection_guidance),
     model: typeof raw.model === "string" ? raw.model : null,
     approved: raw.approved !== false,

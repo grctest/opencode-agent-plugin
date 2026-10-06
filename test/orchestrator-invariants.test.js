@@ -97,7 +97,7 @@ test("round-summary context varies with summaryStyle", () => {
 
 test("turn-order context varies with turnOrderPolicy", () => {
   const base = ["## Key Facts\n- fact one", "R".repeat(1000),
-    [{ config: { id: "a", name: "A", tier: "mid" }, status: "listening", contributions_count: 3 }]];
+    [{ config: { id: "a", name: "A", category: "mid", }, status: "listening", contributions_count: 3 }]];
   const balanced = buildTurnOrderPrompt(...base, { turnOrderPolicy: "balanced" });
   const evidence = buildTurnOrderPrompt(...base, { turnOrderPolicy: "evidence_first" });
   const starve = buildTurnOrderPrompt(...base, { turnOrderPolicy: "anti_starvation" });
@@ -121,8 +121,8 @@ test("turn-order prompt carries no seniority signal", () => {
     "## Key Facts\n- fact one",
     "summary",
     [
-      { config: { id: "junior_0", name: "Jun", tier: "junior" }, status: "listening", contributions_count: 1 },
-      { config: { id: "principal_0", name: "Prin", tier: "principal" }, status: "listening", contributions_count: 9 },
+      { config: { id: "junior_0", name: "Jun", category: "junior", }, status: "listening", contributions_count: 1 },
+      { config: { id: "principal_0", name: "Prin", category: "principal", }, status: "listening", contributions_count: 9 },
     ],
     { turnOrderPolicy: "balanced" },
   );
@@ -133,30 +133,30 @@ test("turn-order prompt carries no seniority signal", () => {
 
 test("turn-order fallback keeps composition order", async () => {
   const participants = [
-    { config: { id: "junior_0", name: "Jun", tier: "junior" }, status: "listening", contributions_count: 1 },
-    { config: { id: "principal_0", name: "Prin", tier: "principal" }, status: "listening", contributions_count: 9 },
+    { config: { id: "junior_0", name: "Jun", category: "junior", }, status: "listening", contributions_count: 1 },
+    { config: { id: "principal_0", name: "Prin", category: "principal", }, status: "listening", contributions_count: 9 },
   ];
   const ordered = await planTurnOrder({
     stateOfPlay: "",
     roundSummary: "",
     participants,
     promptFn: async () => { throw new Error("force fallback"); },
-    getHighestTierModel: () => null,
+    getDefaultModel: () => null,
   });
   assert.deepEqual(ordered.slice(0, 2), ["junior_0", "principal_0"]);
 });
 
 test("turn-order uses the orchestrator decision when available", async () => {
   const participants = [
-    { config: { id: "a", name: "A", tier: "mid" }, status: "listening", contributions_count: 1 },
-    { config: { id: "b", name: "B", tier: "mid" }, status: "listening", contributions_count: 9 },
+    { config: { id: "a", name: "A", category: "mid", }, status: "listening", contributions_count: 1 },
+    { config: { id: "b", name: "B", category: "mid", }, status: "listening", contributions_count: 9 },
   ];
   const ordered = await planTurnOrder({
     stateOfPlay: "",
     roundSummary: "",
     participants,
     promptFn: async () => '["b", "a"]',
-    getHighestTierModel: () => ({ providerID: "p", modelID: "m" }),
+    getDefaultModel: () => ({ providerID: "p", modelID: "m" }),
   });
   assert.deepEqual(ordered.slice(0, 2), ["b", "a"]);
 });
@@ -164,7 +164,7 @@ test("turn-order uses the orchestrator decision when available", async () => {
 test("synthesis participants and dissent carry no tier", () => {
   const prompt = buildSynthesisPrompt(
     "Q", "t",
-    [{ config: { id: "a", name: "Ada", tier: "principal" }, status: "listening", contributions_count: 2 }],
+    [{ config: { id: "a", name: "Ada", category: "principal", }, status: "listening", contributions_count: 2 }],
     [], "",  "", {},
   );
   assert.doesNotMatch(prompt, /\(principal\)/);

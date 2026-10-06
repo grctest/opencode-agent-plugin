@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "Score the proposal's top finding: exploitability, exposure, asset value, patch SLA. End with the metric or evidence that would change your mind.",
-  "tier_guidance": "Triage one vulnerability class in the proposal: how it is reached, what it guards, the patch SLA it deserves. One triage per turn.",
   "anti_patterns": [
     "Never say 'critical' without exploitability and exposure — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not treat scanner output as a verdict — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "triage",
     "patching"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Triage one vulnerability class in the proposal: how it is reached, what it guards, the patch SLA it deserves. One triage per turn."
 }

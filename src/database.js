@@ -65,8 +65,8 @@ export class MeetingDatabase {
     await ensureDb();
     const { result } = withReadonlyDb(dbPath, (db) =>
       db.prepare(
-        `SELECT id, name, persona, agenda, tier, provider_id, model_id, session_id, session_version, status, reflection, known_biases, communication_style, preferred_contribution_types, anti_patterns, tier_guidance, reflection_guidance, tags, expertise
-         FROM participants WHERE status != 'summoned' ORDER BY tier ASC`
+        `SELECT id, name, persona, agenda, category, provider_id, model_id, session_id, session_version, status, reflection, known_biases, communication_style, preferred_contribution_types, anti_patterns, category_guidance, reflection_guidance, tags, expertise
+         FROM participants WHERE status != 'summoned' ORDER BY category ASC`
       ).all().map((row) => ({
         ...row,
         known_biases: safeParseJsonArray(row.known_biases) ?? [],
@@ -207,7 +207,7 @@ export class MeetingDatabase {
   getContributions(meetingId) { return contribOps.getContributions(this.#db, meetingId); }
   getRecentContributions(meetingId, count) { return contribOps.getRecentContributions(this.#db, meetingId, count); }
   getContributionContext(contributionId) { return contribOps.getContributionContext(this.#db, contributionId); }
-  ensureParticipantRow(participantId, name = participantId, tier = "mid") { const r = contribOps.ensureParticipantRow(this.#db, this.#meetingId, participantId, name, tier); this.#notify("participants"); return r; }
+  ensureParticipantRow(participantId, name = participantId, category = "mid") { const r = contribOps.ensureParticipantRow(this.#db, this.#meetingId, participantId, name, category); this.#notify("participants"); return r; }
   addContributionWithStatePatch(meetingId, contribution, statePatch = null) { const r = contribOps.addContributionWithStatePatch(this.#db, meetingId, contribution, () => this.getRound(), statePatch); this.#notify("contributions"); if (statePatch) this.#notify("state_patches"); return r; }
   getMaxContributionId() { return contribOps.getMaxContributionId(this.#db, this.#meetingId); }
   setParticipantSessionId(participantId, sessionId) { const r = contribOps.setParticipantSessionId(this.#db, this.#meetingId, participantId, sessionId); this.#notify("participants"); return r; }

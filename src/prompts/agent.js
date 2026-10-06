@@ -3,7 +3,7 @@ import { getConfig } from "../config.js";
 import { isSummonAvailable } from "../services/embedding-gate.js";
 import { escapeDelimiters, delimitContext } from "./delimiters.js";
 import { LENGTH_LIMITS, TOOL_LADDER_LINE, TOOL_FAILURE_LINE, windowLabel } from "./constants.js";
-import { buildTierDoctrine, buildRoundContext, buildSettledBlock } from "./blocks.js";
+import { buildCategoryLens, buildRoundContext, buildSettledBlock } from "./blocks.js";
 import { renderMyStateMarkdown, getSettledItems } from "../state-patch.js";
 import { formatEvidenceCacheForPrompt } from "../evidence-cache.js";
 
@@ -74,9 +74,9 @@ function hashConfig(cfg, { activeCount, agentTools, contextWindow } = {}) {
   // (audit N6 — verified: edited persona returned the pre-edit prompt).
   const key = [
     PROMPT_TEMPLATE_VERSION,
-    cfg.id ?? "", cfg.name ?? "", cfg.tier ?? "",
+    cfg.id ?? "", cfg.name ?? "", cfg.category ?? cfg.tier ?? "",
     cfg.persona ?? "", cfg.agenda ?? "",
-    cfg.tier_guidance ?? "", cfg.communication_style ?? "",
+    cfg.category_guidance ?? cfg.tier_guidance ?? "", cfg.communication_style ?? "",
     (cfg.preferred_contribution_types ?? []).join("|"),
     (cfg.known_biases ?? []).join("|"),
     (cfg.anti_patterns ?? []).join("|"),
@@ -100,15 +100,15 @@ export function buildAgentSystemPrompt(participant, { activeCount, agentTools, c
     return cached;
   }
 
-  const tier = participant.config.tier;
+  const category = participant.config.category ?? participant.config.tier ?? "";
 
   const safePersonaRaw = typeof cfg.persona === 'string' ? truncateAtSentence(cfg.persona, 2000) : '';
   const safeAgendaRaw = typeof cfg.agenda === 'string' ? truncateAtSentence(cfg.agenda, 1000) : '';
   const safePersona = escapeDelimiters(sanitizeForDisplay(safePersonaRaw, 2000));
   const safeAgenda = escapeDelimiters(sanitizeForDisplay(safeAgendaRaw, 1000));
 
-  const tierGuidance = cfg.tier_guidance || "Contribute a falsifiable claim, question, or refinement — avoid generalities.";
-  const doctrine = buildTierDoctrine(tier, tierGuidance);
+  const categoryGuidance = (cfg.category_guidance ?? cfg.tier_guidance) || "Contribute a falsifiable claim, question, or refinement — avoid generalities.";
+  const lens = buildCategoryLens(categoryGuidance);
 
    const agentToolsConfig = getEffectiveAgentTools(agentTools) ?? {};
    const mandatoryCapabilities = agentToolsConfig?.mandatory ?? {};
@@ -256,7 +256,7 @@ ${antiPatterns}
 `
     : "";
 
-  const result = `You are **${escapeDelimiters(sanitizeForDisplay(cfg.name, 120))}** (${cfg.tier}) — a deliberator in “Loom.”
+  const result = `You are **${escapeDelimiters(sanitizeForDisplay(cfg.name, 120))}** (${category}) — a deliberator in “Loom.”
 
 ## Identity
 ${safePersona}
@@ -265,8 +265,8 @@ ${safePersona}
 ${safeAgenda}
 ${dispositionSection}
 ${antiPatternsSection}
-## Tier Doctrine
-${doctrine}
+## Persona Lens
+${lens}
 ${modeSection}
   ${toolSection}
 
@@ -298,7 +298,7 @@ ${modeSection}
         - Make as many tool calls as you need — there is no per-turn tool-call limit; prefer focused calls but never skip needed research to save calls.
         - CRITICAL: tool invocations are transmitted through the model's function-calling channel, never through response text. Your prose must NEVER contain function-name() or JSON argument blobs. Bracket tags like [QUERY: @id] are legacy — ignored everywhere except loom_vote ballots, which still require [Vote: A].
         Reference contributions by [#id] from Recent Contributions, e.g. [#12].
-  5. Identity — persona and agenda shape framing, not facts. Precedence: OUTPUT CONTRACT > persona/tier guidance > State of Play > Live. Persona voice never overrides budgets or the tool channel.
+  5. Identity — persona and agenda shape framing, not facts. Precedence: OUTPUT CONTRACT > persona/category guidance > State of Play > Live. Persona voice never overrides budgets or the tool channel.
   6. Voice — thorough and human-readable; dissent is welcome and not penalized.
   7. Collaboration (open-ended & programming): for debates, map spectrum and steelman counter-views before concluding; for code, read then propose diff (or write in BUILD), then handoff: **Handoff: @role — verify file=X covers case Y**.
   7a. Test craft — when you propose a test, threshold, or numeric bar: (a) Calibrate it — name the base rate, historical precedent, or data that justifies the number; if you don’t know, say so and propose the cheap test that would measure it. (b) Check internal consistency — a minimum-game floor, a percentage share, and an absolute-minute estimate must be mutually possible; if your floor makes your share unreachable (or trivial), fix one of the three. (c) Prefer a test whose every branch can actually fire — a threshold that can never trigger is not falsifiable, it’s decoration.
@@ -343,9 +343,9 @@ ${tools ? `## Tool outputs from this turn (what produced the prose above)\n\n${d
 Call loom_state_patch ONCE now with your stance (1 sentence, where you stand after this turn) and 1-3 bullets across established/contested/open/facts/files for anything new this turn decided, plus exact-text remove entries for your own outdated bullets. facts need Source: or [#id]. At least one field. No prose needed beyond the call — a patch never substitutes for prose, and prose about patching is forbidden.`;
 }
 
-export function buildPatchTailSystem({ name = "agent", tier = "" } = {}) {
+export function buildPatchTailSystem({ name = "agent", category = "" } = {}) {
   const safe = escapeDelimiters(sanitizeForDisplay(String(name ?? "agent"), 120));
-  return `You are **${safe}**${tier ? ` (${tier})` : ""} — saving private notes for your next turn.
+  return `You are **${safe}**${category ? ` (${category})` : ""} — saving private notes for your next turn.
 
 Call loom_state_patch exactly once. It updates only your own notes; the room never sees them, only your contribution prose. Never write about patching in prose.`;
 }
@@ -479,11 +479,11 @@ _Read with loom_forum_read_topic {topic_id: id} and comment with loom_forum_add_
     const lines = list.map(p => {
       const id = sanitizeForDisplay(String(p.id ?? ""), 60);
       const name = sanitizeForDisplay(String(p.name ?? id), 60);
-      const tier = sanitizeForDisplay(String(p.tier ?? ""), 20);
+      const category = sanitizeForDisplay(String(p.category ?? p.tier ?? ""), 20);
       const status = sanitizeForDisplay(String(p.status ?? ""), 20);
       const personaSnippet = p.persona ? sanitizeForDisplay(String(p.persona), 120).replace(/\n/g, " ").trim() : "";
       const personaPart = personaSnippet ? ` — ${personaSnippet}` : "";
-      return `- ${id} — ${name} (${tier}, ${status})${personaPart}`;
+      return `- ${id} — ${name} (${category}, ${status})${personaPart}`;
     });
     return `## Other Participants — valid loom_query targets (use target = id exactly, not display name)
 
@@ -503,7 +503,7 @@ _Use these ids verbatim for loom_query. Example: {target: "${exampleId}", questi
 
   // Round-phase doctrine (audit N10): the DIVERGE → MAP & REFINE → CONSOLIDATE
   // guidance existed only for peer sub-turns; primary turns got nothing.
-  // Guidance tier, not contract — the late-phase Position closer stays optional.
+  // Guidance category, not contract — the late-phase Position closer stays optional.
   const roundPhaseLine = (Number.isFinite(round) && Number.isFinite(options.maxRounds))
     ? `- **Round phase** — ${buildRoundContext(round, options.maxRounds)}\n`
     : "";

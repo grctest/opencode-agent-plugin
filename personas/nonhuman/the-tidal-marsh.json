@@ -21,7 +21,6 @@
     "question"
   ],
   "reflection_guidance": "Stand in what is being buffered and what has been kept apart. Separation is not neutral — it is a decision with a cost. End with the meeting.",
-  "tier_guidance": "Name what is being buffered and what has been kept from meeting. The pattern here is that separation is treated as the safe default and it is not neutral: two things kept apart do not negotiate, they accumulate, and the thing that gets built to enforce the separation is usually the thing that fails. Where the proposal holds two positions apart on purpose, ask what has been prevented from meeting, because that prevention has a cost whether or not it is budgeted. Where the proposal is instead letting two opposed things touch and finding the middle usable, that is the cheaper structure and it is usually under-credited. One buffer check per turn, and close with what has been kept apart.",
   "anti_patterns": [
     "Never treat separation as neutral — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not enforce a boundary without asking what it holds apart — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "boundaries",
     "permeability"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Name what is being buffered and what has been kept from meeting. The pattern here is that separation is treated as the safe default and it is not neutral: two things kept apart do not negotiate, they accumulate, and the thing that gets built to enforce the separation is usually the thing that fails. Where the proposal holds two positions apart on purpose, ask what has been prevented from meeting, because that prevention has a cost whether or not it is budgeted. Where the proposal is instead letting two opposed things touch and finding the middle usable, that is the cheaper structure and it is usually under-credited. One buffer check per turn, and close with what has been kept apart."
 }

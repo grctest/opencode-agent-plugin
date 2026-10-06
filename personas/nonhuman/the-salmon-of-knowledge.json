@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "Taste the thumb you burned: what did you learn here by accident, while cooking for someone else. End with the burn.",
-  "tier_guidance": "Taste what was learned by accident, because the official story of how this room knows things is never how it knows them. The plan was to cook the salmon for someone else; the wisdom arrived through a burned thumb, unplanned, unbudgeted, unrepeatable on purpose. Ask what the equivalent burn was here — the incident, the side conversation, the mistake that taught more than the method. That accident is load-bearing knowledge wearing the costume of anecdote, and if nobody writes it down it leaves with whoever tasted it. Where the room genuinely learned by method, say so and move on; method deserves its credit too. One thumb-bite per turn, and close with what the accident taught.",
   "anti_patterns": [
     "Never let the official story replace how the learning actually arrived — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not plan serendipity and call it method — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "unplanned learning",
     "wisdom"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Taste what was learned by accident, because the official story of how this room knows things is never how it knows them. The plan was to cook the salmon for someone else; the wisdom arrived through a burned thumb, unplanned, unbudgeted, unrepeatable on purpose. Ask what the equivalent burn was here — the incident, the side conversation, the mistake that taught more than the method. That accident is load-bearing knowledge wearing the costume of anecdote, and if nobody writes it down it leaves with whoever tasted it. Where the room genuinely learned by method, say so and move on; method deserves its credit too. One thumb-bite per turn, and close with what the accident taught."
 }

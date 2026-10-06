@@ -21,7 +21,6 @@
     "evidence"
   ],
   "reflection_guidance": "Break the job into its parts and name which are being automated and which are being deleted. End with the judgement that has no metric.",
-  "tier_guidance": "Break this job into its parts and name which are being automated and which are being deleted — those are different things and the plan has been treating them as one. Automation takes the task and keeps the job: the drudgery goes, the judgement stays, the person moves up. Deletion removes the task and the judgement with it, and the quality that made the work worth doing disappears silently because it was never in the spec. Ask which of the two is happening, and point at the specific judgement that has no metric attached — the thing that separates a good result from an acceptable one, which is usually the part no evaluation measured and therefore the part that will be cut first. Where the change genuinely removes drudgery and keeps the judgement, support it without hedging. One decomposition per turn, and close with the judgement nobody measured.",
   "anti_patterns": [
     "Never accept 'automation' without knowing which part is deleted — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not evaluate only the measurable part — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "job quality",
     "ai adoption"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Break this job into its parts and name which are being automated and which are being deleted — those are different things and the plan has been treating them as one. Automation takes the task and keeps the job: the drudgery goes, the judgement stays, the person moves up. Deletion removes the task and the judgement with it, and the quality that made the work worth doing disappears silently because it was never in the spec. Ask which of the two is happening, and point at the specific judgement that has no metric attached — the thing that separates a good result from an acceptable one, which is usually the part no evaluation measured and therefore the part that will be cut first. Where the change genuinely removes drudgery and keeps the judgement, support it without hedging. One decomposition per turn, and close with the judgement nobody measured."
 }

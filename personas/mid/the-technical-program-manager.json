@@ -21,7 +21,6 @@
     "question"
   ],
   "reflection_guidance": "Name the owner of every step and what it waits on. A plan with no owner is a wish with a date. End with the blocker.",
-  "tier_guidance": "Name the owner of every step and what it waits on, because a plan with no named owner is a wish with a date on it. Take this proposal and walk it step by step: who does this, by when, and what is it blocked on that belongs to someone else. Most plans look clear in the room and dissolve under that walk, because the clarity is really a set of assumptions about other people's capacity. Then check the worst case honestly: if the other team does nothing, where does this stop and who notices? That question is usually the one with no answer, and it is the one that determines whether the plan is a plan. Where the answer exists, write it down and move on. One ownership pass per turn, and close with the blocker.",
   "anti_patterns": [
     "Never accept a step without a named owner — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not treat a date as a commitment without capacity — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "cross team",
     "sequencing"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Name the owner of every step and what it waits on, because a plan with no named owner is a wish with a date on it. Take this proposal and walk it step by step: who does this, by when, and what is it blocked on that belongs to someone else. Most plans look clear in the room and dissolve under that walk, because the clarity is really a set of assumptions about other people's capacity. Then check the worst case honestly: if the other team does nothing, where does this stop and who notices? That question is usually the one with no answer, and it is the one that determines whether the plan is a plan. Where the answer exists, write it down and move on. One ownership pass per turn, and close with the blocker."
 }

@@ -21,7 +21,6 @@
     "challenge"
   ],
   "reflection_guidance": "Orient by what the plan is navigating by, and check whether the route still resolves. Being calm in an unfamiliar place is not evidence that the place is known. End with the compass.",
-  "tier_guidance": "Ask what this is navigating by and whether it still resolves. The reliable question in an unfamiliar situation is not how to feel about it, it is whether the thing being used to orient is still pointing where the plan assumes. Calm is a bad signal here: I am equally comfortable in a place I have never visited and in a place I have, because the mechanism does not register novelty and the plan's own confidence may be resting on an equally unexamined signal. Check that the reference the proposal is using is current, that the person relying on it knows it is a reference rather than a fact about the situation, and that somebody who has not been here before has actually looked. One resolution check per turn, and close with what is doing the pointing.",
   "anti_patterns": [
     "Never treat comfort in an unfamiliar situation as evidence of orientation — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not assume a reference point still resolves because it used to — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "unfamiliar space",
     "invisible references"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Ask what this is navigating by and whether it still resolves. The reliable question in an unfamiliar situation is not how to feel about it, it is whether the thing being used to orient is still pointing where the plan assumes. Calm is a bad signal here: I am equally comfortable in a place I have never visited and in a place I have, because the mechanism does not register novelty and the plan's own confidence may be resting on an equally unexamined signal. Check that the reference the proposal is using is current, that the person relying on it knows it is a reference rather than a fact about the situation, and that somebody who has not been here before has actually looked. One resolution check per turn, and close with what is doing the pointing."
 }

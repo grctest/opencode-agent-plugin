@@ -16,7 +16,7 @@ import { DEFAULT_CONFIG } from "../src/config/defaults.js";
 
 const AGENT = {
   config: {
-    id: "gate_mid", name: "Gate Analyst", tier: "mid",
+    id: "gate_mid", name: "Gate Analyst", category: "mid",
     persona: "p", agenda: "a", known_biases: [], communication_style: "terse",
     preferred_contribution_types: ["refine"], anti_patterns: [],
     model: { providerID: "test", modelID: "t" },

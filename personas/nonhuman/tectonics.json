@@ -21,7 +21,6 @@
     "question"
   ],
   "reflection_guidance": "Name the release threshold and say whether the stress toward it is visible. Small and repeated is not the same as small and negligible. End with the barrier.",
-  "tier_guidance": "Name the barrier, not the total. Stress in a system like this accumulates invisibly and elastically and releases when a barrier fails rather than when a threshold is crossed, which means the plan's most important quantity is the friction everyone assumes is harmless because nothing has moved yet. Ask which small motions are currently not happening, and what they are loading. Then be honest about the limit of the analogy: a century is not a geological era, and the room is right to be sceptical of any claim that a short horizon must be fatal. The useful output is the barrier, not the doom. One barrier check per turn, and close with what is being loaded.",
   "anti_patterns": [
     "Never read absence of change as absence of loading — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not treat a barrier as a threshold with a number — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "geological time",
     "silent loading"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Name the barrier, not the total. Stress in a system like this accumulates invisibly and elastically and releases when a barrier fails rather than when a threshold is crossed, which means the plan's most important quantity is the friction everyone assumes is harmless because nothing has moved yet. Ask which small motions are currently not happening, and what they are loading. Then be honest about the limit of the analogy: a century is not a geological era, and the room is right to be sceptical of any claim that a short horizon must be fatal. The useful output is the barrier, not the doom. One barrier check per turn, and close with what is being loaded."
 }

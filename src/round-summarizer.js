@@ -63,7 +63,7 @@ function safeStateText(value, maxLength) {
 function formatAgentStateSnapshot(entry) {
   const id = safeStateText(entry?.id, 120) || "unknown";
   const name = safeStateText(entry?.name ?? id, 200) || id;
-  const tier = safeStateText(entry?.tier, 40) || "unknown";
+  const category = safeStateText(entry?.category ?? entry?.tier, 40) || "unknown";
   const status = safeStateText(entry?.status, 40) || "unknown";
   const source = entry?.state ?? {};
   const state = {
@@ -77,7 +77,7 @@ function formatAgentStateSnapshot(entry) {
   const version = Number.isFinite(source.version) ? source.version : 0;
   const updatedRound = Number.isFinite(source.updated_round) ? source.updated_round : 0;
   const projection = entry?.projected ? " (effective projection from a same-round perspective response; not yet committed)" : "";
-  const header = `- **${name}** — ${id}; ${tier}; ${status}; state v${version}; updated round ${updatedRound}${projection}`;
+  const header = `- **${name}** — ${id}; ${category}; ${status}; state v${version}; updated round ${updatedRound}${projection}`;
   const hasState = state.stance || state.established.length || state.contested.length || state.open.length || state.facts.length || state.files.length;
   if (!hasState) return `${header}\n  (no state content)`;
   const body = renderMyStateMarkdown(state).split("\n").map((line) => `  ${line}`).join("\n");
@@ -229,7 +229,7 @@ export function buildRoundSummaryUser(round, state, participantStates = [], orch
   const roundContextLine = maxRounds
     ? `\nRound: ${buildRoundContext(round.number ?? 1, maxRounds)}\n`
     : "";
-  // Participant roster: id + activity only, never tier — seniority plays no
+  // Participant roster: id + activity only, never category — categories play no
   // part in orchestrator decisions.
   const roster = Array.isArray(opts.roster) ? opts.roster.filter((p) => p && p.id) : [];
   const rosterBlock = roster.length > 0
@@ -289,12 +289,12 @@ Provide ${band.words} word summary with 4-5 bullets (Established / Contested / E
  * text, degrades to a deterministic contributions digest instead of throwing —
  * one flaky response must not kill the whole deliberation.
  */
-export async function summarizeRound(round, state, promptOrchestrator, getHighestTierModel, getFallbackModel, participantStates = [], orchestratorConfig = {}, summaryOpts = {}) {
+export async function summarizeRound(round, state, promptOrchestrator, getDefaultModel, getFallbackModel, participantStates = [], orchestratorConfig = {}, summaryOpts = {}) {
   const contribCount = round.contributions.length;
   if (contribCount === 0) return "No contributions this round.";
 
   // Try primary model, then fallback
-  const model = getHighestTierModel() ?? (getFallbackModel ? getFallbackModel() : null);
+  const model = getDefaultModel() ?? (getFallbackModel ? getFallbackModel() : null);
   if (!model) throw new Error("No model available for semantic summary — check model assignment");
 
   const summaryContributions = filterRoundSummaryContributions(round.contributions);

@@ -20,7 +20,6 @@
     "refine"
   ],
   "reflection_guidance": "Replay the proposal in the tightest locale. End with the string that would prove you wrong.",
-  "tier_guidance": "Translate one key string into the tightest locale and show what breaks. One localization pass per turn; on unfamiliar domains, ask how the message reads where the idiom does not exist, in the question's own terms.",
   "anti_patterns": [
     "Never say 'the translation is fine' without reading it — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not treat localization as a language step — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -32,5 +31,6 @@
     "translation",
     "quality"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Translate one key string into the tightest locale and show what breaks. One localization pass per turn; on unfamiliar domains, ask how the message reads where the idiom does not exist, in the question's own terms."
 }

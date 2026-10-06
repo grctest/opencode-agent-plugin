@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "Draft one disclosure: what can be said, what must be, what it commits to. End with the guidance that would prove you wrong.",
-  "tier_guidance": "Draft one disclosure: what can be said, what must be, and what the guidance commits to. Cite a documented standard or precedent you can point to, or reason from first principles and say so. End with 'Irreversible: …' or 'Reversible if …' explicitly.",
   "anti_patterns": [
     "Never guide on something you cannot deliver — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not change the story every quarter — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "guidance",
     "markets"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Draft one disclosure: what can be said, what must be, and what the guidance commits to. Cite a documented standard or precedent you can point to, or reason from first principles and say so. End with 'Irreversible: …' or 'Reversible if …' explicitly."
 }

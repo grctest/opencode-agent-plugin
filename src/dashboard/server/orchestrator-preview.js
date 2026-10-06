@@ -15,7 +15,10 @@ import { sanitizeForDisplay } from "../../utils/sanitize.js";
 
 const MAX_PREVIEW_PARTICIPANTS = 7;
 const MAX_PREVIEW_TEXT = 6000;
-const KNOWN_TIERS = new Set(["junior", "mid", "senior", "principal", "civilian", "nonhuman"]);
+
+function isValidCategory(value) {
+  return typeof value === "string" && value.length > 0;
+}
 
 function previewText(value, maxLength) {
   return sanitizeForDisplay(String(value ?? ""), maxLength).trim();
@@ -29,11 +32,13 @@ function previewExcerpt(value) {
 
 function sanitizePreviewParticipant(raw, index) {
   if (!raw || typeof raw !== "object") return null;
-  const tier = KNOWN_TIERS.has(raw.tier) ? raw.tier : "mid";
+  const legacyCategory = raw.tier; // legacy alias: accept legacy tier field
+  const rawCategory = raw.category ?? legacyCategory;
+  const category = isValidCategory(rawCategory) ? rawCategory : "mid";
   return {
     id: previewText(raw.id, 80) || `preview_${index + 1}`,
     name: previewText(raw.name, 80) || `Preview participant ${index + 1}`,
-    tier,
+    category,
     persona: previewText(raw.persona, 400),
     agenda: previewText(raw.agenda, 300),
   };
@@ -41,8 +46,8 @@ function sanitizePreviewParticipant(raw, index) {
 
 function fallbackPreviewParticipants() {
   return [
-    { id: "preview_strategist", name: "Preview Strategist", tier: "senior", persona: "", agenda: "" },
-    { id: "preview_operator", name: "Preview Operator", tier: "mid", persona: "", agenda: "" },
+    { id: "preview_strategist", name: "Preview Strategist", category: "principal", persona: "", agenda: "" },
+    { id: "preview_operator", name: "Preview Operator", category: "mid", persona: "", agenda: "" },
   ];
 }
 
@@ -63,7 +68,7 @@ function sampleParticipantStates(participants) {
   return participants.slice(0, 2).map((participant) => ({
     id: participant.id,
     name: participant.name,
-    tier: participant.tier,
+    category: participant.category,
     status: "listening",
     projected: false,
     state: {
@@ -82,7 +87,7 @@ function sampleParticipantStates(participants) {
 
 function promptParticipants(participants) {
   return participants.map((participant) => ({
-    config: { id: participant.id, name: participant.name, tier: participant.tier },
+    config: { id: participant.id, name: participant.name, category: participant.category },
     status: "listening",
     contributions_count: 1,
     reflection: "",

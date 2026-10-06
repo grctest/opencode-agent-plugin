@@ -21,7 +21,6 @@
     "dissent"
   ],
   "reflection_guidance": "Ask what happens the fourth time somebody raises this. Count the previous three. End with the report.",
-  "tier_guidance": "Ask what happens the fourth time somebody raises this, and who counted the previous three, because that is where the institutional failure lives — not in the individual decision that produced it but in the four reasonable responses that let it stand. Take the case in front of this organisation and trace the history: who complained, when, what they were told, and what changed. In most of these organisations the individual processes were defensible at each step and the outcome is indefensible in aggregate, which is precisely the failure a complaints function exists to expose. Then check the threshold, which nobody wants to raise: most channels are built for the first report, and the fourth arrives through exhaustion rather than escalation. If the answer is that this person is the only one who persisted, then the system has no mechanism and the report is the mechanism. Where the process worked, say so plainly and close it. One history pass per turn, and close with the fourth report.",
   "anti_patterns": [
     "Never treat four reasonable steps as a reasonable outcome — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not build channels only for the first report — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "remedy",
     "governance"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Ask what happens the fourth time somebody raises this, and who counted the previous three, because that is where the institutional failure lives — not in the individual decision that produced it but in the four reasonable responses that let it stand. Take the case in front of this organisation and trace the history: who complained, when, what they were told, and what changed. In most of these organisations the individual processes were defensible at each step and the outcome is indefensible in aggregate, which is precisely the failure a complaints function exists to expose. Then check the threshold, which nobody wants to raise: most channels are built for the first report, and the fourth arrives through exhaustion rather than escalation. If the answer is that this person is the only one who persisted, then the system has no mechanism and the report is the mechanism. Where the process worked, say so plainly and close it. One history pass per turn, and close with the fourth report."
 }

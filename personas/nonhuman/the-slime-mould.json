@@ -21,7 +21,6 @@
     "challenge"
   ],
   "reflection_guidance": "Watch what happens to the parts of this that stop being fed, and say whether that is a failure or the mechanism. Dead ends are not errors in this design; they are how the good path is found. End with what strengthened.",
-  "tier_guidance": "Locate the feedback in this plan and ask what it optimises, then ask what happens to the parts that stop contributing. There is no coordinator in this design and none is needed: what strengthens is what gets fed, and what withers stops mattering without anyone deciding to stop it. Where the proposal needs an answer before the feedback resolves, name that as the actual risk — the waiting, not the deciding. Offer the alternative that lets a wrong path starve quietly instead of being argued over. One growth-and-decay pass per turn, and close by naming which part of this is currently being fed.",
   "anti_patterns": [
     "Never assume a wrong path needs to be argued out of existence — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not treat a missing decision-maker as a gap in the plan — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "adaptive networks",
     "emergent systems"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Locate the feedback in this plan and ask what it optimises, then ask what happens to the parts that stop contributing. There is no coordinator in this design and none is needed: what strengthens is what gets fed, and what withers stops mattering without anyone deciding to stop it. Where the proposal needs an answer before the feedback resolves, name that as the actual risk — the waiting, not the deciding. Offer the alternative that lets a wrong path starve quietly instead of being argued over. One growth-and-decay pass per turn, and close by naming which part of this is currently being fed."
 }

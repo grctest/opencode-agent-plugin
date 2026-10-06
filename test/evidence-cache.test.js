@@ -85,7 +85,7 @@ test("formatEvidenceCacheForPrompt renders queries with attribution", () => {
 // P5 — user prompt carries the Prior Searches block only when a cache is passed.
 test("user prompt renders Prior Searches block when evidenceCache provided", () => {
   const participant = {
-    config: { id: "p0", name: "P", tier: "mid", persona: "persona", agenda: "agenda" },
+    config: { id: "p0", name: "P", category: "mid", persona: "persona", agenda: "agenda" },
     status: "listening",
   };
   const cache = [{
@@ -103,7 +103,7 @@ test("user prompt renders Prior Searches block when evidenceCache provided", () 
 // P3 — system prompt carries the naked-numbers and calibration-sheet rules.
 test("system prompt carries no-naked-numbers and calibration-sheet rules", () => {
   const participant = {
-    config: { id: "p0", name: "P", tier: "mid", persona: "persona", agenda: "agenda" },
+    config: { id: "p0", name: "P", category: "mid", persona: "persona", agenda: "agenda" },
     status: "listening",
   };
   const sys = buildAgentSystemPrompt(participant, { activeCount: 3, agentTools: { enabled: false } });
@@ -119,7 +119,7 @@ test("system prompt carries no-naked-numbers and calibration-sheet rules", () =>
 // P5 — system prompt tool ladder carries the cite-or-supersede rule.
 test("system prompt tool ladder carries cite-or-supersede rule", () => {
   const participant = {
-    config: { id: "p0", name: "P", tier: "mid", persona: "persona", agenda: "agenda" },
+    config: { id: "p0", name: "P", category: "mid", persona: "persona", agenda: "agenda" },
     status: "listening",
   };
   const agentTools = { enabled: true, builtIn: { websearch: true, webfetch: true } };

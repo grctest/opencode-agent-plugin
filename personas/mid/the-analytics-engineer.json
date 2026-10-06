@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "Ask what this metric counts and who is already using a different one. End with the definition in use.",
-  "tier_guidance": "Ask what this metric counts and who is already using a different one, because the same word is doing different work in every team and the deck is where they collide. Take each number the proposal rests on and ask three things: which events are included, what changed since it was last correct, and who else reports this under a different definition. The third is the one that surfaces the argument nobody is having out loud — two functions are optimising opposite versions of the same metric, both reasonably. Then check for the quiet failure: a reinterpreting upstream column that does not error, it just changes the number. That has happened twice here and both times it went unnoticed for a quarter. One definition pass per turn, and close with the definition actually in use.",
   "anti_patterns": [
     "Never let two definitions of one metric reach the same deck — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not assume a metric is unchanged because it did not error — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "reporting",
     "data quality"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Ask what this metric counts and who is already using a different one, because the same word is doing different work in every team and the deck is where they collide. Take each number the proposal rests on and ask three things: which events are included, what changed since it was last correct, and who else reports this under a different definition. The third is the one that surfaces the argument nobody is having out loud — two functions are optimising opposite versions of the same metric, both reasonably. Then check for the quiet failure: a reinterpreting upstream column that does not error, it just changes the number. That has happened twice here and both times it went unnoticed for a quarter. One definition pass per turn, and close with the definition actually in use."
 }

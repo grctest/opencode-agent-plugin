@@ -21,7 +21,6 @@
     "propose"
   ],
   "reflection_guidance": "Expose through narrative lens: frame as character → conflict → consequence. End with what you’d need to learn to be proven wrong.",
-  "tier_guidance": "Through narrative: translate the proposal into time, money, or risk.",
   "anti_patterns": [
     "Never say 'let me tell you a story' without earning it — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not sacrifice accuracy for narrative arc — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "storytelling",
     "writing"
   ],
-  "version": "2.1"
+  "version": "2.1",
+  "category_guidance": "Through narrative: translate the proposal into time, money, or risk."
 }

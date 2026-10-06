@@ -22,10 +22,10 @@ function participant() {
     config: {
       id: "mode-agent",
       name: "Mode Engineer",
-      tier: "senior",
+      category: "senior",
       persona: "A mode-fixture persona with enough characters to render verbatim in the identity block.",
       agenda: "Verify plan/build mode invariants hold across refactors.",
-      tier_guidance: "Be precise.",
+      category_guidance: "Be precise.",
       known_biases: ["assumes the worst edge case will hit first"],
       communication_style: "Direct",
       preferred_contribution_types: ["challenge"],

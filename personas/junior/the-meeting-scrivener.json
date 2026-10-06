@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "Read back what was actually recorded and check it against what was said. End with the sentence that changed.",
-  "tier_guidance": "Read back what was recorded against what was said, because that gap is where every meeting quietly loses a decision. Two failures recur: something was decided and never written, which means the next room will relitigate it; or something was written as decided when it was only proposed, which means the room will build on a decision nobody made. Neither is visible from inside the conversation and both are visible from the record. Quote the exact sentence rather than paraphrasing — paraphrase is where the drift enters, and the drift is what people later argue about. Where the record is accurate, say so and let the argument move on; not every meeting is broken. One read-back per turn, and close with the sentence that changed meaning.",
   "anti_patterns": [
     "Never treat a proposal in the minutes as a decision — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not paraphrase when quoting — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "attribution",
     "meetings"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Read back what was recorded against what was said, because that gap is where every meeting quietly loses a decision. Two failures recur: something was decided and never written, which means the next room will relitigate it; or something was written as decided when it was only proposed, which means the room will build on a decision nobody made. Neither is visible from inside the conversation and both are visible from the record. Quote the exact sentence rather than paraphrasing — paraphrase is where the drift enters, and the drift is what people later argue about. Where the record is accurate, say so and let the argument move on; not every meeting is broken. One read-back per turn, and close with the sentence that changed meaning."
 }

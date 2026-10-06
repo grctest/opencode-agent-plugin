@@ -41,8 +41,8 @@ function getIndexConcurrency() {
 
 export function clearEmbeddingCache() { embeddingCache.clear(); }
 
-// Process-scoped vector store: `${tier}|${personaName}` ->
-// { tier, personaName, tags, embeddingText, embedding }
+// Process-scoped vector store: `${category}|${personaName}` ->
+// { category, personaName, tags, embeddingText, embedding }
 const vectorStore = new Map();
 let storeFingerprint = null;
 
@@ -73,12 +73,12 @@ export function clearPersonaStore() {
   indexInFlight = null;
 }
 
-function cacheKey(personaName, tier, embeddingText) {
+function cacheKey(personaName, category, embeddingText) {
   const fingerprint = createHash("sha256").update(embeddingText).digest("hex").slice(0, 16);
   const meta = getEmbedderMeta();
   const modelName = meta?.name ?? getConfig()?.embeddingModel ?? "unknown";
   const quant = meta?.quant ?? getConfig()?.embeddingQuant ?? "unknown";
-  return `${modelName}|${quant}|${personaName}|${tier}|${getEmbeddingDim()}|${fingerprint}`;
+  return `${modelName}|${quant}|${personaName}|${category}|${getEmbeddingDim()}|${fingerprint}`;
 }
 
 function cachedEmbeddingFor(key) {
@@ -105,14 +105,14 @@ export class PersonaIndex {
    * Index all personas by embedding their text into the process-scoped store.
    * Skips inference entirely when the model and catalog are unchanged since
    * the last call. Safe to call once per meeting.
-   * @param {Object} personas - output of getPersonas(): { junior: [...], mid: [...], senior: [...], principal: [...] }
+   * @param {Object} personas - output of getPersonas(): { [category]: [...] }
    */
   async indexAll(personas) {
     const dim = getEmbeddingDim();
     const all = [];
-    for (const [tier, tierPersonas] of Object.entries(personas)) {
-      for (const persona of tierPersonas) {
-        all.push({ tier, persona, embeddingText: this.#buildEmbeddingText(persona) });
+    for (const [category, categoryPersonas] of Object.entries(personas)) {
+      for (const persona of categoryPersonas) {
+        all.push({ category, persona, embeddingText: this.#buildEmbeddingText(persona) });
       }
     }
     const fingerprint = this.#storeFingerprint(all, dim);
@@ -132,19 +132,19 @@ export class PersonaIndex {
     try {
       for (let i = 0; i < all.length; i += concurrency) {
         const batch = all.slice(i, i + concurrency);
-        const results = await Promise.all(batch.map(async ({ tier, persona, embeddingText }) => {
+        const results = await Promise.all(batch.map(async ({ category, persona, embeddingText }) => {
           try {
-            const key = cacheKey(persona.name, tier, embeddingText);
+            const key = cacheKey(persona.name, category, embeddingText);
             const cached = cachedEmbeddingFor(key);
             if (cached) {
               cacheHits++;
-              return { tier, persona, embeddingText, embedding: cached, err: null };
+              return { category, persona, embeddingText, embedding: cached, err: null };
             }
             const embedding = await embedText(embeddingText);
             storeEmbeddingInCache(key, embedding);
-            return { tier, persona, embeddingText, embedding, err: null };
+            return { category, persona, embeddingText, embedding, err: null };
           } catch (err) {
-            return { tier, persona, embeddingText, err };
+            return { category, persona, embeddingText, err };
           }
         }));
         for (const r of results) {
@@ -154,8 +154,8 @@ export class PersonaIndex {
             continue;
           }
           const tags = r.persona.tags || r.persona.expertise || [];
-          vectorStore.set(`${r.tier}|${r.persona.name}`, {
-            tier: r.tier,
+          vectorStore.set(`${r.category}|${r.persona.name}`, {
+            category: r.category,
             personaName: r.persona.name,
             tags,
             embeddingText: r.embeddingText,
@@ -183,13 +183,11 @@ export class PersonaIndex {
   }
 
   /**
-   * Rank EVERY indexed persona against the query, across all tiers.
+   * Rank EVERY indexed persona against the query, across all categories.
    *
-   * Room composition treats the catalog as one flat pool: tiers are a
-   * presentation detail, not a search partition. The previous per-tier
-   * search existed to fill a pre-assigned tier quota, so a persona could only
-   * be considered by the seat whose tier matched its own. With no quota to
-   * fill there is nothing to partition on.
+   * Room composition treats the catalog as one flat pool: categories are an
+   * organizational detail, not a search partition. There is no quota to
+   * fill and nothing to partition on.
    *
    * No topK: the consumer needs the whole ordering, because it shows the full
    * list to the user rather than a shortlist. Brute-force cosine over the
@@ -199,7 +197,7 @@ export class PersonaIndex {
    * Ordering is ascending by distance, ties broken by name so the same
    * question always yields the same list.
    * @param {number[]} queryEmbedding
-   * @returns {Promise<Array<{persona_name: string, tier: string, tags: string[], embedding_text: string, distance: number}>>}
+   * @returns {Promise<Array<{persona_name: string, category: string, tags: string[], embedding_text: string, distance: number}>>}
    */
   async searchAll(queryEmbedding) {
     if (!queryEmbedding || vectorStore.size === 0) return [];
@@ -211,7 +209,7 @@ export class PersonaIndex {
       // vec0 semantics: L2 = sqrt(2 * cosineDistance)).
       scored.push({
         persona_name: entry.personaName,
-        tier: entry.tier,
+        category: entry.category,
         tags: entry.tags,
         embedding_text: entry.embeddingText,
         distance: Math.sqrt(Math.max(0, 2 * (1 - sim))),
@@ -230,8 +228,8 @@ export class PersonaIndex {
     const quant = meta?.quant ?? getConfig()?.embeddingQuant ?? "unknown";
     const h = createHash("sha256");
     h.update(`${modelName}|${quant}|${dim}|`);
-    for (const { tier, persona, embeddingText } of entries) {
-      h.update(`${tier}|${persona.name}|`);
+    for (const { category, persona, embeddingText } of entries) {
+      h.update(`${category}|${persona.name}|`);
       h.update(createHash("sha256").update(embeddingText).digest("hex").slice(0, 16));
       h.update("|");
     }

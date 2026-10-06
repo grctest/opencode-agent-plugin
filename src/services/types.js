@@ -14,7 +14,7 @@
  * @property {string} name
  * @property {string} persona
  * @property {string} agenda
- * @property {'junior'|'mid'|'senior'|'principal'} tier
+ * @property {string} category - Organizational persona category (folder name); no engine behavior
  * @property {ModelRef} [model] - Explicit per-participant model override
  * @property {string} [model_override] - "provider/model" string override
  * @property {string[]} [tags]
@@ -25,16 +25,8 @@
  */
 
 /**
- * @typedef {Object} TierConfig
- * @property {Object} rights
- * @property {boolean} rights.contribute
- * @property {boolean} rights.call_vote
- */
-
-/**
  * @typedef {Object} ParticipantState
  * @property {ParticipantConfig} config
- * @property {TierConfig} tier_config
  * @property {string} session_id
  * @property {number} [session_version]
  * @property {'listening'|'speaking'|'passed'|'failed'} status

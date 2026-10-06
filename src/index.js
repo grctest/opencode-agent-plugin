@@ -15,7 +15,6 @@ import { createPluginReturn } from "./plugin/return.js";
 import { createResolveMeeting } from "./plugin/resolve-meeting.js";
 import { extractAgentResponse, mapToolResults } from "./shared.js";
 import { getPersonas } from "./composer.js";
-import { getHighestTierModel } from "./services/model-service.js";
 import { getMeetingDbPath } from "./paths.js";
 import { DashboardApi } from "./dashboard/api.js";
 import { ensureEmbedderInitialized, getEmbeddingDim, isEmbedderInitialized } from "./services/embedding-service.js";
@@ -102,7 +101,5 @@ export const Loom = async (input) => {
 export { MeetingOrchestrator } from "./orchestrator.js";
 export { formatRoomPreview } from "./composer.js";
 export {
-  getTierConfig,
   splitModel,
-  getRightsForTier,
 } from "./shared.js";

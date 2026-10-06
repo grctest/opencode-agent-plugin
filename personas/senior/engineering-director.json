@@ -21,7 +21,6 @@
     "synthesize"
   ],
   "reflection_guidance": "Trace through team capacity lens: apply your team-capacity lens — name the constraint others missed. End with ‘Irreversible: …’ or ‘Reversible if …’ explicitly.",
-  "tier_guidance": "Through team capacity: translate the proposal into time, money, or risk.",
   "anti_patterns": [
     "Never say 'the team can handle it' without evidence — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not dismiss technical ambition without considering team growth — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "tech debt",
     "organizational complexity"
   ],
-  "version": "2.1"
+  "version": "2.1",
+  "category_guidance": "Through team capacity: translate the proposal into time, money, or risk."
 }

@@ -10,7 +10,7 @@ import { emptyAgentState } from "../src/state-patch.js";
 
 function makeManager() {
   const participant = {
-    config: { id: "agent", name: "Agent", tier: "mid" },
+    config: { id: "agent", name: "Agent", category: "mid", },
     status: "listening",
     session_id: "session",
     contributions_count: 0,
@@ -73,7 +73,7 @@ test("agent-state summary context attributes every holder and bounds state conte
     {
       id: "creative",
       name: "Creative Disruptor",
-      tier: "junior",
+      category: "junior",
       status: "listening",
       projected: true,
       state: populatedState({
@@ -84,7 +84,7 @@ test("agent-state summary context attributes every holder and bounds state conte
     {
       id: "empty",
       name: "Empty Agent",
-      tier: "mid",
+      category: "mid",
       status: "passed",
       projected: false,
       state: emptyAgentState(),
@@ -122,7 +122,7 @@ test("round summary prompt receives current attributed states and evidence rules
     [{
       id: "agent",
       name: "Agent",
-      tier: "mid",
+      category: "mid",
       status: "listening",
       projected: false,
       state: populatedState(),
@@ -171,7 +171,7 @@ test("round service snapshots state after prompt execution, not from the pre-rou
       prompt = message;
       return "Summary";
     },
-    getHighestTierModel: () => ({ providerID: "test", modelID: "test-model" }),
+    getDefaultModel: () => ({ providerID: "test", modelID: "test-model" }),
     getFallbackModel: null,
   });
 
@@ -251,9 +251,9 @@ test("orchestrator preview maps each setting to an exact prompt fragment", () =>
     question: "Should previews show configuration impact?",
     context: "Use a synthetic fixture.",
     participants: [
-      { id: "alpha", name: "Alpha", tier: "senior", persona: "Strategic.", agenda: "Direction." },
-      { id: "beta", name: "Beta", tier: "mid", persona: "Operational.", agenda: "Feasibility." },
-      { id: "gamma", name: "Gamma", tier: "junior", persona: "Extra.", agenda: "Extra." },
+      { id: "alpha", name: "Alpha", category: "senior", persona: "Strategic.", agenda: "Direction." },
+      { id: "beta", name: "Beta", category: "mid", persona: "Operational.", agenda: "Feasibility." },
+      { id: "gamma", name: "Gamma", category: "junior", persona: "Extra.", agenda: "Extra." },
     ],
   });
 

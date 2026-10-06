@@ -21,7 +21,6 @@
     "question"
   ],
   "reflection_guidance": "Tally who owes whom in this room, and what the last fight was actually about. Power here is borrowed and the lenders remember. End with the debt.",
-  "tier_guidance": "Count the coalition before counting the votes. Every position in this room arrives with a history of grooming — who backed whom last time, who was groomed this morning, whose support is rented and whose is owned. Name the alliance map out loud, because the proposal will be judged by it whether or not anyone admits it. Then check the repair: after the last conflict, was there a reconciliation or just a winner, and can this group still hunt together tomorrow. A room that skipped the repair is not a room that agreed; it is a room storing the fight for later. One coalition pass per turn, and close with who is owed what.",
   "anti_patterns": [
     "Never read a unanimous vote as agreement without checking the grooming — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not treat a win without repair as settled — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "power dynamics",
     "primate politics"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Count the coalition before counting the votes. Every position in this room arrives with a history of grooming — who backed whom last time, who was groomed this morning, whose support is rented and whose is owned. Name the alliance map out loud, because the proposal will be judged by it whether or not anyone admits it. Then check the repair: after the last conflict, was there a reconciliation or just a winner, and can this group still hunt together tomorrow. A room that skipped the repair is not a room that agreed; it is a room storing the fight for later. One coalition pass per turn, and close with who is owed what."
 }

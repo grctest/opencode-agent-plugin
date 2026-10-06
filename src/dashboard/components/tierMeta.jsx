@@ -1,29 +1,29 @@
-export const TIER_ORDER = ["principal", "senior", "mid", "nonhuman", "civilian", "junior"];
+export const CATEGORY_ORDER = ["civilian", "junior", "mid", "nonhuman", "principal", "senior"];
 
-export const TIER_META = {
+export const CATEGORY_META = {
   principal: {
     label: "Principal",
     badge: "bg-violet-500/15 text-violet-700 border-violet-500/30 dark:text-violet-300",
     dot: "bg-violet-500",
-    blurb: "Top authority — sets direction and writes the final synthesis",
+    blurb: "Broad pattern view — follows how pieces connect",
   },
   senior: {
     label: "Senior",
     badge: "bg-blue-500/15 text-blue-700 border-blue-500/30 dark:text-blue-300",
     dot: "bg-blue-500",
-    blurb: "Senior authority — names irreversible commitments and mitigations",
+    blurb: "Review view — checks commitments and names mitigations",
   },
   mid: {
     label: "Mid",
     badge: "bg-emerald-500/15 text-emerald-700 border-emerald-500/30 dark:text-emerald-300",
     dot: "bg-emerald-500",
-    blurb: "Experienced practitioner — challenges and refines proposals",
+    blurb: "Practitioner view — refines proposals against day-to-day tradeoffs",
   },
   civilian: {
     label: "Civilian",
     badge: "bg-amber-500/15 text-amber-700 border-amber-500/30 dark:text-amber-300",
     dot: "bg-amber-500",
-    blurb: "Generalist — outside perspective, no specialist blinders",
+    blurb: "Generalist view — outside perspective without specialist blinders",
   },
   junior: {
     label: "Junior",
@@ -35,7 +35,7 @@ export const TIER_META = {
     label: "Non-Human",
     badge: "bg-fuchsia-500/15 text-fuchsia-700 border-fuchsia-500/30 dark:text-fuchsia-300",
     dot: "bg-fuchsia-500",
-    blurb: "No human senses — knows the room by a different set of evidence",
+    blurb: "Non-human view — reads the room through a different set of evidence",
   },
 };
 

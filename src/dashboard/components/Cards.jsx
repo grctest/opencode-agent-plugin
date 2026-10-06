@@ -3,7 +3,7 @@ import { cn } from "../utils.js";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { normalizePipeTables } from "../../utils/markdown-tables.js";
-import { TierBadge, TypeBadge } from "./Badges.jsx";
+import { CategoryBadge, TypeBadge } from "./Badges.jsx";
 import { Card, CardContent, CardHeader } from "./ui/card.tsx";
 import { Badge } from "./ui/badge.tsx";
 import { Avatar as PersonaAvatar } from "./Avatar.tsx";
@@ -124,7 +124,7 @@ export const ThinkingCard = memo(({ participant }) => (
     <CardContent className="flex items-center gap-3 py-0">
       <Spinner className="size-4" />
       <span className="text-sm text-muted-foreground">
-        {participant.name} ({participant.tier}) is thinking...
+        {participant.name} ({participant.category}) is thinking...
       </span>
     </CardContent>
   </Card>
@@ -250,14 +250,14 @@ export const SummonedResponseRow = memo(({ summonedResponse, contributions, part
   const content = summonedResponse.content ?? "";
   const personaInfo = useMemo(() => {
     const match = content.match(/^\[Summoned: (.+?) \((.+?)\)\]/m);
-    return match ? { name: match[1], tier: match[2] } : { name: "Guest Expert", tier: "unknown" };
+    return match ? { name: match[1], category: match[2] } : { name: "Guest Expert", category: "unknown" };
   }, [content]);
   const invokerName = useMemo(() => {
     const n = resolveInvokerName({ invokerId, source: null, response: summonedResponse, contributions, participantName });
     return n === "another agent" ? null : n;
   }, [invokerId, summonedResponse, contributions, participantName]);
-  const header = <><span className="font-bold">Guest expert {personaInfo.name}</span> <span className="text-muted-foreground">({personaInfo.tier}){invokerName ? " summoned by " : ""}</span>{invokerName && <span className="font-bold">{invokerName}</span>}</>;
-  return <BaseResponseRow contribution={summonedResponse} header={header} badgeLabel="summoned" badgeVariant="summoned_response" strippedRegex={/^\[Summoned: .+?\]\s*/m} borderClass="border-l-[var(--badge-violet)] bg-[color-mix(in_oklch,var(--badge-violet)_4%,var(--card))]" onDialogOpen={onDialogOpen} dialogPayload={{ participantName: personaInfo.name, isSummonedResponse: true, personaName: personaInfo.name, personaTier: personaInfo.tier }} />;
+  const header = <><span className="font-bold">Guest expert {personaInfo.name}</span> <span className="text-muted-foreground">({personaInfo.category}){invokerName ? " summoned by " : ""}</span>{invokerName && <span className="font-bold">{invokerName}</span>}</>;
+  return <BaseResponseRow contribution={summonedResponse} header={header} badgeLabel="summoned" badgeVariant="summoned_response" strippedRegex={/^\[Summoned: .+?\]\s*/m} borderClass="border-l-[var(--badge-violet)] bg-[color-mix(in_oklch,var(--badge-violet)_4%,var(--card))]" onDialogOpen={onDialogOpen} dialogPayload={{ participantName: personaInfo.name, isSummonedResponse: true, personaName: personaInfo.name, personaCategory: personaInfo.category }} />;
 });
 
 export const VoteResponseRow = memo(({ voteResponse, contributions, participantName, onDialogOpen, invokerId }) => {
@@ -295,7 +295,7 @@ export const AgentPerspective = memo(({ participant, stateOfPlay, recentContribu
     <Card className="border-l-2 border-l-muted py-3 gap-2">
       <CardHeader className="flex flex-row items-center justify-between py-0">
         <span className="text-sm font-semibold">{participant.name}</span>
-        <TierBadge tier={participant.tier} />
+        <CategoryBadge category={participant.category} />
       </CardHeader>
       <CardContent className="flex flex-col gap-3 py-0">
         {participant.persona && (
@@ -385,7 +385,7 @@ export const OrchestratorItem = memo(({ group, onDialogOpen }) => {
   );
 });
 
-export const OrchestratorDetailDialog = memo(({ open, onClose, orchestratorMessages, highestTierModel }) => {
+export const OrchestratorDetailDialog = memo(({ open, onClose, orchestratorMessages, firstSeatModel }) => {
   const messages = orchestratorMessages ?? [];
   const stats = useMemo(() => {
     const counts = {};
@@ -404,10 +404,10 @@ export const OrchestratorDetailDialog = memo(({ open, onClose, orchestratorMessa
             Coordinates the deliberation flow — plans turn order, summarizes rounds, and checks for convergence.
           </p>
         </div>
-        {highestTierModel && (
+        {firstSeatModel && (
           <div>
             <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Model</span>
-            <p className="text-sm text-muted-foreground">{highestTierModel}</p>
+            <p className="text-sm text-muted-foreground">{firstSeatModel}</p>
           </div>
         )}
         {Object.keys(stats).length > 0 && (

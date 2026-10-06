@@ -166,9 +166,9 @@ test("N9 — the closing patch grace gives every unpatched participant a turn", 
   const stateManager = new StateManager({
     id: meetingId,
     participants: [
-      { config: { id: "a", name: "A", tier: "mid" }, status: "listening", contributions_count: 2 },
-      { config: { id: "b", name: "B", tier: "junior" }, status: "listening", contributions_count: 2 },
-      { config: { id: "c", name: "C", tier: "civilian" }, status: "failed", contributions_count: 0 },
+      { config: { id: "a", name: "A", category: "mid", }, status: "listening", contributions_count: 2 },
+      { config: { id: "b", name: "B", category: "junior", }, status: "listening", contributions_count: 2 },
+      { config: { id: "c", name: "C", category: "civilian", }, status: "failed", contributions_count: 0 },
     ],
     // Only `a` spoke in the final round.
     weave: [{ id: 1, round: 2, participant_id: "a", type: "contribution", content: "x" }],
@@ -200,7 +200,7 @@ test("N9 — the closing patch grace gives every unpatched participant a turn", 
 test("N9 — the patch grace is skipped when disabled or cancelled", async () => {
   const stateManager = {
     getCurrentRound: () => 4,
-    getParticipants: () => [{ config: { id: "a", name: "A", tier: "mid" }, status: "listening" }],
+    getParticipants: () => [{ config: { id: "a", name: "A", category: "mid", }, status: "listening" }],
     getWeave: () => [],
   };
   const asked = [];
@@ -226,12 +226,11 @@ test("N6 — a rejected state patch is in both the counters and the audit table"
   const meetingId = "m-patch-rejected";
   const target = {
     config: {
-      id: "agent", name: "Agent", tier: "mid",
+      id: "agent", name: "Agent", category: "mid",
       persona: "Tests grounded reasoning.", agenda: "Verify state continuity.",
       known_biases: [], preferred_contribution_types: [], anti_patterns: [],
       model: { providerID: "test", modelID: "test-model" },
     },
-    tier_config: {},
     status: "speaking",
     session_id: "agent-session",
     contributions_count: 0,
@@ -283,12 +282,11 @@ test("state patches never fail on shape — a nested object and an over-long sta
   const meetingId = "m-patch-loose";
   const target = {
     config: {
-      id: "agent", name: "Agent", tier: "mid",
+      id: "agent", name: "Agent", category: "mid",
       persona: "Tests grounded reasoning.", agenda: "Verify state continuity.",
       known_biases: [], preferred_contribution_types: [], anti_patterns: [],
       model: { providerID: "test", modelID: "test-model" },
     },
-    tier_config: {},
     status: "speaking",
     session_id: "agent-session",
     contributions_count: 0,

@@ -256,7 +256,7 @@ const TimelineRow = memo(({ index, style, items, onToggleCollapse, participantNa
         <Card className="border-dashed opacity-70 py-2">
           <CardContent className="flex items-center gap-3 py-0">
             <Spinner className="size-4" />
-            <span className="text-sm text-muted-foreground">{item.participant.name} ({item.participant.tier}) is thinking...</span>
+            <span className="text-sm text-muted-foreground">{item.participant.name} ({item.participant.category ?? item.participant.tier}) is thinking...</span>
           </CardContent>
         </Card>
       </div>

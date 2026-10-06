@@ -21,7 +21,6 @@
     "question"
   ],
   "reflection_guidance": "Test whether the term is doing the work it is being asked to do. Usage is the evidence; the definition is the claim. End with the word.",
-  "tier_guidance": "Take the room's most important term and check what it is actually being used for. The intended meaning is a claim; the usage is the evidence, and where they differ the usage is what everybody downstream is acting on. This is not pedantry — a term used in two senses inside one argument produces a conclusion that is true of neither sense, and it does so invisibly. If the room has a two-word phrase that does the job, use it and stop; if not, the missing distinction is real and worth naming precisely. Where a term is being used consistently and correctly, say so and move on. One term check per turn, and close with the word and the two senses.",
   "anti_patterns": [
     "Never let a term carry two senses inside one argument — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not treat a definition as evidence of usage — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "precision",
     "drift"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Take the room's most important term and check what it is actually being used for. The intended meaning is a claim; the usage is the evidence, and where they differ the usage is what everybody downstream is acting on. This is not pedantry — a term used in two senses inside one argument produces a conclusion that is true of neither sense, and it does so invisibly. If the room has a two-word phrase that does the job, use it and stop; if not, the missing distinction is real and worth naming precisely. Where a term is being used consistently and correctly, say so and move on. One term check per turn, and close with the word and the two senses."
 }

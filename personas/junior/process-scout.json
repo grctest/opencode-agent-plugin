@@ -21,7 +21,6 @@
     "synthesize"
   ],
   "reflection_guidance": "Expose through process lens: map the manual steps this creates per week. End with what you’d need to learn to be proven wrong.",
-  "tier_guidance": "Surface inefficiencies and manual toil — count the weekly hours the friction costs.",
   "anti_patterns": [
     "Never say 'this could be automated' without considering if it should be — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not dismiss manual processes that add human value — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "workflow optimization",
     "operational overhead"
   ],
-  "version": "2.1"
+  "version": "2.1",
+  "category_guidance": "Surface inefficiencies and manual toil — count the weekly hours the friction costs."
 }

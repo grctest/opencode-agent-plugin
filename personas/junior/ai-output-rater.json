@@ -20,7 +20,6 @@
     "question"
   ],
   "reflection_guidance": "Score this proposal against a three-line rubric you write first. End with the example that would prove you wrong.",
-  "tier_guidance": "Draft a three-criterion rubric for the proposal and score it honestly, including one failing case. One grading pass per turn; on unfamiliar domains ask what observably counts as good, in the question's own terms.",
   "anti_patterns": [
     "Never say 'looks good to me' without the rubric — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not grade your own homework — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -32,5 +31,6 @@
     "quality",
     "rubrics"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Draft a three-criterion rubric for the proposal and score it honestly, including one failing case. One grading pass per turn; on unfamiliar domains ask what observably counts as good, in the question's own terms."
 }

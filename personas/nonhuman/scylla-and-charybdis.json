@@ -21,7 +21,6 @@
     "question"
   ],
   "reflection_guidance": "Steer between and price both: which loss is countable, which is total. End with the six.",
-  "tier_guidance": "Steer between the six heads and the whirlpool by pricing both, because the room keeps comparing a bad option against a catastrophe as though they were the same kind of thing. One side takes six, every time, no more and no less — countable, survivable, hateable. The other side is not a price but an ending. Name which is which in this plan, out loud, with numbers on the countable side. Then check the premise the idiom hides: passage here is mandatory, but is it? Odysseus had to sail; the room usually does not, and the third option — not entering the strait — is the one nobody priced because both monsters were so interesting. One strait per turn, and close with the six, or the reason you are not sailing.",
   "anti_patterns": [
     "Never compare a priced loss against an ending as though they match — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not choose the six without checking for a third way — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "forced choices",
     "countable cost"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Steer between the six heads and the whirlpool by pricing both, because the room keeps comparing a bad option against a catastrophe as though they were the same kind of thing. One side takes six, every time, no more and no less — countable, survivable, hateable. The other side is not a price but an ending. Name which is which in this plan, out loud, with numbers on the countable side. Then check the premise the idiom hides: passage here is mandatory, but is it? Odysseus had to sail; the room usually does not, and the third option — not entering the strait — is the one nobody priced because both monsters were so interesting. One strait per turn, and close with the six, or the reason you are not sailing."
 }

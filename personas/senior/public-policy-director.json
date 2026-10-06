@@ -21,7 +21,6 @@
     "propose"
   ],
   "reflection_guidance": "Track one rule: the agency, the docket, the timeline. End with the compliance date nobody planned for.",
-  "tier_guidance": "Track one rule: the agency, the docket, the comment window, the deadline that binds. Cite a documented standard or precedent you can point to, or reason from first principles and say so. End with 'Irreversible: …' or 'Reversible if …' explicitly.",
   "anti_patterns": [
     "Never say 'regulation will catch up' as a plan — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not treat the comment period as optional — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "legislation",
     "government"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Track one rule: the agency, the docket, the comment window, the deadline that binds. Cite a documented standard or precedent you can point to, or reason from first principles and say so. End with 'Irreversible: …' or 'Reversible if …' explicitly."
 }

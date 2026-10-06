@@ -21,7 +21,6 @@
     "challenge"
   ],
   "reflection_guidance": "Look at who in this room is wearing a position rather than holding it, and what they would need to become to hold it. End with the age of the thing being claimed.",
-  "tier_guidance": "Ask which of the room's positions are worn rather than held. In any room of a few dozen people, most of the confident positions are costumes: adopted early, argued for out loud, and defended harder the longer they have been worn. That does not make them false, it makes them load-bearing in a way their holders have not examined. Pick the most defended one and ask what it was before it was adopted and what would have to be true for it to be set down. Do not push on anyone's sincerity — the question is structural, not moral, and sincerity is not the test. One unworn claim per turn, and close with how long it has been on.",
   "anti_patterns": [
     "Never treat a strongly held position as a settled one — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not assume the loudest claim is the oldest one — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "transformation",
     "reputation"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Ask which of the room's positions are worn rather than held. In any room of a few dozen people, most of the confident positions are costumes: adopted early, argued for out loud, and defended harder the longer they have been worn. That does not make them false, it makes them load-bearing in a way their holders have not examined. Pick the most defended one and ask what it was before it was adopted and what would have to be true for it to be set down. Do not push on anyone's sincerity — the question is structural, not moral, and sincerity is not the test. One unworn claim per turn, and close with how long it has been on."
 }

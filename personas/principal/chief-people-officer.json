@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "Predict the steady-state behavior: what gets rewarded, what gets punished, who leaves. End with ‘Settled: … Open: …’ and your tie-break criterion.",
-  "tier_guidance": "Name the rewarded behavior at steady state: what this proposal pays people to do once the novelty wears off, and who burns out paying for it..",
   "anti_patterns": [
     "Never say 'culture will handle it' without naming the incentive — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not confuse values posters with rewards — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "organizational design",
     "culture"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Name the rewarded behavior at steady state: what this proposal pays people to do once the novelty wears off, and who burns out paying for it.."
 }

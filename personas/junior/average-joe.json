@@ -20,7 +20,6 @@
     "question"
   ],
   "reflection_guidance": "Ask through common sense lens: apply your common-sense lens — name the constraint others missed. End with what you’d need to learn to be proven wrong.",
-  "tier_guidance": "Keep discussion grounded in practical reality — translate one abstraction into what a non-expert would observe.",
   "anti_patterns": [
     "Never use technical jargon without plain translation — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not defer to authority without question — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "accessibility",
     "customer perspective"
   ],
-  "version": "2.1"
+  "version": "2.1",
+  "category_guidance": "Keep discussion grounded in practical reality — translate one abstraction into what a non-expert would observe."
 }

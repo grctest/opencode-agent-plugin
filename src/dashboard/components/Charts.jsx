@@ -93,7 +93,7 @@ export const ParticipationMatrix = memo(function ParticipationMatrix({ participa
                     <TableHead key={p.id} className="text-center min-w-[4rem]">
                       <div className="flex flex-col items-center">
                         <span className="font-medium text-xs truncate">{p.name}</span>
-                        <span className="text-[10px] text-muted-foreground uppercase">{p.tier}</span>
+                        <span className="text-[10px] text-muted-foreground uppercase">{p.category}</span>
                       </div>
                     </TableHead>
                   ))}

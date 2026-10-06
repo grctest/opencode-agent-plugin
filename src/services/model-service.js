@@ -1,6 +1,6 @@
 /**
  * Phase 3 audit: model trio kept distinct — model-discovery.js owns
- * assignModelsByTier/sortModelsByQuality (capability scoring), this file is
+ * assignModelsRandomly/sortModelsByQuality, this file is
  * the discovery+assignment service, and model-manager.js is the embedding
  * ONNX manager. Consolidating discovery into this file would be invasive
  * and conflate LLM/provider models with embedding models, so we keep the
@@ -8,8 +8,7 @@
  * single source is src/config/utils.js (re-exported via config/loader.js).
  * A re-export alias is provided at bottom for callers expecting barrel.
  */
-import { assignModelsByTier, sortModelsByQuality } from "../model-discovery.js";
-import { getConfig } from "../config.js";
+import { assignModelsRandomly, sortModelsByQuality } from "../model-discovery.js";
 import { Logger, extractErrorInfo } from "../logger.js";
 
 /**
@@ -131,129 +130,52 @@ export async function discoverModels(client, directory, sessionID) {
 
 /**
  * Assigns models to participants respecting explicit per-participant overrides.
- * Tier-based assignment fills in any participant that hasn't declared an override.
+ * Seats without an override get a random model from the available pool —
+ * persona categories never influence assignment.
  *
- * For model diversity, when multiple high-quality models are available, each
- * participant within a tier gets a different model where possible.
  * @param {Array} participants - Participant configs (may carry `model` or `model_override`)
  * @param {Array} available - Discovered available models
- * @param {Object|null} sessionModel - The session default model
+ * @param {Object|null} _sessionModel - Unused (kept for call-site compatibility)
+ * @param {() => number} [rng=Math.random] random source (injectable for tests)
  * @returns {Array} Participants with `model` set
  */
-export function assignModelsToParticipants(participants, available, sessionModel) {
+export function assignModelsToParticipants(participants, available, _sessionModel = null, rng = Math.random) {
   if (!Array.isArray(participants)) return participants;
   if (available.length === 0) return participants;
 
   const overrideMap = buildOverrideMap(participants);
-
-  const tiers = [...new Set(participants.map((p) => p.tier))];
-  const assignments = assignModelsByTier(available, sessionModel, tiers);
-
-  const tierMap = new Map();
-  for (const a of assignments) {
-    tierMap.set(a.tier, { providerID: a.providerID, modelID: a.modelID });
-  }
-
-  // For diversity: if we have more models than tiers, try to give each agent a unique model
-  const modelDiversity = getModelDiversity(available, participants, tierMap, overrideMap, getConfig().modelDiversity !== false);
+  const needsRandom = participants.filter((p) => !overrideMap.has(p.id)).length;
+  const randomAssignments = assignModelsRandomly(available, needsRandom, rng);
+  let randomIdx = 0;
 
   return participants.map((p) => {
     const override = overrideMap.get(p.id);
     if (override) {
       return { ...p, model: override };
     }
-
-    const diverse = modelDiversity.get(p.id);
-    if (diverse) {
-      return { ...p, model: diverse };
+    const drawn = randomAssignments[randomIdx++] ?? null;
+    if (drawn) {
+      return { ...p, model: { providerID: drawn.providerID, modelID: drawn.modelID } };
     }
-
-    return {
-      ...p,
-      model: tierMap.get(p.tier) ?? undefined,
-    };
+    return { ...p };
   });
 }
 
 /**
- * Attempts to assign unique models per agent for diversity.
- * Only activates when the number of available models exceeds the number of tiers,
- * meaning there are enough models to give each agent a different one.
- * @returns {Map<string, ModelRef>} Map of participant_id -> model
- */
-function getModelDiversity(available, participants, tierMap, overrideMap, enabled = true) {
-  const diversityMap = new Map();
-  if (!enabled) return diversityMap;
-
-  const tierOrder = ["principal", "senior", "mid", "nonhuman", "civilian", "junior"];
-  const uniqueTiers = [...new Set(participants.map((p) => p.tier))];
-
-  // Need more models than tiers for diversity to make sense
-  if (available.length <= uniqueTiers.length) return diversityMap;
-
-  const sortedModels = sortModelsByQuality(available);
-  const usedModels = new Set();
-  const participantModels = [];
-
-  // First pass: assign models to participants with overrides
-  for (const p of participants) {
-    if (overrideMap.has(p.id)) {
-      const m = overrideMap.get(p.id);
-      usedModels.add(`${m.providerID}/${m.modelID}`);
-    }
-  }
-
-  // Second pass: assign unique models to remaining participants, preferring
-  // higher-tier participants first for the best models
-  const unassigned = participants
-    .filter((p) => !overrideMap.has(p.id))
-    .sort((a, b) => tierOrder.indexOf(a.tier) - tierOrder.indexOf(b.tier));
-
-  for (const p of unassigned) {
-    let assigned = false;
-    for (const model of sortedModels) {
-      const modelKey = `${model.providerID}/${model.modelID}`;
-      if (usedModels.has(modelKey)) continue;
-      usedModels.add(modelKey);
-      participantModels.push({ participantId: p.id, model: { providerID: model.providerID, modelID: model.modelID } });
-      assigned = true;
-      break;
-    }
-    if (!assigned) {
-      // All models are used; reuse with tier fallback
-      const tierModel = tierMap.get(p.tier);
-      if (tierModel) {
-        participantModels.push({ participantId: p.id, model: tierModel });
-      }
-    }
-  }
-
-  // Build the diversity map
-  for (const { participantId, model } of participantModels) {
-    diversityMap.set(participantId, model);
-  }
-
-  return diversityMap;
-}
-
-/**
- * Returns the highest-tier model that is actually usable (principal > senior > mid > junior),
- * falling back to the first participant with a valid model.
- * Ranking for model selection is capability-fit (active(20)+context/10k+reasoning(15)),
- * cost is display-only; tie-breaker is latency if available else deterministic key.
- * Session model is scored like any other and only preferred if in top 3 (handled in assignModelsByTier).
- * @param {Array<{tier:string, model?:{providerID:string, modelID:string}}>} participants
+ * Returns the default model for orchestrator-side calls (summaries, turn
+ * planning, synthesis): the first participant carrying a valid model,
+ * otherwise the first available model, otherwise null. No category plays
+ * any role — seat order is the only input.
+ *
+ * @param {Array<{model?:{providerID:string, modelID:string}}>} participants
+ * @param {Array<{providerID:string, modelID:string}>} [available]
  * @returns {{providerID:string, modelID:string}|null}
  */
-export function getHighestTierModel(participants) {
-  // nonhuman is included so a room whose only high-authority seat is a
-  // non-human persona still resolves an orchestrator model.
-  for (const tier of ["principal", "senior", "mid", "nonhuman", "civilian", "junior"]) {
-    const p = participants.find((pp) => pp.tier === tier && pp.model?.providerID && pp.model.modelID);
-    if (p) return { providerID: p.model.providerID, modelID: p.model.modelID };
-  }
-  const firstWithModel = participants.find((p) => p.model?.providerID && p.model.modelID);
+export function getDefaultModel(participants, available = []) {
+  const firstWithModel = (participants ?? []).find((p) => p?.model?.providerID && p.model.modelID);
   if (firstWithModel) return { providerID: firstWithModel.model.providerID, modelID: firstWithModel.model.modelID };
+  const firstAvailable = (available ?? []).find((m) => m?.providerID && m.modelID);
+  if (firstAvailable) return { providerID: firstAvailable.providerID, modelID: firstAvailable.modelID };
   return null;
 }
 
@@ -279,5 +201,5 @@ export function selectFallbackModel(currentModel, availableModels, circuitBreake
 }
 
 // Re-export alias for model-discovery barrel expectations (Phase 3) — allows
-// `import { assignModelsByTier } from "./services/model-service.js"` as consolidation alias.
-export { assignModelsByTier, sortModelsByQuality };
+// `import { assignModelsRandomly } from "./services/model-service.js"` as consolidation alias.
+export { assignModelsRandomly, sortModelsByQuality };

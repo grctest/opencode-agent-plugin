@@ -19,7 +19,7 @@ const badgeVariants = cva(
         ghost:
           "hover:bg-muted hover:text-muted-foreground dark:hover:bg-muted/50",
         link: "text-primary underline-offset-4 hover:underline",
-        // Tier variants (loom semantics)
+        // Category variants (loom semantics)
         junior: "bg-secondary text-secondary-foreground",
         mid: "bg-[var(--badge-blue-mid)] text-white",
         senior: "bg-[var(--badge-purple-dark)] text-white",

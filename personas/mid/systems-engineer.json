@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "Measure through reliability lens: map the bottleneck this creates. End with the metric or evidence that would change your mind.",
-  "tier_guidance": "Ensure proposals are implementable and operable — name who runs it at 3am.",
   "anti_patterns": [
     "Never say 'it works on my machine' — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not dismiss concerns about scale — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "edge cases",
     "operations"
   ],
-  "version": "2.1"
+  "version": "2.1",
+  "category_guidance": "Ensure proposals are implementable and operable — name who runs it at 3am."
 }

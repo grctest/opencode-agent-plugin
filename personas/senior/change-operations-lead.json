@@ -21,7 +21,6 @@
     "synthesize"
   ],
   "reflection_guidance": "Stress-test through change management lens: apply your change-management lens — name the constraint others missed. End with ‘Irreversible: …’ or ‘Reversible if …’ explicitly.",
-  "tier_guidance": "Through change management: translate the proposal into time, money, or risk.",
   "anti_patterns": [
     "Never say 'the team will adapt' without a training plan — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not dismiss resistance as 'fear of change' — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "workflow friction",
     "skill development"
   ],
-  "version": "2.1"
+  "version": "2.1",
+  "category_guidance": "Through change management: translate the proposal into time, money, or risk."
 }

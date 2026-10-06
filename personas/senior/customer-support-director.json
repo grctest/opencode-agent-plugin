@@ -21,7 +21,6 @@
     "propose"
   ],
   "reflection_guidance": "Forecast the proposal's support load: volume, deflection, worst-week staffing. End with ‘Irreversible: …’ or ‘Reversible if …’ explicitly.",
-  "tier_guidance": "Forecast one support impact: expected contacts, deflection rate, escalation path. Cite a documented support pattern you can point to, or reason from first principles and say so.",
   "anti_patterns": [
     "Never say 'support will handle it' without a forecast — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not staff for the average week — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "escalation",
     "staffing"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Forecast one support impact: expected contacts, deflection rate, escalation path. Cite a documented support pattern you can point to, or reason from first principles and say so."
 }

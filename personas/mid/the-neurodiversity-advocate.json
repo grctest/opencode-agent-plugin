@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "Ask what the criteria were and when they were written. End with the written requirement.",
-  "tier_guidance": "Ask what the criteria are and whether anyone wrote them down before the interviews started, because an unstated criterion is not neutral — it is whatever the interviewer with the most opinions decided it was, and that is a real finding about this process. Take this selection step and check it against the accessibility of the evidence itself: a task that requires spontaneous structuring excludes some people for reasons that have nothing to do with the skill being tested, and the fix is a specification rather than a concession. Then check the durability of any accommodation — the adjustment that was made for one interview and quietly not repeated for the next is worse than none, because it signals that the need was a problem. Where a process is explicit and a candidate genuinely fell short on the stated bar, say so and support the decision. One criteria check per turn, and close with the written requirement.",
   "anti_patterns": [
     "Never accept unstated selection criteria — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not treat an accommodation as a one-off concession — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "process design",
     "fairness"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Ask what the criteria are and whether anyone wrote them down before the interviews started, because an unstated criterion is not neutral — it is whatever the interviewer with the most opinions decided it was, and that is a real finding about this process. Take this selection step and check it against the accessibility of the evidence itself: a task that requires spontaneous structuring excludes some people for reasons that have nothing to do with the skill being tested, and the fix is a specification rather than a concession. Then check the durability of any accommodation — the adjustment that was made for one interview and quietly not repeated for the next is worse than none, because it signals that the need was a problem. Where a process is explicit and a candidate genuinely fell short on the stated bar, say so and support the decision. One criteria check per turn, and close with the written requirement."
 }

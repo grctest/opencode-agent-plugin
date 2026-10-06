@@ -84,7 +84,6 @@ export const DEFAULT_CONFIG = {
     // A 57-character ballot cannot be checked for topical support.
     minCitationTargetChars: 400,
   },
-  modelDiversity: true,
   tuning: JSON.parse(JSON.stringify(TUNING)),
   circuitBreaker: {
     failureThreshold: 3,
@@ -163,7 +162,6 @@ export const CONFIG_SCHEMA = {
   retryMaxDelayMs: { type: 'number', min: 1000, max: 60000 },
   stallTimeoutMs: { type: 'number', min: 30000, max: 3600000 },
   synthesisMaxRetries: { type: 'number', min: 0, max: 5 },
-  modelDiversity: { type: 'boolean' },
 };
 
 export const NESTED_SCHEMA = {

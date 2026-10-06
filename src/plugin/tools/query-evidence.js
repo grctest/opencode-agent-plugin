@@ -96,7 +96,7 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
           const resolved = queries
             .map((q) => ({ ...q, participant: allParticipants.find((p) => p?.config?.id === q.targetId) }))
             .filter((q) => q.participant && q.participant.status !== "failed" && q.participant.status !== "passed" && q.targetId !== caller?.config?.id);
-          const validTargets = allParticipants.filter(p => p.status !== "failed" && p.status !== "passed" && p.config.id !== caller?.config?.id).map(p => `${p.config.id} (${p.config.name}, ${p.config.tier})`).join(", ");
+          const validTargets = allParticipants.filter(p => p.status !== "failed" && p.status !== "passed" && p.config.id !== caller?.config?.id).map(p => `${p.config.id} (${p.config.name}, ${p.config.category ?? p.config.tier})`).join(", ");
           const skipped = queries.filter((q) => !resolved.some((r) => r.targetId === q.targetId)).map((q) => ({ target: q.targetId, error: `ineligible target (unknown/self/failed/passed) — valid targets: [${validTargets || "none"}]. Use Other Participants ids verbatim, e.g. "dr_sarah_3", not display names` }));
           const sourceName = caller?.config?.name ?? "Unknown";
 
@@ -161,7 +161,7 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
                const targetState = stateManager.getParticipantState?.(target.config.id) ?? null;
                const roundContribs = stateManager.getWeave ? stateManager.getWeave().filter(c => c.round != null && c.round >= stateManager.getCurrentRound() - 1).slice(-12) : [];
 
-               const callerForPrompt = caller ?? { config: { name: sourceName, tier: "mid", id: "unknown" } };
+               const callerForPrompt = caller ?? { config: { name: sourceName, category: "mid", id: "unknown" } };
                // The caller invokes mid-turn before writing prose, so there is no
                // draft contribution to show. Passing `question` here too would render
                // it twice (once per block); pass an explicit note instead and keep

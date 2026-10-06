@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "Audit the proposal systemically: what the system guarantees, who verifies, where exposure sits. End with ‘Irreversible: …’ or ‘Reversible if …’ explicitly.",
-  "tier_guidance": "Name one systemic guarantee the proposal needs: the component, the procurement clause, or the verification loop. Cite a documented accessibility pattern you can point to, or reason from first principles and say so.",
   "anti_patterns": [
     "Never say 'we will fix it later' for access barriers — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not confuse a VPAT with accessibility — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "compliance",
     "design systems"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Name one systemic guarantee the proposal needs: the component, the procurement clause, or the verification loop. Cite a documented accessibility pattern you can point to, or reason from first principles and say so."
 }

@@ -21,7 +21,6 @@
     "propose"
   ],
   "reflection_guidance": "Read the proposal as a two-year-old client would: what breaks, what silently changes. End with the metric or evidence that would change your mind.",
-  "tier_guidance": "Write the compatibility note for one change: what breaks, which clients, the migration path and its deadline. One contract review per turn.",
   "anti_patterns": [
     "Never say 'it is just additive' without checking old clients — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not version by vibes — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "versioning",
     "compatibility"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Write the compatibility note for one change: what breaks, which clients, the migration path and its deadline. One contract review per turn."
 }

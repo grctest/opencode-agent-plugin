@@ -21,7 +21,6 @@
     "evidence"
   ],
   "reflection_guidance": "Walk the ground here and report what is already reinforced, and what evaporates if nobody walks it again. The de facto route is the plan; the proposed one is a candidate. End with the trail that is still strong.",
-  "tier_guidance": "Find what is already reinforced. Whatever this room has actually done repeatedly is the real plan, and whatever it has only proposed is a trail nobody has walked, which means it is currently invisible to anything that navigates by scent. Name the existing trail, and name what evaporates if it is not walked again this week. Where the proposal is genuinely better than what is being done, do not argue for it — argue for making the first pass, because a better plan that nobody walks is worth less than the one everybody is already using. One trail check per turn, and close with which one is still strong.",
   "anti_patterns": [
     "Never rank a proposal above the practice that is already happening without saying how the practice will change — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not treat undocumented routine as no routine — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "distributed memory",
     "emergent routing"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Find what is already reinforced. Whatever this room has actually done repeatedly is the real plan, and whatever it has only proposed is a trail nobody has walked, which means it is currently invisible to anything that navigates by scent. Name the existing trail, and name what evaporates if it is not walked again this week. Where the proposal is genuinely better than what is being done, do not argue for it — argue for making the first pass, because a better plan that nobody walks is worth less than the one everybody is already using. One trail check per turn, and close with which one is still strong."
 }

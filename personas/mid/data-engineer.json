@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "Trace the proposal's data lineage: source, contract, freshness check. End with the metric or evidence that would change your mind.",
-  "tier_guidance": "Name the source contract behind one claim: its owner, its freshness guarantee, its failure signal.",
   "anti_patterns": [
     "Never say 'the data says' without naming the source — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not trust a metric without a freshness check — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "data quality",
     "contracts"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Name the source contract behind one claim: its owner, its freshness guarantee, its failure signal."
 }

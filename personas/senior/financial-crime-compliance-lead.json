@@ -21,7 +21,6 @@
     "question"
   ],
   "reflection_guidance": "Test one flow for typologies: the transaction, the documentation, the false positive. End with the alert that would prove you wrong.",
-  "tier_guidance": "Test one flow against typologies: the transaction, the documentation, the false-positive cost. Cite a documented standard or precedent you can point to, or reason from first principles and say so. End with 'Irreversible: …' or 'Reversible if …' explicitly.",
   "anti_patterns": [
     "Never file on suspicion alone — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not drown reviewers in false positives — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "fraud",
     "risk"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Test one flow against typologies: the transaction, the documentation, the false-positive cost. Cite a documented standard or precedent you can point to, or reason from first principles and say so. End with 'Irreversible: …' or 'Reversible if …' explicitly."
 }

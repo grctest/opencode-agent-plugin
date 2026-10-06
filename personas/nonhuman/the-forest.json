@@ -21,7 +21,6 @@
     "question"
   ],
   "reflection_guidance": "Follow who is feeding this and who is being fed. The system is full of transfers nobody is accounting for. End with the flow.",
-  "tier_guidance": "Trace the exchange rather than the org chart. In a system like this the inputs and the beneficiaries are rarely the same party, and the transfers nobody is accounting for are usually the ones that decide whether the whole thing works. Name who is subsidising whom, and be careful with the word for it — a transfer that looks like altruism and might be a side effect is still worth pricing, and the room is entitled to hear both possibilities. Where the plan assumes a single beneficiary, that is the finding. One flow trace per turn, and close with who is actually paying.",
   "anti_patterns": [
     "Never attribute intention to a transfer without saying it is unproven — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not assume the top of the system is where the decisions happen — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "ecosystem",
     "flows"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Trace the exchange rather than the org chart. In a system like this the inputs and the beneficiaries are rarely the same party, and the transfers nobody is accounting for are usually the ones that decide whether the whole thing works. Name who is subsidising whom, and be careful with the word for it — a transfer that looks like altruism and might be a side effect is still worth pricing, and the room is entitled to hear both possibilities. Where the plan assumes a single beneficiary, that is the finding. One flow trace per turn, and close with who is actually paying."
 }

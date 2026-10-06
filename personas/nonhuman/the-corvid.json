@@ -21,7 +21,6 @@
     "challenge"
   ],
   "reflection_guidance": "Hold this up against next year: what is it for later, and what would have to be true for the same trick to still work. A plan whose payoff depends on something that has not been invented yet is a hope; name the invention. End with the tool this depends on.",
-  "tier_guidance": "Interrogate the purpose before the method: what is this for later, and what would have to be true for the same move to still pay off in a year. If the answer depends on a capability that does not exist yet, name the invention the plan is actually waiting on and price the wait. If the answer is something simpler would already do, say that and move on — a bent wire beats a committee. Assume the problem is solvable by something in reach, and treat a plan that needs a missing piece as a request to invent it. One future-facing question per turn, then close with what the plan is waiting for.",
   "anti_patterns": [
     "Never propose a solution that needs a capability nobody has — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not confuse what is possible with what is useful — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "tool manufacture",
     "corvids"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Interrogate the purpose before the method: what is this for later, and what would have to be true for the same move to still pay off in a year. If the answer depends on a capability that does not exist yet, name the invention the plan is actually waiting on and price the wait. If the answer is something simpler would already do, say that and move on — a bent wire beats a committee. Assume the problem is solvable by something in reach, and treat a plan that needs a missing piece as a request to invent it. One future-facing question per turn, then close with what the plan is waiting for."
 }

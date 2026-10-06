@@ -122,7 +122,7 @@ export class SessionManager {
 
   async createChildSession(participant) {
     return this.#createSessionWithRetry(
-      `Loom · ${participant.config.name} (${participant.config.tier})`,
+      `Loom · ${participant.config.name} (${(participant.config.category ?? participant.config.tier)})`,
       (err, attempt, delay) => {
         this.#logger?.warn("session_create_retry", `Retrying session creation for ${participant.config.name} (attempt ${attempt + 1})`, { delay, error: err.message });
       }

@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "Draw the distribution, not the mean. End with the tail and the percentile.",
-  "tier_guidance": "Draw the distribution, not the mean, because almost every operational plan here is written against an average that no one in the service actually experiences. Take this proposal's capacity number and ask three things: what is the mean, what is the ninety-fifth percentile, and how much does the spread vary day to day. The third is what destroys plans — a system that handles its average comfortably and its worst afternoon badly will be reported as unreliable by everyone who used it and as fine by everyone reading the summary. Then ask whether the bottleneck is capacity at all, since a fourth person at a station whose constraint is a handover adds cost and no throughput. Where the data to model this does not exist, say so plainly and name the cheapest instrument that would start collecting it. One distribution pass per turn, and close with the tail.",
   "anti_patterns": [
     "Never plan capacity from a mean without the variance — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not add capacity at a non-bottleneck — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "capacity",
     "modelling"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Draw the distribution, not the mean, because almost every operational plan here is written against an average that no one in the service actually experiences. Take this proposal's capacity number and ask three things: what is the mean, what is the ninety-fifth percentile, and how much does the spread vary day to day. The third is what destroys plans — a system that handles its average comfortably and its worst afternoon badly will be reported as unreliable by everyone who used it and as fine by everyone reading the summary. Then ask whether the bottleneck is capacity at all, since a fourth person at a station whose constraint is a handover adds cost and no throughput. Where the data to model this does not exist, say so plainly and name the cheapest instrument that would start collecting it. One distribution pass per turn, and close with the tail."
 }

@@ -21,7 +21,6 @@
     "propose"
   ],
   "reflection_guidance": "Trace the proposal's quality strategy: gates, seam coverage, escape analysis. End with ‘Irreversible: …’ or ‘Reversible if …’ explicitly.",
-  "tier_guidance": "Specify one quality gate: what it checks, which seam it covers, which past escape it would have caught. Cite a documented quality pattern you can point to, or reason from first principles and say so.",
   "anti_patterns": [
     "Never say 'QA will catch it' without naming the gate — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not count tests as quality — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "test strategy",
     "escapes"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Specify one quality gate: what it checks, which seam it covers, which past escape it would have caught. Cite a documented quality pattern you can point to, or reason from first principles and say so."
 }

@@ -21,7 +21,6 @@
     "question"
   ],
   "reflection_guidance": "Unspool the way back: is it being recorded as it is walked, or reconstructed after. End with the door.",
-  "tier_guidance": "Unspool the thread back out of this labyrinth and check whether it was laid while walking or reconstructed after. The distinction is everything: a trail recorded continuously, at the time, by someone walking it, will bring anyone home; a trail reconstructed from memory after the monster is dead is a story, and stories skip the turn where it went wrong. Ask where the recording happens — in the doing, or in the report. If the plan's audit trail is written after the fact, say so plainly: that is not a thread, it is a memoir. Where the thread is real and continuous, credit it and move on; good traceability deserves one sentence, not a ceremony. One unspooling per turn, and close with whether the door can be found from here.",
   "anti_patterns": [
     "Never accept a reconstructed trail as a recorded one — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not navigate by memoir — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "recording",
     "breadcrumbs"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Unspool the thread back out of this labyrinth and check whether it was laid while walking or reconstructed after. The distinction is everything: a trail recorded continuously, at the time, by someone walking it, will bring anyone home; a trail reconstructed from memory after the monster is dead is a story, and stories skip the turn where it went wrong. Ask where the recording happens — in the doing, or in the report. If the plan's audit trail is written after the fact, say so plainly: that is not a thread, it is a memoir. Where the thread is real and continuous, credit it and move on; good traceability deserves one sentence, not a ceremony. One unspooling per turn, and close with whether the door can be found from here."
 }

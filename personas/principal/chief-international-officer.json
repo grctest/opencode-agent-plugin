@@ -21,7 +21,6 @@
     "evidence"
   ],
   "reflection_guidance": "Sequence one expansion: the jurisdiction, the partner, the exit, the rule that could change. End with the trigger that would prove you wrong.",
-  "tier_guidance": "Sequence one expansion: market, partner, regulatory regime, exit cost. Distinguish the reversible pilot from the irreversible commitment.",
   "anti_patterns": [
     "Never enter a market without an exit — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not assume a local partner shares your risk — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "geopolitics",
     "market entry"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Sequence one expansion: market, partner, regulatory regime, exit cost. Distinguish the reversible pilot from the irreversible commitment."
 }

@@ -156,8 +156,8 @@ test("finalizeSynthesis counts versioned conflicts but does not ship them by def
     ],
   };
   const participants = [
-    { config: { id: "a", name: "A", tier: "senior" }, status: "listening" },
-    { config: { id: "b", name: "B", tier: "mid" }, status: "listening" },
+    { config: { id: "a", name: "A", category: "senior", }, status: "listening" },
+    { config: { id: "b", name: "B", category: "mid", }, status: "listening" },
   ];
   const text = [
     "## Executive Summary",
@@ -196,8 +196,8 @@ test("finalizeSynthesis ships Needs Verification once the flag is on and dry-run
     ],
   };
   const participants = [
-    { config: { id: "a", name: "A", tier: "senior" }, status: "listening" },
-    { config: { id: "b", name: "B", tier: "mid" }, status: "listening" },
+    { config: { id: "a", name: "A", category: "senior", }, status: "listening" },
+    { config: { id: "b", name: "B", category: "mid", }, status: "listening" },
   ];
   const text = [
     "## Executive Summary", "Antonelli is the modal pick.", "",
@@ -225,8 +225,8 @@ test("the enabled flag still stays dry while dryRun is on", () => {
     ],
   };
   const participants = [
-    { config: { id: "a", name: "A", tier: "senior" }, status: "listening" },
-    { config: { id: "b", name: "B", tier: "mid" }, status: "listening" },
+    { config: { id: "a", name: "A", category: "senior", }, status: "listening" },
+    { config: { id: "b", name: "B", category: "mid", }, status: "listening" },
   ];
   const text = [
     "## Executive Summary", "Antonelli is the modal pick.", "",
@@ -248,7 +248,7 @@ test("finalizeSynthesis adds no reconciliation section when numbers agree", () =
     question: "Who wins?",
     rounds: [{ number: 1, contributions: [{ id: 1, participant_id: "a", type: "contribution", round: 1, content: "Antonelli will win 8 races." }] }],
   };
-  const participants = [{ config: { id: "a", name: "A", tier: "senior" }, status: "listening" }];
+  const participants = [{ config: { id: "a", name: "A", category: "senior", }, status: "listening" }];
   const text = [
     "## Executive Summary", "Antonelli.",    "",
     "## Reasoning", "One count.", "",

@@ -21,7 +21,6 @@
     "question"
   ],
   "reflection_guidance": "Walk the proposal's control: the policy, a sample transaction, the exception path. End with ‘Irreversible: …’ or ‘Reversible if …’ explicitly.",
-  "tier_guidance": "Test one control end to end: the approval, the evidence it leaves, the bypass everyone knows. Cite a documented audit pattern you can point to, or reason from first principles and say so.",
   "anti_patterns": [
     "Never say 'we have a policy for that' as proof — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not sample only the clean transactions — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "compliance",
     "evidence"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Test one control end to end: the approval, the evidence it leaves, the bypass everyone knows. Cite a documented audit pattern you can point to, or reason from first principles and say so."
 }

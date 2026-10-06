@@ -17,7 +17,6 @@ import { normalizeOrchestratorConfig, validateOrchestratorConfig } from "../../o
 import { rankAllPersonas, EMBEDDER_UNAVAILABLE } from "../../composer.js";
 import { getPersonas, getPersonaTags } from "../../composer/persona-loader.js";
 import { discoverModels, assignModelsToParticipants } from "../../services/model-service.js";
-import { createModelPlan } from "../../model-discovery.js";
 import { buildOrchestratorPromptPreview } from "./orchestrator-preview.js";
 import { MeetingDatabase, findMeetingBySessionId, getDbPathForMeeting } from "../../database.js";
 import { repairDatabase } from "../../database/connection.js";
@@ -36,7 +35,7 @@ import { clearGlobalUnhealthyKey, clearAllGlobalUnhealthyKeys } from "../../util
 import { resetPollCursorsForMeeting } from "./poll-cursors.js";
 
 const logger = new Logger();
-const ALLOWED_TIERS = new Set(["junior", "mid", "senior", "principal", "civilian", "nonhuman"]);
+const CATEGORY_SLUG = /^[a-z0-9][a-z0-9-]*$/;
 
 // Injected by the plugin host (src/plugin/return.js loom_viz execute).
 const runtime = {
@@ -186,30 +185,33 @@ async function discoverFiltered(force = false) {
 
 // --- Personas ---
 
-function personaDto(p, tier) {
+function personaDto(p, category) {
+  const legacyCategory = p.tier; // legacy alias: accept legacy tier field
+  const legacyGuidance = p.tier_guidance; // legacy alias: accept legacy tier_guidance field
+  const resolvedCategory = category ?? p.category ?? legacyCategory;
   return {
     name: p.name,
     persona: p.persona,
     agenda: p.agenda,
-    tier,
+    category: resolvedCategory,
     tags: getPersonaTags(p),
     expertise: Array.isArray(p.expertise) ? p.expertise : [],
     known_biases: Array.isArray(p.known_biases) ? p.known_biases : [],
     communication_style: p.communication_style ?? "",
     preferred_contribution_types: Array.isArray(p.preferred_contribution_types) ? p.preferred_contribution_types : [],
     anti_patterns: Array.isArray(p.anti_patterns) ? p.anti_patterns : [],
-    tier_guidance: p.tier_guidance ?? "",
+    category_guidance: p.category_guidance ?? legacyGuidance ?? "",
     reflection_guidance: p.reflection_guidance ?? "",
   };
 }
 
 export function handleListPersonas() {
   const grouped = getPersonas();
-  const tiers = {};
-  for (const [tier, arr] of Object.entries(grouped)) {
-    tiers[tier] = (arr ?? []).map((p) => personaDto(p, tier));
+  const categories = {};
+  for (const [category, arr] of Object.entries(grouped)) {
+    categories[category] = (arr ?? []).map((p) => personaDto(p, category));
   }
-  return Response.json({ tiers });
+  return Response.json({ categories });
 }
 
 // --- Persona ranking (in-memory persona index, no database) ---
@@ -260,25 +262,29 @@ export async function handleRoomPreview(req) {
       detail: info.message,
     }, { status: 500 });
   }
-  // Attach suggested per-tier models so the UI can pre-fill pickers.
+  // Attach suggested models (flat, parallel to `selected`) so the UI can pre-fill pickers.
+  // Picks are random: persona categories never influence model assignment.
   let suggestedModels = [];
   let suggestedOrchestrator = null;
   try {
-    const { available, sessionModel } = await discoverFiltered();
+    const { available } = await discoverFiltered();
     const pool = available.length > 0 ? available : [];
     if (pool.length > 0) {
-      const plan = createModelPlan(pool, undefined, sessionModel);
-       suggestedModels = (plan.participants ?? []).map((p) => ({
-         tier: p.tier,
-         provider_id: p.providerID ?? p.provider_id,
-         model_id: p.modelID ?? p.model_id,
-       }));
-       const orchestrator = plan.orchestrator;
-       if (orchestrator?.providerID && orchestrator?.modelID) {
+       const selectedRows = ranking.selected ?? [];
+       const pick = () => pool[Math.floor(Math.random() * pool.length)];
+       suggestedModels = selectedRows.map(() => {
+         const m = pick();
+         return {
+           provider_id: m.providerID ?? m.provider_id,
+           model_id: m.modelID ?? m.model_id,
+         };
+       });
+       const orch = pick();
+       if (orch?.providerID && orch?.modelID) {
          suggestedOrchestrator = {
-           provider_id: orchestrator.providerID,
-           model_id: orchestrator.modelID,
-           key: `${orchestrator.providerID}/${orchestrator.modelID}`,
+           provider_id: orch.providerID,
+           model_id: orch.modelID,
+           key: `${orch.providerID}/${orch.modelID}`,
          };
        }
     }
@@ -287,9 +293,14 @@ export async function handleRoomPreview(req) {
   // catalog entries would be megabytes on every rank; the dialog already
   // loads the catalog from /api/personas to render rows, so it joins on `name`
   // locally rather than receiving it twice.
+  const normalizeRankRow = (row) => ({
+    name: row.name,
+    category: row.category ?? row.tier ?? "mid", // legacy alias: accept legacy tier field
+    distance: row.distance,
+  });
   return Response.json({
-    ranked: ranking.ranked ?? [],
-    selected: ranking.selected ?? [],
+    ranked: (ranking.ranked ?? []).map(normalizeRankRow),
+    selected: (ranking.selected ?? []).map(normalizeRankRow),
     auto_select_count: ranking.autoSelectCount ?? 0,
      suggested_models: suggestedModels,
      suggested_orchestrator: suggestedOrchestrator,
@@ -315,7 +326,7 @@ export async function handleOrchestratorPreview(req) {
   }
 }
 
-// --- LLM models (filter + per-tier assignment parity with old chat commands) ---
+// --- LLM models (filter) ---
 
 export async function handleListLlmModels(url = null) {
   if (!isControlReady()) {
@@ -348,17 +359,17 @@ export async function handleListLlmModels(url = null) {
     let suggested = [];
     let suggestedOrchestrator = null;
     try {
-      const plan = createModelPlan(enabledPool.length > 0 ? enabledPool : allAvailable, undefined, sessionModel);
-       suggested = (plan.participants ?? []).map((p) => ({
-         tier: p.tier,
-         provider_id: p.providerID ?? p.provider_id,
-         model_id: p.modelID ?? p.model_id,
+       const pool = enabledPool.length > 0 ? enabledPool : allAvailable;
+       suggested = pool.slice(0, 3).map((m) => ({
+         provider_id: m.providerID ?? m.provider_id,
+         model_id: m.modelID ?? m.model_id,
        }));
-       if (plan.orchestrator?.providerID && plan.orchestrator?.modelID) {
+       const orch = pool[Math.floor(Math.random() * pool.length)];
+       if (orch?.providerID && orch?.modelID) {
          suggestedOrchestrator = {
-           provider_id: plan.orchestrator.providerID,
-           model_id: plan.orchestrator.modelID,
-           key: `${plan.orchestrator.providerID}/${plan.orchestrator.modelID}`,
+           provider_id: orch.providerID,
+           model_id: orch.modelID,
+           key: `${orch.providerID}/${orch.modelID}`,
          };
        }
     } catch {}
@@ -443,14 +454,15 @@ function validateParticipants(list) {
   for (let i = 0; i < list.length; i++) {
     const p = list[i];
     if (!p || typeof p !== "object") return `participant #${i + 1} must be an object`;
-    if (!p.name || !p.persona || !p.agenda || !p.tier) {
-      return `participant #${i + 1} is missing required fields (name, persona, agenda, tier)`;
+    const category = p.category ?? p.tier;
+    if (!p.name || !p.persona || !p.agenda || !category) {
+      return `participant #${i + 1} is missing required fields (name, persona, agenda, category)`;
     }
     if (p.approved !== true) {
       return `participant #${i + 1} must be explicitly approved`;
     }
-    if (!ALLOWED_TIERS.has(p.tier)) {
-      return `participant #${i + 1} has invalid tier "${p.tier}" — must be one of ${[...ALLOWED_TIERS].join(", ")}`;
+    if (typeof category !== "string" || !CATEGORY_SLUG.test(category)) {
+      return `participant #${i + 1} has invalid category "${category}" — must match ${CATEGORY_SLUG}`;
     }
   }
   return null;
@@ -630,9 +642,11 @@ async function handleStartMeetingInternal(req) {
     return Response.json({ error: "no models available — enable at least one provider model first" }, { status: 400 });
   }
 
-  // Explicit per-tier model assignments (validate against allowed pool).
-  const modelMap = new Map();
-  const explicitModels = Array.isArray(body?.models) ? body.models : [];
+  // Legacy per-tier `models[]` are no longer supported — per-seat `model`
+  // wins when valid, otherwise a random available model fills the seat.
+  if (Array.isArray(body?.models) && body.models.length > 0) {
+    logger.warn("dashboard_legacy_models_ignored", "Per-tier `models[]` are no longer supported — seats use per-seat models or random assignment");
+  }
   const allowedKeys = new Set(available.map((m) => `${m.providerID}/${m.modelID}`));
   const rawOrchestrator = body?.orchestrator_model ?? (orchestratorConfig.model ? {
     provider_id: orchestratorConfig.model.split("/")[0],
@@ -645,23 +659,6 @@ async function handleStartMeetingInternal(req) {
     return Response.json({ error: "orchestrator_model must be an enabled, healthy model" }, { status: 400 });
   }
   const resolvedOrchestratorConfig = { ...orchestratorConfig, model: orchestratorKey };
-  for (const m of explicitModels) {
-    if (!m || typeof m !== "object" || !m.tier) continue;
-    const providerId = m.provider_id ?? m.providerID;
-    const modelId = m.model_id ?? m.modelID;
-    if (!providerId || !modelId) continue;
-    const key = `${providerId}/${modelId}`;
-    if ((disabledSet instanceof Set && disabledSet.has(key)) || globalUnhealthy.has(key)) {
-      logger.warn("dashboard_explicit_model_blocked", `Explicit model ${key} for tier ${m.tier} is disabled/unhealthy — ignoring`);
-      continue;
-    }
-    if (!allowedKeys.has(key)) {
-      logger.warn("dashboard_explicit_model_unknown", `Explicit model ${key} not in current available — ignoring`);
-      continue;
-    }
-    if (modelMap.has(m.tier)) logger.warn("dashboard_duplicate_tier", `Duplicate tier "${m.tier}" in model map — last wins`);
-    modelMap.set(m.tier, { providerID: providerId, modelID: modelId });
-  }
 
   const seenIds = new Set();
   let dedup = 0;
@@ -673,7 +670,7 @@ async function handleStartMeetingInternal(req) {
     if (seenIds.has(id)) id = `${id}_${++dedup}`;
     seenIds.add(id);
     // Per-seat model wins when valid (dashboard assigns one per persona row);
-    // otherwise the per-tier map applies; assignModelsToParticipants fills the rest.
+    // otherwise assignModelsToParticipants draws a random available model.
     let seatModel = null;
     const rawModel = p.model;
     if (rawModel && typeof rawModel === "object") {
@@ -685,7 +682,7 @@ async function handleStartMeetingInternal(req) {
       const seatKey = `${seatModel.providerID}/${seatModel.modelID}`;
       const blocked = (disabledSet instanceof Set && disabledSet.has(seatKey)) || globalUnhealthy.has(seatKey);
       if (!allowedKeys.has(seatKey) || blocked) {
-        logger.warn("dashboard_seat_model_blocked", `Per-seat model ${seatKey} for ${p.name} is disabled/unhealthy/unknown — falling back to tier assignment`);
+        logger.warn("dashboard_seat_model_blocked", `Per-seat model ${seatKey} for ${p.name} is disabled/unhealthy/unknown — falling back to random assignment`);
         seatModel = null;
       }
     }
@@ -694,15 +691,15 @@ async function handleStartMeetingInternal(req) {
        name: p.name,
        persona: sanitizeForPrompt(String(p.persona), 4000),
        agenda: sanitizeForPrompt(String(p.agenda), 2000),
-       tier: p.tier,
-       model: seatModel ?? modelMap.get(p.tier),
+       category: p.category ?? p.tier,
+       model: seatModel,
        tags,
        expertise: Array.isArray(p.expertise) ? p.expertise : [],
        known_biases: Array.isArray(p.known_biases) ? p.known_biases : [],
        communication_style: sanitizeForPrompt(String(p.communication_style ?? ""), 800),
        preferred_contribution_types: Array.isArray(p.preferred_contribution_types) ? p.preferred_contribution_types : [],
        anti_patterns: Array.isArray(p.anti_patterns) ? p.anti_patterns : [],
-       tier_guidance: sanitizeForPrompt(String(p.tier_guidance ?? ""), 1600),
+       category_guidance: sanitizeForPrompt(String(p.category_guidance ?? p.tier_guidance ?? ""), 1600),
        reflection_guidance: sanitizeForPrompt(String(p.reflection_guidance ?? ""), 1600),
     };
   });
@@ -792,7 +789,7 @@ async function handleStartMeetingInternal(req) {
       const artifact = await engine.runMeeting();
       const state = engine.getState();
       const safeQuestion = sanitizeForDisplay(question, 5000);
-      const fullReport = `# Loom Deliberation Output\n\n**Question:** ${safeQuestion}\n\n**Participants:** ${participants.map((p) => `${p.name} (${p.tier})`).join(", ")}\n\n**Rounds:** ${state.current_round}\n\n**Meeting ID:** ${engine.getMeetingId()}\n\n---\n\n${artifact}`;
+      const fullReport = `# Loom Deliberation Output\n\n**Question:** ${safeQuestion}\n\n**Participants:** ${participants.map((p) => `${p.name} (${p.category ?? p.tier})`).join(", ")}\n\n**Rounds:** ${state.current_round}\n\n**Meeting ID:** ${engine.getMeetingId()}\n\n---\n\n${artifact}`;
       writeReportFileHelper(getDirectory(), engine.getMeetingId(), fullReport, logger);
       jobs.set(meetingId, { phase: "done", startedAt: jobs.get(meetingId)?.startedAt ?? null, finishedAt: new Date().toISOString() });
     } catch (err) {
@@ -929,7 +926,7 @@ async function handleExtendMeetingInternal(req) {
         name: p.name,
         persona: p.persona,
         agenda: p.agenda,
-        tier: p.tier,
+        category: p.category ?? p.tier,
         model: modelKey && allowedKeys.has(modelKey) ? { providerID: p.provider_id, modelID: p.model_id } : undefined,
         tags: Array.isArray(p.tags) ? p.tags : [],
         expertise: Array.isArray(p.expertise) ? p.expertise : [],
@@ -937,7 +934,7 @@ async function handleExtendMeetingInternal(req) {
         communication_style: p.communication_style ?? "",
         preferred_contribution_types: Array.isArray(p.preferred_contribution_types) ? p.preferred_contribution_types : [],
         anti_patterns: Array.isArray(p.anti_patterns) ? p.anti_patterns : [],
-        tier_guidance: p.tier_guidance ?? "",
+        category_guidance: p.category_guidance ?? p.tier_guidance ?? "",
         reflection_guidance: p.reflection_guidance ?? "",
       };
     }),
@@ -959,7 +956,7 @@ async function handleExtendMeetingInternal(req) {
       await extEngine.initialize();
       const artifact = await extEngine.extendMeeting(question, additionalRounds);
       const extState = extEngine.getState();
-      const fullReport = `# Loom Deliberation (Extended)\n\n**New Input:** ${sanitizeForDisplay(question, 5000)}\n\n**Participants:** ${existingParts.map((p) => `${p.name} (${p.tier})`).join(", ")}\n\n**Total Rounds:** ${extState.current_round}\n\n**Meeting ID:** ${extEngine.getMeetingId()}\n\n---\n\n${artifact}`;
+      const fullReport = `# Loom Deliberation (Extended)\n\n**New Input:** ${sanitizeForDisplay(question, 5000)}\n\n**Participants:** ${existingParts.map((p) => `${p.name} (${p.category ?? p.tier})`).join(", ")}\n\n**Total Rounds:** ${extState.current_round}\n\n**Meeting ID:** ${extEngine.getMeetingId()}\n\n---\n\n${artifact}`;
       writeReportFileHelper(getDirectory(), extEngine.getMeetingId(), fullReport, logger);
       jobs.set(meetingId, { phase: "done", startedAt: jobs.get(meetingId)?.startedAt ?? null, finishedAt: new Date().toISOString(), extended: true });
     } catch (err) {
@@ -1108,7 +1105,7 @@ async function loadRecoveryContext(meetingId) {
       name: p.name,
       persona: p.persona,
       agenda: p.agenda,
-      tier: p.tier,
+      category: p.category ?? p.tier,
       model: modelKey && allowedKeys.has(modelKey) ? { providerID: p.provider_id, modelID: p.model_id } : undefined,
       tags: Array.isArray(p.tags) ? p.tags : [],
       expertise: Array.isArray(p.expertise) ? p.expertise : [],
@@ -1116,7 +1113,7 @@ async function loadRecoveryContext(meetingId) {
       communication_style: p.communication_style ?? "",
       preferred_contribution_types: Array.isArray(p.preferred_contribution_types) ? p.preferred_contribution_types : [],
       anti_patterns: Array.isArray(p.anti_patterns) ? p.anti_patterns : [],
-      tier_guidance: p.tier_guidance ?? "",
+      category_guidance: p.category_guidance ?? p.tier_guidance ?? "",
       reflection_guidance: p.reflection_guidance ?? "",
     };
   });
@@ -1144,7 +1141,7 @@ function reportPathFor(directory, meetingId) {
 }
 
 function writeRecoveryReport(meetingId, question, parts, currentRound, artifact, tag) {
-  const fullReport = `# Loom Deliberation Output (${tag})\n\n**Question:** ${sanitizeForDisplay(question, 5000)}\n\n**Participants:** ${parts.map((p) => `${p.name} (${p.tier})`).join(", ")}\n\n**Rounds:** ${currentRound}\n\n**Meeting ID:** ${meetingId}\n\n---\n\n${artifact}`;
+  const fullReport = `# Loom Deliberation Output (${tag})\n\n**Question:** ${sanitizeForDisplay(question, 5000)}\n\n**Participants:** ${parts.map((p) => `${p.name} (${p.category ?? p.tier})`).join(", ")}\n\n**Rounds:** ${currentRound}\n\n**Meeting ID:** ${meetingId}\n\n---\n\n${artifact}`;
   return writeReportFileHelper(getDirectory(), meetingId, fullReport, logger);
 }
 

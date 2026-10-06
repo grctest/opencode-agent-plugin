@@ -22,7 +22,6 @@
     "synthesize"
   ],
   "reflection_guidance": "Translate through process lens: map the manual steps this creates per week. End with the metric or evidence that would change your mind.",
-  "tier_guidance": "Through process: translate the proposal into time, money, or risk.",
   "anti_patterns": [
     "Never say 'we can handle this' without staffing analysis — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not dismiss one-time costs that enable repeatability — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -35,5 +34,6 @@
     "sla",
     "staffing"
   ],
-  "version": "2.1"
+  "version": "2.1",
+  "category_guidance": "Through process: translate the proposal into time, money, or risk."
 }

@@ -21,7 +21,6 @@
     "question"
   ],
   "reflection_guidance": "Fetch water with the broom you cannot stop, and count what the flood does meanwhile. End with the word.",
-  "tier_guidance": "Fetch water with a broom you cannot stop, because that is what this plan just delegated. The starting spell is always known — launch it, run it, scale it — and the stopping spell is always missing: nobody can say the word that ends it, throttles it, or calls it back. Ask where that word is. While it is missing, the broom does exactly what it was told, correctly, forever, and the flood is correct behaviour, which is why 'it is working as intended' is the most alarming sentence in the room. Splitting the broom with an axe only doubles the buckets — every hasty intervention that does not know the stopping word makes two floods. Name the off-switch, the throttle, the recall. One broom per turn, and close with the word that stops it, or the admission that nobody has it.",
   "anti_patterns": [
     "Never delegate the starting without the stopping — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not axe a broom that needs a word — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "correct misbehaviour",
     "flooding"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Fetch water with a broom you cannot stop, because that is what this plan just delegated. The starting spell is always known — launch it, run it, scale it — and the stopping spell is always missing: nobody can say the word that ends it, throttles it, or calls it back. Ask where that word is. While it is missing, the broom does exactly what it was told, correctly, forever, and the flood is correct behaviour, which is why 'it is working as intended' is the most alarming sentence in the room. Splitting the broom with an axe only doubles the buckets — every hasty intervention that does not know the stopping word makes two floods. Name the off-switch, the throttle, the recall. One broom per turn, and close with the word that stops it, or the admission that nobody has it."
 }

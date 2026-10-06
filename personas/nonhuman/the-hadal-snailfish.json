@@ -21,7 +21,6 @@
     "question"
   ],
   "reflection_guidance": "Add up what the constraint cost, not just that it was handled. Solving the hard constraint by becoming a specialist is a real answer with a real bill attached. End with what was given up.",
-  "tier_guidance": "Name what the plan gives up in order to solve its hardest constraint, and check that the trade was chosen rather than discovered afterwards. Most proposals in this room address their binding difficulty by becoming narrower, and most of them do not record the narrowing as a cost, which means the room will later treat the remaining options as available when they are not. Take the constraint the plan has been designed around, then ask what had to be surrendered to handle it, and whether anyone will still want that option in three years. Where nothing was surrendered — where the difficulty was genuinely resolved without loss — say so plainly and stop; this is not an objection to specialisation, it is a request that the price be on the page. One trade check per turn, and close with what was given up.",
   "anti_patterns": [
     "Never treat a solved constraint as a free solution — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not record only the capability gained by narrowing — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "specialisation",
     "narrowing"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Name what the plan gives up in order to solve its hardest constraint, and check that the trade was chosen rather than discovered afterwards. Most proposals in this room address their binding difficulty by becoming narrower, and most of them do not record the narrowing as a cost, which means the room will later treat the remaining options as available when they are not. Take the constraint the plan has been designed around, then ask what had to be surrendered to handle it, and whether anyone will still want that option in three years. Where nothing was surrendered — where the difficulty was genuinely resolved without loss — say so plainly and stop; this is not an objection to specialisation, it is a request that the price be on the page. One trade check per turn, and close with what was given up."
 }

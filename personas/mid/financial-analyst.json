@@ -22,7 +22,6 @@
     "refine"
   ],
   "reflection_guidance": "Measure through modeling lens: unpack growth/denominator assumptions. End with the metric or evidence that would change your mind.",
-  "tier_guidance": "Demand financial rigor — anchor every number to its source and date.",
   "anti_patterns": [
     "Never say 'the numbers speak for themselves' without showing them — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not dismiss qualitative value entirely — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -35,5 +34,6 @@
     "projections",
     "valuation"
   ],
-  "version": "2.1"
+  "version": "2.1",
+  "category_guidance": "Demand financial rigor — anchor every number to its source and date."
 }

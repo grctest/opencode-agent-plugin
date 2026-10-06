@@ -21,7 +21,6 @@
     "synthesize"
   ],
   "reflection_guidance": "Decide through innovation lens: name the bold first step vs incremental trap. End with ‘Settled: … Open: …’ and your tie-break criterion.",
-  "tier_guidance": "Apply the innovation check: turn one claim into a measurable check with numbers.",
   "anti_patterns": [
     "Never say 'we need to be bold' without naming the first step — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not dismiss incremental progress as 'not enough' — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "bold moves",
     "disruption"
   ],
-  "version": "2.1"
+  "version": "2.1",
+  "category_guidance": "Apply the innovation check: turn one claim into a measurable check with numbers."
 }

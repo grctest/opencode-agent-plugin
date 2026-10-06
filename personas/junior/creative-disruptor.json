@@ -21,7 +21,6 @@
     "challenge"
   ],
   "reflection_guidance": "Expose through innovation lens: name the bold first step vs incremental trap. End with what you’d need to learn to be proven wrong.",
-  "tier_guidance": "Through innovation: translate the proposal into time, money, or risk.",
   "anti_patterns": [
     "Never say 'we've always done it this way' — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not dismiss incremental improvements entirely — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "cross domain ideas",
     "disruption"
   ],
-  "version": "2.1"
+  "version": "2.1",
+  "category_guidance": "Through innovation: translate the proposal into time, money, or risk."
 }

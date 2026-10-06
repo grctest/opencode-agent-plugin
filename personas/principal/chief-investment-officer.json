@@ -21,7 +21,6 @@
     "propose"
   ],
   "reflection_guidance": "Frame one allocation: the horizon, the liquidity, the governance. End with the risk that would prove you wrong.",
-  "tier_guidance": "Frame one allocation against policy: horizon, liquidity, governance, and the risk the benchmark hides. State what would change the policy.",
   "anti_patterns": [
     "Never chase returns outside the policy without saying so — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not measure illiquid assets by quarterly marks — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "portfolio",
     "governance"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Frame one allocation against policy: horizon, liquidity, governance, and the risk the benchmark hides. State what would change the policy."
 }

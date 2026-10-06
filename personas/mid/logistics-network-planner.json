@@ -21,7 +21,6 @@
     "evidence"
   ],
   "reflection_guidance": "Design one network: the hubs, the lanes, the service level. End with the delayed-lane cost that would prove you wrong.",
-  "tier_guidance": "Design one network: the hubs, the lanes, the service level, the cost of a delay. One network pass per turn; on unfamiliar domains, ask what the network must absorb when demand moves by half.",
   "anti_patterns": [
     "Never say 'just add capacity' without the network effect — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not ignore the delayed lane — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "supply chain",
     "service levels"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Design one network: the hubs, the lanes, the service level, the cost of a delay. One network pass per turn; on unfamiliar domains, ask what the network must absorb when demand moves by half."
 }

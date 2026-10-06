@@ -10,7 +10,7 @@ import {
   STATE_PATCH_CAPS,
 } from "../src/state-patch.js";
 import { buildAgentSystemPrompt, buildAgentUserPrompt, truncateAtSentence } from "../src/prompts/agent.js";
-import { buildRoundContext, buildSettledBlock, buildTierDoctrine, getRecentContributionsBlock } from "../src/prompts/blocks.js";
+import { buildRoundContext, buildSettledBlock, buildCategoryLens, getRecentContributionsBlock } from "../src/prompts/blocks.js";
 import { buildQueryPrompt } from "../src/prompts/interaction-prompts.js";
 import { QUERY_MODES } from "../src/prompts/query-modes.js";
 import { buildRoundSummaryUser } from "../src/round-summarizer.js";
@@ -31,10 +31,10 @@ function participant(id = "p0") {
     config: {
       id,
       name: "Test Engineer",
-      tier: "senior",
+      category: "senior",
       persona: "A test persona with enough characters to pass validation checks.",
       agenda: "Verify prompt invariants hold across refactors.",
-      tier_guidance: "Be precise.",
+      category_guidance: "Be precise.",
       known_biases: [],
       communication_style: "Direct",
       preferred_contribution_types: ["challenge"],
@@ -69,7 +69,7 @@ function fullState(i) {
 }
 
 function sevenStates() {
-  return Array.from({ length: 7 }, (_, i) => ({ id: `p${i}`, name: `Persona ${i}`, tier: "mid", state: fullState(i) }));
+  return Array.from({ length: 7 }, (_, i) => ({ id: `p${i}`, name: `Persona ${i}`, category: "mid", state: fullState(i) }));
 }
 
 // 1. A1 — synthesis transcript must resolve every weave id, and pass rows
@@ -88,9 +88,9 @@ test("synthesis transcript carries [#id] for every contribution and drops passes
     }],
   };
   const participants = [
-    { config: { id: "a", name: "A", tier: "senior" }, status: "listening" },
-    { config: { id: "b", name: "B", tier: "mid" }, status: "listening" },
-    { config: { id: "c", name: "C", tier: "junior" }, status: "passed" },
+    { config: { id: "a", name: "A", category: "senior" }, status: "listening" },
+    { config: { id: "b", name: "B", category: "mid" }, status: "listening" },
+    { config: { id: "c", name: "C", category: "junior" }, status: "passed" },
   ];
   const t = formatFinalRoundTranscript(data, participants);
   assert.match(t, /\[#4\]/);
@@ -159,8 +159,8 @@ test("mixed pinned and unpinned facts stay within the render window", () => {
 
 // 7. B3 — peer prompt renders the question exactly once (self-contained contract).
 test("peer prompt contains the question once, not duplicated across blocks", () => {
-  const caller = { config: { id: "asker", name: "Asker", tier: "mid" } };
-  const target = { config: { id: "t", name: "Target", tier: "mid" }, status: "listening" };
+  const caller = { config: { id: "asker", name: "Asker", category: "mid" } };
+  const target = { config: { id: "t", name: "Target", category: "mid" }, status: "listening" };
   const note = "The asker invoked this query mid-turn — no draft to show.";
   const prompt = buildQueryPrompt(caller, target, note, "UNIQUEQUESTIONZZZ", [], 1, 3, "", "clarify", null);
   assert.equal(prompt.split("UNIQUEQUESTIONZZZ").length - 1, 1);
@@ -170,8 +170,8 @@ test("peer prompt contains the question once, not duplicated across blocks", () 
 // 8. Sub-agent cut-back contract — peer prompt carries a one-line stance,
 // never the full state block or a patch directive (empty state is round-1 normal).
 test("peer prompt prefers the position line over the full state block", () => {
-  const caller = { config: { id: "asker", name: "Asker", tier: "mid" } };
-  const target = { config: { id: "t", name: "Target", tier: "mid" }, status: "listening" };
+  const caller = { config: { id: "asker", name: "Asker", category: "mid" } };
+  const target = { config: { id: "t", name: "Target", category: "mid" }, status: "listening" };
   const state = {
     stance: "Target stance here",
     established: ["e1", "e2"],
@@ -200,7 +200,7 @@ test("round summary prompt stays within budget", () => {
     })),
   };
   const states = sevenStates().map((e) => ({
-    id: e.id, name: e.name, tier: e.tier, status: "listening", state: e.state,
+    id: e.id, name: e.name, category: e.category ?? e.tier, status: "listening", state: e.state,
   }));
   const prompt = buildRoundSummaryUser(round, { question: "Q", tags: ["engineering"] }, states);
   assert.ok(prompt.length < 20000, `summary prompt ${prompt.length} chars exceeds budget`);
@@ -236,7 +236,7 @@ test("delimiters cannot be forged and citations survive sanitization", () => {
 
 // 14. A10 — the question appears exactly once per user prompt.
 test("user prompt carries the question once when the SoP already has it", () => {
-  const sop = aggregateStateOfPlay([{ id: "p0", name: "P", tier: "mid", state: { ...emptyAgentState(), stance: "S", version: 1, updated_round: 1 } }], "UNIQUEQUESTIONZZZ", []);
+  const sop = aggregateStateOfPlay([{ id: "p0", name: "P", category: "mid", state: { ...emptyAgentState(), stance: "S", version: 1, updated_round: 1 } }], "UNIQUEQUESTIONZZZ", []);
   assert.ok(sop.includes("## Question"), "fixture SoP should carry the question");
   const user = buildAgentUserPrompt(participant(), sop, [], 1, "UNIQUEQUESTIONZZZ", [], "", [], [], null, false, true, {});
   assert.equal(user.split("UNIQUEQUESTIONZZZ").length - 1, 1);
@@ -263,7 +263,7 @@ test("transcript truncation keeps the final round and state blocks", () => {
     summary: `round summary text. `.repeat(30),
   }));
   const participants = Array.from({ length: 7 }, (_, i) => ({
-    config: { id: `p${i}`, name: `Persona ${i}`, tier: "mid" },
+    config: { id: `p${i}`, name: `Persona ${i}`, category: "mid" },
     status: "listening",
     state_stance: `stance ${i}`,
     state_bullets: ["b1"],
@@ -370,12 +370,12 @@ test("output contract carries newness, test-craft, and source-novelty rules", ()
   assert.match(contract, /Research it \(websearch\) before or while posing it/);
 });
 
-// 23. Plan §4.5 — civilian doctrine makes the routine-image closer optional.
-test("civilian doctrine makes the closer optional, not mandatory", () => {
-  const doc = buildTierDoctrine("civilian", "lens");
-  assert.match(doc, /a skipped image is correct, not a failure/);
-  assert.match(doc, /never force the analogy/);
-  assert.doesNotMatch(doc, /‘On my Tuesday at 7am this means …’/, "doctrine must not quote a mandatory closer");
+// 23. Persona lens renders the persona's own guidance verbatim — no per-category doctrine.
+test("persona lens carries guidance verbatim with no category doctrine", () => {
+  const lens = buildCategoryLens("UNIQUEGUIDANCEZZZ");
+  assert.match(lens, /UNIQUEGUIDANCEZZZ/);
+  assert.match(lens, /subordinate to contract/);
+  assert.doesNotMatch(lens, /doctrine/i);
 });
 
 // 24. Plan §4.4 — perspective and clarify task blocks bound restatement.
@@ -428,15 +428,15 @@ test("settled registry returns only consensus established items", () => {
     facts: [], files: [], version: 1, updated_round: 1, updated_contribution_id: 1,
   });
   const states = [
-    { id: "a", name: "A", tier: "mid", state: mkState() },
-    { id: "b", name: "B", tier: "mid", state: mkState(["Solo claim [#9]"]) },
+    { id: "a", name: "A", category: "mid", state: mkState() },
+    { id: "b", name: "B", category: "mid", state: mkState(["Solo claim [#9]"]) },
   ];
   const settled = getSettledItems(states);
   assert.equal(settled.length, 1);
   assert.equal(settled[0].text, shared);
   assert.deepEqual([...settled[0].holders].sort(), ["A", "B"]);
   assert.deepEqual(getSettledItems([]), []);
-  assert.deepEqual(getSettledItems([{ id: "a", name: "A", tier: "mid", state: emptyAgentState() }]), []);
+  assert.deepEqual(getSettledItems([{ id: "a", name: "A", category: "mid", state: emptyAgentState() }]), []);
   // Solo room (1 holder) can never settle.
   assert.deepEqual(getSettledItems([states[0]]), []);
 });
@@ -464,8 +464,8 @@ test("user prompt renders settled registry late-only with consensus", () => {
     facts: [], files: [], version: 1, updated_round: 1, updated_contribution_id: 1,
   });
   const allStates = [
-    { id: "a", name: "A", tier: "mid", state: mkState() },
-    { id: "b", name: "B", tier: "mid", state: mkState(["Solo [#9]"]) },
+    { id: "a", name: "A", category: "mid", state: mkState() },
+    { id: "b", name: "B", category: "mid", state: mkState(["Solo [#9]"]) },
   ];
   const lateUser = buildAgentUserPrompt(
     participant(), "", [], 4, "Q", [], "", [], [], null, false, true, {},
@@ -621,7 +621,7 @@ test("finalizeSynthesis warns on unsupported citations", () => {
     question: "Q",
     rounds: [{ number: 1, contributions: [{ id: 7, participant_id: "a", type: "contribution", content: LONG_QUANTUM }] }],
   };
-  const participants = [{ config: { id: "a", name: "A", tier: "senior" }, status: "listening" }];
+  const participants = [{ config: { id: "a", name: "A", category: "senior" }, status: "listening" }];
   const text = [
     "## Executive Summary",
     "We should adopt the rollback strategy [#7].",

@@ -1,5 +1,4 @@
-/** Shared seniority ordering — civilian ranks at mid per utils/tier.js. */
-export const TIER_ORDER = { junior: 0, mid: 1, senior: 2, principal: 3, civilian: 1 };
+/** Persona categories are organizational labels only — no ordering, no seniority. */
 
 /** Word/sentence contracts — generous ranges favouring thoroughness; never cost-cut.
  * Agents may use up to the top of the range; synthesis prefers the upper half.

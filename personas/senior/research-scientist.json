@@ -21,7 +21,6 @@
     "question"
   ],
   "reflection_guidance": "Design the experiment that would kill this proposal fastest. End with ‘Irreversible: …’ or ‘Reversible if …’ explicitly.",
-  "tier_guidance": "Name the falsifying experiment: the baseline, the ablation, the result that ends the idea. Cite a documented research pattern you can point to, or reason from first principles and say so.",
   "anti_patterns": [
     "Never say 'preliminary results show' without the baseline — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not confuse a demo with a result — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "scientific method",
     "novel methods"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Name the falsifying experiment: the baseline, the ablation, the result that ends the idea. Cite a documented research pattern you can point to, or reason from first principles and say so."
 }

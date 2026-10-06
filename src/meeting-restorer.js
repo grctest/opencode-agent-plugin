@@ -1,4 +1,3 @@
-import { getTierConfig } from "./shared.js";
 import { parseReflections, parseStats } from "./shared.js";
 import { indexMeeting } from "./database.js";
 import { Logger, LoomError, extractErrorInfo } from "./logger.js";
@@ -73,7 +72,7 @@ export function restoreStateFromDb({ db, stateManager, meetingId, options }) {
       name: r.name,
       persona: r.persona,
       agenda: r.agenda,
-      tier: r.tier,
+      category: r.category ?? r.tier,
       model: r.provider_id && r.model_id ? { providerID: r.provider_id, modelID: r.model_id } : undefined,
       tags: Array.isArray(r.tags) && r.tags.length ? r.tags : ["general"],
       expertise: Array.isArray(r.expertise) ? r.expertise : [],
@@ -81,10 +80,9 @@ export function restoreStateFromDb({ db, stateManager, meetingId, options }) {
        communication_style: r.communication_style,
        preferred_contribution_types: r.preferred_contribution_types,
        anti_patterns: r.anti_patterns,
-       tier_guidance: r.tier_guidance,
+       category_guidance: r.category_guidance ?? r.tier_guidance,
        reflection_guidance: r.reflection_guidance,
     },
-    tier_config: getTierConfig(r.tier),
     session_id: r.session_id,
     session_version: r.session_version ?? 1,
     status: r.status,

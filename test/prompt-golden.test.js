@@ -23,10 +23,10 @@ function fixture() {
   const agentTools = structuredClone(DEFAULT_CONFIG.agentTools);
   const participant = {
     config: {
-      id: "golden_mid", name: "Golden Analyst", tier: "mid",
+      id: "golden_mid", name: "Golden Analyst", category: "mid",
       persona: "A golden-fixture analyst persona with enough characters to render verbatim in the identity block here.",
       agenda: "Hold the golden line: verify prompt structure across refactors.",
-      tier_guidance: "Make one tradeoff explicit.",
+      category_guidance: "Make one tradeoff explicit.",
       reflection_guidance: "Map through fixture lens.",
       known_biases: ["over-weights fixture scope"],
       communication_style: "Terse and exact.",
@@ -42,7 +42,7 @@ function fixture() {
     "## Question\nShould we ship?\n\n## Agreements\n- Ship Friday",
     [{ id: 7, participant_id: "peer_a", content: "Ship Friday is risky without a rollback plan." }],
     2, "Should we ship?", ["engineering"], "golden context", [],
-    [{ id: "peer_a", name: "Peer A", tier: "senior", status: "listening", persona: "Risk person." }],
+    [{ id: "peer_a", name: "Peer A", category: "senior", status: "listening", persona: "Risk person." }],
     { stance: "Ship with rollback.", established: ["rollback plan exists"], contested: [], open: ["downtime budget?"], facts: ["Rollback tested twice [#7]"], files: ["src/ship.ts"], version: 2, updated_round: 2, updated_contribution_id: 7 },
     false, true, { skillState: true },
     { maxRounds: 4, contextWindow: 200000, steeringHint: "consolidate before new threads", lastRoundSummary: "Round 1 opened the rollback thread." },
@@ -56,7 +56,7 @@ const EXPECTED_SYS = {
   "Agenda": "4d2e63f50946",
   "Disposition": "9a865e4985dd",
   "Craft (positive anti-patterns)": "48d74bb60ea6",
-  "Tier Doctrine": "367eda2be27c",
+  "Persona Lens": "58099a30ac4a",
   "Mode": "e2f67c7b37e3",
   // loom_summon is capability-gated: this fixture runs with no embedding model
   // loaded (the default in a fresh checkout), so the tool ladder omits it from
@@ -68,7 +68,8 @@ const EXPECTED_SYS = {
   "Research Tools — Tool Ladder": "e600daede5fa",
   "WHEN TO PASS": "4013ac9d695b",
   // Tool calls are unlimited: the contract states no per-turn tool-call limit.
-  "OUTPUT CONTRACT — read last, it governs; in conflict it wins": "e3067b79181f",
+  // Category rename: clause 5 precedence reads persona/category guidance.
+  "OUTPUT CONTRACT — read last, it governs; in conflict it wins": "c0fe2b079b44",
 };
 
 const EXPECTED_USER = {

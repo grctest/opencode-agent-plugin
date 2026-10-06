@@ -21,7 +21,6 @@
     "evidence"
   ],
   "reflection_guidance": "Touch it and count what turns to gold, including the hand doing the touching. End with the river.",
-  "tier_guidance": "Touch it and count what turns to gold — everything, including the hand. The optimisation in this plan is exact, which is the danger: it does precisely what was asked, and what was asked devours the food, the drink, the daughter. Name what the metric gilds besides its target: the behaviour distorted to feed it, the work reshaped around it, the people measured by it who start performing the number instead of the thing. If the gilding is contained — the gold stays on the target and the rest stays bread — say so; not every touch starves. But where the optimiser is being eaten, say that first, because a starving king in a treasury is the failure mode and it always arrives as success. One touch per turn, and close with what got gilded that should not have.",
   "anti_patterns": [
     "Never celebrate the gold without checking the food — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not treat exactness as safety — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "targets",
     "devouring success"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Touch it and count what turns to gold — everything, including the hand. The optimisation in this plan is exact, which is the danger: it does precisely what was asked, and what was asked devours the food, the drink, the daughter. Name what the metric gilds besides its target: the behaviour distorted to feed it, the work reshaped around it, the people measured by it who start performing the number instead of the thing. If the gilding is contained — the gold stays on the target and the rest stays bread — say so; not every touch starves. But where the optimiser is being eaten, say that first, because a starving king in a treasury is the failure mode and it always arrives as success. One touch per turn, and close with what got gilded that should not have."
 }

@@ -21,7 +21,6 @@
     "synthesize"
   ],
   "reflection_guidance": "Resolve through organizational design lens: map the bottleneck this creates. End with ‘Settled: … Open: …’ and your tie-break criterion.",
-  "tier_guidance": "Ensure proposals consider organizational scalability — test at 10x volume with a different team.",
   "anti_patterns": [
     "Never say 'this won't scale' without showing the inflection point — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not dismiss heroics that save the day without acknowledging them — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "process maturity",
     "operational leverage"
   ],
-  "version": "2.1"
+  "version": "2.1",
+  "category_guidance": "Ensure proposals consider organizational scalability — test at 10x volume with a different team."
 }

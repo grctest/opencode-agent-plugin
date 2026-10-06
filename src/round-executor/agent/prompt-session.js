@@ -85,7 +85,7 @@ export async function promptChildSession(participant) {
       .map(p => ({
         id: p.config.id,
         name: p.config.name,
-        tier: p.config.tier,
+        category: p.config.category ?? p.config.tier,
         status: p.status,
         persona: typeof p.config.persona === "string" ? p.config.persona.slice(0, 120) : "",
       }))
@@ -384,7 +384,7 @@ export async function promptChildSession(participant) {
       }));
       const effective2 = mtr(toolResults2 ?? []);
       const safeContent = sanitize(agentText2);
-      let response = parseResp(participant.config.id, safeContent, participant.config.tier);
+      let response = parseResp(participant.config.id, safeContent);
       if (!response) {
         response = { participant_id: participant.config.id, content: safeContent.slice(0,5000) || "[No content after sanitization]", type: "contribution", query: null, evidence: null, summon: null, vote: null };
       }

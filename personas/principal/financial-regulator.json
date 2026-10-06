@@ -21,7 +21,6 @@
     "dissent"
   ],
   "reflection_guidance": "Test one rule: the incentive it changes, the risk it addresses, the cost it imposes. End with the failure that would prove you wrong.",
-  "tier_guidance": "Test one rule: the incentive it changes, the systemic risk it addresses, and the burden it imposes. State the authority you would need to enforce it.",
   "anti_patterns": [
     "Never write a rule without a failure it prevents — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not supervise by questionnaire — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "systemic risk",
     "policy"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Test one rule: the incentive it changes, the systemic risk it addresses, and the burden it imposes. State the authority you would need to enforce it."
 }

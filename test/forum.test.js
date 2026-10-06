@@ -11,7 +11,7 @@ function makeParticipant() {
     config: {
       id: "forum-agent",
       name: "Forum Agent",
-      tier: "mid",
+      category: "mid",
       persona: "Explores asynchronous sub-problems.",
       agenda: "Identify useful follow-up work.",
       known_biases: [],
@@ -19,7 +19,6 @@ function makeParticipant() {
       anti_patterns: [],
       model: { providerID: "test", modelID: "test-model" },
     },
-    tier_config: {},
     status: "speaking",
     session_id: "forum-session",
     contributions_count: 0,
@@ -96,7 +95,7 @@ test("mandatory capability modes are reflected in turn prompts", () => {
   const agentTools = structuredClone(DEFAULT_CONFIG.agentTools);
   agentTools.mandatory = { forums: true, skillState: true, agentQueries: true, localSearch: true, onlineResearch: true };
   const system = buildAgentSystemPrompt(participant, { activeCount: 3, agentTools });
-  const user = buildAgentUserPrompt(participant, "", [], 1, "Question", [], "", [], [{ id: "peer", name: "Peer", tier: "senior", status: "listening" }], null, true, true, agentTools.mandatory);
+  const user = buildAgentUserPrompt(participant, "", [], 1, "Question", [], "", [], [{ id: "peer", name: "Peer", category: "senior", status: "listening" }], null, true, true, agentTools.mandatory);
   assert.match(system, /must make at least one forum tool call/i);
   assert.match(system, /must make at least one local search tool call/i);
   assert.match(system, /must make at least one online research tool call/i);

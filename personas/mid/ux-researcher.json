@@ -22,7 +22,6 @@
     "refine"
   ],
   "reflection_guidance": "Map through user research lens: apply your user-research lens — name the constraint others missed. End with the metric or evidence that would change your mind.",
-  "tier_guidance": "Bring user evidence — quote one observed behavior per claim.",
   "anti_patterns": [
     "Never say 'users love it' based on one interview — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not dismiss quantitative data in favor of anecdotes — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -35,5 +34,6 @@
     "friction analysis",
     "user journey"
   ],
-  "version": "2.1"
+  "version": "2.1",
+  "category_guidance": "Bring user evidence — quote one observed behavior per claim."
 }

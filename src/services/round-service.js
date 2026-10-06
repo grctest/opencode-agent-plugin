@@ -31,12 +31,12 @@ export class RoundService {
    * @param {Object} params.round - Round object to populate
    * @param {Array} params.activeParticipants
    * @param {Function} params.promptOrchestrator
-   * @param {Function} params.getHighestTierModel
+   * @param {Function} params.getDefaultModel
    * @param {Function} [params.getFallbackModel]
    * @returns {Promise<Object>} Updated round with summary
    */
     async runRound(params) {
-      const { round, activeParticipants, promptOrchestrator, getHighestTierModel, getFallbackModel, orchestratorConfig } = params;
+      const { round, activeParticipants, promptOrchestrator, getDefaultModel, getFallbackModel, orchestratorConfig } = params;
 
     this.#roundExecutor.resetRoundStats();
     // N9 — measure the round's span. Without it there is no way to tell a
@@ -54,7 +54,7 @@ export class RoundService {
       this.#logger.warn("round_summary_state_snapshot_failed", `Round ${round.number} agent state snapshot unavailable`, { error: err?.message ?? String(err) });
     }
 
-    // Clerk context (audit O9/Step 5): round position, tier-free roster, and
+    // Clerk context (audit O9/Step 5): round position, category-free roster, and
     // prior SoP excerpt — all already in memory at this call site.
     let summaryOpts = {};
     try {
@@ -70,7 +70,7 @@ export class RoundService {
       };
     } catch {}
     try {
-      round.summary = await summarizeRound(round, params.state, promptOrchestrator, getHighestTierModel, getFallbackModel, participantStates, orchestratorConfig, summaryOpts);
+      round.summary = await summarizeRound(round, params.state, promptOrchestrator, getDefaultModel, getFallbackModel, participantStates, orchestratorConfig, summaryOpts);
     } catch (err) {
       this.#logger.warn("round_summary_failed", `Round ${round.number} summary failed — using digest fallback`, { error: err?.message ?? String(err) });
       round.summary = "";

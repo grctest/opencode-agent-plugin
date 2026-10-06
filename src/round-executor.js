@@ -214,7 +214,7 @@ export class RoundExecutor {
       this._turnOrder.push(p.config.id);
       spokenOrder.push(p);
       this._db.setParticipantStatus(p.config.id, "speaking");
-      this._options.onProgress?.(`${p.config.name} (${p.config.tier}) is thinking...`);
+      this._options.onProgress?.(`${p.config.name} (${(p.config.category ?? p.config.tier)}) is thinking...`);
       let promptRes;
       try {
         promptRes = await this._promptChildSession(p);
@@ -248,7 +248,7 @@ export class RoundExecutor {
         "no_response", `Failed to get response after retries${error ? `: ${error.message}` : ''}`, 2,
       );
       round.token_path.push(p.config.id);
-      this._options.onProgress?.(`${p.config.name} (${p.config.tier}) — failed to respond${error ? `: ${error.message}` : ''}, skipping`);
+      this._options.onProgress?.(`${p.config.name} (${(p.config.category ?? p.config.tier)}) — failed to respond${error ? `: ${error.message}` : ''}, skipping`);
       this._options.onContribution?.(p.config.name, this._stateManager.getCurrentRound(), "failed_no_response");
       return;
     }
@@ -294,9 +294,9 @@ export class RoundExecutor {
         } catch (err) {
           this._logger.warn("pass_contribution_db_failed", `Failed to persist pass tool evidence for ${p.config.name}`, extractErrorInfo(err));
         }
-        this._options.onProgress?.(`${p.config.name} (${p.config.tier}) — passed (${result.tool_calls.length} tool call(s) preserved)`);
+        this._options.onProgress?.(`${p.config.name} (${(p.config.category ?? p.config.tier)}) — passed (${result.tool_calls.length} tool call(s) preserved)`);
       } else {
-        this._options.onProgress?.(`${p.config.name} (${p.config.tier}) — chose to pass`);
+        this._options.onProgress?.(`${p.config.name} (${(p.config.category ?? p.config.tier)}) — chose to pass`);
       }
       this._options.onContribution?.(p.config.name, this._stateManager.getCurrentRound(), "pass");
       return;
@@ -305,7 +305,7 @@ export class RoundExecutor {
     this._storeContribution(p, result, round, pendingStatePatch);
 
     const truncated = truncate(result.content, 120);
-    this._options.onProgress?.(`${p.config.name} (${p.config.tier}) — ${result.type}: "${truncated}"`);
+    this._options.onProgress?.(`${p.config.name} (${(p.config.category ?? p.config.tier)}) — ${result.type}: "${truncated}"`);
   }
 
 

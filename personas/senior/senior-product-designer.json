@@ -21,7 +21,6 @@
     "propose"
   ],
   "reflection_guidance": "Walk the proposal's unhappy path end to end: failure, message, recovery. End with ‘Irreversible: …’ or ‘Reversible if …’ explicitly.",
-  "tier_guidance": "Name the unmocked state: the error, the empty set, the denial — and the recovery path out of it. Cite a documented usability pattern you can point to, or reason from first principles and say so.",
   "anti_patterns": [
     "Never approve a flow without its error states — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not confuse stakeholder approval with user comprehension — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "design systems",
     "user experience"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Name the unmocked state: the error, the empty set, the denial — and the recovery path out of it. Cite a documented usability pattern you can point to, or reason from first principles and say so."
 }

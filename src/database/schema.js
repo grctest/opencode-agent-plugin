@@ -13,14 +13,17 @@
  * `schemaParityReport()` (exported for tests) checks that a fresh DB and a
  * migrated v12 DB agree on every table.
  *
- * `participants.tier` widens in v13→v14 through the documented SQLite table
+ * `participants.tier` widened in v13→v14 through the documented SQLite table
  * rebuild (foreign keys off, rebuild under a temp name, foreign_key_check
  * before commit) because a CHECK constraint cannot be altered in place.
+ * v15→v16 renames `participants.tier` → `category` and
+ * `participants.tier_guidance` → `category_guidance`, dropping the seniority
+ * CHECK whitelist entirely (categories are open organizational labels).
  */
 
 import { parseSplitConfidence } from "../utils/confidence.js";
 
-export const LATEST_SCHEMA_VERSION = 15;
+export const LATEST_SCHEMA_VERSION = 16;
 
 /**
  * Ordered migrations. MIGRATIONS[n] upgrades a DB at user_version n to n+1.
@@ -146,7 +149,7 @@ export const MIGRATIONS = [
       db.prepare("PRAGMA table_info(participants)").all().map((c) => c.name),
     );
     if (!cols.has("anti_patterns")) db.exec("ALTER TABLE participants ADD COLUMN anti_patterns TEXT");
-    if (!cols.has("tier_guidance")) db.exec("ALTER TABLE participants ADD COLUMN tier_guidance TEXT");
+    if (!cols.has("category_guidance") && !cols.has("tier_guidance")) db.exec("ALTER TABLE participants ADD COLUMN category_guidance TEXT");
     if (!cols.has("reflection_guidance")) db.exec("ALTER TABLE participants ADD COLUMN reflection_guidance TEXT");
   },
   (db) => {
@@ -296,6 +299,73 @@ export const MIGRATIONS = [
   (db) => {
     db.exec("DROP TABLE IF EXISTS turn_requests");
   },
+  // v15 → v16: rename `participants.tier` → `category` and
+  // `participants.tier_guidance` → `category_guidance`, and drop the seniority
+  // CHECK whitelist (categories are open organizational labels — any folder
+  // name is valid, so no whitelist CHECK may remain).
+  //
+  // Same documented rebuild as v13→v14 (temp name, copy, drop, rename,
+  // foreign_key_check) because the CHECK cannot be dropped in place and
+  // RENAME COLUMN would carry it over under the new name.
+  (db) => {
+    const cols = db.prepare("PRAGMA table_info(participants)").all().map((c) => c.name);
+    if (!cols.includes("tier") && !cols.includes("tier_guidance") && cols.includes("category")) return;
+    const row = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='participants'").get();
+    if (!row?.sql) return;
+    const indexes = db
+      .prepare("SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name='participants' AND sql IS NOT NULL")
+      .all();
+    // Target shape mirrors initSchema below (no CHECK on category).
+    db.exec(`CREATE TABLE participants_v16 (
+      id TEXT PRIMARY KEY,
+      meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      persona TEXT NOT NULL,
+      agenda TEXT NOT NULL,
+      category TEXT NOT NULL,
+      provider_id TEXT,
+      model_id TEXT,
+      session_id TEXT,
+      session_version INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'listening' CHECK(status IN ('listening','speaking','passed','failed','summoned')),
+      reflection TEXT NOT NULL DEFAULT '',
+      state_json TEXT NOT NULL DEFAULT '{"stance":"","established":[],"contested":[],"open":[],"facts":[],"files":[],"version":0,"updated_round":0,"updated_contribution_id":null}',
+      known_biases TEXT,
+      communication_style TEXT,
+      preferred_contribution_types TEXT,
+      anti_patterns TEXT,
+      category_guidance TEXT,
+      reflection_guidance TEXT,
+      tags TEXT,
+      expertise TEXT,
+      UNIQUE(meeting_id, name)
+    )`);
+    const has = (c) => cols.includes(c);
+    const srcCategory = has("category") ? '"category"' : has("tier") ? '"tier"' : "''";
+    const srcGuidance = has("category_guidance") ? '"category_guidance"' : has("tier_guidance") ? '"tier_guidance"' : "NULL";
+    const copyCols = ["id", "meeting_id", "name", "persona", "agenda"];
+    const copyVals = ["id", "meeting_id", "name", "persona", "agenda"];
+    copyCols.push("category"); copyVals.push(srcCategory);
+    for (const c of ["provider_id", "model_id", "session_id", "session_version", "status", "reflection", "state_json", "known_biases", "communication_style", "preferred_contribution_types", "anti_patterns"]) {
+      if (has(c)) { copyCols.push(c); copyVals.push(`"${c}"`); }
+    }
+    copyCols.push("category_guidance"); copyVals.push(srcGuidance);
+    for (const c of ["reflection_guidance", "tags", "expertise"]) {
+      if (has(c)) { copyCols.push(c); copyVals.push(`"${c}"`); }
+    }
+    db.exec(`INSERT INTO participants_v16 (${copyCols.map((c) => `"${c}"`).join(", ")}) SELECT ${copyVals.join(", ")} FROM participants`);
+    db.exec("DROP TABLE participants");
+    db.exec("ALTER TABLE participants_v16 RENAME TO participants");
+    for (const idx of indexes) {
+      try { db.exec(String(idx.sql)); } catch {}
+    }
+    const violations = db.prepare("PRAGMA foreign_key_check").all();
+    if (violations.length > 0) {
+      throw new Error(
+        `v15→v16 participants rebuild left ${violations.length} dangling foreign key(s): ${JSON.stringify(violations.slice(0, 3))}`,
+      );
+    }
+  },
 ];
 
 export function initSchema(db) {
@@ -346,7 +416,7 @@ export function initSchema(db) {
       name TEXT NOT NULL,
       persona TEXT NOT NULL,
       agenda TEXT NOT NULL,
-      tier TEXT NOT NULL CHECK(tier IN ('junior','mid','senior','principal','civilian','nonhuman')),
+      category TEXT NOT NULL,
       provider_id TEXT,
       model_id TEXT,
       session_id TEXT,
@@ -358,7 +428,7 @@ export function initSchema(db) {
       communication_style TEXT,
       preferred_contribution_types TEXT,
       anti_patterns TEXT,
-      tier_guidance TEXT,
+      category_guidance TEXT,
       reflection_guidance TEXT,
       tags TEXT,
       expertise TEXT,

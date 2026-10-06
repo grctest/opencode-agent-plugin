@@ -29,11 +29,8 @@ function personasBasePath() {
 function userPersonasPath() {
   const configDir = process.env.LOOM_CONFIG_DIR || join(resolveOpencodeConfigDir(), "loom");
   const personasDir = join(configDir, "personas");
-  const tiers = ["junior", "mid", "senior", "principal", "civilian", "nonhuman"];
-  for (const tier of tiers) {
-    if (existsSync(join(personasDir, tier))) {
-      return personasDir;
-    }
+  if (existsSync(personasDir)) {
+    return personasDir;
   }
   return null;
 }
@@ -66,7 +63,16 @@ export function loadDomainVocabulary() {
   return domainVocabCache;
 }
 
-const VALID_TIERS = new Set(["junior", "mid", "senior", "principal", "civilian", "nonhuman"]);
+/**
+ * Persona categories are organizational labels only (folder names under
+ * personas/). Any non-empty folder name is a valid category — there is no
+ * whitelist, no seniority, and no per-category rule anywhere in the engine.
+ */
+const CATEGORY_RE = /^[a-z0-9][a-z0-9-]*$/;
+export function isValidCategory(value) {
+  return typeof value === "string" && CATEGORY_RE.test(value);
+}
+const KNOWN_CATEGORIES = new Set(["junior", "mid", "senior", "principal", "civilian", "nonhuman"]);
 function validatePersona(persona) {
   const errors = [];
   if (!persona.name || typeof persona.name !== "string") errors.push("name required");
@@ -79,7 +85,8 @@ function validatePersona(persona) {
   else if (persona.agenda.length > 2000) errors.push("agenda must be ≤2000 chars");
   const hasTags = persona.tags || persona.domains || persona.domain;
   if (!hasTags || (typeof hasTags !== "string" && !Array.isArray(hasTags))) errors.push("tags required");
-  if (persona.tier && !VALID_TIERS.has(persona.tier)) errors.push(`tier must be one of ${[...VALID_TIERS].join(",")}`);
+  if (persona.category !== undefined && !isValidCategory(persona.category)) errors.push(`category must match ${CATEGORY_RE}`);
+  if (persona.tier !== undefined && !isValidCategory(persona.tier)) errors.push(`tier (legacy alias of category) must match ${CATEGORY_RE}`);
   if (persona.expertise && !Array.isArray(persona.expertise) && typeof persona.expertise !== "string") errors.push("expertise must be string or array");
   return errors;
 }
@@ -93,7 +100,7 @@ const THIRD_PERSON_VERB_RE = /^(Assumes|May\s|Resists|Over-?weights?|Over-?relie
 // Injected budgets in prompts/agent.js (truncateAtSentence/sanitize caps).
 // Validation ceilings are higher, so over-budget text is silently truncated
 // with an ellipsis and no warning (audit N12). Warn at load instead.
-const INJECTED_BUDGETS = { persona: 2000, agenda: 1000, tier_guidance: 1500, communication_style: 800 };
+const INJECTED_BUDGETS = { persona: 2000, agenda: 1000, category_guidance: 1500, communication_style: 800 };
 // Embodiment lint (corpus audit §12): these personas are text agents whose
 // only instruments are read/glob/grep, websearch/webfetch, allowlisted bash,
 // and the loom peer tools. An instruction that tells one to use a body, a
@@ -102,7 +109,7 @@ const INJECTED_BUDGETS = { persona: 2000, agenda: 1000, tier_guidance: 1500, com
 const EMBODIED_DEVICE = /\b(keyboard-only|screen reader running|smartphone|badge data|microphone|haptic|gyroscope|with a keyboard alone|test every flow with)\b/i;
 const EMBODIED_ACTION = /\b(run the proposal on|run the procedure|replicate the procedure|measure the (yield|latency|weight|temperature)|produce live|transcribe hours|hold the switch|navigate with a keyboard|by feel|you watch (thirty|people|a team|a class))\b/i;
 const EMBODIED_EXTERNAL = /\b(call the customer|email the|interview the user|watch a user session|shadow the developer)\b/i;
-const INSTRUCTION_FIELDS = ["agenda", "tier_guidance", "reflection_guidance", "anti_patterns"];
+const INSTRUCTION_FIELDS = ["agenda", "category_guidance", "reflection_guidance", "anti_patterns"];
 const IDENTITY_FIELDS = ["persona", "communication_style"];
 export function lintEmbodiment(persona) {
   const warnings = [];
@@ -127,7 +134,7 @@ export function lintEmbodiment(persona) {
 // Run-on lint (corpus audit F2): template concatenation without terminal
 // punctuation ("failure modes You ask…") renders as a typo in ## Identity.
 const RUNON_RE = /[a-z] (You|Your)( [a-z])/;
-const RUNON_FIELDS = ["persona", "agenda", "tier_guidance", "reflection_guidance", "communication_style"];
+const RUNON_FIELDS = ["persona", "agenda", "category_guidance", "reflection_guidance", "communication_style"];
 export function lintRunons(persona) {
   const warnings = [];
   for (const f of RUNON_FIELDS) {
@@ -137,42 +144,38 @@ export function lintRunons(persona) {
   return warnings;
 }
 
-// Circularity lint (corpus audit F1): tier_guidance that IS the agenda's first
+// Circularity lint (corpus audit F1): category_guidance that IS the agenda's first
 // sentence verbatim carries no new information — extend it with an operational
 // clause instead. Shared domain vocabulary alone is fine (same lens, two jobs:
-// assignment in ## Agenda, instruction in ## Tier Doctrine).
+// assignment in ## Agenda, instruction in ## Persona Lens).
 export function lintCircularity(persona) {
   const norm = (s) => String(s ?? "").trim().replace(/\.$/, "").toLowerCase();
   const head = norm(String(persona?.agenda ?? "").split(".")[0]);
-  if (head.length > 10 && norm(persona?.tier_guidance) === head) {
-    return ["tier_guidance duplicates the agenda verbatim — extend with an operational clause"];
+  const guidance = persona?.category_guidance ?? persona?.tier_guidance;
+  if (head.length > 10 && norm(guidance) === head) {
+    return ["category_guidance duplicates the agenda verbatim — extend with an operational clause"];
   }
   return [];
 }
 
-// Range-rule lint (corpus audit §6.1): every civilian lens needs its exit
-// clause, or the hobby-trap returns the next time someone edits the file.
-export function lintRangeRule(persona, tier) {
-  if (tier === "civilian" && typeof persona?.tier_guidance === "string" && !/at most (one|once)/.test(persona.tier_guidance)) {
-    return ["civilian tier_guidance lacks the range rule (at most one analogy + off-ramp)"];
+export function discoverCategories(base) {
+  let entries = [];
+  try {
+    entries = readdirSync(base, { withFileTypes: true });
+  } catch {
+    return [...KNOWN_CATEGORIES];
   }
-  return [];
-}
-
-// Depth lint (audit P2-E): senior/principal voices carry the hardest judgments
-// but every bundled senior/principal persona description is <200 chars, so the
-// model fills the gap with stereotype. Non-blocking: warn the author.
-export function lintDepth(persona, tier) {
-  if ((tier === "senior" || tier === "principal") && typeof persona?.persona === "string" && persona.persona.length < 200) {
-    return [`${tier} persona description is only ${persona.persona.length} chars — under 200 risks stereotype fill; expand with domain specifics`];
-  }
-  return [];
+  const dirs = entries.filter((e) => e.isDirectory() && isValidCategory(e.name)).map((e) => e.name);
+  if (dirs.length === 0) return [...KNOWN_CATEGORIES];
+  return dirs.sort();
 }
 
 export function lintTruncation(persona) {
   const warnings = [];
+  const guidance = persona?.category_guidance ?? persona?.tier_guidance;
+  const view = { ...persona, category_guidance: guidance };
   for (const [field, budget] of Object.entries(INJECTED_BUDGETS)) {
-    const v = persona?.[field];
+    const v = view?.[field];
     if (typeof v === "string" && v.length > budget) {
       warnings.push(`${field} is ${v.length} chars but only ${budget} are injected into prompts — excess is truncated`);
     }
@@ -192,6 +195,15 @@ export function lintPersonaStyle(persona) {
 
 function normalizePersona(persona) {
   const out = { ...persona };
+  // Legacy aliases: tier_guidance → category_guidance, tier → category.
+  if (out.tier_guidance !== undefined && out.category_guidance === undefined) {
+    out.category_guidance = out.tier_guidance;
+  }
+  delete out.tier_guidance;
+  if (out.tier !== undefined && out.category === undefined) {
+    out.category = out.tier;
+  }
+  delete out.tier;
   if (typeof out.domain === "string" && !out.tags) {
     out.tags = [out.domain];
     delete out.domain;
@@ -214,61 +226,58 @@ function normalizePersona(persona) {
 }
 
 function loadPersonasFromPath(base) {
-  const tiers = ["junior", "mid", "senior", "principal", "civilian", "nonhuman"];
+  const categories = discoverCategories(base);
   const result = {};
   let totalLoaded = 0;
   let totalRejected = 0;
 
-  for (const tier of tiers) {
+  for (const category of categories) {
     try {
-      const tierDir = join(base, tier);
-      if (!existsSync(tierDir)) {
-        const legacyPath = join(base, `${tier}.json`);
+      const categoryDir = join(base, category);
+      if (!existsSync(categoryDir)) {
+        const legacyPath = join(base, `${category}.json`);
         if (existsSync(legacyPath)) {
-          result[tier] = loadLegacyPersonaFile(legacyPath, tier);
-          totalLoaded += result[tier].length;
+          result[category] = loadLegacyPersonaFile(legacyPath, category);
+          totalLoaded += result[category].length;
         } else {
-          result[tier] = [];
+          result[category] = [];
         }
         continue;
       }
 
-      result[tier] = [];
-      const files = readdirSync(tierDir).filter((f) => f.endsWith(".json"));
+      result[category] = [];
+      const files = readdirSync(categoryDir).filter((f) => f.endsWith(".json"));
       for (const file of files) {
         try {
-          const filePath = join(tierDir, file);
+          const filePath = join(categoryDir, file);
           const data = readFileSync(filePath, "utf-8");
           const p = JSON.parse(data);
           const errors = validatePersona(p);
           if (errors.length > 0) {
-            composerLogger.warn("invalid_persona", `Invalid persona at ${tier}/${file} (${p.name ?? "unnamed"})`, { errors });
+            composerLogger.warn("invalid_persona", `Invalid persona at ${category}/${file} (${p.name ?? "unnamed"})`, { errors });
             totalRejected++;
             continue;
           }
-          result[tier].push(normalizePersona(p));
+          result[category].push(normalizePersona(p));
           totalLoaded++;
           for (const w of lintPersonaStyle(p)) {
-            composerLogger.warn("persona_style", `Style: ${tier}/${file} (${p.name ?? "unnamed"}) — ${w}`);
+            composerLogger.warn("persona_style", `Style: ${category}/${file} (${p.name ?? "unnamed"}) — ${w}`);
           }
           for (const w of lintTruncation(p)) {
-            composerLogger.warn("persona_truncated", `Truncation: ${tier}/${file} (${p.name ?? "unnamed"}) — ${w}`);
+            composerLogger.warn("persona_truncated", `Truncation: ${category}/${file} (${p.name ?? "unnamed"}) — ${w}`);
           }
-          for (const w of lintDepth(p, tier)) {
-            composerLogger.warn("persona_thin", `Depth: ${tier}/${file} (${p.name ?? "unnamed"}) — ${w}`);
-          }
-          for (const w of [...lintRunons(p), ...lintCircularity(p), ...lintRangeRule(p, tier), ...lintEmbodiment(p)]) {
-            composerLogger.warn("persona_lint", `Lint: ${tier}/${file} (${p.name ?? "unnamed"}) — ${w}`);
+          for (const w of [...lintRunons(p), ...lintCircularity(p), ...lintEmbodiment(p)]) {
+            composerLogger.warn("persona_lint", `Lint: ${category}/${file} (${p.name ?? "unnamed"}) — ${w}`);
           }
         } catch (err) {
-          composerLogger.warn("persona_load_failed", `Failed to load persona from ${tier}/${file}`, { error: err.message });
+          composerLogger.warn("persona_load_failed", `Failed to load persona from ${category}/${file}`, { error: err.message });
           totalRejected++;
         }
       }
     } catch (err) {
-      if (!result[tier]) result[tier] = [];
+      if (!result[category]) result[category] = [];
       if (err.code !== "ENOENT") {
-        composerLogger.warn("persona_load_failed", `Failed to load personas from ${base}/${tier}/`, { error: err.message });
+        composerLogger.warn("persona_load_failed", `Failed to load personas from ${base}/${category}/`, { error: err.message });
       }
     }
   }
@@ -280,7 +289,7 @@ function loadPersonasFromPath(base) {
   return result;
 }
 
-function loadLegacyPersonaFile(filePath, tier) {
+function loadLegacyPersonaFile(filePath, category) {
   try {
     const data = readFileSync(filePath, "utf-8");
     const raw = JSON.parse(data);
@@ -289,7 +298,7 @@ function loadLegacyPersonaFile(filePath, tier) {
       const p = raw[i];
       const errors = validatePersona(p);
       if (errors.length > 0) {
-        composerLogger.warn("invalid_persona", `Invalid persona at ${tier}[${i}] (${p.name ?? "unnamed"})`, { errors });
+        composerLogger.warn("invalid_persona", `Invalid persona at ${category}[${i}] (${p.name ?? "unnamed"})`, { errors });
         continue;
       }
       personas.push(normalizePersona(p));
@@ -341,13 +350,13 @@ function loadPersonas() {
 
   if (userPath) {
     const userPersonas = loadPersonasFromPath(userPath);
-    for (const [tier, personas] of Object.entries(userPersonas)) {
+    for (const [category, personas] of Object.entries(userPersonas)) {
       if (personas.length > 0) {
-        if (!result[tier]) result[tier] = [];
-        const existingNames = new Set(result[tier].map((p) => p.name));
+        if (!result[category]) result[category] = [];
+        const existingNames = new Set(result[category].map((p) => p.name));
         for (const p of personas) {
           if (!existingNames.has(p.name)) {
-            result[tier].push(p);
+            result[category].push(p);
           }
         }
       }

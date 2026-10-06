@@ -52,10 +52,10 @@ export function extractBalancedJsonArray(text) {
  * @param {string} params.roundSummary - Summary of the completed round
  * @param {Array} params.participants - All participants
  * @param {Function} params.promptFn - Function to prompt the orchestrator LLM
- * @param {Function} params.getHighestTierModel - Function to get the highest tier model
+ * @param {Function} params.getDefaultModel - Function to get the default model
  * @returns {Promise<string[]>} Ordered array of participant IDs
  */
-export async function planTurnOrder({ stateOfPlay, roundSummary, participants, promptFn, getHighestTierModel, getOrchestratorModel, orchestratorConfig }) {
+export async function planTurnOrder({ stateOfPlay, roundSummary, participants, promptFn, getDefaultModel, getOrchestratorModel, orchestratorConfig }) {
   const config = getConfig();
 
   const defaultOrder = () => participants
@@ -63,7 +63,7 @@ export async function planTurnOrder({ stateOfPlay, roundSummary, participants, p
     .map((p) => p.config.id);
 
   const fastPathModelObj = config.fastPathModelObj ?? (config.fastPathModel ? (() => { const idx = config.fastPathModel.indexOf("/"); if (idx === -1) return null; return { providerID: config.fastPathModel.slice(0, idx), modelID: config.fastPathModel.slice(idx + 1) }; })() : null);
-  const model = getOrchestratorModel?.() ?? fastPathModelObj ?? getHighestTierModel();
+  const model = getOrchestratorModel?.() ?? fastPathModelObj ?? getDefaultModel();
   if (!model) {
     return defaultOrder();
   }

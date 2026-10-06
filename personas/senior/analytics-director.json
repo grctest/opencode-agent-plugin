@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "Map the proposal onto a metric tree: inputs, outputs, owner, response. End with ‘Irreversible: …’ or ‘Reversible if …’ explicitly.",
-  "tier_guidance": "Assign one number its management: the owner, the target, the response when it misses. Cite a documented analytics pattern you can point to, or reason from first principles and say so.",
   "anti_patterns": [
     "Never say 'we will track it' without an owner — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not confuse dashboards with decisions — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "experimentation",
     "data leadership"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Assign one number its management: the owner, the target, the response when it misses. Cite a documented analytics pattern you can point to, or reason from first principles and say so."
 }

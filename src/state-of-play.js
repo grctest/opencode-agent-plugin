@@ -269,10 +269,10 @@ function formatRoundLines(round, participants) {
     if (c.type === "pass") continue;
     const participant = participants.find((p) => p.config.id === c.participant_id);
     const name = participant?.config.name ?? c.participant_id;
-    const tier = participant?.config.tier ?? "mid";
+    const category = participant?.config.category ?? participant?.config.tier ?? "";
     // The [#id] is the citation key the synthesis doctrine requires (audit A1):
     // every contribution line must carry the id finalizeSynthesis validates against.
-    lines.push(`- **[#${c.id ?? "?"}] ${name}** (${tier}, ${c.type}): ${c.content}`);
+    lines.push(`- **[#${c.id ?? "?"}] ${name}** (${category}, ${c.type}): ${c.content}`);
   }
 
   if (round.summary) {
@@ -293,7 +293,7 @@ export function formatFinalRoundTranscript(data, participants) {
     return cut + "\n...[truncated]";
   };
   const appendReflections = (lines) => {
-    const reflections = (participants || []).filter((p) => p.reflection).map((p) => `**${p.config.name} (${p.config.tier}) reflection**: ${p.reflection.slice(0, 800).replace(/\n/g, " ")}`);
+    const reflections = (participants || []).filter((p) => p.reflection).map((p) => `**${p.config.name} (${p.config.category ?? p.config.tier ?? ""}) reflection**: ${p.reflection.slice(0, 800).replace(/\n/g, " ")}`);
     if (reflections.length > 0) {
       lines.push("### Final Reflections");
       lines.push(...reflections);
@@ -310,10 +310,10 @@ export function formatFinalRoundTranscript(data, participants) {
     // looks complete to the synthesizer, an explicit marker does not (audit D9/5.3).
     const blocks = states.map((p) => {
       const name = p.config?.name ?? p.config?.id ?? "unknown";
-      const tier = p.config?.tier ?? "";
+      const category = p.config?.category ?? p.config?.tier ?? "";
       const stance = String(p.state_stance ?? "").slice(0, STATE_PATCH_CAPS.stanceMax).replace(/\n/g, " ");
       const bullets = (p.state_bullets ?? []).slice(0, 4).map((b) => String(b).slice(0, STATE_PATCH_CAPS.bulletMax).replace(/\n/g, " "));
-      return `**${name} (${tier})${p.state_version ? ` v${p.state_version}` : ""}**: ${stance || "(no stance)"}${bullets.length > 0 ? ` — ${bullets.join(" | ")}` : ""}`;
+      return `**${name} (${category})${p.state_version ? ` v${p.state_version}` : ""}**: ${stance || "(no stance)"}${bullets.length > 0 ? ` — ${bullets.join(" | ")}` : ""}`;
     });
     const out = ["### Agent States (final)", "_Positions only — cite weave [#id] for every contested claim; bullets without a [#id] trail are unattributed positions, not findings._"];
     let used = out.join("\n").length;

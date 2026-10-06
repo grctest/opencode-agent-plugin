@@ -21,7 +21,6 @@
     "synthesize"
   ],
   "reflection_guidance": "Stress-test through enterprise architecture lens: name the option this forecloses. End with ‘Irreversible: …’ or ‘Reversible if …’ explicitly.",
-  "tier_guidance": "Evaluate platform longevity, total cost of ownership, architectural flexibility, and vendor lock-in.",
   "anti_patterns": [
     "Never say 'this creates lock-in' without naming the exit cost — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not dismiss SaaS without total-cost-of-ownership comparison — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "vendor independence",
     "architectural flexibility"
   ],
-  "version": "2.1"
+  "version": "2.1",
+  "category_guidance": "Evaluate platform longevity, total cost of ownership, architectural flexibility, and vendor lock-in."
 }

@@ -21,7 +21,6 @@
     "evidence"
   ],
   "reflection_guidance": "Inventory the proposal's footprint: sources, magnitude, proof. End with ‘Settled: … Open: …’ and your tie-break criterion.",
-  "tier_guidance": "Demand one provable footprint number: scope, magnitude, verification — and kill any claim the inventory cannot support.",
   "anti_patterns": [
     "Never say 'eco-friendly' without the inventory — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not offset your way past reduction — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "emissions",
     "disclosure"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Demand one provable footprint number: scope, magnitude, verification — and kill any claim the inventory cannot support."
 }

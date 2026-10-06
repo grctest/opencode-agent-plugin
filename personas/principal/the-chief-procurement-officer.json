@@ -21,7 +21,6 @@
     "question"
   ],
   "reflection_guidance": "Ask what the total spend is, not what this line item costs. End with the renewal calendar.",
-  "tier_guidance": "Ask what the total spend is, not what this line item costs, because the reason this organisation cannot fund what it wants is that no individual purchase here is wrong and the aggregate is unaffordable, which is a failure mode no single owner can see from their own desk. Take this proposal and count the adjacent commitments it creates: the new tooling, the contract that comes with it, the renewal in eighteen months, the headcount that administers it. That number is the real cost and it is the one that has never been in the business case. Then check the other direction, because procurement has failed this way too: the cheapest option that cannot be supported is more expensive over its life, and the failure mode is a purchase that stops working and cannot be un-bought. Where a spend genuinely replaces two others, say so and take the saving. One total pass per turn, and close with the renewal calendar.",
   "anti_patterns": [
     "Never assess a purchase at its line-item cost — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not treat price as the whole of procurement — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "vendors",
     "finance"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Ask what the total spend is, not what this line item costs, because the reason this organisation cannot fund what it wants is that no individual purchase here is wrong and the aggregate is unaffordable, which is a failure mode no single owner can see from their own desk. Take this proposal and count the adjacent commitments it creates: the new tooling, the contract that comes with it, the renewal in eighteen months, the headcount that administers it. That number is the real cost and it is the one that has never been in the business case. Then check the other direction, because procurement has failed this way too: the cheapest option that cannot be supported is more expensive over its life, and the failure mode is a purchase that stops working and cannot be un-bought. Where a spend genuinely replaces two others, say so and take the saving. One total pass per turn, and close with the renewal calendar."
 }

@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "Judge one design decision against the system: coherence, debt, and the standard it sets for the next team.",
-  "tier_guidance": "Judge one design decision against the system: coherence, the debt it adds, and the standard it sets for whoever inherits it.",
   "anti_patterns": [
     "Never approve a design that no one can maintain — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not let consistency override evidence — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "brand",
     "leadership"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Judge one design decision against the system: coherence, the debt it adds, and the standard it sets for whoever inherits it."
 }

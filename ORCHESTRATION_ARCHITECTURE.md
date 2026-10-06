@@ -1,6 +1,6 @@
 # The Loom Orchestration Architecture
 
-**Schema version:** `PRAGMA user_version = 14` (`LATEST_SCHEMA_VERSION` in `src/database/schema.js`) — `meetings.status ∈ {initializing,weaving,converged,timeout,cancelled,aborted,max_rounds_reached}` — fresh DBs enforce `CHECK(status IN …)` + `CHECK(tier IN …)` + foreign keys. v5→v6 adds the SKILL.state layer: `participants.state_json` (JSON `AgentState`) + append-only `state_patches` audit table (see §12). v6→v7 persists the complete persona behavior contract; v9→v10 stamps the effective orchestrator config; v11→v12 adds the meeting-level settled registry; **v12→v13 lands the confidence split and drops the orphaned `artifacts.dissent` column**; **v13→v14 widens `participants.tier` to admit the `nonhuman` tier**. Rule: any change to the DDL ships with `LATEST_SCHEMA_VERSION += 1` *and* a matching `MIGRATIONS[]` entry in the same change, so two structurally different databases can never claim one version number (N2). Static schema and bundle checks cover the current version; live Bun/opencode integration remains environment-dependent.
+**Schema version:** `PRAGMA user_version = 16` (`LATEST_SCHEMA_VERSION` in `src/database/schema.js`) — `meetings.status ∈ {initializing,weaving,converged,timeout,cancelled,aborted,max_rounds_reached}` — fresh DBs enforce `CHECK(status IN …)` + foreign keys. Persona categories carry no CHECK whitelist: any folder name is a valid category. v5→v6 adds the SKILL.state layer: `participants.state_json` (JSON `AgentState`) + append-only `state_patches` audit table (see §12). v6→v7 persists the complete persona behavior contract; v9→v10 stamps the effective orchestrator config; v11→v12 adds the meeting-level settled registry; **v12→v13 lands the confidence split and drops the orphaned `artifacts.dissent` column**; **v13→v14 widens `participants.tier` to admit the `nonhuman` tier**; **v15→v16 renames `participants.tier` → `category` and `participants.tier_guidance` → `category_guidance` and drops the seniority whitelist**. Rule: any change to the DDL ships with `LATEST_SCHEMA_VERSION += 1` *and* a matching `MIGRATIONS[]` entry in the same change, so two structurally different databases can never claim one version number (N2). Static schema and bundle checks cover the current version; live Bun/opencode integration remains environment-dependent.
 
 A complete technical reference for how the Loom multi-agent deliberation system works, from user input to final output. Every LLM prompt, every data structure, every decision point. Written for someone who cannot read the source code.
 
@@ -53,10 +53,10 @@ A complete technical reference for how the Loom multi-agent deliberation system 
 
 When a user approves and starts a deliberation from the dashboard Setup tab, this is what happens:
 
-0. **Setup approval (always required)** — The user enters a question, previews the suggested room, and must approve every persona seat (agreeing with the suggestion or replacing seats from the persona catalog) plus the per-tier model assignments before anything runs. Nothing starts without explicit `approved: true`.
+0. **Setup approval (always required)** — The user enters a question, previews the suggested room, and must approve every persona seat (agreeing with the suggestion or replacing seats from the persona catalog) plus the per-seat model assignments before anything runs. Nothing starts without explicit `approved: true`.
 0a. **Deliberation mode (Setup tab §5, defaults to Plan)** — Plan is read-only: agents propose diffs (``` file=src/... ```) but the `write`/`edit` tools are never offered. Build offers `write`/`edit` and renders BUILD prompt wording, so agents may apply live file edits after reading. The choice is stored in `features.buildMode` (strict `=== true`, persisted in `feature_toggles_json`) and flows into `agentTools.buildMode` for the meeting, its extensions, and resumes — pick Build before starting whenever the deliberation is expected to produce live changes.
-1. **Room composition** — The question is analyzed for complexity, then a team of at least 2 agents is suggested without any LLM call (auto-composed rooms run 2–7 seats; manually-built rooms have no maximum): each per-tier role is filled by the persona (from `personas/<tier>/*.json`) whose embedded description is most semantically similar to the question (via `PersonaIndex`). Each agent gets a name, persona description, agenda, tier, and topic tags.
-2. **Model assignment** — Each agent is assigned an LLM model. Principal/senior tiers get the top available model (the session's model when present); remaining tiers get the next-best unused models. Explicit per-tier `models` selections from Setup win over automatic assignment. The discovery pool can be narrowed with the dashboard model filter (Setup tab, Section 26).
+1. **Room composition** — The question is analyzed for complexity, then a team of at least 2 agents is suggested without any LLM call (auto-composed rooms run 2–7 seats; manually-built rooms have no maximum): each seat is filled by the persona (from `personas/<category>/*.json`) whose embedded description is most semantically similar to the question (via `PersonaIndex`). Each agent gets a name, persona description, agenda, category, and topic tags.
+2. **Model assignment** — Each agent is assigned an LLM model at random from the enabled pool; categories never influence the draw. Explicit per-seat `model` selections from Setup win over random assignment. The discovery pool can be narrowed with the dashboard model filter (Setup tab, Section 26).
 3. **Rounds execute** — A round is a single sequential prompt phase:
    - Each agent speaks in turn via a **round-scoped ephemeral session** (one session per participant per round), seeing the state of play, its own bounded state, and current-round contributions.
    - Agents write **untyped prose** — there are no `[PROPOSE]`/`[CHALLENGE]` type tags anymore; following agents interpret content directly. Agents call `loom_pass` when they have nothing new to contribute.
@@ -83,22 +83,22 @@ user confirms, the room is exactly what they chose.
 
 There is **no LLM domain detection** — the now-removed `domain` pipeline was replaced by embedding-based selection.
 
-1. All personas are loaded from JSON files (`personas/<tier>/*.json`, or legacy `<tier>.json` arrays) and embedded into a process-scoped in-memory store via `PersonaIndex.indexAll()` (no database tables; a store-level fingerprint skips re-indexing when the model and catalog are unchanged). Cache key is `model|quant|persona|tier|dim|fingerprint` (model-aware, `TUNING.EMBEDDING_CACHE_MAX` LRU).
+1. All personas are loaded from JSON files (`personas/<category>/*.json`, or legacy `<category>.json` arrays) and embedded into a process-scoped in-memory store via `PersonaIndex.indexAll()` (no database tables; a store-level fingerprint skips re-indexing when the model and catalog are unchanged). Cache key is `model|quant|persona|category|dim|fingerprint` (model-aware, `TUNING.EMBEDDING_CACHE_MAX` LRU).
 2. The question (plus any context) is embedded once with the query-side prefix.
 3. `PersonaIndex.searchAll(queryEmbedding)` brute-forces cosine over the **entire** store and returns every persona sorted ascending by L2-equivalent distance (`sqrt(2 * cosineDistance)`), ties broken by name so the list is reproducible.
 4. `buildRankingResult` slices the top `autoSelectSeats` as `selected`, keeping `selected` a strict prefix of `ranked` so the dialog can highlight a contiguous block.
 
-**The catalog is one flat pool.** This is the whole rule, and it replaced a much larger one: no tier quota, no per-tier top-N cut, no cross-tier promotion, and no separate non-human pool. Three of the nearest personas may all be `junior`; `nonhuman` is ranked alongside the rest with no special-casing and can occupy any position. Composition is deterministic content-similarity; no `seed` parameter exists — rooms are reproducible given the same question and persona index. `test/persona-ranking.test.js` pins each of these as an invariant, including that a distant persona is never promoted over a nearer one.
+**The catalog is one flat pool.** This is the whole rule, and it replaced a much larger one: no category quota, no per-category top-N cut, no cross-category promotion, and no separate non-human pool. Three of the nearest personas may all be `junior`; `nonhuman` is ranked alongside the rest with no special-casing and can occupy any position. Composition is deterministic content-similarity; no `seed` parameter exists — rooms are reproducible given the same question and persona index. `test/persona-ranking.test.js` pins each of these as an invariant, including that a distant persona is never promoted over a nearer one.
 
-**There is no embedder → there is no auto-select.** Ranking is the one operation that cannot degrade: a keyword-overlap score is not a weaker version of a vector ranking, it is a different answer to a different question, and it fails worst exactly where it matters — a question whose vocabulary overlaps no persona's prose ranks everyone at zero and presents an arbitrary order as relevance. So `rankAllPersonas` throws with `code: "embedder_unavailable"`, `POST /api/room/preview` maps that to **503**, and the Setup tab omits the auto-select button entirely. Manual persona selection is unaffected. The keyword fallback path and all the tier machinery it mirrored have been deleted, so there is no second selection path left to keep in sync.
+**There is no embedder → there is no auto-select.** Ranking is the one operation that cannot degrade: a keyword-overlap score is not a weaker version of a vector ranking, it is a different answer to a different question, and it fails worst exactly where it matters — a question whose vocabulary overlaps no persona's prose ranks everyone at zero and presents an arbitrary order as relevance. So `rankAllPersonas` throws with `code: "embedder_unavailable"`, `POST /api/room/preview` maps that to **503**, and the Setup tab omits the auto-select button entirely. Manual persona selection is unaffected. The keyword fallback path and all the seniority machinery it mirrored have been deleted, so there is no second selection path left to keep in sync.
 
-**The dialog.** The endpoint returns `{ ranked: [{name, tier, distance}], selected, auto_select_count }` — identity and distance only, since full persona text for 349 entries would be megabytes and the client already holds the catalog from `/api/personas`. `RoomSelectionDialog` renders all 349 in distance order with a similarity bar, pre-selects the top 3, and lets the user toggle any of the six seniorities off, select or deselect anyone, and confirm. Three invariants. First, filtering only ever *removes* rows — it never re-sorts, because the list *is* the similarity ordering and re-sorting by tier would be making a different claim about relevance. Second, hiding a tier does not evict already-selected seats from it; the footer says so explicitly when that happens. Third, and purely mechanical: **the list viewport has a height floor** (`min-h-[220px]` on the wrapper, and `MIN_LIST_HEIGHT` clamping the measured value).
+**The dialog.** The endpoint returns `{ ranked: [{name, category, distance}], selected, auto_select_count }` — identity and distance only, since full persona text for 349 entries would be megabytes and the client already holds the catalog from `/api/personas`. `RoomSelectionDialog` renders all 349 in distance order with a similarity bar, pre-selects the top 3, and lets the user toggle any of the six categories off, select or deselect anyone, and confirm. Three invariants. First, filtering only ever *removes* rows — it never re-sorts, because the list *is* the similarity ordering and re-sorting by category would be making a different claim about relevance. Second, hiding a category does not evict already-selected seats from it; the footer says so explicitly when that happens. Third, and purely mechanical: **the list viewport has a height floor** (`min-h-[220px]` on the wrapper, and `MIN_LIST_HEIGHT` clamping the measured value).
 
 That third one exists because the measurement and the rendered height are mutually
 dependent — the `List`'s height is what gives the wrapper its height. With no floor
-that is a feedback loop: hiding every tier unmounts the `List`, leaving only a
+that is a feedback loop: hiding every category unmounts the `List`, leaving only a
 one-line empty-state message, which collapses the wrapper, which makes
-`ResizeObserver` record the collapsed height, which means re-showing tiers mounts a
+`ResizeObserver` record the collapsed height, which means re-showing categories mounts a
 `List` one row tall — permanently, because the short `List` keeps the wrapper short.
 The floor makes collapse unreachable rather than merely unlikely.
 
@@ -113,26 +113,26 @@ Seats are written only on confirm, so a cancelled dialog leaves the room untouch
 
 4. Meeting-level `tags` are derived from the selected participants' most common tags (top 3).
 
-**Custom rooms:** Approving an edited participant list in the Setup tab skips composition entirely. Each participant requires `name`, `persona`, `agenda`, `tier` (an `id` is derived; `tags`/`expertise` default to `["general"]`). Persona similarity needs no database access, so composition imposes no ordering constraint on the meeting-row insert.
+**Custom rooms:** Approving an edited participant list in the Setup tab skips composition entirely. Each participant requires `name`, `persona`, `agenda`, `category` (an `id` is derived; `tags`/`expertise` default to `["general"]`). Persona similarity needs no database access, so composition imposes no ordering constraint on the meeting-row insert.
 
-### 3c. The `nonhuman` Tier: Sentience as a Lens
+### 3c. The `nonhuman` Category: Sentience as a Lens
 
-Five tiers describe persona purpose and voice, and a sixth exists to hold personas
+Five categories describe persona flavor, and a sixth exists to hold personas
 that are **not people**. `personas/nonhuman/*.json` ships 77 sentient non-humans —
 animal minds with alien senses, the hadal deep, intelligence in another medium,
 collective minds, folkloric beings, planetary-scale systems, and personified
 abstractions. None of them is a human job role: a CISO here would duplicate a
-principal persona, and `test/nonhuman-tier.test.js` fails on any persona named
+principal persona, and `test/nonhuman-category.test.js` fails on any persona named
 after an office.
 
-Three properties make the tier work, none of which come for free from "it's just
-another tier":
+Three properties make the category work, none of which come for free from "it's just
+another category":
 
-1. **It is a tier, not a reserved seat** (Step 2). Because selection ranks one flat pool, a non-human persona is seated exactly when it is among the nearest to the question — never because a slot was held for it. Nothing guarantees the tier appears; equally, nothing caps it or promotes it. A reef question legitimately seats three non-humans, and an API-design question legitimately seats none.
-2. **A non-human seat is a peer, not a curiosity.** `getRightsForTier("nonhuman")`
-   returns `call_vote: true`. Granting a lesser right would make a whale's dissent
-   procedurally weaker than a CFO's, which is precisely the failure the tier
-   exists to prevent.
+1. **It is a category, not a reserved seat** (Step 2). Because selection ranks one flat pool, a non-human persona is seated exactly when it is among the nearest to the question — never because a slot was held for it. Nothing guarantees the category appears; equally, nothing caps it or promotes it. A reef question legitimately seats three non-humans, and an API-design question legitimately seats none.
+2. **A non-human seat is a peer, not a curiosity.** All seats hold identical
+   rights (`BASE_RIGHTS`: contribute + call_vote). Granting a lesser right would
+   make a whale's dissent procedurally weaker than a CFO's, which is precisely
+   the failure the category exists to prevent.
 3. **The authoring law inverts.** For a human persona the rule is *the lens is not
    a body*; for a non-human being whose senses are not ours it becomes positive:
    **a being's senses become the evidence it demands, not the actions it takes.**
@@ -142,25 +142,23 @@ another tier":
    instruction field, and the rewrite is not a concession: a genuinely alien sense
    is an unimpeachable reason to distrust the room's default epistemics.
 
-A question with no non-human neighbour simply ranks the tier low. `test/nonhuman-tier.test.js` asserts that the tier remains a first-class tier everywhere one is named (loader, dashboard, DB CHECK, packaging) and that no quota has crept back in.
+A question with no non-human neighbour simply ranks the category low. `test/nonhuman-category.test.js` asserts that the category remains a first-class category everywhere one is named (loader, dashboard, DB, packaging) and that no quota has crept back in.
 
 ### Persona Loading
 
-Personas live under `<plugin>/personas/<tier>/*.json` (tier directories), with fallback to legacy `<tier>.json` arrays. User-authored personas in `~/.config/opencode/loom/personas/<tier>/` are merged in (user personas take precedence, loaded after the bundled ones; duplicates by name are dropped). Persona files are cached for 60 seconds. Each persona is validated: `name` present, `persona` >50 chars, `agenda` >20 chars, and `tags` present (legacy `domain`/`domains` fields are normalized to `tags`). Each persona has `name`, `persona` (description), `agenda`, `tags`, optional `expertise`, `known_biases`, `communication_style`, `preferred_contribution_types`, `anti_patterns`, `tier_guidance`, and `reflection_guidance`.
+Personas live under `<plugin>/personas/<category>/*.json` (category directories — any folder name is a valid category), with fallback to legacy `<category>.json` arrays. User-authored personas in `~/.config/opencode/loom/personas/<category>/` are merged in (user personas take precedence, loaded after the bundled ones; duplicates by name are dropped). Persona files are cached for 60 seconds. Each persona is validated: `name` present, `persona` >50 chars, `agenda` >20 chars, and `tags` present (legacy `domain`/`domains` fields are normalized to `tags`; legacy `tier`/`tier_guidance` fields are normalized to `category`/`category_guidance`). Each persona has `name`, `persona` (description), `agenda`, `tags`, optional `expertise`, `known_biases`, `communication_style`, `preferred_contribution_types`, `anti_patterns`, `category_guidance`, and `reflection_guidance`.
 
-The six tiers are `junior`, `mid`, `senior`, `principal`, `civilian` (all human) and `nonhuman` (see §3c) — 349 bundled personas in total. `VALID_TIERS` (`composer/persona-loader.js`), `ALLOWED_TIERS` (`dashboard/server/control.js`), `KNOWN_TIERS` (`stores/setupForm.js`, `dashboard/server/orchestrator-preview.js`), `validTier` (`dashboard/components/Badges.jsx`) and the `participants.tier` CHECK all carry the same six, and `test/nonhuman-tier.test.js` asserts every one of them — a tier valid in the loader but not in the dashboard persists a participant that cannot be read back.
+The six bundled categories are `junior`, `mid`, `senior`, `principal`, `civilian` (all human) and `nonhuman` (see §3c) — 349 bundled personas in total. There is no whitelist anywhere: `isValidCategory` accepts any folder-name slug, Setup validation accepts any category slug, and `participants.category` carries no CHECK. `test/nonhuman-category.test.js` asserts the category survives the loader, dashboard, DB, and packaging with no quota.
 
 ### Step 3: Model Assignment
 
 Models are discovered from the connected providers via `discoverModels()` (`provider.providers` API), with the user session's current model recorded as `sessionModel`. The discovery result may be narrowed by the dashboard model filter (Setup tab, Section 26). If a session model can't be discovered the discovery result is empty (agents just carry their session model).
 
-`assignModelsToParticipants()` uses `assignModelsByTier()` (a single deterministic engine shared with the Setup tab suggestion preview so the two always agree):
+`assignModelsToParticipants()` draws a random model per seat from the enabled pool (`assignModelsRandomly()`; an injectable RNG keeps tests deterministic):
 
-- Models are sorted by capability score (active + context window + reasoning capability; cost is display-only).
-- **Principal and senior** roles get the top model — the session model if present, else the best available.
-- **Mid and junior** roles get the next-best unused models.
+- Categories never influence the draw — persona categories are organizational labels only.
 - Per-participant overrides (`model` object or `model_override` string) always win.
-- **Model diversity** (`modelDiversity`, default true): when more distinct models are available than tiers, each *individual* agent gets a unique model (best models to the highest tiers), so participants don't all use the same LLM.
+- The Setup tab pre-fills each seat's model picker from the preview's flat `suggested_models` (parallel to the selected seats, likewise random); every picker remains changeable to any enabled model before start.
 
 ### Step 4: Session Creation
 
@@ -170,22 +168,15 @@ Models are discovered from the connected providers via `discoverModels()` (`prov
 
 ## 3. Agent Architecture
 
-### The Tier System
+### The Category System
 
-Four tiers describe persona purpose and voice; they grant no decision advantage:
+Categories (`junior`, `mid`, `senior`, `principal`, `civilian`, `nonhuman` folders) organize persona flavors for browsing; they grant nothing and drive no engine behavior:
 
-| Tier | Rights |
-|------|--------|
-| junior | contribute |
-| mid | contribute, call_vote |
-| senior | contribute, call_vote |
-| principal | contribute, call_vote |
+- Every seat holds identical rights (`BASE_RIGHTS`: contribute + call_vote). Actual tool availability is governed by the `agentTools` config (Section 20), never by category.
+- Categories play no part in turn-order decisions — the orchestrator orders participants by evidence, urgency, and recency — and no part in model assignment, which is random per seat.
+- A sixth category, `nonhuman`, holds personas that are not people (§3c). It is never reserved and wins a seat only on distance, like any other category.
 
-Tiers are setup-phase labels differentiating persona purpose, and seniority plays no part in turn-order decisions — the orchestrator orders participants by evidence, urgency, and recency. `civilian` shares mid rights via `utils/tier.js`. The rights flags are vestigial metadata — actual tool availability is governed by the `agentTools` config (Section 20), not tier rights.
-
-A sixth tier, `nonhuman`, holds personas that are not people and carries the same rights (§3c). It is a **candidate pool rather than a seniority band**: it appears in no role chain, is never reserved, and wins a seat only on distance. Model assignment ranks it after `mid` in `assignModelsByTier`'s `priorityOrder` so a seated non-human agent is not handed the weakest model in the room.
-
-**Behavioral guidance is defined in each persona's `tier_guidance` field** (the old static `getPromptForTier` tier strings still exist but are deprecated fallbacks). Each persona file is self-contained and user-editable:
+**Behavioral guidance is defined in each persona's `category_guidance` field** (legacy `tier_guidance` is accepted as an alias). Each persona file is self-contained and user-editable:
 
 ```json
 {
@@ -194,7 +185,7 @@ A sixth tier, `nonhuman`, holds personas that are not people and carries the sam
   "agenda": "Identify security implications...",
   "tags": ["engineering", "security"],
   "expertise": ["threat modeling", "authentication"],
-  "tier_guidance": "Prioritize accuracy and risk assessment. Cite patterns from experience. Be conservative with claims but commit fully when you do. Flag irreversible decisions.",
+  "category_guidance": "Prioritize accuracy and risk assessment. Cite patterns from experience. Be conservative with claims but commit fully when you do. Flag irreversible decisions.",
   "reflection_guidance": "When reflecting, walk through the exploit path of the proposed change. Ask: 'What new attack surface does this create?' or 'What existing defense does this weaken?'",
   "anti_patterns": ["Sweeping generalizations without evidence"]
 }
@@ -214,7 +205,7 @@ Each agent is loaded from a JSON persona file that also describes how to behave 
   "known_biases": ["Over-indexes on security at the expense of UX"],
   "communication_style": "Technical and precise, references OWASP and CVE patterns",
   "preferred_contribution_types": ["challenge", "refine"],
-  "tier_guidance": "Prioritize accuracy and risk assessment...",
+  "category_guidance": "Prioritize accuracy and risk assessment...",
   "reflection_guidance": "When reflecting, walk through the exploit path..."
 }
 ```
@@ -230,17 +221,17 @@ Each agent is loaded from a JSON persona file that also describes how to behave 
     name: "Security Engineer",
     persona: "A seasoned application security engineer...",
     agenda: "Ensure all proposed solutions meet security baselines...",
-    tier: "senior",
+    category: "senior",
     tags: ["engineering", "security"],
     expertise: ["authentication", "encryption", "threat modeling"],
     known_biases: ["Over-indexes on security at the expense of UX"],
     communication_style: "Technical and precise",
     preferred_contribution_types: ["challenge", "refine"],
     anti_patterns: [...],
-    tier_guidance: "...", reflection_guidance: "...",
+    category_guidance: "...", reflection_guidance: "...",
     model: { providerID: "anthropic", modelID: "claude-sonnet-4-20250514" }
   },
-  tier_config: { rights: { contribute: true, request_turn: true, call_vote: true } },
+  // (no tier_config: every seat holds identical rights; categories are labels only)
   embedding: Float32Array /* loaded at init from persona embeddings when the embedder is available */,
   status: "listening",      // listening | speaking | passed | failed | muted (muted only appears in restored data from older meetings)
   reflection: "The JWT migration makes sense, but token revocation is unsolved.",   // maintained via perspective-mode query answers
@@ -261,7 +252,7 @@ Every agent LLM call involves two prompts: a **system prompt** (identity + rules
 Every agent receives this system prompt (built by `buildAgentSystemPrompt`). Condensed structure:
 
 ```
-You are **Security Engineer** (senior) — a deliberator in "Loom."
+You are **Security Engineer** (senior) — a deliberator in "Loom." (the parenthetical is the organizational category label)
 
 ## Identity
 A seasoned application security engineer with 12 years of experience in
@@ -280,9 +271,9 @@ new attack surfaces.
 ## Craft (positive anti-patterns)
 - Instead of: "Sweeping generalizations without evidence" → say what you observed, with [#id] or Source.
 
-## Tier Doctrine
-Senior doctrine: name the irreversible commitment and its mitigation/rollback...
-<persona tier_guidance>
+## Persona Lens
+Persona lens (subordinate to contract):
+<persona category_guidance>
 
   ## OUTPUT CONTRACT — read this last, it governs your response
 
@@ -680,7 +671,7 @@ Constraints:
 Respond with ONLY a JSON array: ["id1", "id2", "id3"]
 ```
 
-No tier or seniority appears anywhere in the planner prompt by design — tiers are setup-phase purpose labels, not ordering inputs. The planner runs on the **fast-path model** when configured (otherwise the highest-tier model). The response is parsed with a balanced-bracket JSON-array scan (`extractBalancedJsonArray`) so a `]` inside a quoted ID can't truncate it, and validated against the participant list (unknown IDs dropped, missing participants appended). On LLM failure or when no model is available, the default composition order of non-failed participants is used.
+No category or seniority appears anywhere in the planner prompt by design — categories are setup-phase organizational labels, not ordering inputs. The planner runs on the **fast-path model** when configured (otherwise the default seat model). The response is parsed with a balanced-bracket JSON-array scan (`extractBalancedJsonArray`) so a `]` inside a quoted ID can't truncate it, and validated against the participant list (unknown IDs dropped, missing participants appended). On LLM failure or when no model is available, the default composition order of non-failed participants is used.
 
 The ordered list is stored as `planned_turn_order` (and its head as `next_speaker_id`) and applied by `RoundInitializer.filterActiveParticipants()` next round.
 
@@ -806,7 +797,7 @@ The only live write path is **`loom_query` with mode `perspective`**: when an ag
 ### Where Reflections Surface
 
 - **Peer-facing prompts:** query/vote/summon targets see `Your current position: "<reflection>"` so they answer consistently with their latest stance (Section 22).
-- **Synthesis:** participants with reflections get a `### Final Reflections` block appended to the transcript digest (`**Name (tier) reflection**: …`).
+- **Synthesis:** participants with reflections get a `### Final Reflections` block appended to the transcript digest (`**Name (category) reflection**: …`).
 - **Dashboard:** participant cards show a reflection indicator; legacy `reflection`-type contribution rows still render in the timeline.
 - **Skip-passed logic:** a passed agent is kept active if they carry a reflection (Section 6).
 
@@ -822,7 +813,7 @@ After each round, a summary is generated via LLM — every round, unconditionall
 
 ### LLM Clerk Summary
 
-`summarizeRound` picks the highest-tier model (or fallback model), filters to substantive contributions (`contribution` + `query_response`/`evidence_response` etc., legacy `propose`/`challenge` included; `evidence_response` only when tool-backed; `[PASS]` excluded) via `SUBSTANTIVE_TYPES` (`src/utils/contribution-types.js`, `vote_tally` removed — outcome via invoker prose) and prompts:
+`summarizeRound` picks the default model (first seat carrying a model, else first available — or fallback model), filters to substantive contributions (`contribution` + `query_response`/`evidence_response` etc., legacy `propose`/`challenge` included; `evidence_response` only when tool-backed; `[PASS]` excluded) via `SUBSTANTIVE_TYPES` (`src/utils/contribution-types.js`, `vote_tally` removed — outcome via invoker prose) and prompts:
 
 ```
 You are a concise deliberation clerk. Summarize round 3 in 60-90 words —
@@ -894,7 +885,7 @@ agendas — including the synthesizer persona you may have borrowed.
 Rules:
 1. Prefer citing [#id] or State-of-Play for every Decision and Action Item.
    Novel synthesized fixes are marked "Proposed — synthesized from [#id]".
-2. Every Dissenting View must name holder (name + tier) and [#id].
+2. Every Dissenting View must name holder (name + category) and [#id].
    Unresolved Objections are mandatory dissent.
 3. Do not invent numbers, dates, costs, tool results, or participant positions
    not in transcript/State-of-Play. If evidence conflicts, state both and set
@@ -960,7 +951,7 @@ One word: High | Medium | Low — justified against the rubric:
 - Low = significant disagreement remains, or many failed/passed, or ungrounded key claims
 ```
 
-Only a bounded transcript is included (`formatFinalRoundTranscript`): every contribution line carries its stable `- **[#id] Name** (tier, type)` citation key (`pass` rows excluded); earlier rounds appear as ~2-line digests, the last 2 rounds in full (24k chars total, digests truncated first — the final round and state blocks are never cut for digests), plus each participant's stored reflection under `### Final Reflections`. Unresolved objections come from `collectObjections()` (untyped dissent found by keyword + `critique_response` type): an objection cited (`[#id]`) by the final round is resolved; one merely sharing vocabulary is `stale` (background, not live dissent); the rest stay unresolved and are mandatory dissent.
+Only a bounded transcript is included (`formatFinalRoundTranscript`): every contribution line carries its stable `- **[#id] Name** (category, type)` citation key (`pass` rows excluded); earlier rounds appear as ~2-line digests, the last 2 rounds in full (24k chars total, digests truncated first — the final round and state blocks are never cut for digests), plus each participant's stored reflection under `### Final Reflections`. Unresolved objections come from `collectObjections()` (untyped dissent found by keyword + `critique_response` type): an objection cited (`[#id]`) by the final round is resolved; one merely sharing vocabulary is `stale` (background, not live dissent); the rest stay unresolved and are mandatory dissent.
 
 ### Required-Section Repair
 
@@ -1049,7 +1040,7 @@ If the draft is accurate, grounded, and complete, respond with exactly: [NO_CHAN
 
 ### Immutability
 
-`getState()` returns deep-frozen copies (`structuredClone` + `deepFreeze` + `freezeTierConfig`; `createMeetingConfig()` deep-freezes via `JSON.parse(JSON.stringify(TUNING))` per-meeting). All mutations go through targeted `StateManager` methods:
+`getState()` returns deep-frozen copies (`structuredClone` + `deepFreeze`; `createMeetingConfig()` deep-freezes via `JSON.parse(JSON.stringify(TUNING))` per-meeting). All mutations go through targeted `StateManager` methods:
 
 ```javascript
 stateManager.transitionTo("weaving")            // validated TRANSITIONS table
@@ -1069,7 +1060,7 @@ stateManager.getAllParticipantStates()          // SoP aggregation + synthesis
 
 ### Persistence
 
-State is persisted via the `PersistenceService` after each round finalization and after terminal events (`#persistState`), atomically updating `meetings` with round, status, fabric, state_of_play, next_speaker_id, stats, and degradation flags. Fresh DBs enforce participant tier/status checks, foreign keys, and `UNIQUE(meeting_id,name)`. On resume, `restoreStateFromDb()` reconstructs from SQLite (participants with behavioral persona fields, weave, rounds, `agent_errors` with `CHECK`, next speaker, call stats) and rehydrates `artifact`/`objections` if synthesized.
+State is persisted via the `PersistenceService` after each round finalization and after terminal events (`#persistState`), atomically updating `meetings` with round, status, fabric, state_of_play, next_speaker_id, stats, and degradation flags. Fresh DBs enforce participant status checks, foreign keys, and `UNIQUE(meeting_id,name)` (no category whitelist). On resume, `restoreStateFromDb()` reconstructs from SQLite (participants with behavioral persona fields, weave, rounds, `agent_errors` with `CHECK`, next speaker, call stats) and rehydrates `artifact`/`objections` if synthesized.
 
 ### Per-Agent Execution State (SKILL.state)
 
@@ -1112,7 +1103,7 @@ Every failed/finished turn path is precomputed once: **bounded state context, sy
 
 **Inline-tool side effects across retries:** loom interaction tools execute server-side *during* `session.prompt`. If an attempt fails after those side effects landed, the retried response will not re-contain those ToolParts — the peer contributions already live in the weave (deduplicated by batch+target+question idempotency keys, Section 22), and the gap is surfaced via an explicit `attempt_failed_possible_tool_side_effects` log instead of silently disappearing.
 
-Successful fallback turns carry a `_fallback` metadata object on the parsed response (`{ from, to, error }`); having succeeded on the fallback model, the agent's status returns to `listening` as normal. Additionally, `#getParticipantModel` can itself substitute the highest-tier healthy model when a participant's own model is unhealthy (orchestrator-level fallback used by directives and synthesis).
+Successful fallback turns carry a `_fallback` metadata object on the parsed response (`{ from, to, error }`); having succeeded on the fallback model, the agent's status returns to `listening` as normal. Additionally, `#getParticipantModel` can itself substitute the highest-quality healthy model when a participant's own model is unhealthy (orchestrator-level fallback used by directives and synthesis).
 
 ### Circuit Breaker
 
@@ -1189,7 +1180,7 @@ Extension is rejected with HTTP 409 while another deliberation is running. Every
 
 ### What Survives a Resume
 
-From the database: participants (with personas, tiers, models, status, reflections), the full weave, rounds, the state of play, max rounds, next speaker, and call stats. Participant contribution counts are recomputed from the weave. Each finished agent turn commits atomically (contribution + optional state patch); the round summary and state of play commit only at round finalization. A kill mid-round therefore leaves the partial round's committed turns durable, its in-flight turn lost, and its summary unwritten.
+From the database: participants (with personas, categories, models, status, reflections), the full weave, rounds, the state of play, max rounds, next speaker, and call stats. Participant contribution counts are recomputed from the weave. Each finished agent turn commits atomically (contribution + optional state patch); the round summary and state of play commit only at round finalization. A kill mid-round therefore leaves the partial round's committed turns durable, its in-flight turn lost, and its summary unwritten.
 
 ### Resume after an Interruption (from the dashboard Setup tab)
 
@@ -1215,7 +1206,7 @@ Loom uses local embeddings for **persona selection only**. It does not auto-retr
 
 | Structure | Purpose |
 |-------|---------|
-| process-scoped `Map` in `PersonaIndex` | Persona vectors (`personaName`, tier, tags, embedding text) keyed `tier\|name`, ~280KB for the full catalog |
+| process-scoped `Map` in `PersonaIndex` | Persona vectors (`personaName`, category, tags, embedding text) keyed `category\|name`, ~280KB for the full catalog |
 
 The store is filled lazily with a validated embedding dimension and a store-level fingerprint (model + catalog content), so repeat meetings skip inference entirely. If the model is unavailable, composition falls back to keyword/tag matching. (Historical note: these vectors used to live in `persona_embeddings` + sqlite-vec `vec_persona_embeddings_${dim}` tables per meeting DB; that backing was removed — old DBs may still contain the orphaned tables, which nothing reads.)
 
@@ -1361,7 +1352,7 @@ When loom tools are enabled, the system prompt includes:
 
 ## 21. Fast-Path Model Routing
 
-Orchestrator calls can use a cheaper/faster model instead of the highest-tier agent model.
+Orchestrator calls can use a cheaper/faster model instead of the default seat model.
 
 ### Configuration
 
@@ -1387,9 +1378,9 @@ const useModel = (fastPathModel && (type === "moderation" || type === "summary")
 | `summary` | Yes | LLM round summaries (Section 13) |
 | `turn_order` | No (via planner) | `planTurnOrder` selects `fastPathModel` itself (Section 9) |
 
-Note: turn-order planning is special — `#promptOrchestrator` doesn't fast-path `turn_order`, but `planTurnOrder` picks `fastPathModel || getHighestTierModel()` as its model before calling the orchestrator, so it still benefits when configured.
+Note: turn-order planning is special — `#promptOrchestrator` doesn't fast-path `turn_order`, but `planTurnOrder` picks `fastPathModel || getDefaultModel()` as its model before calling the orchestrator, so it still benefits when configured.
 
-When `fastPathModel` is empty (default), all orchestrator calls use the highest-tier model.
+When `fastPathModel` is empty (default), all orchestrator calls use the default seat model.
 
 ---
 
@@ -1415,7 +1406,7 @@ One call can query multiple peers (1 per item). Each item specifies a `target` (
 
 **Execution flow:**
 1. Resolve each target (must exist, not failed/passed/muted).
-2. For each resolved target: build prompt via `buildQueryPrompt` (clarify/other modes) or `buildEvidencePrompt` (evidence mode) — the self-contained question (no draft exists mid-turn; the prompt states this explicitly), target's recent contributions plus recent room context, one-line position (`Your position (from your state vN)` + top bullets; the full Σⁱ block is the fallback only when no position exists), seniority + round context.
+2. For each resolved target: build prompt via `buildQueryPrompt` (clarify/other modes) or `buildEvidencePrompt` (evidence mode) — the self-contained question (no draft exists mid-turn; the prompt states this explicitly), target's recent contributions plus recent room context, one-line position (`Your position (from your state vN)` + top bullets; the full Σⁱ block is the fallback only when no position exists), plus round context.
 3. Run `runEphemeralPrompt` for each target — **parallel by default** (`agentTools.parallelQueries`, Setup-tab toggle; off = serial loop). Parallel runs use batched fan-out (`src/utils/fanout.js`: default 5/batch, ~100/min budget from `TUNING.FANOUT`, order-preserving, all-settled — one slow/failed peer never blocks the others). Prompts run concurrently; persistence stays serial in request order (two-phase) so contribution IDs are monotonic.
 4. Persist each response as a typed contribution (`query_response` or `evidence_response`) under the invoker's `batch_id`.
 5. **Perspective mode side-effect:** the response replaces the target's stored `reflection` (pushed onto bounded `reflectionHistory`, max 5) and persists via `setParticipantReflection` — this is the primary write path for reflections (Section 12).
@@ -1441,13 +1432,13 @@ Fan-out to **all other active participants** (the source does not ballot; failed
 
 **Signature:** `loom_summon({ persona_name, issue })`
 
-Brings in a **guest expert** from the persona pool (matched by name across all tiers; unknown personas are rejected). The summoned agent is not a registered participant — it contributes once.
+Brings in a **guest expert** from the persona pool (matched by name across all categories; unknown personas are rejected). The summoned agent is not a registered participant — it contributes once.
 
 - **Rate limits:** none — agents may summon as many guests as they want.
 - **Model:** the summoning agent's own model.
 - **Tools:** `webfetch`, `websearch`, `read` (no bash/glob/grep — least privilege for guests).
 - **Prompt** (`buildSummonPrompt`): persona expertise, communication style, requester's issue, recent context (last 4 contributions), round context.
-- **Contribution:** type `summoned_response`, participant id `summoned_<slug>`, content prefixed `[Summoned: <Name> (<tier>)]`.
+- **Contribution:** type `summoned_response`, participant id `summoned_<slug>`, content prefixed `[Summoned: <Name> (<category>)]`.
 
 ### How Inline Responses Appear in the Caller's Context
 
@@ -1483,7 +1474,7 @@ All response types flow into the weave and appear in later agents' recent contri
 
 ### UI Tabs
 
-- **Overview** — participants (cards with status/tier/model/reflection, contribution counts), recent contributions, errors, an agent-perspective panel, and the final artifact when present.
+- **Overview** — participants (cards with status/category/model/reflection, contribution counts), recent contributions, errors, an agent-perspective panel, and the final artifact when present.
 - **Timeline** — per-round contribution timeline, orchestrator decision log (turn-order plans, summaries) interleaved per round, participation matrix, contribution-type chart, and inline reflection/query/evidence/summon/vote rows.
 - **Output** — the final artifact with structured fields; export actions.
 
@@ -1523,19 +1514,19 @@ On dashboard start, the embedding model is initialized eagerly (status tracked: 
 Deliberations are created exclusively from the dashboard Setup tab. The plugin exposes only `/loom_viz` (start server) and `/loom_stop`. The Setup flow is:
 
 1. **Question** — user enters `question` (required, ≥3 chars), optional `context`, `max_rounds` (default from config: 4).
-2. **Models** — the user toggles the enable/disable filter (`POST /api/llm-models/filter`). At least one model must be enabled before personas can be added. No per-tier pickers here — models are chosen per persona seat in step 3.
-3. **Personas** — the user auto-selects or adds seats manually from the catalog (`GET /api/personas`). Adding a seat is the approval; at least 2 seats required. Auto-select calls `POST /api/room/preview`, which ranks the whole catalog via the same `rankAllPersonas` path as a real run — persona vectors are process-scoped, so no throwaway database is involved. It returns `{ ranked, selected, auto_select_count }` plus suggested per-tier models (`createModelPlan`), which pre-fill each seat's model picker. The dialog opens on the returned ranking with the top 3 selected; seats are written only on confirm. With no embedder the endpoint returns **503 `embedder_unavailable`** and the Setup tab shows no auto-select button, leaving manual selection as the only route.
-4. **Per-seat models** — every persona row carries its own model picker (defaults from the tier suggestion, changeable to any enabled model). Disabling a model prunes it from seats holding it, blocking start until re-picked.
-5. **Start** — `POST /api/meetings/start` with `{ question, context, max_rounds, participants: [{ …, model: { provider_id, model_id } }], approved: true }` (explicit `approved: true` enforced server-side, HTTP 400 otherwise). Per-seat `model` values validated against the filtered pool (disabled/unhealthy/unknown fall back to tier assignment, then automatic assignment). Hard deadline disabled — stall watchdog and provider errors are the only extrinsic stops.
+2. **Models** — the user toggles the enable/disable filter (`POST /api/llm-models/filter`). At least one model must be enabled before personas can be added. No per-category pickers here — models are chosen per persona seat in step 3.
+3. **Personas** — the user auto-selects or adds seats manually from the catalog (`GET /api/personas`). Adding a seat is the approval; at least 2 seats required. Auto-select calls `POST /api/room/preview`, which ranks the whole catalog via the same `rankAllPersonas` path as a real run — persona vectors are process-scoped, so no throwaway database is involved. It returns `{ ranked, selected, auto_select_count }` plus flat random `suggested_models` (parallel to the selected seats), which pre-fill each seat's model picker. The dialog opens on the returned ranking with the top 3 selected; seats are written only on confirm. With no embedder the endpoint returns **503 `embedder_unavailable`** and the Setup tab shows no auto-select button, leaving manual selection as the only route.
+4. **Per-seat models** — every persona row carries its own model picker (defaults from the random suggestion, changeable to any enabled model). Disabling a model prunes it from seats holding it, blocking start until re-picked.
+5. **Start** — `POST /api/meetings/start` with `{ question, context, max_rounds, participants: [{ …, model: { provider_id, model_id } }], approved: true }` (explicit `approved: true` enforced server-side, HTTP 400 otherwise). Per-seat `model` values validated against the filtered pool (disabled/unhealthy/unknown fall back to random assignment). Hard deadline disabled — stall watchdog and provider errors are the only extrinsic stops.
 
 **Stored-run view:** when the selected meeting has persisted participants, the Setup form mirrors its stored configuration (question, context, rounds, seats with per-seat models, feature toggles, orchestrator config) and every input is disabled — the meeting already ran, so the form is a read-only record. The "Extend current deliberation" card below it remains the way to continue the meeting.
 
 ### Control-Plane Flow (`src/dashboard/server/control.js`)
 
 1. Reject with 409 if a deliberation is already running (single-run lock); reject with 503 if the plugin runtime (opencode client) isn't injected.
-2. Validate `question`/`participants` (at least 2 seats, no maximum; required `name`/`persona`/`agenda`/`tier`, tier whitelist) and clamp `max_rounds` to 1–999.
+2. Validate `question`/`participants` (at least 2 seats, no maximum; required `name`/`persona`/`agenda`/`category`, any category slug accepted) and clamp `max_rounds` to 1–999.
 3. Discover models + session model; apply the dashboard model filter (Section 26) plus the global-unhealthy set to the pool.
-4. Map explicit per-tier `models` selections (disabled/unhealthy/unknown keys ignored with a warning), then `assignModelsToParticipants()` for the rest.
+4. Ignore legacy per-tier `models` selections (warn), then `assignModelsToParticipants()` fills seats without a valid per-seat model at random.
 5. Create the meeting DB, `initializeMeeting()` (with the launcher session as `parentSessionId`/`opencodeSessionId`), `insertParticipants()`.
 6. Construct `MeetingOrchestrator` (passing the filtered `availableModels` for fallback selection) with dashboard callbacks (no-ops — progress is SSE/DB only), register it in shared `activeLooms`, and run `initialize()` + `runMeeting()` on a **detached promise** — HTTP returns `{ meeting_id }` with 202 immediately.
 7. On completion write the full report to `.opencode/loom/meetings/<meetingId>.md`. Nothing is ever returned to chat.
@@ -1552,7 +1543,7 @@ Dashboard-first, callbacks are intentionally silent toward chat:
 - `loom_cancel` — request cancellation (current round completes, then synthesis runs)
 - `loom_debug` — dump internal state of a running Loom (optional `include` filter)
 - `loom_viz` / `loom_stop` — start/stop the dashboard (the only user commands)
-- `GET /api/llm-models` — discover available models with cost/context/reasoning, enabled/unhealthy status, and the suggested tier assignment plan. `POST /api/llm-models/filter` (`enable`/`disable`/`reset`) — manage the **dashboard-global model filter** (persisted as `models-filter.json`). The filter restricts which discovered models Loom agents may use. (See Section 26.)
+- `GET /api/llm-models` — discover available models with cost/context/reasoning, enabled/unhealthy status, and a random suggested model. `POST /api/llm-models/filter` (`enable`/`disable`/`reset`) — manage the **dashboard-global model filter** (persisted as `models-filter.json`). The filter restricts which discovered models Loom agents may use. (See Section 26.)
 - `GET /api/personas`, `POST /api/room/preview`, `POST /api/meetings/start|-cancel|extend`, `GET /api/jobs` — the Setup control plane.
 
 ### Session Index & Cleanup
@@ -1571,7 +1562,7 @@ Dashboard-first, callbacks are intentionally silent toward chat:
   ├── session-index.json               // opencode session → meeting mapping
   ├── models/<name>/model.json         // downloaded embedding models
   ├── deps/node_modules/               // onnxruntime / tokenizers externals
-  └── personas/<tier>/*.json           // user-authored personas (optional)
+  └── personas/<category>/*.json      // user-authored personas (optional)
 ```
 
 ---
@@ -1622,11 +1613,11 @@ A recap of every knob that controls which LLM runs an agent or the orchestrator.
 `discoverModels()` (`src/services/model-service.js`) reads the connected providers via `client.provider.providers` and records the user session's current model as `sessionModel`. Deprecated models are excluded.
 
 A **dashboard-global deny-list model filter** (persisted as `models-filter.json` under `resolveLoomBaseDir(directory)`) is maintained from the Setup tab:
-- `GET /api/llm-models` — lists all discovered models with `provider/model` identifiers, cost, context window, reasoning capability, enabled/unhealthy status, plus the suggested tier assignment plan (filtered preview — disabled models never proposed).
+- `GET /api/llm-models` — lists all discovered models with `provider/model` identifiers, cost, context window, reasoning capability, enabled/unhealthy status, plus a random suggested model (filtered preview — disabled models never proposed).
 - `POST /api/llm-models/filter` with `action: enable|disable` + `models: [<id>…]` — restrict which discovered models Loom agents may use (`applyModelFilter` deny-list). Default (no filter) = all models; new models are enabled by default; disabling the last model leaves one enabled and reports it as `guard_kept`. Enabling a model also clears its global-unhealthy mark.
 - `action: reset` — clears the filter back to "all models" and clears all global-unhealthy marks.
 
-The filter is applied to the discovery result before assignment and to the `availableModels` list passed to the orchestrator for fallback selection. Explicit per-tier `models=[…]` selections from Setup are validated against the filtered available set — disabled/unhealthy/unknown models are ignored with a warning.
+The filter is applied to the discovery result before assignment and to the `availableModels` list passed to the orchestrator for fallback selection. Legacy per-tier `models=[…]` selections from Setup are ignored with a warning — only per-seat `model` values apply.
 
 ### 2. Tier-Based Assignment
 
@@ -1634,21 +1625,21 @@ The filter is applied to the discovery result before assignment and to the `avai
 
 - Models are sorted by a capability score (`scoreModel`: active status + context window + reasoning capability; cost is display-only).
 - Principal/senior roles receive the session model (or the best available); mid/junior get the next-best unused models.
-- **Model diversity** (`modelDiversity`, default true): when more distinct models are available than tiers, every individual agent gets a unique model (best models to the highest tiers) instead of sharing per tier.
+- **No model diversity flag**: random per-seat assignment already spreads seats across the pool; categories never influence the draw.
 - The pool itself can be pre-narrowed by the model filter (layer 1).
 
 ### 3. Per-Participant Overrides
 
 Explicit configuration always wins over automatic assignment:
 
-- **Setup `models=[{ tier, provider_id, model_id }]`** — per-tier selection applied at meeting start (mapped into each participant's `model`).
+- **Setup `models=[…]`** — legacy per-tier selection, ignored with a warning (per-seat `model` is the only selection).
 - **Custom rooms** — participants may carry a `model` object `{ providerID, modelID }` or a `model_override` string `"provider/model"` (`buildOverrideMap`). Overridden models are also excluded from the diversity pool so they aren't double-assigned.
 
 ### 4. Orchestrator & Fallback Model Safeguards
 
 - **Fast-path routing** (`fastPathModel`): cheap models for moderation/summary orchestrator calls; turn-order planning selects it itself (Section 21).
 - **Model fallback** (`modelFallback.*`): a failed agent turn is retried on its model, then on a healthy fallback selected by `selectFallbackModel()` (Section 16).
-- `getHighestTierModel()` acts as a safety net: `#getParticipantModel(participant, fallbackOnError)` substitutes the highest-tier healthy model whenever a participant's own model is missing or unhealthy (used by directives, votes, and synthesis).
+- `getDefaultModel()` acts as a safety net: `#getParticipantModel(participant, fallbackOnError)` substitutes the highest-quality healthy model whenever a participant's own model is missing or unhealthy (used by directives, votes, and synthesis).
 
 The appendix table lists every model-related configuration key (`fastPathModel`, `circuitBreaker.*`, `modelFallback.*`).
 

@@ -20,7 +20,6 @@
     "refine"
   ],
   "reflection_guidance": "Name the cheapest test that would kill or confirm the proposal. End with what you would need to learn to be proven wrong.",
-  "tier_guidance": "Propose the two-hour version: what gets built, what it measures, what kills it. One prototype sketch per turn; on unfamiliar domains ask what the smallest observable bet looks like in the question's own terms.",
   "anti_patterns": [
     "Never say 'just ship it' without naming what it proves — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not confuse a demo with evidence — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -32,5 +31,6 @@
     "experimentation",
     "cheapest test"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Propose the two-hour version: what gets built, what it measures, what kills it. One prototype sketch per turn; on unfamiliar domains ask what the smallest observable bet looks like in the question's own terms."
 }

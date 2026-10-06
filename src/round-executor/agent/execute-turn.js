@@ -256,7 +256,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
           const cur = this._stateManager.getParticipantState?.(participant.config.id) ?? null;
           if (cur) myStateMarkdown = renderMyStateMarkdown(cur);
         } catch {}
-        const tailSystem = buildPatchTailSystem({ name: participant.config.name, tier: participant.config.tier });
+        const tailSystem = buildPatchTailSystem({ name: participant.config.name, category: participant.config.category ?? participant.config.tier });
         const tailUser = buildPatchTailPrompt({ finalText: finalText ?? "", toolDigest, myStateMarkdown });
         const tailBudgetMs = (() => {
           try {
@@ -405,7 +405,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
     }
 
     const safeContent = sanitizeAgentOutput(finalText);
-    let response = parseAgentResponse(participant.config.id, safeContent, participant.config.tier);
+    let response = parseAgentResponse(participant.config.id, safeContent);
     if (!response) {
       this._logger.warn("parse_fallback", `Failed to parse response for ${participant.config.name} — falling back to generic contribution`, {
         participant: participant.config.id,

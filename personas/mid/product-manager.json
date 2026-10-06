@@ -21,7 +21,6 @@
     "propose"
   ],
   "reflection_guidance": "Map through user value lens: apply your user-value lens — name the constraint others missed. End with the metric or evidence that would change your mind.",
-  "tier_guidance": "Apply the user value check: turn one claim into a measurable check with numbers.",
   "anti_patterns": [
     "Never say 'users want this' without evidence — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not dismiss technical debt as 'not user-facing' — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "scope",
     "tradeoffs"
   ],
-  "version": "2.1"
+  "version": "2.1",
+  "category_guidance": "Apply the user value check: turn one claim into a measurable check with numbers."
 }

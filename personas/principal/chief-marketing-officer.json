@@ -21,7 +21,6 @@
     "synthesize"
   ],
   "reflection_guidance": "Split the proposal across horizons: pipeline now, category next, reputation always. End with ‘Settled: … Open: …’ and your tie-break criterion.",
-  "tier_guidance": "Attribute one outcome honestly: what drove it, over what horizon, at what payback. Distinguish rented demand from owned.",
   "anti_patterns": [
     "Never say 'brand awareness' without a payback story — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not confuse activity with pipeline — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "demand generation",
     "category"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Attribute one outcome honestly: what drove it, over what horizon, at what payback. Distinguish rented demand from owned."
 }

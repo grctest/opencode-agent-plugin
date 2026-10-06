@@ -53,7 +53,7 @@ export function exportTimeline(meetingId) {
     name: r.name,
     persona: r.persona,
     agenda: r.agenda,
-    tier: r.tier,
+    category: r.category,
     model: r.provider_id && r.model_id ? `${r.provider_id}/${r.model_id}` : null,
     provider_id: r.provider_id ?? null,
     model_id: r.model_id ?? null,
@@ -66,7 +66,7 @@ export function exportTimeline(meetingId) {
     communication_style: r.communication_style ?? "",
     preferred_contribution_types: parse(r.preferred_contribution_types, []),
     anti_patterns: parse(r.anti_patterns, []),
-    tier_guidance: r.tier_guidance ?? "",
+    category_guidance: r.category_guidance ?? "",
     reflection_guidance: r.reflection_guidance ?? "",
     tags: parse(r.tags, []),
     expertise: parse(r.expertise, []),
@@ -313,7 +313,7 @@ export function exportMarkdown(meetingId) {
     lines.push(`## Participants`);
     lines.push("");
     for (const p of participants) {
-      lines.push(`- **${p.name}** (${p.tier}) — ${p.provider_id ?? "unknown"}/${p.model_id ?? "unknown"}${p.state_stance ? ` — stance@v${p.state_version ?? 0}: ${p.state_stance}` : ""}`);
+      lines.push(`- **${p.name}** (${p.category}) — ${p.provider_id ?? "unknown"}/${p.model_id ?? "unknown"}${p.state_stance ? ` — stance@v${p.state_version ?? 0}: ${p.state_stance}` : ""}`);
     }
     lines.push("");
 
@@ -324,7 +324,7 @@ export function exportMarkdown(meetingId) {
       lines.push(`_Positions only — cite weave [#id] for contested claims._`);
       lines.push("");
       for (const p of withState) {
-        lines.push(`- **${p.name}** (${p.tier}${p.state_version ? ` v${p.state_version}` : ""}): ${p.state_stance}`);
+        lines.push(`- **${p.name}** (${p.category}${p.state_version ? ` v${p.state_version}` : ""}): ${p.state_stance}`);
       }
       lines.push("");
     }
@@ -393,7 +393,7 @@ export function exportJSON(meetingId) {
       participants: participants.map(p => ({
         id: p.id,
         name: p.name,
-        tier: p.tier,
+        category: p.category,
         persona: p.persona,
         agenda: p.agenda,
         model: p.provider_id && p.model_id ? `${p.provider_id}/${p.model_id}` : null,
@@ -455,7 +455,7 @@ export function exportJSON(meetingId) {
 
     yield `## Participants\n\n`;
     for (const p of participants) {
-      yield `- **${p.name}** (${p.tier}) — ${p.provider_id ?? "unknown"}/${p.model_id ?? "unknown"}\n`;
+      yield `- **${p.name}** (${p.category}) — ${p.provider_id ?? "unknown"}/${p.model_id ?? "unknown"}\n`;
     }
     yield `\n`;
 

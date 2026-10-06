@@ -70,7 +70,7 @@ test("the artifact carries the measured engagement ledger", () => {
     question: "Q?",
     rounds: [{ number: 1, contributions: WEAVE }],
   };
-  const participants = [{ config: { id: "a", name: "A", tier: "mid" }, status: "listening" }];
+  const participants = [{ config: { id: "a", name: "A", category: "mid", }, status: "listening" }];
   const text = [
     "## Executive Summary", "The convention is pinned [#1].", "",
     "## Decision", "Keep the pinned denominator [#1].", "",

@@ -22,7 +22,6 @@
     "question"
   ],
   "reflection_guidance": "Compare through integration lens: apply your integration lens — name the constraint others missed. End with the metric or evidence that would change your mind.",
-  "tier_guidance": "Through integration: translate the proposal into time, money, or risk.",
   "anti_patterns": [
     "Never say 'just use a queue' without discussing ordering guarantees — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not dismiss one-off integrations as 'not worth the abstraction' — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -35,5 +34,6 @@
     "performance",
     "interoperability"
   ],
-  "version": "2.1"
+  "version": "2.1",
+  "category_guidance": "Through integration: translate the proposal into time, money, or risk."
 }

@@ -21,7 +21,6 @@
     "propose"
   ],
   "reflection_guidance": "Sequence one plan: the order of operations, the clash, the change-order cost, and who signs the delay. End with the delay nobody priced.",
-  "tier_guidance": "Sequence one plan: order of operations, clashes, change-order exposure, and who signs the delay. Cite a documented method you can point to. End with 'Irreversible: …' or 'Reversible if …' explicitly.",
   "anti_patterns": [
     "Never say 'it is only a small change' without the sequence and who signs the delay — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not let the schedule compress silently — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "change orders",
     "delivery"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Sequence one plan: order of operations, clashes, change-order exposure, and who signs the delay. Cite a documented method you can point to. End with 'Irreversible: …' or 'Reversible if …' explicitly."
 }

@@ -111,13 +111,13 @@ export function getContributionContext(db, contributionId) {
   return safeJsonParse(row?.prompt_context, null);
 }
 
-export function ensureParticipantRow(db, meetingId, participantId, name = participantId, tier = "mid") {
+export function ensureParticipantRow(db, meetingId, participantId, name = participantId, category = "mid") {
   try {
     const result = qq(db,
-        `INSERT OR IGNORE INTO participants (id, meeting_id, name, persona, agenda, tier, status)
+        `INSERT OR IGNORE INTO participants (id, meeting_id, name, persona, agenda, category, status)
            VALUES (?, ?, ?, ?, ?, ?, 'summoned')`,
       )
-      .run(participantId, meetingId, name, "Summoned guest expert", "", tier);
+      .run(participantId, meetingId, name, "Summoned guest expert", "", category);
     return Number(result?.changes ?? 0) > 0;
   } catch (err) {
     dbLogger.warn("ensure_participant_row_failed", `Failed to ensure participant row ${participantId}`, extractErrorInfo(err));
@@ -220,7 +220,7 @@ export function getParticipantStatus(db, meetingId, participantId) {
 export function getAllParticipantsWithStatus(db, meetingId) {
   return db
     .prepare(
-      `SELECT id, name, persona, agenda, tier, provider_id, model_id, session_id, session_version, status, reflection, known_biases, communication_style, preferred_contribution_types, anti_patterns, tier_guidance, reflection_guidance, tags, expertise
+      `SELECT id, name, persona, agenda, category, provider_id, model_id, session_id, session_version, status, reflection, known_biases, communication_style, preferred_contribution_types, anti_patterns, category_guidance, reflection_guidance, tags, expertise
          FROM participants WHERE meeting_id = ?`,
     )
     .all(meetingId)
@@ -229,7 +229,7 @@ export function getAllParticipantsWithStatus(db, meetingId) {
       name: r.name,
       persona: r.persona,
       agenda: r.agenda,
-      tier: r.tier,
+      category: r.category ?? r.tier,
       provider_id: r.provider_id,
       model_id: r.model_id,
       session_id: r.session_id,
@@ -240,7 +240,7 @@ export function getAllParticipantsWithStatus(db, meetingId) {
        communication_style: r.communication_style ?? null,
        preferred_contribution_types: safeParseJsonArray(r.preferred_contribution_types),
        anti_patterns: safeParseJsonArray(r.anti_patterns),
-       tier_guidance: r.tier_guidance ?? "",
+       category_guidance: r.category_guidance ?? r.tier_guidance ?? "",
        reflection_guidance: r.reflection_guidance ?? "",
        tags: safeParseJsonArray(r.tags),
       expertise: safeParseJsonArray(r.expertise),

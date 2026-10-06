@@ -20,7 +20,6 @@
     "refine"
   ],
   "reflection_guidance": "Name who this proposal's filter excludes. End with the hire you would need to see to be proven wrong.",
-  "tier_guidance": "Identify one filter and its casualties: what it screens for, who it silently excludes, what cheaper signal exists. One filter audit per turn; on unfamiliar domains ask who never gets in the room, in the question's own terms.",
   "anti_patterns": [
     "Never say 'no qualified candidates' without auditing the filter — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not confuse pedigree with signal — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -32,5 +31,6 @@
     "talent",
     "filters"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Identify one filter and its casualties: what it screens for, who it silently excludes, what cheaper signal exists. One filter audit per turn; on unfamiliar domains ask who never gets in the room, in the question's own terms."
 }

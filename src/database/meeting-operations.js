@@ -30,7 +30,7 @@ export function initializeMeeting(db, meetingId, input, opts = {}) {
           updated_at=excluded.updated_at`,
   );
   const insertParticipant = db.prepare(
-    `INSERT INTO participants (id, meeting_id, name, persona, agenda, tier, provider_id, model_id, session_id, known_biases, communication_style, preferred_contribution_types, anti_patterns, tier_guidance, reflection_guidance, tags, expertise)
+    `INSERT INTO participants (id, meeting_id, name, persona, agenda, category, provider_id, model_id, session_id, known_biases, communication_style, preferred_contribution_types, anti_patterns, category_guidance, reflection_guidance, tags, expertise)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
 
@@ -64,7 +64,7 @@ export function initializeMeeting(db, meetingId, input, opts = {}) {
         p.name,
         p.persona,
         p.agenda,
-        p.tier,
+        p.category ?? p.tier,
         p.model?.providerID ?? null,
         p.model?.modelID ?? null,
         null,
@@ -72,7 +72,7 @@ export function initializeMeeting(db, meetingId, input, opts = {}) {
         p.communication_style ?? null,
         p.preferred_contribution_types ? JSON.stringify(p.preferred_contribution_types) : null,
         p.anti_patterns ? JSON.stringify(p.anti_patterns) : null,
-        p.tier_guidance ?? null,
+        (p.category_guidance ?? p.tier_guidance) ?? null,
         p.reflection_guidance ?? null,
         p.tags ? JSON.stringify(p.tags) : null,
         p.expertise ? JSON.stringify(p.expertise) : null,
@@ -126,7 +126,7 @@ export function upsertMeeting(db, meetingId, input) {
 
 export function insertParticipants(db, meetingId, participants) {
   const insertParticipant = db.prepare(
-    `INSERT INTO participants (id, meeting_id, name, persona, agenda, tier, provider_id, model_id, session_id, known_biases, communication_style, preferred_contribution_types, anti_patterns, tier_guidance, reflection_guidance, tags, expertise)
+    `INSERT INTO participants (id, meeting_id, name, persona, agenda, category, provider_id, model_id, session_id, known_biases, communication_style, preferred_contribution_types, anti_patterns, category_guidance, reflection_guidance, tags, expertise)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   db.exec('BEGIN IMMEDIATE');
@@ -138,7 +138,7 @@ export function insertParticipants(db, meetingId, participants) {
         p.name,
         p.persona,
         p.agenda,
-        p.tier,
+        p.category ?? p.tier,
         p.model?.providerID ?? null,
         p.model?.modelID ?? null,
         null,
@@ -146,7 +146,7 @@ export function insertParticipants(db, meetingId, participants) {
         p.communication_style ?? null,
         p.preferred_contribution_types ? JSON.stringify(p.preferred_contribution_types) : null,
         p.anti_patterns ? JSON.stringify(p.anti_patterns) : null,
-        p.tier_guidance ?? null,
+        (p.category_guidance ?? p.tier_guidance) ?? null,
         p.reflection_guidance ?? null,
         p.tags ? JSON.stringify(p.tags) : null,
         p.expertise ? JSON.stringify(p.expertise) : null,

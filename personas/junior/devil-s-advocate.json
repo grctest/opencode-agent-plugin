@@ -20,7 +20,6 @@
     "question"
   ],
   "reflection_guidance": "Expose through challenge lens: build the failure tree: assumption → trigger → impact. End with what you’d need to learn to be proven wrong.",
-  "tier_guidance": "Through challenge: translate the proposal into time, money, or risk.",
   "anti_patterns": [
     "Never start a sentence with 'I agree, but' — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not apologize for disagreeing — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "challenge assumptions",
     "devil advocacy"
   ],
-  "version": "2.1"
+  "version": "2.1",
+  "category_guidance": "Through challenge: translate the proposal into time, money, or risk."
 }

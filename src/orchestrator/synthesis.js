@@ -67,7 +67,7 @@ export async function runFinalRoundPatchGrace() {
     attempted++;
     try {
       const res = await this._sessionManager.runEphemeralPrompt(p, {
-        system: `You are ${p.config.name} (${p.config.tier}). The deliberation is closing. Call loom_state_patch ONCE with anything from your last turn worth carrying forward (stance, and any established/contested/open/facts bullets you still rely on). If there is nothing new, do not call it. Do not write prose, do not argue, do not re-litigate — this is your private notes only.`,
+        system: `You are ${p.config.name} (${p.config.category ?? p.config.tier}). The deliberation is closing. Call loom_state_patch ONCE with anything from your last turn worth carrying forward (stance, and any established/contested/open/facts bullets you still rely on). If there is nothing new, do not call it. Do not write prose, do not argue, do not re-litigate — this is your private notes only.`,
         model,
         parts: [{ type: "text", text: "Closing the deliberation. Save anything worth remembering, or skip if there is nothing." }],
         tools: { loom_state_patch: true },

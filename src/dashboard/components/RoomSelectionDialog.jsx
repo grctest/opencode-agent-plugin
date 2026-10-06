@@ -13,7 +13,7 @@ import { Badge } from "./ui/badge.tsx";
 import { Alert } from "./ui/alert.tsx";
 import { Spinner } from "./ui/spinner.tsx";
 import { Avatar } from "./Avatar.tsx";
-import { TIER_ORDER, TIER_META, AVATAR_EXPRESSION, AVATAR_COLORS } from "./tierMeta.jsx";
+import { CATEGORY_ORDER, CATEGORY_META, AVATAR_EXPRESSION, AVATAR_COLORS } from "./tierMeta.jsx";
 import { similarityOf, similarityPercent } from "../../composer/similarity.js";
 import { MIN_LIST_HEIGHT, resolveListHeight } from "./roomSelectionLayout.js";
 
@@ -31,7 +31,7 @@ function RankRow({ index, style, ariaAttributes, items, selectedNames, onToggle 
   const entry = items[index];
   if (!entry) return null;
   const { persona, rank, distance } = entry;
-  const meta = TIER_META[persona.tier] ?? TIER_META.mid;
+  const meta = CATEGORY_META[persona.category] ?? CATEGORY_META.mid;
   const isSelected = selectedNames.has(persona.name);
   const pct = similarityPercent(distance);
   return (
@@ -94,18 +94,18 @@ function RankRow({ index, style, ariaAttributes, items, selectedNames, onToggle 
  * The server ranks the ENTIRE persona catalog against the question and hands
  * back one ordered list. This dialog's job is to make that ordering legible and
  * correctable: the top N are pre-selected, every persona is listed in distance
- * order, and the tier buttons hide tiers the user does not want without
+ * order, and the category buttons hide categories the user does not want without
  * reordering anything.
  *
  * Two invariants worth stating, because both are easy to break later:
  *
  * 1. Filtering only ever REMOVES rows. It never re-sorts. The whole point of
  *    the list is that it is the similarity ordering; a filter that re-sorted
- *    by tier would be showing a different claim about relevance.
- * 2. Selection is local until `onApply`. Toggling tiers does not silently drop
- *    already-selected personas from the result — a user who hides a tier is
+ *    by category would be showing a different claim about relevance.
+ * 2. Selection is local until `onApply`. Toggling categories does not silently drop
+ *    already-selected personas from the result — a user who hides a category is
  *    looking away from it, not evicting seats. The footer says so explicitly
- *    when a hidden tier holds selected seats.
+ *    when a hidden category holds selected seats.
  */
 export function RoomSelectionDialog({
   open,
@@ -119,7 +119,7 @@ export function RoomSelectionDialog({
   onOpenChange,
 }) {
   const [selected, setSelected] = useState(() => new Set());
-  const [hiddenTiers, setHiddenTiers] = useState(() => new Set());
+  const [hiddenCategories, setHiddenCategories] = useState(() => new Set());
   const listWrapRef = useRef(null);
   // Starts at 0, meaning "no measured height yet" — the list is not painted until
   // one exists. Seeding a guessed height would paint the wrong size first and
@@ -156,20 +156,21 @@ export function RoomSelectionDialog({
     if (!open) return;
     const seed = (ranked ?? []).slice(0, autoSelectCount).map((r) => r.name);
     setSelected(new Set(seed));
-    setHiddenTiers(new Set());
+    setHiddenCategories(new Set());
   }, [open, autoSelectCount, ranked]);
 
   // Join the ranking to the catalog for display text. `ranked` carries only
-  // {name, tier, distance} — the full persona bodies come from /api/personas.
+  // {name, category, distance} — the full persona bodies come from /api/personas.
   const items = useMemo(() => {
-    const tiers = catalog?.tiers ?? {};
+    const categories = catalog?.categories ?? catalog?.tiers ?? {}; // legacy alias: accept legacy tiers key
     const byName = new Map();
-    for (const t of TIER_ORDER) {
-      for (const p of tiers[t] ?? []) byName.set(p.name, { ...p, tier: t });
+    for (const t of CATEGORY_ORDER) {
+      for (const p of categories[t] ?? []) byName.set(p.name, { ...p, category: p.category ?? p.tier ?? t }); // legacy alias: normalize legacy tier field
     }
     const out = [];
     (ranked ?? []).forEach((row, i) => {
-      const persona = byName.get(row.name) ?? { name: row.name, tier: row.tier, agenda: "", tags: [] };
+      const category = row.category ?? row.tier ?? "mid"; // legacy alias: accept legacy tier field
+      const persona = byName.get(row.name) ?? { name: row.name, category, agenda: "", tags: [] };
       out.push({ persona, rank: i + 1, distance: row.distance });
     });
     return out;
@@ -177,23 +178,23 @@ export function RoomSelectionDialog({
 
   const counts = useMemo(() => {
     const per = {};
-    for (const t of TIER_ORDER) per[t] = items.filter((it) => it.persona.tier === t).length;
+    for (const t of CATEGORY_ORDER) per[t] = items.filter((it) => it.persona.category === t).length;
     return per;
   }, [items]);
 
-  const visible = useMemo(() => items.filter((it) => !hiddenTiers.has(it.persona.tier)), [items, hiddenTiers]);
+  const visible = useMemo(() => items.filter((it) => !hiddenCategories.has(it.persona.category)), [items, hiddenCategories]);
 
   const selectedNames = useMemo(() => new Set(selected), [selected]);
   const hiddenSelected = useMemo(
-    () => items.filter((it) => hiddenTiers.has(it.persona.tier) && selected.has(it.persona.name)).map((it) => it.persona.name),
-    [items, hiddenTiers, selected],
+    () => items.filter((it) => hiddenCategories.has(it.persona.category) && selected.has(it.persona.name)).map((it) => it.persona.name),
+    [items, hiddenCategories, selected],
   );
 
-  const toggleTier = useCallback((tier) => {
-    setHiddenTiers((prev) => {
+  const toggleCategory = useCallback((category) => {
+    setHiddenCategories((prev) => {
       const next = new Set(prev);
-      if (next.has(tier)) next.delete(tier);
-      else next.add(tier);
+      if (next.has(category)) next.delete(category);
+      else next.add(category);
       return next;
     });
   }, []);
@@ -234,21 +235,21 @@ export function RoomSelectionDialog({
           <DialogTitle>Select personas</DialogTitle>
           <DialogDescription>
             All {items.length} personas ranked by similarity to your question, closest first. The top{" "}
-            {autoSelectCount} are selected — change the selection, or hide a seniority you don't want.
+            {autoSelectCount} are selected — change the selection, or hide a category you don't want.
           </DialogDescription>
         </DialogHeader>
 
         <div className="flex min-h-0 flex-1 flex-col gap-3">
-          <div className="flex shrink-0 flex-wrap gap-1.5" role="group" aria-label="Hide or show a seniority">
-            {TIER_ORDER.map((t) => {
-              const meta = TIER_META[t] ?? TIER_META.mid;
-              const hidden = hiddenTiers.has(t);
+          <div className="flex shrink-0 flex-wrap gap-1.5" role="group" aria-label="Hide or show a category">
+            {CATEGORY_ORDER.map((t) => {
+              const meta = CATEGORY_META[t] ?? CATEGORY_META.mid;
+              const hidden = hiddenCategories.has(t);
               return (
                 <Button
                   key={t}
                   size="sm"
                   variant={hidden ? "outline" : "default"}
-                  onClick={() => toggleTier(t)}
+                  onClick={() => toggleCategory(t)}
                   aria-pressed={!hidden}
                   className={hidden ? "opacity-50" : ""}
                   title={hidden ? `Show ${meta.label} personas` : `Hide all ${meta.label} personas`}
@@ -273,7 +274,7 @@ export function RoomSelectionDialog({
             )}
             {!busy && !error && visible.length === 0 && (
               <p className="py-8 text-sm text-muted-foreground">
-                No personas in the seniorities you have shown — turn a filter back on above.
+                No personas in the categories you have shown — turn a filter back on above.
               </p>
             )}
             {/* Not ready to paint a list yet — no measured height. Rendering the
@@ -311,7 +312,7 @@ export function RoomSelectionDialog({
             {hiddenSelected.length > 0 && (
               <span>
                 {hiddenSelected.length} selected persona{hiddenSelected.length === 1 ? " is" : "s are"} in a hidden
-                seniority — still included.
+                category — still included.
               </span>
             )}
           </div>

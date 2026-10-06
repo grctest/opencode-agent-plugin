@@ -1,4 +1,3 @@
-import { getTierConfig } from "../shared.js";
 import { Logger } from "../logger.js";
 import { getConfig } from "../config.js";
 import { emptyAgentState, STATE_PATCH_CAPS } from "../state-patch.js";
@@ -223,7 +222,7 @@ export class StateManager {
       out.push({
         id: p.config.id,
         name: p.config.name ?? p.config.id,
-        tier: p.config.tier ?? "",
+        category: p.config.category ?? p.config.tier ?? "",
         state: s ? structuredClone(s) : this.getParticipantState(p.config.id),
       });
     }
@@ -234,7 +233,7 @@ export class StateManager {
     return deepFreeze(this.#state.participants.map((p) => ({
       id: p.config.id,
       name: p.config.name ?? p.config.id,
-      tier: p.config.tier ?? "",
+      category: p.config.category ?? p.config.tier ?? "",
       status: p.status ?? "",
       state: this.getParticipantState(p.config.id),
       projected: this.stateDirty.has(p.config.id),
@@ -274,15 +273,7 @@ export class StateManager {
     };
     const frozenParticipant = (p) => {
       const cfg = p.config && typeof p.config === "object" ? deepFreeze(structuredClone(p.config)) : p.config;
-      const tierCfg = p.tier_config && typeof p.tier_config === "object" ? deepFreeze(structuredClone(p.tier_config)) : p.tier_config;
-      return Object.freeze({ ...p, config: cfg, tier_config: tierCfg });
-    };
-    // Ensure tier_config.rights is deeply frozen if present
-    const freezeTierConfig = (tc) => {
-      if (!tc || typeof tc !== "object") return tc;
-      const frozen = { ...tc };
-      if (frozen.rights && typeof frozen.rights === "object") frozen.rights = Object.freeze({ ...frozen.rights });
-      return Object.freeze(frozen);
+      return Object.freeze({ ...p, config: cfg });
     };
     const frozenCopy = (v) => {
       if (v === null || typeof v !== "object") return v;
@@ -296,12 +287,7 @@ export class StateManager {
     };
     return Object.freeze({
       ...this.#state,
-      participants: Object.freeze(this.#state.participants.map((p) => {
-        const fp = frozenParticipant(p);
-        // Re-freeze tier_config deeply
-        if (fp.tier_config) return Object.freeze({ ...fp, tier_config: freezeTierConfig(fp.tier_config) });
-        return fp;
-      })),
+      participants: Object.freeze(this.#state.participants.map((p) => frozenParticipant(p))),
       weave: Object.freeze([...this.#state.weave]),
       rounds: Object.freeze(this.#state.rounds.map((r) => Object.freeze({ ...r }))),
       artifact: this.#state.artifact ? frozenCopy(this.#state.artifact) : this.#state.artifact,

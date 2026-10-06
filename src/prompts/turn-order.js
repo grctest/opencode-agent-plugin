@@ -7,7 +7,7 @@ export function buildTurnOrderPrompt(stateOfPlay, roundSummary, participants, or
   const safeStateOfPlay = escapeDelimiters(sanitizeForDisplay(stateOfPlay, 2000));
   const safeRoundSummary = escapeDelimiters(sanitizeForDisplay(roundSummary, 1000));
 
-  // No tier/seniority anywhere in this prompt by design: tiers are setup-phase
+  // No category/seniority anywhere in this prompt by design: categories are setup-phase
   // labels differentiating persona purpose, and seniority plays no part in
   // turn-order decisions. Ordering is by evidence, urgency, and recency only.
   const participantsList = participants

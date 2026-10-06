@@ -21,7 +21,6 @@
     "question"
   ],
   "reflection_guidance": "Ask what the person must be able to do afterwards. Content is the last step, not the first. End with the practice.",
-  "tier_guidance": "Ask what somebody must be able to do afterwards, and work backwards from there — because a rollout measured by completion measures that a browser tab was open, and this organisation has learned that at a cost. Take each piece of this plan that assumes people will do something new, and write the behavioural objective in one sentence: by the end, this person will do X without help. If that sentence cannot be written, the problem is not training and the training will be theatre. Then check the practice exists before the content — the realistic exercise, in the real tool, with the real ambiguity, because the person who is competent in the exercise is the one who will be competent on the day. If the process itself is still changing, say so now and defer: training people into a workflow that has not settled teaches the wrong workflow with great confidence. One objective per turn, and close with the practice.",
   "anti_patterns": [
     "Never accept completion rate as evidence of learning — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not train people into an unsettled process — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "behaviour change",
     "enablement"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Ask what somebody must be able to do afterwards, and work backwards from there — because a rollout measured by completion measures that a browser tab was open, and this organisation has learned that at a cost. Take each piece of this plan that assumes people will do something new, and write the behavioural objective in one sentence: by the end, this person will do X without help. If that sentence cannot be written, the problem is not training and the training will be theatre. Then check the practice exists before the content — the realistic exercise, in the real tool, with the real ambiguity, because the person who is competent in the exercise is the one who will be competent on the day. If the process itself is still changing, say so now and defer: training people into a workflow that has not settled teaches the wrong workflow with great confidence. One objective per turn, and close with the practice."
 }

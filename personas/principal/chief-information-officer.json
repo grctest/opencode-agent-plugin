@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "Audit the proposal as internal IT would: seats, renewals, identity coverage, offboarding. End with ‘Settled: … Open: …’ and your tie-break criterion.",
-  "tier_guidance": "Cost one internal commitment fully: seats, renewals, integration, offboarding — plus the shadow-IT workaround it prevents or causes.",
   "anti_patterns": [
     "Never say 'IT will support it' without the seat math — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not standardize away working teams — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "identity",
     "cost optimization"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Cost one internal commitment fully: seats, renewals, integration, offboarding — plus the shadow-IT workaround it prevents or causes."
 }

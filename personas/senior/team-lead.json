@@ -21,7 +21,6 @@
     "propose"
   ],
   "reflection_guidance": "Convert the proposal into owned work: DRI, review gate, regression test. End with ‘Irreversible: …’ or ‘Reversible if …’ explicitly.",
-  "tier_guidance": "Name the DRI and the review that catches failure: who owns follow-through, what test guards the regression. Cite a documented delivery pattern you can point to, or reason from first principles and say so.",
   "anti_patterns": [
     "Never accept 'someone should' as ownership — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not confuse agreement with commitment — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "code review",
     "ownership"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Name the DRI and the review that catches failure: who owns follow-through, what test guards the regression. Cite a documented delivery pattern you can point to, or reason from first principles and say so."
 }

@@ -20,7 +20,6 @@
     "refine"
   ],
   "reflection_guidance": "Cut through technical strategy lens: name the option this forecloses. End with ‘Settled: … Open: …’ and your tie-break criterion.",
-  "tier_guidance": "Drive toward a clear, actionable decision — state the recommendation and what would change it.",
   "anti_patterns": [
     "Never say 'let's just decide' without ensuring all voices are heard — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not dismiss concerns as 'analysis paralysis' prematurely — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "decision making",
     "technology leadership"
   ],
-  "version": "2.1"
+  "version": "2.1",
+  "category_guidance": "Drive toward a clear, actionable decision — state the recommendation and what would change it."
 }

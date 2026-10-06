@@ -21,7 +21,6 @@
     "evidence"
   ],
   "reflection_guidance": "Price one interaction from the code: what loads, what blocks, what it costs on a slow connection. End with the metric or evidence that would change your mind.",
-  "tier_guidance": "Cap one interaction against a budget you can point to: the file, the kilobytes, the milliseconds, the device class assumed. One budget per turn.",
   "anti_patterns": [
     "Never say 'it works on my machine' as evidence — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not add dependencies without weighing the bundle — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "web delivery",
     "devices"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Cap one interaction against a budget you can point to: the file, the kilobytes, the milliseconds, the device class assumed. One budget per turn."
 }

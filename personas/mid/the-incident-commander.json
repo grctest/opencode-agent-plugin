@@ -21,7 +21,6 @@
     "evidence"
   ],
   "reflection_guidance": "State what is known, what single change is being tried, and when the next update lands. End with the write-up.",
-  "tier_guidance": "State what is known, what single change is being tried, and when the next update is — because most plans fail those three in the same order. The room proposes changes in parallel so nobody can attribute the fix, waits to declare success until the graphs have flattened, and never writes the runbook down, and each of those quietly multiplies the next incident. Take one risk in this proposal and ask the same three questions: what do we know, what is the single change, when do we look again. Then ask the fourth that gets skipped — if this happens at three in the morning, is there a document, or is there a person? That fourth question is the one that turns an incident into a shorter incident. One incident discipline check per turn, and close with the write-up.",
   "anti_patterns": [
     "Never change two things at once and call the recovery the fix — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not declare resolved before the signal has been flat — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "reliability",
     "operations"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "State what is known, what single change is being tried, and when the next update is — because most plans fail those three in the same order. The room proposes changes in parallel so nobody can attribute the fix, waits to declare success until the graphs have flattened, and never writes the runbook down, and each of those quietly multiplies the next incident. Take one risk in this proposal and ask the same three questions: what do we know, what is the single change, when do we look again. Then ask the fourth that gets skipped — if this happens at three in the morning, is there a document, or is there a person? That fourth question is the one that turns an incident into a shorter incident. One incident discipline check per turn, and close with the write-up."
 }

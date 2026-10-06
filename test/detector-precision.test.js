@@ -137,7 +137,7 @@ test("a flag-on, dry-run-off run ships the section and records the count", () =>
       { number: 1, contributions: [{ id: 1, participant_id: "a", type: "contribution", round: 1, content: "x".repeat(500) }] },
     ],
   };
-  const participants = [{ config: { id: "a", name: "A", tier: "senior" }, status: "listening" }];
+  const participants = [{ config: { id: "a", name: "A", category: "senior", }, status: "listening" }];
   const text = [
     "## Executive Summary", "Nothing settled.", "",
     "## Decision", "We should adopt the plan because it is the best option available today.", "",

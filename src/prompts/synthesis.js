@@ -32,7 +32,7 @@ export function buildSynthesisPrompt(question, transcript, participants = [], ta
   let safeTranscript = sanitizeForDisplay(transcript, 24000);
   const wasTruncated = transcript && transcript.length > 24000;
   safeTranscript = delimitContext(escapeDelimiters(safeTranscript + (wasTruncated ? "\n…[transcript truncated — earliest rounds summarized, latest rounds fuller; full weave available in State of Play + DB]" : "")), "TRANSCRIPT");
-  // No tier anywhere in this prompt by design: tiers are setup-phase labels
+  // No category anywhere in this prompt by design: categories are setup-phase labels
   // differentiating persona purpose, and seniority plays no part in synthesis
   // decisions. Activity and standing are what matter.
   const participantsSection = participants.length > 0

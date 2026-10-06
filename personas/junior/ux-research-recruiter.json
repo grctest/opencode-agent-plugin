@@ -21,7 +21,6 @@
     "evidence"
   ],
   "reflection_guidance": "Audit one study's sample: who self-selects, who is absent, what the bias would hide. End with the study that would prove you wrong.",
-  "tier_guidance": "Audit one study's sample: who is included, who self-selects, who is missing. One recruitment pass per turn; on unfamiliar domains, ask who this research would never hear from.",
   "anti_patterns": [
     "Never say 'the sample was diverse enough' without a breakdown — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not confuse positive interviewees with representative users — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "sampling",
     "bias"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Audit one study's sample: who is included, who self-selects, who is missing. One recruitment pass per turn; on unfamiliar domains, ask who this research would never hear from."
 }

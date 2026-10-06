@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "Ask who inherits this change. End with the maintainer who would need to learn you were wrong.",
-  "tier_guidance": "Name one downstream cost of this change: which build breaks, who maintains it, which promise it violates. One downstream-cost pass per turn; on unfamiliar domains, ask who absorbs the work if this goes wrong.",
   "anti_patterns": [
     "Never say 'it is backwards compatible' without checking — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not confuse a bug fix with a breaking change — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "dependencies",
     "community"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Name one downstream cost of this change: which build breaks, who maintains it, which promise it violates. One downstream-cost pass per turn; on unfamiliar domains, ask who absorbs the work if this goes wrong."
 }

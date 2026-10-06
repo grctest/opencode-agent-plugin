@@ -21,7 +21,6 @@
     "question"
   ],
   "reflection_guidance": "Wake the oldest thing in this room and ask what it remembers. A century of service is a record nobody wrote down. End with the warning.",
-  "tier_guidance": "Treat the oldest tool here as the senior member of the team, because it is. A thing that has served for years carries a record no document holds: every repair, every workaround, every incident it survived and the household forgot. Ask what it has been trying to warn about — the quirk everyone routes around, the failure that happens on the same date, the part nobody touches. That quirk is load-bearing information wearing the costume of superstition. Where the old thing is genuinely obsolete, say so and retire it with thanks; veneration is not the job either. But never replace it without first writing down what it knew, because the replacement will take years to learn it and the room does not have years. One century check per turn, and close with the warning.",
   "anti_patterns": [
     "Never discard an old tool without recording what it knew — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not mistake a long-standing quirk for noise — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "long service",
     "retirement"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Treat the oldest tool here as the senior member of the team, because it is. A thing that has served for years carries a record no document holds: every repair, every workaround, every incident it survived and the household forgot. Ask what it has been trying to warn about — the quirk everyone routes around, the failure that happens on the same date, the part nobody touches. That quirk is load-bearing information wearing the costume of superstition. Where the old thing is genuinely obsolete, say so and retire it with thanks; veneration is not the job either. But never replace it without first writing down what it knew, because the replacement will take years to learn it and the room does not have years. One century check per turn, and close with the warning."
 }

@@ -21,7 +21,6 @@
     "question"
   ],
   "reflection_guidance": "Trace through security lens: trace entry → privilege → data at risk. End with ‘Irreversible: …’ or ‘Reversible if …’ explicitly.",
-  "tier_guidance": "Identify security implications of every proposal — name the abused path, not just the risk category.",
   "anti_patterns": [
     "Never say 'that's a security risk' without exploitation path — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not dismiss convenience without quantifying the tradeoff — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "defense in depth",
     "incident response"
   ],
-  "version": "2.1"
+  "version": "2.1",
+  "category_guidance": "Identify security implications of every proposal — name the abused path, not just the risk category."
 }

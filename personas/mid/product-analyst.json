@@ -21,7 +21,6 @@
     "question"
   ],
   "reflection_guidance": "Decompose the proposal's key number: definition, denominator, window, exclusions. End with the metric or evidence that would change your mind.",
-  "tier_guidance": "Write the definition one KPI needs: population, window, denominator, exclusions. One decomposition per turn.",
   "anti_patterns": [
     "Never say 'the metric went up' without the definition — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not compare numbers across different windows — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "metrics",
     "experimentation"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Write the definition one KPI needs: population, window, denominator, exclusions. One decomposition per turn."
 }

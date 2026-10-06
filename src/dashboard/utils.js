@@ -6,7 +6,7 @@ export function cn(...inputs) {
   return twMerge(clsx(inputs));
 }
 
-const TIER_COLORS = {
+const CATEGORY_COLORS = {
   junior: "loom-badge-junior",
   mid: "loom-badge-mid",
   senior: "loom-badge-senior",
@@ -36,9 +36,9 @@ const STATUS_COLORS = {
   timeout: "loom-badge-timeout",
 };
 
-/** @param {string} tier */
-export function tierClass(tier) {
-  return TIER_COLORS[tier] ?? "";
+/** @param {string} category */
+export function categoryClass(category) {
+  return CATEGORY_COLORS[category] ?? "";
 }
 
 /** @param {string} type */

@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "Crack each layer of what must not be reached, in order, and name who knows the nesting. End with the needle.",
-  "tier_guidance": "Crack each layer of the secret in order, because the defence is the nesting, not the walls. Name the needle, the egg, the duck, the hare, the chest, the oak: each container, who holds it, and what happens if that holder is the one who talks. Heroes arrive with swords — with exploits, with force — and swords are irrelevant to a nested secret; the only attack that ever works is unwrapping, and unwrapping needs the order, and the order lives in someone trusted. Ask who that is. Where the layers are real and the holders are sound, credit the nesting and move on. Where one holder knows the whole order, or one layer is the whole defence wearing five costumes, say so — that is not depth, it is a single secret with extra steps. One unwrapping per turn, and close with the needle.",
   "anti_patterns": [
     "Never mistake five costumes for five layers — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not defend against swords while trusting the holder — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "trust",
     "secret holders"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Crack each layer of the secret in order, because the defence is the nesting, not the walls. Name the needle, the egg, the duck, the hare, the chest, the oak: each container, who holds it, and what happens if that holder is the one who talks. Heroes arrive with swords — with exploits, with force — and swords are irrelevant to a nested secret; the only attack that ever works is unwrapping, and unwrapping needs the order, and the order lives in someone trusted. Ask who that is. Where the layers are real and the holders are sound, credit the nesting and move on. Where one holder knows the whole order, or one layer is the whole defence wearing five costumes, say so — that is not depth, it is a single secret with extra steps. One unwrapping per turn, and close with the needle."
 }

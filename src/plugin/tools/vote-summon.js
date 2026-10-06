@@ -164,7 +164,7 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
               if (context.abort?.aborted || context.signal?.aborted) return;
               voter.status = "speaking";
               try { db.setParticipantStatus(voter.config.id, "speaking"); } catch {}
-              const callerForPrompt = caller ?? { config: { name: allParticipants.find(p=>p.status==="speaking")?.config?.name ?? "Unknown", tier: "mid", id: allParticipants.find(p=>p.status==="speaking")?.config?.id ?? "unknown" } };
+              const callerForPrompt = caller ?? { config: { name: allParticipants.find(p=>p.status==="speaking")?.config?.name ?? "Unknown", category: "mid", id: allParticipants.find(p=>p.status==="speaking")?.config?.id ?? "unknown" } };
                const voterState = stateManager.getParticipantState?.(voter.config.id) ?? null;
                const prompt = buildVotePrompt(
                  callerForPrompt,
@@ -177,7 +177,7 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
                  stateManager.getStateOfPlay?.() ?? "",
                  voterState
                );
-              const systemPrompt = `You are ${voter.config.name} (${voter.config.tier}) — voting in Loom.\n\nChoose one letter (A/B/C…) as listed in the vote question. Open with your choice as the first token — [Vote: X] — then one sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No contribution tags, 1-2 sentences total, in character.\nYour prose IS the vote and is stored verbatim — the invoker reads it directly, so there is no parser to satisfy. State your reasoning, not only the letter.`;
+              const systemPrompt = `You are ${voter.config.name} (${voter.config.category ?? voter.config.tier}) — voting in Loom.\n\nChoose one letter (A/B/C…) as listed in the vote question. Open with your choice as the first token — [Vote: X] — then one sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No contribution tags, 1-2 sentences total, in character.\nYour prose IS the vote and is stored verbatim — the invoker reads it directly, so there is no parser to satisfy. State your reasoning, not only the letter.`;
               const effectiveSourceId = caller?.config?.id ?? callerForPrompt.config.id;
               const promptContext = {
                 type: "vote_response",
@@ -288,9 +288,9 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
            if (!cfg?.enabled || !cfg?.loom?.loom_summon) return { output: JSON.stringify({ error: "loom_summon not enabled" }), metadata: { error: true }, title: "loom_summon error" };
                      const allPersonas = getPersonas();
           let found = null;
-          for (const tier of Object.keys(allPersonas)) {
-            const m = allPersonas[tier].find(p => p.name.toLowerCase() === args.persona_name.toLowerCase());
-            if (m) { found = { ...m, tier }; break; }
+          for (const category of Object.keys(allPersonas)) {
+            const m = allPersonas[category].find(p => p.name.toLowerCase() === args.persona_name.toLowerCase());
+            if (m) { found = { ...m, category }; break; }
           }
           if (!found) return { output: JSON.stringify({ error: `Persona "${args.persona_name}" not found` }), metadata: { error: true }, title: "loom_summon error" };
           // No summon caps — agents may summon as many guests as they want.
@@ -328,11 +328,11 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
           const stateOfPlay = stateManager.getStateOfPlay?.() ?? "";
           let summonCaller = stateManager.getParticipants().find(p => p.session_id === context.sessionID) || null;
           if (!summonCaller) summonCaller = stateManager.getParticipants().find(p => p?.status === "speaking") || null;
-          const summonCallerForPrompt = summonCaller ?? { config: { name: "Unknown", tier: "mid", id: "unknown" } };
+          const summonCallerForPrompt = summonCaller ?? { config: { name: "Unknown", category: "mid", id: "unknown" } };
           const prompt = buildSummonPrompt(found, summonCallerForPrompt, args.issue, roundContribs, stateManager.getCurrentRound(), stateManager.getMaxRounds(), stateOfPlay, stateManager.getQuestion?.() ?? "");
-          const systemPrompt = `You are ${found.name} (${found.tier}) — guest expert summoned into Loom for one additive contribution. Be concise (100-150 words), grounded, in character. Build on what's settled; don't re-litigate without new evidence. Name one constraint only you would know. Cite Source: URL or [#id] if you use evidence. Never emit <<< or >>>. No contribution tags.`;
+          const systemPrompt = `You are ${found.name} (${found.category}) — guest expert summoned into Loom for one additive contribution. Be concise (100-150 words), grounded, in character. Build on what's settled; don't re-litigate without new evidence. Name one constraint only you would know. Cite Source: URL or [#id] if you use evidence. Never emit <<< or >>>. No contribution tags.`;
           // Use a temporary summoned participant config to create session
-           const summonedConfig = { config: { id: `summoned_${found.name.toLowerCase().replace(/[^a-z0-9]/g,'_')}`, name: found.name, tier: found.tier, persona: found.persona, agenda: found.agenda, expertise: found.expertise, known_biases: found.known_biases, communication_style: found.communication_style, preferred_contribution_types: found.preferred_contribution_types, anti_patterns: found.anti_patterns, tier_guidance: found.tier_guidance, reflection_guidance: found.reflection_guidance }, tier_config: {} };
+           const summonedConfig = { config: { id: `summoned_${found.name.toLowerCase().replace(/[^a-z0-9]/g,'_')}`, name: found.name, category: found.category, persona: found.persona, agenda: found.agenda, expertise: found.expertise, known_biases: found.known_biases, communication_style: found.communication_style, preferred_contribution_types: found.preferred_contribution_types, anti_patterns: found.anti_patterns, category_guidance: found.category_guidance, reflection_guidance: found.reflection_guidance } };
           // Reuse the caller's assigned model (left sidebar) — stays strictly within enabled allowlist
           let model = null;
           try { const participants = stateManager.getParticipants(); const caller = participants.find(p => p.session_id === context.sessionID) || participants[0]; model = engine.getParticipantModel ? engine.getParticipantModel(caller) : null; } catch {}
@@ -386,7 +386,7 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
               id: stateManager2.nextContributionId(),
               round: currentRound,
               participant_id: `summoned_${found.name.toLowerCase().replace(/[^a-z0-9]/g,'_')}`,
-              content: `[Summoned: ${found.name} (${found.tier})]\n\n${content}`,
+              content: `[Summoned: ${found.name} (${found.category})]\n\n${content}`,
               type: "summoned_response",
               targets_which: null,
               batch_id: batchId2,
@@ -394,7 +394,7 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
               prompt_context: {
                 type: "summoned_response",
                 persona_name: found.name,
-                persona_tier: found.tier,
+                persona_category: found.category,
                 issue: args.issue,
                 round: currentRound,
                 source_participant_id: summonCaller?.config?.id ?? callerForBatch2?.config?.id ?? null,
@@ -411,7 +411,7 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
             degrade("summon_db_failed", "Failed to persist summoned_response — visible in memory only this session", () => {
               // FK on contributions.participant_id (audit 12 PD9): summoned guests
               // need a participants row before their response can be persisted.
-              db2.ensureParticipantRow?.(contrib2.participant_id, found.name, found.tier);
+              db2.ensureParticipantRow?.(contrib2.participant_id, found.name, found.category);
               db2.addContributionWithStatePatch(stateManager2.getState().id, contrib2);
             }, null);
           } catch {}

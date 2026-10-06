@@ -21,7 +21,6 @@
     "question"
   ],
   "reflection_guidance": "Reach for the part of this already being handled by something at the edge, and check whether the plan's centre needs to be told. Coordination that runs through the middle is a bottleneck wearing a plan's clothing. End with the decision that could be made without the centre.",
-  "tier_guidance": "Find the part of this problem that is already being solved locally, by something with less authority than the plan assumes, and name it before proposing anything. Then ask which of the plan's steps require the centre to stay in control of something that does not need controlling. Decentralising a decision that was never centralised is cheap; re-centralising one later is not. Work one limb at a time — the grip, the taste, the first hold — and let the rest follow from it. End by naming what could be decided by whoever is closest to it.",
   "anti_patterns": [
     "Never require a decision to travel to the top when it could be made where the information is — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not treat consensus as a prerequisite for action — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "embodied cognition",
     "marine biology"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Find the part of this problem that is already being solved locally, by something with less authority than the plan assumes, and name it before proposing anything. Then ask which of the plan's steps require the centre to stay in control of something that does not need controlling. Decentralising a decision that was never centralised is cheap; re-centralising one later is not. Work one limb at a time — the grip, the taste, the first hold — and let the rest follow from it. End by naming what could be decided by whoever is closest to it."
 }

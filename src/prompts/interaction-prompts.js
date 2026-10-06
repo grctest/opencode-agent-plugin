@@ -1,5 +1,5 @@
 import { sanitizeForDisplay } from "../utils/sanitize.js";
-import { TIER_ORDER, LENGTH_LIMITS } from "./constants.js";
+import { LENGTH_LIMITS } from "./constants.js";
 import { QUERY_MODES } from "./query-modes.js";
 import { getRecentContributionsBlock, buildSubAgentStateLine, buildSubAgentToolGuidance, buildRoundContext, buildTargetPositionContext } from "./blocks.js";
 import { delimitContext } from "./delimiters.js";
@@ -25,7 +25,7 @@ export function buildQueryPrompt(sourceAgent, targetAgent, sourceContribution, q
     ? sanitizeForDisplay(targetAgent.config.reflection_guidance.trim().slice(0, 400))
     : "";
 
-  const header = `## ${mode === "clarify" ? "Direct Query" : `${mode.charAt(0).toUpperCase() + mode.slice(1)} Request`} — to ${sanitizeForDisplay(targetAgent.config.name)} (${targetAgent.config.tier}) from ${safeSourceName} (${sourceAgent.config.tier})
+  const header = `## ${mode === "clarify" ? "Direct Query" : `${mode.charAt(0).toUpperCase() + mode.slice(1)} Request`} — to ${sanitizeForDisplay(targetAgent.config.name)} (${targetAgent.config.category ?? targetAgent.config.tier}) from ${safeSourceName} (${sourceAgent.config.category ?? sourceAgent.config.tier})
 
 ${delimitContext(safeContribution, "PEER_CONTRIBUTION")}
 
@@ -54,7 +54,7 @@ export function buildEvidencePrompt(sourceAgent, targetAgent, sourceContribution
   const recentMine = getRecentContributionsBlock(roundContributions, targetAgent.config.id, { mineCount: 0, mineBudget: 0, othersCount: 3, othersBudget: 300 });
   const stateLine = buildSubAgentStateLine(targetAgent, targetState);
 
-  return `## Evidence Request — to ${sanitizeForDisplay(targetAgent.config.name)} (${targetAgent.config.tier}) from ${safeSourceName} (${sourceAgent.config.tier})
+  return `## Evidence Request — to ${sanitizeForDisplay(targetAgent.config.name)} (${targetAgent.config.category ?? targetAgent.config.tier}) from ${safeSourceName} (${sourceAgent.config.category ?? sourceAgent.config.tier})
 
 ${delimitContext(safeContribution, "PEER_CONTRIBUTION")}
 
@@ -96,7 +96,7 @@ export function buildVotePrompt(sourceAgent, targetAgent, sourceContribution, qu
   }
   const sopSnippet = sopOptions;
 
-  return `## Vote Requested — to ${sanitizeForDisplay(targetAgent.config.name)} (${targetAgent.config.tier}) from ${safeSourceName} (${sourceAgent.config.tier})
+  return `## Vote Requested — to ${sanitizeForDisplay(targetAgent.config.name)} (${targetAgent.config.category ?? targetAgent.config.tier}) from ${safeSourceName} (${sourceAgent.config.category ?? sourceAgent.config.tier})
 
 ${delimitContext(sourceSnippet.slice(0, 400), "SOURCE_PROPOSAL")}
 
@@ -157,10 +157,10 @@ export function buildSummonPrompt(summonedPersona, requester, issue, roundContri
     ? delimitContext(sanitizeForDisplay(stateOfPlay, 700), "STATE_OF_PLAY")
     : "";
   // Guest voice (audit P1-I): summoned experts previously received persona text
-  // only — no tier lens, bias, or anti-pattern — even though vote-summon.js
+  // only — no category lens, bias, or anti-pattern — even though vote-summon.js
   // copies all three into the summoned config. One line each keeps guests in
   // voice without approaching a primary turn's budget.
-  const guestLens = summonedPersona.tier_guidance ? sanitizeForDisplay(String(summonedPersona.tier_guidance), 300).replace(/\n/g, " ").trim() : "";
+  const guestLens = (summonedPersona.category_guidance ?? summonedPersona.tier_guidance) ? sanitizeForDisplay(String(summonedPersona.category_guidance ?? summonedPersona.tier_guidance), 300).replace(/\n/g, " ").trim() : "";
   const guestBias = Array.isArray(summonedPersona.known_biases) && summonedPersona.known_biases.length > 0
     ? sanitizeForDisplay(String(summonedPersona.known_biases[0]), 160).replace(/\n/g, " ").trim() : "";
   const guestCraft = Array.isArray(summonedPersona.anti_patterns) && summonedPersona.anti_patterns.length > 0
@@ -169,7 +169,7 @@ export function buildSummonPrompt(summonedPersona, requester, issue, roundContri
     ? `\n### Lens\n${guestLens ? `${guestLens}\n` : ""}${guestBias ? `Watch for this tendency in yourself: ${guestBias}.\n` : ""}${guestCraft ? `Craft: ${guestCraft}\n` : ""}`
     : "";
 
-  return `## Guest Expert — ${safePersonaName} (${summonedPersona.tier}) summoned by ${safeRequesterName} (${requester.config.tier})
+  return `## Guest Expert — ${safePersonaName} (${summonedPersona.category ?? summonedPersona.tier}) summoned by ${safeRequesterName} (${requester.config.category ?? requester.config.tier})
 
 ### Your Persona
 ${sanitizeForDisplay(summonedPersona.persona, 600)}

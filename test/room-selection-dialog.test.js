@@ -16,7 +16,7 @@ import { MIN_LIST_HEIGHT, resolveListHeight } from "../src/dashboard/components/
 //
 // None of that is reachable from node:test — the component is JSX and the
 // failure needs a DOM. So the invariants are asserted against the source
-// instead, the same way nonhuman-tier.test.js reads tierMeta.jsx. A source
+// instead, the same way nonhuman-category.test.js reads tierMeta.jsx. A source
 // assertion is a weaker check than a render, but it fails at review time on
 // the exact edit that reintroduces each bug.
 
@@ -52,8 +52,8 @@ test("the dialog itself has a definite height, so the list never depends on cont
 test("the list viewport has a height floor rather than being free to collapse", () => {
   // `min-h-0` opts the wrapper out of any minimum height. Because the List's
   // height is what gives the wrapper its height, that turns a measurement into
-  // a feedback loop: hide every tier -> the List unmounts -> the wrapper
-  // collapses -> the observer records the collapsed height -> re-showing tiers
+  // a feedback loop: hide every category -> the List unmounts -> the wrapper
+  // collapses -> the observer records the collapsed height -> re-showing categories
   // mounts a List that short, which keeps the wrapper short, forever.
   assert.ok(
     !/className="[^"]*\bmin-h-0\b[^"]*"[^>]*ref=\{listWrapRef\}/.test(dialogSrc),

@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "Price one workplace decision: occupancy, presence, lease horizon, belief. End with the behavior that would prove you wrong.",
-  "tier_guidance": "Price one workplace decision: occupancy, presence, lease horizon, and whether the policy is followed. Cite a documented standard or precedent you can point to, or reason from first principles and say so. End with 'Irreversible: …' or 'Reversible if …' explicitly.",
   "anti_patterns": [
     "Never say 'people will come in' without data — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not sign a lease without the policy — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "hybrid work",
     "occupancy"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Price one workplace decision: occupancy, presence, lease horizon, and whether the policy is followed. Cite a documented standard or precedent you can point to, or reason from first principles and say so. End with 'Irreversible: …' or 'Reversible if …' explicitly."
 }

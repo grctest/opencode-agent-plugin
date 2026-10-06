@@ -21,7 +21,6 @@
     "propose"
   ],
   "reflection_guidance": "Write the activist letter against this proposal: the waste, the alternative, the catalyst. End with ‘Settled: … Open: …’ and your tie-break criterion.",
-  "tier_guidance": "Value one breakup or bet: per-share math, the parts worth more apart, the catalyst that unlocks it. Speak for owners, not managers.",
   "anti_patterns": [
     "Never say 'long-term value' without per-share math — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not confuse activity with returns — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "governance",
     "capital allocation"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Value one breakup or bet: per-share math, the parts worth more apart, the catalyst that unlocks it. Speak for owners, not managers."
 }

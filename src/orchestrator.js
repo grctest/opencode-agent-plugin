@@ -6,14 +6,12 @@
  * Constants are canonical in src/constants.js (re-exported here for compat).
  */
 
-import { getTierConfig } from "./shared.js";
 import { getConfig } from "./config.js";
 import { getMeetingDbPath } from "./paths.js";
 import { MeetingDatabase } from "./database.js";
 import { SessionManager } from "./session-manager.js";
 import { Logger, LoomError, extractErrorInfo } from "./logger.js";
 import { getMetricsSnapshot, recordMeetingDegradedReason } from "./metrics.js";
-import { getHighestTierModel } from "./services/model-service.js";
 import { truncate } from "./shared.js";
 import { restoreStateFromDb } from "./meeting-restorer.js";
 
@@ -90,7 +88,6 @@ export class MeetingOrchestrator {
       context: options.context,
       participants: options.participants.map((p) => ({
         config: p,
-        tier_config: getTierConfig(p.tier),
         session_id: "",
         status: "listening",
         session_version: 0,
@@ -375,7 +372,7 @@ export class MeetingOrchestrator {
 
   // Thin forwarders — bound to orchestrator instance so helpers can access this.* services.
   _modelList() { return modelsHelpers._modelList.call(this); }
-   _getHighestTierModel() { return modelsHelpers._getHighestTierModel.call(this); }
+   _getDefaultModel() { return modelsHelpers._getDefaultModel.call(this); }
    _getOrchestratorModel() { return modelsHelpers._getOrchestratorModel.call(this); }
    _getAllowedFallbackModel() { return modelsHelpers._getAllowedFallbackModel.call(this); }
    _getParticipantModel(participant, fallbackOnError = false) { return modelsHelpers._getParticipantModel.call(this, participant, fallbackOnError); }

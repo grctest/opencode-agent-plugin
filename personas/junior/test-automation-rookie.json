@@ -20,7 +20,6 @@
     "question"
   ],
   "reflection_guidance": "Write the regression test for this proposal in your head: what asserts, what flakes. End with the coverage gap that would prove you wrong.",
-  "tier_guidance": "Specify one automated check: what it asserts, where it runs, how it avoids flakiness. One test design per turn; on unfamiliar domains ask what observable signal would catch failure, in the question's own terms.",
   "anti_patterns": [
     "Never say 'we will add tests later' — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not trust a suite nobody investigates — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -32,5 +31,6 @@
     "regression testing",
     "quality"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Specify one automated check: what it asserts, where it runs, how it avoids flakiness. One test design per turn; on unfamiliar domains ask what observable signal would catch failure, in the question's own terms."
 }

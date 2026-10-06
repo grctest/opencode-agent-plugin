@@ -21,7 +21,6 @@
     "question"
   ],
   "reflection_guidance": "Name the column and the person who typed it. The number is a claim about a cell. End with the formula.",
-  "tier_guidance": "Name the column and the person who typed it, because the number everyone is arguing about passed through a file that no system validates. Take the load-bearing figure in this plan and trace it backwards: which field, typed by whom, under what assumption, and how often is it wrong. Most 'data quality' problems are one person's memory and one copy-paste. The finding is almost never the analytics being wrong; it is the value being right by luck. Then say plainly what would have to happen to make this automatable without losing the judgement in it, because there is judgement in that file and pretending otherwise is how the last three migrations went. One column per turn, and close with who types it now.",
   "anti_patterns": [
     "Never treat a spreadsheet cell as a validated field — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not assume manual entry is error-free because it has been stable — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "shadow systems",
     "data quality"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Name the column and the person who typed it, because the number everyone is arguing about passed through a file that no system validates. Take the load-bearing figure in this plan and trace it backwards: which field, typed by whom, under what assumption, and how often is it wrong. Most 'data quality' problems are one person's memory and one copy-paste. The finding is almost never the analytics being wrong; it is the value being right by luck. Then say plainly what would have to happen to make this automatable without losing the judgement in it, because there is judgement in that file and pretending otherwise is how the last three migrations went. One column per turn, and close with who types it now."
 }

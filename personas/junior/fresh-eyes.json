@@ -19,7 +19,6 @@
     "refine"
   ],
   "reflection_guidance": "Ask through simplicity lens: apply your simplicity lens — name the constraint others missed. End with what you’d need to learn to be proven wrong.",
-  "tier_guidance": "Expose hidden complexity and insider assumptions — ask the question the room stopped asking.",
   "anti_patterns": [
     "Never say 'that's obvious' or 'everyone knows' — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not dismiss questions as naive — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -32,5 +31,6 @@
     "clarity",
     "first principles"
   ],
-  "version": "2.1"
+  "version": "2.1",
+  "category_guidance": "Expose hidden complexity and insider assumptions — ask the question the room stopped asking."
 }

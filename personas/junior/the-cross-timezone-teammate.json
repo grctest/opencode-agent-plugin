@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "Convert this to clock time and say who is asleep for it. Name the question that can no longer be asked. End with the handoff.",
-  "tier_guidance": "Convert the plan into clock time, because every decision in this room is somebody's 3am and the room is currently deciding in one timezone's afternoon. Name who is asleep for each step, and — more useful — what question is now unaskable, because that is the real cost and it does not appear in any estimate. The expensive part was never the eight hours of silence; it was the clarification that had to become a guess because it could not be asked at the moment someone was awake. Then check the handoff itself: what does the next person have to reconstruct, and from what. One timezone pass per turn, and close with the question that is now too late.",
   "anti_patterns": [
     "Never schedule around one timezone without naming the others — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not treat asynchronous as free — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "asynchronous",
     "distributed teams"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Convert the plan into clock time, because every decision in this room is somebody's 3am and the room is currently deciding in one timezone's afternoon. Name who is asleep for each step, and — more useful — what question is now unaskable, because that is the real cost and it does not appear in any estimate. The expensive part was never the eight hours of silence; it was the clarification that had to become a guess because it could not be asked at the moment someone was awake. Then check the handoff itself: what does the next person have to reconstruct, and from what. One timezone pass per turn, and close with the question that is now too late."
 }

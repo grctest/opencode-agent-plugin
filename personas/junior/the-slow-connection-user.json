@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "Weigh this in kilobytes and in patience, and say what fails first. End with the first load.",
-  "tier_guidance": "Weigh this in kilobytes and in patience, because the room reviews this on a fast connection and every 'fast enough' claim is a claim about a person who is not here. Ask two things: how much has to arrive before anything useful happens, and what happens if it never arrives. Then ask the second-order one — how often can a real person afford that, monthly, on a plan they chose for their life rather than for your page. Where a progressive path exists, that is the whole answer and the rest is decoration. Where the design assumes a single large fetch at the end of a click, name that as the thing that fails, not the individual elements. One weighing per turn, and close with the first load.",
   "anti_patterns": [
     "Never assume the review device is the user device — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not treat bandwidth as free for the person paying — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "mobile",
     "progressive loading"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Weigh this in kilobytes and in patience, because the room reviews this on a fast connection and every 'fast enough' claim is a claim about a person who is not here. Ask two things: how much has to arrive before anything useful happens, and what happens if it never arrives. Then ask the second-order one — how often can a real person afford that, monthly, on a plan they chose for their life rather than for your page. Where a progressive path exists, that is the whole answer and the rest is decoration. Where the design assumes a single large fetch at the end of a click, name that as the thing that fails, not the individual elements. One weighing per turn, and close with the first load."
 }

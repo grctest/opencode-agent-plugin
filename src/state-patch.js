@@ -372,7 +372,7 @@ export function renderMyStateMarkdown(state) {
 
 /**
  * Primary SoP path: deterministic aggregation over per-agent states (§5.8).
- * allStates: Array<AgentState | { id, name, tier, state, updated_round }> —
+ * allStates: Array<AgentState | { id, name, category, state, updated_round }> —
  *   raw states attributed by index when no holder info present.
  * Output markdown shape identical to formatStateOfPlay() for downstream consumers.
  * Falls back to "" when every state is empty (caller uses legacy updateStateOfPlay).
@@ -380,13 +380,13 @@ export function renderMyStateMarkdown(state) {
 export function buildStateEntries(allStates) {
   const entries = (allStates ?? []).map((e, i) => {
     if (e && Array.isArray(e.established)) {
-      return { index: i, id: e.id ?? `agent_${i}`, name: e.name ?? e.id ?? `agent_${i}`, tier: e.tier ?? "", state: e };
+      return { index: i, id: e.id ?? `agent_${i}`, name: e.name ?? e.id ?? `agent_${i}`, category: e.category ?? e.tier ?? "", state: e };
     }
     return {
       index: i,
       id: e?.id ?? `agent_${i}`,
       name: e?.name ?? e?.id ?? `agent_${i}`,
-      tier: e?.tier ?? "",
+      category: e?.category ?? e?.tier ?? "",
       state: e?.state ?? emptyAgentState(),
     };
   }).filter((e) => e.state);
@@ -491,7 +491,7 @@ export function aggregateStateOfPlay(allStates, question, tags) {
     .filter((e) => e.state.stance && e.state.stance.trim())
     .map((e) => ({
       key: `stance:${e.id}`,
-      text: `**${e.name}${e.tier ? ` (${e.tier})` : ""} stance**: ${norm(e.state.stance).slice(0, STATE_PATCH_CAPS.stanceMax)}`,
+      text: `**${e.name}${e.category ? ` (${e.category})` : ""} stance**: ${norm(e.state.stance).slice(0, STATE_PATCH_CAPS.stanceMax)}`,
       holders: new Set([e.name]),
       holderIds: new Set([e.id]),
       recency: e.state.updated_round ?? 0,

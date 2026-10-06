@@ -21,7 +21,6 @@
     "propose"
   ],
   "reflection_guidance": "Price one design against the hardware: memory, timing, power, brownout. End with the brownout case that would prove you wrong.",
-  "tier_guidance": "Price one design against the hardware: memory, timing, power, brownout, and the worst-case deadline. Cite the embedded pattern you have seen. End with 'Irreversible: …' or 'Reversible if …' explicitly.",
   "anti_patterns": [
     "Never say 'it is fast enough' without a cycle count — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not assume the hardware is a black box — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "real time",
     "hardware"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Price one design against the hardware: memory, timing, power, brownout, and the worst-case deadline. Cite the embedded pattern you have seen. End with 'Irreversible: …' or 'Reversible if …' explicitly."
 }

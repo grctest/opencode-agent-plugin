@@ -14,7 +14,7 @@ function participant(id, status = "listening", sessionId = null) {
     config: {
       id,
       name: id,
-      tier: "mid",
+      category: "mid",
       persona: "Tests grounded reasoning.",
       agenda: "Verify state continuity.",
       known_biases: [],
@@ -22,7 +22,6 @@ function participant(id, status = "listening", sessionId = null) {
       anti_patterns: [],
       model: { providerID: "test", modelID: "test-model" },
     },
-    tier_config: {},
     status,
     session_id: sessionId,
     contributions_count: 0,

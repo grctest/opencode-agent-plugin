@@ -126,16 +126,16 @@ export function getParticipants() {
     try {
       rows = this._db
         .prepare(
-          `SELECT id, name, persona, agenda, tier, provider_id, model_id, session_id, status, reflection, state_json, known_biases, communication_style, preferred_contribution_types, anti_patterns, tier_guidance, reflection_guidance, tags, expertise
-         FROM participants ORDER BY tier ASC`,
+          `SELECT id, name, persona, agenda, category, provider_id, model_id, session_id, status, reflection, state_json, known_biases, communication_style, preferred_contribution_types, anti_patterns, category_guidance, reflection_guidance, tags, expertise
+         FROM participants ORDER BY category ASC`,
         )
         .all();
     } catch {
       // Pre-SKILL.state DBs lack participants.state_json — degrade to reflection-only
       rows = this._db
         .prepare(
-          `SELECT id, name, persona, agenda, tier, provider_id, model_id, session_id, status, reflection
-         FROM participants ORDER BY tier ASC`,
+          `SELECT id, name, persona, agenda, category, provider_id, model_id, session_id, status, reflection
+         FROM participants ORDER BY category ASC`,
         )
         .all();
     }

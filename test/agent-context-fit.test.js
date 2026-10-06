@@ -33,7 +33,7 @@ function fakeExecutor({ model = AVAILABLE[0], weave = [], tools = null } = {}) {
   const captured = [];
   const participant = {
     id: "p1",
-    config: { id: "p1", name: "A", tier: "standard", persona: "a careful analyst", model: { providerID: model.providerID, modelID: model.modelID } },
+    config: { id: "p1", name: "A", category: "standard", persona: "a careful analyst", model: { providerID: model.providerID, modelID: model.modelID } },
     status: "listening",
     reflection: null,
   };

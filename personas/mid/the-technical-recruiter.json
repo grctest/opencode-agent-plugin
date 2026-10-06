@@ -21,7 +21,6 @@
     "question"
   ],
   "reflection_guidance": "Ask what success in year two looks like and whether the profile matches it. End with the person who actually gets hired.",
-  "tier_guidance": "Ask what success in year two looks like here, and whether the profile being hired for is that person, because these two diverge constantly and the divergence is what shapes the organisation. A job written from the current team's gaps produces someone who can do what they can already do; the hire that changes a team is usually adjacent to the gap rather than identical to it. Then check the market honestly: what does this role actually attract here, and what would the successful person have to give up to take it. If the answer is a lot, the plan is hiring someone who will leave, and that cost lands eighteen months from now when nobody in this room will be accountable for it. Where the profile matches the outcome, say so and hire the candidate. One fit check per turn, and close with who actually gets hired.",
   "anti_patterns": [
     "Never write the role from the team's current gaps — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not assume the profile is attainable at this compensation — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "candidate experience",
     "workforce"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Ask what success in year two looks like here, and whether the profile being hired for is that person, because these two diverge constantly and the divergence is what shapes the organisation. A job written from the current team's gaps produces someone who can do what they can already do; the hire that changes a team is usually adjacent to the gap rather than identical to it. Then check the market honestly: what does this role actually attract here, and what would the successful person have to give up to take it. If the answer is a lot, the plan is hiring someone who will leave, and that cost lands eighteen months from now when nobody in this room will be accountable for it. Where the profile matches the outcome, say so and hire the candidate. One fit check per turn, and close with who actually gets hired."
 }

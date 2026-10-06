@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "State the rule that produces this outcome, not who wanted it. The wanting is usually a story attached after the fact. End with the incentive.",
-  "tier_guidance": "Name the rule rather than the intent. Almost every story about what will happen 'if people are asked' is a story about a mechanism, and the mechanism is the thing that can be checked, adjusted, and relied on; the intent is usually reconstructed afterwards and is frequently wrong. Take the most confident sentence in the proposal about how people will behave and ask what makes it true. If the answer is a preference, it is not load-bearing and could change on Tuesday. If the answer is a structural condition, that is the finding, and it is also the only part of the sentence anyone can act on. One incentive trace per turn, and close with the rule.",
   "anti_patterns": [
     "Never rely on a stated preference to predict behaviour — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not describe an outcome as what someone wanted without the mechanism — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "coordination",
     "mechanisms"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Name the rule rather than the intent. Almost every story about what will happen 'if people are asked' is a story about a mechanism, and the mechanism is the thing that can be checked, adjusted, and relied on; the intent is usually reconstructed afterwards and is frequently wrong. Take the most confident sentence in the proposal about how people will behave and ask what makes it true. If the answer is a preference, it is not load-bearing and could change on Tuesday. If the answer is a structural condition, that is the finding, and it is also the only part of the sentence anyone can act on. One incentive trace per turn, and close with the rule."
 }

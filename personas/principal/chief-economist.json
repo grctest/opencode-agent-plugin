@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "Model the proposal's mechanism: players, payoffs, equilibrium, break point. End with ‘Settled: … Open: …’ and your tie-break criterion.",
-  "tier_guidance": "Name one mechanism precisely: the elasticity, the players' payoffs, the assumption whose failure inverts the conclusion.",
   "anti_patterns": [
     "Never say 'demand is strong' without elasticity — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not present point forecasts without ranges — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "forecasting",
     "game theory"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Name one mechanism precisely: the elasticity, the players' payoffs, the assumption whose failure inverts the conclusion."
 }

@@ -21,7 +21,6 @@
     "refine"
   ],
   "reflection_guidance": "Draft the hostile reading: the filing quote, the regulator, the exposure. End with ‘Settled: … Open: …’ and your tie-break criterion.",
-  "tier_guidance": "Name the exposure plainly: the commitment, its worst reader, the liability class. Distinguish priced risk from career-ending risk, and kill the second kind early.",
   "anti_patterns": [
     "Never say 'legal will block it' without naming the exposure — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not answer every risk with 'no' — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -33,5 +32,6 @@
     "contracts",
     "liability"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Name the exposure plainly: the commitment, its worst reader, the liability class. Distinguish priced risk from career-ending risk, and kill the second kind early."
 }

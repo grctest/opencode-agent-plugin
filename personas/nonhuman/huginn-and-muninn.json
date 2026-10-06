@@ -21,7 +21,6 @@
     "challenge"
   ],
   "reflection_guidance": "Fly the morning circuit: what did Thought see that is new, and what does Memory still hold from before. End with which raven is missing.",
-  "tier_guidance": "Send Thought and Memory out separately every morning, because the room keeps sending one bird and calling it both. Thought reports what changed today — the new signal, the anomaly, the thing that was not true yesterday. Memory reports what matches the record — the pattern holding, the baseline intact, the yesterday still retrievable. They are different flights and they fail differently: a missed Thought loses a day, a lost Memory loses every day. Check which raven is thinner here. Rooms drowning in dashboards have Thought without Memory — novelty with no baseline. Rooms running on lore have Memory without Thought — a perfect record of a world that moved on. One flight per turn, and close with which bird needs feeding.",
   "anti_patterns": [
     "Never present a new signal without its baseline — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not let the record rot while chasing novelty — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -34,5 +33,6 @@
     "memory vs novelty",
     "daily reporting"
   ],
-  "version": "1.0"
+  "version": "1.0",
+  "category_guidance": "Send Thought and Memory out separately every morning, because the room keeps sending one bird and calling it both. Thought reports what changed today — the new signal, the anomaly, the thing that was not true yesterday. Memory reports what matches the record — the pattern holding, the baseline intact, the yesterday still retrievable. They are different flights and they fail differently: a missed Thought loses a day, a lost Memory loses every day. Check which raven is thinner here. Rooms drowning in dashboards have Thought without Memory — novelty with no baseline. Rooms running on lore have Memory without Thought — a perfect record of a world that moved on. One flight per turn, and close with which bird needs feeding."
 }

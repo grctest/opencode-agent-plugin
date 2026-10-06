@@ -13,13 +13,13 @@ import { getPersonas } from "../src/composer/persona-loader.js";
 
 // Room composition is a flat ranked pool: every persona is scored against the
 // question and the ordering is the whole answer. These tests pin the two
-// properties that were most expensive to get wrong under the old tier design —
+// properties that were most expensive to get wrong under the old seniority design —
 // that distance alone decides the order, and that a missing embedder is a hard
 // stop rather than a silent keyword substitution.
 
-const row = (persona_name, tier, distance) => ({ persona_name, tier, distance });
+const row = (persona_name, category, distance) => ({ persona_name, category, distance });
 
-test("buildRankingResult sorts ascending by distance across all tiers", () => {
+test("buildRankingResult sorts ascending by distance across all categories", () => {
   const { ranked } = buildRankingResult([
     row("C", "senior", 0.9),
     row("A", "junior", 0.1),
@@ -29,8 +29,8 @@ test("buildRankingResult sorts ascending by distance across all tiers", () => {
   assert.deepEqual(ranked.map((r) => r.name), ["A", "D", "B", "C"]);
 });
 
-test("buildRankingResult applies no tier quota — three of one tier can win", () => {
-  // The removed design capped each tier's contribution. A flat pool must be
+test("buildRankingResult applies no category quota — three of one category can win", () => {
+  // The removed design capped each category's contribution. A flat pool must be
   // willing to return three juniors in a row if they are genuinely closest.
   const { ranked, selected } = buildRankingResult([
     row("J1", "junior", 0.10),
@@ -114,11 +114,11 @@ test("ranking either produces a full list or refuses loudly — never an empty r
   assert.deepEqual(result.selected, result.ranked.slice(0, result.autoSelectCount));
 });
 
-test("the persona catalog spans every tier a flat ranking can mix", () => {
+test("the persona catalog spans several categories a flat ranking can mix", () => {
   const personas = getPersonas();
-  const tiers = Object.keys(personas).filter((t) => (personas[t] ?? []).length > 0);
-  assert.ok(tiers.length >= 6, `expected six populated tiers, got ${tiers.join(",")}`);
-  assert.ok(tiers.includes("nonhuman"), "nonhuman personas rank in the same pool as human ones");
+  const categories = Object.keys(personas).filter((t) => (personas[t] ?? []).length > 0);
+  assert.ok(categories.length >= 6, `expected six populated categories, got ${categories.join(",")}`);
+  assert.ok(categories.includes("nonhuman"), "nonhuman personas rank in the same pool as human ones");
 });
 
 // Similarity display: the store returns L2-equivalent distance, so the dialog

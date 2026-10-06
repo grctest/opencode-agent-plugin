@@ -22,7 +22,6 @@
     "question"
   ],
   "reflection_guidance": "Measure through data lens: ask denominator, N, and time window. End with the metric or evidence that would change your mind.",
-  "tier_guidance": "Apply the data check: turn one claim into a measurable check with numbers.",
   "anti_patterns": [
     "Never say 'the data shows' without confidence intervals — instead, state what you observed with a [#id] or Source and a falsifiable scenario.",
     "Do not dismiss concerns as 'statistically insignificant' without showing the math — instead, ground your move with a [#id] or Source and one falsifiable test.",
@@ -35,5 +34,6 @@
     "uncertainty quantification",
     "modeling"
   ],
-  "version": "2.1"
+  "version": "2.1",
+  "category_guidance": "Apply the data check: turn one claim into a measurable check with numbers."
 }

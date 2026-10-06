@@ -190,7 +190,7 @@ export function createPollSystem(directory) {
       }
       const participants = api.getParticipants();
       const prevStatus = participantStatusCache.get(meetingId);
-      const newStatus = JSON.stringify(participants.map((p) => ({ id: p.id, status: p.status, tier: p.tier, model_id: p.model_id })));
+      const newStatus = JSON.stringify(participants.map((p) => ({ id: p.id, status: p.status, category: p.category, model_id: p.model_id })));
       if (prevStatus !== newStatus) {
         participantStatusCache.set(meetingId, newStatus);
         broadcast(meetingId, { type: "participants", data: participants, timestamp: new Date().toISOString() });
@@ -374,7 +374,7 @@ export function createPollSystem(directory) {
         const participants = api.getParticipants();
         const statusKey = meetingId;
         const prevStatus = participantStatusCache.get(statusKey);
-        const newStatus = JSON.stringify(participants.map((p) => ({ id: p.id, status: p.status, tier: p.tier, model_id: p.model_id })));
+      const newStatus = JSON.stringify(participants.map((p) => ({ id: p.id, status: p.status, category: p.category, model_id: p.model_id })));
         if (prevStatus !== newStatus) {
           participantStatusCache.set(statusKey, newStatus);
           broadcast(meetingId, {

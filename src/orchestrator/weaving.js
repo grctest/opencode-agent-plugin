@@ -7,7 +7,7 @@ export async function runMeeting() {
     await this.initialize();
 
     const participantItems = this._stateManager.getParticipants()
-      .map((p) => `  - ${p.config.name} (${p.config.tier}${p.config.tags?.length ? ", " + p.config.tags.join(", ") : ""})`)
+      .map((p) => `  - ${p.config.name} (${p.config.category ?? p.config.tier}${p.config.tags?.length ? ", " + p.config.tags.join(", ") : ""})`)
       .join("\n");
     await this._sessionManager.postProgress(
       `🎬 Loom started — ${this._stateManager.getParticipants().length} participants:\n${participantItems}`

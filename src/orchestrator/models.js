@@ -1,6 +1,6 @@
 import { getConfig } from "../config.js";
 import { parseFastPathModel } from "../config/utils.js";
-import { getHighestTierModel } from "../services/model-service.js";
+import { getDefaultModel } from "../services/model-service.js";
 import { sortModelsByQuality } from "../model-discovery.js";
 import { Logger, LoomError, extractErrorInfo } from "../logger.js";
 import { sanitizeForDisplay } from "../utils/sanitize.js";
@@ -234,11 +234,11 @@ export function getSynthesisGuidance(config = {}) {
 }
 
 export function _modelList() {
-    return this._stateManager.getParticipants().map((p) => ({ tier: p.config.tier, model: p.config.model }));
+    return this._stateManager.getParticipants().map((p) => ({ category: p.config.category ?? p.config.tier, model: p.config.model }));
   }
 
-export function _getHighestTierModel() {
-    return getHighestTierModel(this._modelList());
+export function _getDefaultModel() {
+    return getDefaultModel(this._modelList(), this._availableModels);
   }
 
 export function _getOrchestratorModel() {
@@ -246,9 +246,9 @@ export function _getOrchestratorModel() {
     if (configured?.providerID && configured?.modelID) {
       const model = { providerID: configured.providerID, modelID: configured.modelID };
       if (this._roundExecutor?.isModelHealthy?.(model)) return model;
-      return this._getAllowedFallbackModel() ?? this._getHighestTierModel();
+      return this._getAllowedFallbackModel() ?? this._getDefaultModel();
     }
-    return this._getHighestTierModel() ?? this._getAllowedFallbackModel();
+    return this._getDefaultModel() ?? this._getAllowedFallbackModel();
   }
 
 export function _getAllowedFallbackModel() {
@@ -276,10 +276,10 @@ export function _getParticipantModel(participant, fallbackOnError = false) {
       }
       return model;
     }
-    const fallback = this._getAllowedFallbackModel() ?? this._getHighestTierModel();
+    const fallback = this._getAllowedFallbackModel() ?? this._getDefaultModel();
     if (fallback) return fallback;
     throw new LoomError(
-      `No model assigned for participant ${participant.config.name} (${participant.config.tier})`,
+      `No model assigned for participant ${participant.config.name} (${participant.config.category ?? participant.config.tier ?? "unknown"})`,
       { phase: "model_assignment", participantId: participant.config.id, recoverable: false }
     );
   }

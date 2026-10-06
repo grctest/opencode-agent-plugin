@@ -128,7 +128,7 @@ test("the artifact carries no retraction markers or fields", () => {
       { id: 25, participant_id: "a", type: "contribution", round: 1, content: "y".repeat(500) },
     ] }],
   };
-  const participants = [{ config: { id: "a", name: "A", tier: "mid" }, status: "listening" }];
+  const participants = [{ config: { id: "a", name: "A", category: "mid", }, status: "listening" }];
   const text = [
     "## Executive Summary", "Nothing settled.", "",
     "## Decision", "Adopt the plan [#18] because it is the best option available today.", "",
