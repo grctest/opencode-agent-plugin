@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildAgentSystemPrompt } from "../src/prompts/agent.js";
@@ -16,6 +16,15 @@ import { DEFAULT_CONFIG, NESTED_SCHEMA } from "../src/config/defaults.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const src = (p) => readFileSync(join(root, p), "utf8");
+// Post-split tree readers: SetupTab composes setup/* cards, the control
+// plane composes server/control/* stages — scan the trees, not the facades.
+const srcTree = (dir, rel) => {
+  const out = [src(rel)];
+  for (const f of readdirSync(join(root, dir))) {
+    if (/\.(jsx?|tsx?)$/.test(f)) out.push(readFileSync(join(root, dir, f), "utf8"));
+  }
+  return out.join("\n");
+};
 
 function participant() {
   return {
@@ -76,7 +85,7 @@ test("Build mode: prompt says BUILD and the map offers write/edit", () => {
 });
 
 test("server: features.buildMode normalizes strict and reaches the tool build", () => {
-  const control = src("src/dashboard/server/control.js");
+  const control = srcTree("src/dashboard/server/control", "src/dashboard/server/control.js");
   assert.match(control, /buildMode: raw\.buildMode === true/);
   assert.match(control, /tools\.buildMode = buildMode/);
   assert.match(control, /const buildMode = features\.buildMode === true/);
@@ -92,7 +101,7 @@ test("setup store: buildMode defaults to Plan and sanitizes strict", () => {
 });
 
 test("setup tab: orchestrator card exposes the Plan/Build mode toggle", () => {
-  const tab = src("src/dashboard/components/SetupTab.jsx");
+  const tab = srcTree("src/dashboard/components/setup", "src/dashboard/components/SetupTab.jsx");
   assert.match(tab, /Deliberation mode/);
   assert.match(tab, /loom-orchestrator-deliberationMode/);
   assert.match(tab, /setFeature\("buildMode", value === "build"\)/);

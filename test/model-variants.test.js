@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -21,6 +21,25 @@ import { initSchema, runMigrations, LATEST_SCHEMA_VERSION } from "../src/databas
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const readSrc = (rel) => readFileSync(join(root, rel), "utf8");
+// SetupTab is a thin composer since the god-module split — its sections live
+// in src/dashboard/components/setup/. Structural assertions scan the whole
+// setup dir so moves between cards don't break the contract.
+const readSetupTree = () => {
+  const out = [readSrc("src/dashboard/components/SetupTab.jsx")];
+  for (const f of readdirSync(join(root, "src/dashboard/components/setup"))) {
+    if (/\.(jsx?|tsx?)$/.test(f)) out.push(readFileSync(join(root, "src/dashboard/components/setup", f), "utf8"));
+  }
+  return out.join("\n");
+};
+// Control plane likewise split into src/dashboard/server/control/.
+const readControlTree = () => {
+  const out = [];
+  try { out.push(readSrc("src/dashboard/server/control.js")); } catch {}
+  for (const f of readdirSync(join(root, "src/dashboard/server/control"))) {
+    if (/\.js$/.test(f)) out.push(readFileSync(join(root, "src/dashboard/server/control", f), "utf8"));
+  }
+  return out.join("\n");
+};
 
 test("extractVariants reads both catalog shapes and nothing else", () => {
   assert.deepEqual(extractVariants({ variants: { high: {}, low: {} } }), ["high", "low"]);
@@ -148,7 +167,7 @@ test("v17 persists seat and orchestrator variants; pre-v17 rows read as default"
 // The dashboard setup UI is JSX (no DOM in node:test), so its contract is
 // asserted against the source — same pattern as room-selection-dialog.test.js.
 test("SetupTab offers a variant picker beside each model picker", () => {
-  const src = readSrc("src/dashboard/components/SetupTab.jsx");
+  const src = readSetupTree();
   assert.ok(src.includes("loom-seat-variant-"), "per-seat variant select exists in the persona row");
   assert.ok(src.includes("loom-orchestrator-variant"), "orchestrator variant select exists");
   assert.ok(/variantsForKey\(s\.model\)\.length > 0/.test(src), "seat picker only renders when the model offers variants");
@@ -160,7 +179,7 @@ test("SetupTab offers a variant picker beside each model picker", () => {
 });
 
 test("server exposes variants and validates selections", () => {
-  const src = readSrc("src/dashboard/server/control.js");
+  const src = readControlTree();
   assert.ok(src.includes("variants: Array.isArray(m.variants) ? [...m.variants] : []"), "/api/llm-models exposes variant lists");
   assert.ok(src.includes('unknown variant'), "unknown orchestrator variants are rejected");
   assert.ok(src.includes("dashboard_seat_variant_unknown"), "unknown seat variants fall back with a warning");
