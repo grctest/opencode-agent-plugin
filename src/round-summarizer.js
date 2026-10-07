@@ -5,7 +5,8 @@ import { SUBSTANTIVE_TYPES } from "./utils/contribution-types.js";
 import { renderMyStateMarkdown, STATE_PATCH_CAPS } from "./state-patch.js";
 import { sanitizeForPrompt } from "./utils/sanitize.js";
 import { delimitContext, escapeDelimiters } from "./prompts/delimiters.js";
-import { getSummaryGuidance, orchestratorContextPolicy, getSummaryBand } from "./orchestrator/models.js";
+import { getSummaryGuidance, orchestratorContextPolicy, getSummaryBand, getTurnOrderGuidance } from "./orchestrator/models.js";
+import { incrementKeyedCounter, recordLatency, recordMeetingCall, recordMeetingLatency } from "./metrics.js";
 import { buildRoundContext } from "./prompts/blocks.js";
 import { sanitizeForDisplay } from "./utils/sanitize.js";
 
@@ -232,6 +233,16 @@ export function buildRoundSummaryUser(round, state, participantStates = [], orch
   // Participant roster: id + activity only, never category — categories play no
   // part in orchestrator decisions.
   const roster = Array.isArray(opts.roster) ? opts.roster.filter((p) => p && p.id) : [];
+  // Orchestrator-only turn-order override: the summary call is the
+  // orchestrator's single LLM call per round, so a warranted order change for
+  // next round travels with it instead of costing a second planning call. The
+  // default rotation stands — call loom_set_turn_order at most once, and only
+  // when this round's evidence warrants a different order (ids from ##
+  // Participants above; unknown ids are dropped, missing seats appended).
+  // The operator's turnOrderPolicy steers the preference, not a second call.
+  const turnOrderBlock = roster.length > 0
+    ? `\n## Next-round turn order (orchestrator-only override)\nDefault rotation stands. If this round's evidence warrants a different speaking order next round, call loom_set_turn_order once with the full ordered participant ids. Omit it to keep the default. Order preference: ${getTurnOrderGuidance(orchestratorConfig)}\n`
+    : "";
   const rosterBlock = roster.length > 0
     ? `\n## Participants (activity)\n${roster.map((p) => `- ${sanitizeForDisplay(String(p.id), 60)} — ${Number(p.contributions_count ?? 0)} contributions${p.status === "passed" ? " [passed]" : ""}`).join("\n")}\n`
     : "";
@@ -255,7 +266,7 @@ export function buildRoundSummaryUser(round, state, participantStates = [], orch
 
 ## Question
 ${state.question || "(no question provided)"}
-${roundContextLine}${rosterBlock}${sopExcerpt}
+${roundContextLine}${rosterBlock}${turnOrderBlock}${sopExcerpt}
 ## Round ${round.number || "?"} Contributions
 ${formattedContributions}
 ${uncitedBlock}${evidenceHint}${stateHint}
@@ -274,7 +285,7 @@ Rules: Agent States are remembered positions and standing context, not independe
 
 ## Question
 ${state.question || "(no question provided)"}
-${roundContextLine}${rosterBlock}
+${roundContextLine}${rosterBlock}${turnOrderBlock}
 ## Round ${round.number || "?"}
 Contribution types: ${round.contributions.map((c) => c.type).join(", ")}
 ${evidenceHint}${stateHint}
@@ -299,7 +310,15 @@ export async function summarizeRound(round, state, promptOrchestrator, getDefaul
 
   const summaryContributions = filterRoundSummaryContributions(round.contributions);
   const prompt = buildRoundSummaryUser(round, state, participantStates, orchestratorConfig, summaryOpts);
+  const summaryStart = Date.now();
   const semanticSummary = await promptOrchestrator(buildRoundSummarySystem(orchestratorConfig), model, prompt, "summary");
+  const summaryMs = Date.now() - summaryStart;
+  incrementKeyedCounter("llm_calls_by_type", "summary");
+  recordLatency("summary_ms", summaryMs);
+  try {
+    const mid = state?.id ?? null;
+    if (mid) { recordMeetingCall(mid, "summary"); recordMeetingLatency(mid, "summary_ms", summaryMs); }
+  } catch {}
 
   if (semanticSummary && semanticSummary.trim().length > 0) {
     return semanticSummary.trim();

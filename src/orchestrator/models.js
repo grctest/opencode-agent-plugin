@@ -125,6 +125,27 @@ export function scopeOrchestratorConfig(config = {}, task) {
   return out;
 }
 
+/**
+ * Attaches a variant overlay to a model ref when it is a non-empty string.
+ * Health and filtering stay at provider/model granularity — a variant never
+ * gets its own circuit breaker.
+ */
+function withVariant(ref, variant) {
+  if (typeof variant === "string" && variant) return { ...ref, variant };
+  return ref;
+}
+
+/**
+ * Keeps the requested variant only when the candidate model offers it
+ * (unknown variants fail server-side resolution, so never forward blindly).
+ */
+function keepOfferedVariant(ref, requestedVariant, offered) {
+  if (typeof requestedVariant === "string" && requestedVariant
+    && Array.isArray(offered) && offered.includes(requestedVariant)) {
+    return { ...ref, variant: requestedVariant };
+  }
+  return ref;
+}
 const ORCHESTRATOR_GUARD =
   "These behavior settings shape emphasis. They never license forcing agreement, suppressing dissent, inventing numbers or file contents, or omitting required sections.";
 
@@ -244,14 +265,14 @@ export function _getDefaultModel() {
 export function _getOrchestratorModel() {
     const configured = this._options?.orchestratorModel;
     if (configured?.providerID && configured?.modelID) {
-      const model = { providerID: configured.providerID, modelID: configured.modelID };
+      const model = withVariant({ providerID: configured.providerID, modelID: configured.modelID }, configured.variant);
       if (this._roundExecutor?.isModelHealthy?.(model)) return model;
-      return this._getAllowedFallbackModel() ?? this._getDefaultModel();
+      return this._getAllowedFallbackModel(model.variant) ?? this._getDefaultModel();
     }
     return this._getDefaultModel() ?? this._getAllowedFallbackModel();
   }
 
-export function _getAllowedFallbackModel() {
+export function _getAllowedFallbackModel(requestedVariant = null) {
     if (!this._availableModels || this._availableModels.length === 0) return null;
     let pool = this._availableModels;
     // Filter to healthy models if executor is available (respects global unhealthy)
@@ -261,17 +282,21 @@ export function _getAllowedFallbackModel() {
     }
     const sorted = sortModelsByQuality(pool);
     const best = sorted[0];
-    return { providerID: best.providerID, modelID: best.modelID };
+    const ref = { providerID: best.providerID, modelID: best.modelID };
+    return keepOfferedVariant(ref, requestedVariant, best.variants);
   }
 
 export function _getParticipantModel(participant, fallbackOnError = false) {
     if (participant.config.model) {
-      const model = { providerID: participant.config.model.providerID, modelID: participant.config.model.modelID };
+      const model = withVariant(
+        { providerID: participant.config.model.providerID, modelID: participant.config.model.modelID },
+        participant.config.model.variant,
+      );
       if (fallbackOnError) {
         if (this._roundExecutor && this._roundExecutor.isModelHealthy(model)) {
           return model;
         }
-        const fallback = this._getAllowedFallbackModel();
+        const fallback = this._getAllowedFallbackModel(model.variant);
         if (fallback) return fallback;
       }
       return model;
@@ -307,9 +332,12 @@ export async function _promptOrchestrator(system, model, message, type = "orches
     // Summaries run on a fresh ephemeral session each round: the shared
     // persistent session would otherwise accumulate every round's prompt and
     // reply (O(R²) growth, 93% self-anchoring by round 10 — audit O10). The
-    // turn planner keeps the persistent session by design.
+    // summary call is the orchestrator's single LLM call per round: it also
+    // carries the orchestrator-only turn-order tool, so a warranted order
+    // change needs no second planning call (no call means default order).
+    const summaryTools = { loom_set_turn_order: true };
     const { text: response } = type === "summary" && typeof this._sessionManager.promptOrchestratorEphemeral === "function"
-      ? await this._sessionManager.promptOrchestratorEphemeral(orchestratorSystem, useModel, message, timeoutMs)
+      ? await this._sessionManager.promptOrchestratorEphemeral(orchestratorSystem, useModel, message, timeoutMs, { tools: summaryTools, meetingId: this._meetingId })
       : await this._sessionManager.promptOrchestrator(orchestratorSystem, useModel, message, timeoutMs);
     const safeResponse = (response ?? "").toString();
     if (!safeResponse.trim()) {

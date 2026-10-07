@@ -9,6 +9,7 @@ import { Logger } from "../../logger.js";
 import { resolveCaller, resolveModel, buildBatchId, findExistingQueryResponse } from "./shared.js";
 import { auditLoomTool } from "./audit.js";
 import { mapInBatches, batchDelayForRpm } from "../../utils/fanout.js";
+import { getSettledItems } from "../../state-patch.js";
 import { TUNING } from "../../config/defaults.js";
 import { getConfig } from "../../config.js";
 const logger = new Logger();
@@ -130,6 +131,13 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
            // Persistence happens sequentially afterwards in request order
            // (two-phase: prompt parallel-batched, persist serial) so
            // contribution IDs stay monotonic and DB writes never interleave.
+           // Settled registry snapshot (T4'): computed once per batch so every
+           // peer sees the same signed points; empty when states are off.
+           let settledItems = [];
+           try {
+             const snapshots = stateManager.getParticipantStateSnapshots?.() ?? stateManager.getAllParticipantStates?.() ?? [];
+             settledItems = getSettledItems(snapshots);
+           } catch {}
            const runSingleQuery = async ({ participant: target, question, mode }) => {
              const meta = QUERY_MODES[mode];
              // Idempotent retry guard: reuse existing response instead of re-prompting peer.
@@ -168,31 +176,33 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
                // the question solely in the QUESTION block (audit B3).
                const noDraftNote = "The asker invoked this query mid-turn, before writing their contribution — there is no draft to show. The question below is self-contained; answer it directly.";
                let prompt;
-               if (mode === "evidence") {
-                 prompt = buildEvidencePrompt(
-                   callerForPrompt,
-                   target,
-                   noDraftNote,
-                   question,
-                   roundContribs,
-                   stateManager.getCurrentRound(),
-                   stateManager.getMaxRounds(),
-                   targetState
-                 );
-               } else {
-                 prompt = buildQueryPrompt(
-                   callerForPrompt,
-                   target,
-                   noDraftNote,
-                   question,
-                   roundContribs,
-                   stateManager.getCurrentRound(),
-                   stateManager.getMaxRounds(),
-                   stateOfPlay,
-                   mode,
-                   targetState
-                 );
-               }
+                if (mode === "evidence") {
+                  prompt = buildEvidencePrompt(
+                    callerForPrompt,
+                    target,
+                    noDraftNote,
+                    question,
+                    roundContribs,
+                    stateManager.getCurrentRound(),
+                    stateManager.getMaxRounds(),
+                    targetState,
+                    { settledItems }
+                  );
+                } else {
+                  prompt = buildQueryPrompt(
+                    callerForPrompt,
+                    target,
+                    noDraftNote,
+                    question,
+                    roundContribs,
+                    stateManager.getCurrentRound(),
+                    stateManager.getMaxRounds(),
+                    stateOfPlay,
+                    mode,
+                    targetState,
+                    { settledItems }
+                  );
+                }
 
                // Persona reflection lens for perspective answers (audit N2/P2-G).
                const perspectiveGuidance = mode === "perspective" && typeof target?.config?.reflection_guidance === "string"

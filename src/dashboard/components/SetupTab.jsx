@@ -238,6 +238,7 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
         category_guidance: p.category_guidance ?? p.tier_guidance ?? "",
         reflection_guidance: p.reflection_guidance ?? "",
         model: p.provider_id && p.model_id ? `${p.provider_id}/${p.model_id}` : null,
+        variant: typeof p.model_variant === "string" && p.model_variant ? p.model_variant : (typeof p.variant === "string" && p.variant ? p.variant : null),
         approved: true,
       })),
       features: { ...cur.features, ...rawFeatures, ...(skillStateMigrated !== undefined ? { skillState: skillStateMigrated } : {}) },
@@ -254,34 +255,61 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
   // Returns the same array ref when nothing changed so setSeats bails out
   // without re-rendering. Skipped entirely for stored-run meetings: their
   // persisted models are shown as-is.
+  // A replaced model always resets the seat variant (variants are
+  // model-specific), as does a variant that the current model no longer offers.
   const fillSeatModels = (seatList, llmData, extraSuggested = null) => {
     if (readOnly) return seatList;
     const enabled = (llmData?.models ?? []).filter((m) => m.enabled && !m.unhealthy).map((m) => m.key);
     const enabledSet = new Set(enabled);
+    const variantsByKey = new Map((llmData?.models ?? []).map((m) => [m.key, Array.isArray(m.variants) ? m.variants : []]));
     const pick = () => (enabled.length > 0 ? enabled[Math.floor(Math.random() * enabled.length)] : null);
     let changed = false;
     const next = seatList.map((st, i) => {
-      if (st.model && enabledSet.has(st.model)) return st;
+      if (st.model && enabledSet.has(st.model)) {
+        const offered = variantsByKey.get(st.model) ?? [];
+        if (st.variant && !offered.includes(st.variant)) {
+          changed = true;
+          return { ...st, variant: null };
+        }
+        return st;
+      }
       const indexed = Array.isArray(extraSuggested) ? extraSuggested[i] : null;
       const d = (indexed && enabledSet.has(indexed)) ? indexed : pick();
-      if ((d ?? null) === (st.model ?? null)) return st;
+      if ((d ?? null) === (st.model ?? null)) {
+        if (st.variant) {
+          changed = true;
+          return { ...st, variant: null };
+        }
+        return st;
+      }
       changed = true;
-      return { ...st, model: d };
+      return { ...st, model: d, variant: null };
     });
     return changed ? next : seatList;
   };
 
   const fillOrchestratorModel = useCallback((llmData) => {
     const enabled = (llmData?.models ?? []).filter((m) => m.enabled && !m.unhealthy).map((m) => m.key);
+    const variantsByKey = new Map((llmData?.models ?? []).map((m) => [m.key, Array.isArray(m.variants) ? m.variants : []]));
     if (enabled.length === 0) {
       if (orchestrator.model) setOrchestratorField("model", null);
+      if (orchestrator.variant) setOrchestratorField("variant", null);
       return;
     }
     const current = $setupForm.get().orchestrator?.model;
-    if (current && enabled.includes(current)) return;
+    const currentVariant = $setupForm.get().orchestrator?.variant;
+    if (current && enabled.includes(current)) {
+      // Keep the model, but drop a variant the model no longer offers
+      // (variants are model-specific).
+      const offered = variantsByKey.get(current) ?? [];
+      if (currentVariant && !offered.includes(currentVariant)) setOrchestratorField("variant", null);
+      return;
+    }
     const recommended = llmData?.suggested_orchestrator?.key;
-    setOrchestratorField("model", recommended && enabled.includes(recommended) ? recommended : enabled[0]);
-  }, [orchestrator.model]);
+    const next = recommended && enabled.includes(recommended) ? recommended : enabled[0];
+    const form = $setupForm.get();
+    $setupForm.set({ ...form, orchestrator: { ...form.orchestrator, model: next, variant: null } });
+  }, [orchestrator.model, orchestrator.variant]);
 
   const refreshLlm = useCallback(async (force = false) => {
     try {
@@ -437,7 +465,7 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
   // The dialog returns the personas it settled on, in ranked order.
   const applyAutoSelect = (personas) => {
     setSeats(fillSeatModels(
-      personas.map((p) => ({ ...p, approved: true, model: null })),
+      personas.map((p) => ({ ...p, approved: true, model: null, variant: null })),
       llm,
       rankSuggestedModels,
     ));
@@ -463,7 +491,7 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
       setAddOpen(false);
       return;
     }
-    setSeats((prev) => [...prev, { ...persona, category, approved: true, model: defaultModelForSeat() }]);
+    setSeats((prev) => [...prev, { ...persona, category, approved: true, model: defaultModelForSeat(), variant: null }]);
     setAddOpen(false);
     setGuidance(null);
   };
@@ -522,6 +550,15 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
     () => (llm?.models ?? []).filter((m) => m.enabled && !m.unhealthy),
     [llm],
   );
+  // Variant IDs offered per model key (mirrors upstream `Object.keys(variants)`).
+  // Variants are model-specific overlays (e.g. reasoning effort); absent or
+  // empty means the model offers none and no picker is shown.
+  const variantsByKey = useMemo(() => {
+    const map = new Map();
+    for (const m of llm?.models ?? []) map.set(m.key, Array.isArray(m.variants) ? m.variants : []);
+    return map;
+  }, [llm]);
+  const variantsForKey = useCallback((key) => variantsByKey.get(key) ?? [], [variantsByKey]);
   const enabledCount = enabledModels.length;
   const totalCount = (llm?.models ?? []).length;
 
@@ -530,8 +567,12 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
   const personasOk = roomOk;
   const filterOk = enabledKeys.size >= 1;
   const seatsMapped = !roomOk || seats.every((s) => s.model && enabledKeys.has(s.model));
-  const modelsOk = filterOk && seatsMapped;
-  const orchestratorOk = !!orchestrator.model && enabledKeys.has(orchestrator.model);
+  // A selected variant must be offered by its model; switching models resets
+  // the variant, and catalog changes clear stale ones, so this is a backstop.
+  const variantsOk = seats.every((s) => !s.variant || variantsForKey(s.model).includes(s.variant))
+    && (!orchestrator.variant || variantsForKey(orchestrator.model).includes(orchestrator.variant));
+  const modelsOk = filterOk && seatsMapped && variantsOk;
+  const orchestratorOk = !!orchestrator.model && enabledKeys.has(orchestrator.model) && (!orchestrator.variant || variantsForKey(orchestrator.model).includes(orchestrator.variant));
   const idleOk = !job?.running;
   // While a deliberation is weaving, the entire setup form freezes in its
   // current state — question, rounds, models, seats, and actions all lock.
@@ -540,12 +581,12 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
 
   const requirements = useMemo(() => ([
     { key: "question", met: questionOk, label: "Enter a question" },
-    { key: "models", met: modelsOk, label: !filterOk ? "Enable at least 1 model" : (!roomOk ? `Models ready (${enabledCount} enabled)` : seatsMapped ? `Models ready (${seats.length} seats mapped)` : "Pick a model for every seat") },
+    { key: "models", met: modelsOk, label: !filterOk ? "Enable at least 1 model" : (!variantsOk ? "Fix invalid model variants" : (!roomOk ? `Models ready (${enabledCount} enabled)` : seatsMapped ? `Models ready (${seats.length} seats mapped)` : "Pick a model for every seat")) },
       { key: "personas", met: personasOk, label: roomOk ? `Personas selected (${seats.length} seats)` : "Add at least 2 persona seats (auto-select or manual)" },
       { key: "capabilities", met: true, label: "Persona capabilities configured" },
       { key: "orchestrator", met: orchestratorOk, label: orchestratorOk ? "Orchestrator ready" : "Choose an orchestrator model" },
      { key: "idle", met: idleOk, label: "No deliberation running" },
-   ]), [questionOk, personasOk, roomOk, seats.length, modelsOk, orchestratorOk, filterOk, seatsMapped, enabledCount, idleOk]);
+    ]), [questionOk, personasOk, roomOk, seats.length, modelsOk, orchestratorOk, filterOk, seatsMapped, variantsOk, enabledCount, idleOk]);
 
   const steps = useMemo(() => ([
       { key: "question", label: "Question", status: questionOk ? "done" : "current", detail: null },
@@ -576,15 +617,19 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
         question: question.trim(),
         context: context.trim(),
          max_rounds: Number(maxRounds) || 4,
-         participants: seats.map(({ model, ...p }) => {
+         participants: seats.map(({ model, variant, ...p }) => {
            if (!model) return { ...p, approved: true };
           const [provider_id, ...rest] = model.split("/");
-           return { ...p, approved: true, model: { provider_id, model_id: rest.join("/") } };
+           const ref = { provider_id, model_id: rest.join("/") };
+           if (variant) ref.variant = variant;
+           return { ...p, approved: true, model: ref };
          }),
           orchestrator: { ...orchestrator, model: orchestrator.model },
           orchestrator_model: (() => {
             const [provider_id, ...rest] = (orchestrator.model ?? "").split("/");
-            return { provider_id, model_id: rest.join("/") };
+            const ref = { provider_id, model_id: rest.join("/") };
+            if (orchestrator.variant) ref.variant = orchestrator.variant;
+            return ref;
           })(),
           features,
          models: [],
@@ -980,7 +1025,7 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
                       <Label htmlFor={`loom-seat-model-${i}`} className="text-xs text-muted-foreground">Model</Label>
                       <Select
                         value={s.model ?? ""}
-                        onValueChange={(v) => setSeats((prev) => prev.map((x, j) => (j === i ? { ...x, model: v } : x)))}
+                        onValueChange={(v) => setSeats((prev) => prev.map((x, j) => (j === i ? { ...x, model: v, variant: null } : x)))}
                         disabled={isFrozen || readOnly}
                       >
                         <SelectTrigger id={`loom-seat-model-${i}`} size="sm" className="min-w-56 max-w-full font-mono text-xs" aria-label={`Model for ${s.name}`}>
@@ -992,6 +1037,26 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
                           ))}
                         </SelectContent>
                  </Select>
+                 {variantsForKey(s.model).length > 0 && (
+                   <>
+                     <Label htmlFor={`loom-seat-variant-${i}`} className="text-xs text-muted-foreground">Variant</Label>
+                     <Select
+                       value={s.variant ?? "default"}
+                       onValueChange={(v) => setSeats((prev) => prev.map((x, j) => (j === i ? { ...x, variant: v === "default" ? null : v } : x)))}
+                       disabled={isFrozen || readOnly}
+                     >
+                       <SelectTrigger id={`loom-seat-variant-${i}`} size="sm" className="min-w-28 max-w-full font-mono text-xs capitalize" aria-label={`Variant for ${s.name}`}>
+                         <SelectValue placeholder="Default" />
+                       </SelectTrigger>
+                       <SelectContent>
+                         <SelectItem value="default">Default</SelectItem>
+                         {variantsForKey(s.model).map((v) => (
+                           <SelectItem key={v} value={v} className="capitalize">{v}</SelectItem>
+                         ))}
+                       </SelectContent>
+                     </Select>
+                   </>
+                 )}
                </div>
                       <div className="mt-0.5 flex flex-wrap items-center gap-2">
                         <Button variant="outline" size="sm" onClick={() => setSwapIdx(i)} disabled={isFrozen || readOnly} aria-label={`Swap ${s.name} for another persona`}>
@@ -1086,16 +1151,36 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
             </Select>
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="loom-orchestrator-model">Orchestrator model</Label>
-            <Select value={orchestrator.model ?? ""} onValueChange={(value) => setOrchestratorField("model", value)} disabled={isFrozen || readOnly || !enabledModels.length}>
-              <SelectTrigger id="loom-orchestrator-model" className="max-w-xl font-mono text-xs" aria-label="Orchestrator model">
-                <SelectValue placeholder="Select a model…" />
-              </SelectTrigger>
-              <SelectContent>
-                {enabledModels.map((m) => <SelectItem key={m.key} value={m.key}>{m.key}</SelectItem>)}
-              </SelectContent>
-             </Select>
-              <p className="text-xs text-muted-foreground">The model used for orchestrator calls, including turn planning, round summaries, and final synthesis; participant models remain independent.</p>
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+                <Label htmlFor="loom-orchestrator-model">Orchestrator model</Label>
+                <Select value={orchestrator.model ?? ""} onValueChange={(value) => patchForm({ orchestrator: { ...orchestrator, model: value, variant: null } })} disabled={isFrozen || readOnly || !enabledModels.length}>
+                  <SelectTrigger id="loom-orchestrator-model" className="max-w-xl font-mono text-xs" aria-label="Orchestrator model">
+                    <SelectValue placeholder="Select a model…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {enabledModels.map((m) => <SelectItem key={m.key} value={m.key}>{m.key}</SelectItem>)}
+                  </SelectContent>
+                 </Select>
+              </div>
+              {variantsForKey(orchestrator.model).length > 0 && (
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="loom-orchestrator-variant">Variant</Label>
+                  <Select value={orchestrator.variant ?? "default"} onValueChange={(value) => setOrchestratorField("variant", value === "default" ? null : value)} disabled={isFrozen || readOnly || !enabledModels.length}>
+                    <SelectTrigger id="loom-orchestrator-variant" size="sm" className="min-w-28 font-mono text-xs capitalize" aria-label="Orchestrator variant">
+                      <SelectValue placeholder="Default" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="default">Default</SelectItem>
+                      {variantsForKey(orchestrator.model).map((v) => (
+                        <SelectItem key={v} value={v} className="capitalize">{v}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+            </div>
+              <p className="text-xs text-muted-foreground">The model used for orchestrator calls, including turn planning, round summaries, and final synthesis; participant models remain independent. Variant selects the model's reasoning-effort overlay when the provider offers one — Default uses the server default.</p>
            </div>
            <div className="flex flex-col gap-2">
              {Object.entries(ORCHESTRATOR_BEHAVIOR_OPTIONS).map(([key, options]) => (

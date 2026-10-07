@@ -30,6 +30,37 @@ export function writeReportFile(directory, meetingId, report, logger) {
   }
 }
 
+/**
+ * Writes a persona-proposal review file beside the meeting reports
+ * (persona-proposals/<meetingId>.md). Atomic tmp+rename like reports.
+ * Human-applied only — the engine never reads this directory back.
+ */
+export function writeProposalFile(directory, meetingId, text, logger) {
+  const tmpSuffix = `${process.pid}.${crypto.randomUUID().slice(0, 8)}`;
+  let tmpPath = null;
+  try {
+    const baseDir = resolveLoomBaseDir(directory);
+    const dir = join(baseDir, "persona-proposals");
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    try { chmodSync(dir, 0o700); } catch {}
+    const filePath = join(dir, `${meetingId}.md`);
+    tmpPath = `${filePath}.tmp.${tmpSuffix}`;
+    writeFileSync(tmpPath, text, { encoding: "utf-8", mode: 0o600 });
+    try {
+      const fd = openSync(tmpPath, "r+");
+      fsyncSync(fd);
+      closeSync(fd);
+    } catch {}
+    renameSync(tmpPath, filePath);
+    return filePath;
+  } catch (err) {
+    const info = extractErrorInfo(err);
+    logger.warn("proposal_write_failed", "Failed to write persona proposal file", info);
+    if (tmpPath) try { unlinkSync(tmpPath); } catch {}
+    return null;
+  }
+}
+
 export function createSessionLock() {
   const sessionLocks = new Map();
   async function withSessionLock(sessionId, fn) {

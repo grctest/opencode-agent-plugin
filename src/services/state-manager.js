@@ -19,6 +19,8 @@ export class StateManager {
   #logger;
   #activeTurn = null;
   #lastTurnPatch = null;
+  #tailTurns = new Map();
+  #tailPatches = new Map();
   // N7 — highest tool-call count any single turn reached. The cap is per turn
   // and the audit is per round; without this high-water mark the two look like
   // a contradiction whenever a round's audited total exceeds the cap.
@@ -140,6 +142,57 @@ export class StateManager {
     if (!this.#activeTurn) return;
     this.#activeTurn.pendingPatch = null;
     this.#activeTurn.patchApplied = false;
+  }
+
+  /**
+   * Pipelined tail channel (T2): a primary turn's patch tail may run while the
+   * next turn owns #activeTurn, so tail patches cannot flow through the
+   * singleton without being refused or misattributed. Each tail registers here
+   * and queues into its own per-participant slot with the same force-merge
+   * semantics as queueTurnPatch. The executor applies the slot at tail
+   * completion; outputs are identical to the sequential path.
+   */
+  beginTailTurn(participantId) {
+    if (!participantId) return;
+    this.#tailTurns.set(participantId, true);
+  }
+
+  endTailTurn(participantId) {
+    if (!participantId) return;
+    this.#tailTurns.delete(participantId);
+  }
+
+  isTailTurn(participantId) {
+    if (!participantId) return false;
+    return this.#tailTurns.get(participantId) === true;
+  }
+
+  getTailPatch(participantId) {
+    const slot = this.#tailPatches.get(participantId);
+    return slot ? structuredClone(slot) : null;
+  }
+
+  queueTailPatch(participantId, patch, opts = {}) {
+    if (!participantId || !patch) return false;
+    if (opts?.force === true) {
+      this.#tailPatches.set(participantId, structuredClone(patch));
+      return true;
+    }
+    if (this.#tailPatches.has(participantId)) return false;
+    this.#tailPatches.set(participantId, structuredClone(patch));
+    return true;
+  }
+
+  takeTailPatch(participantId) {
+    const slot = this.#tailPatches.get(participantId);
+    if (!slot) return null;
+    this.#tailPatches.delete(participantId);
+    return structuredClone(slot);
+  }
+
+  discardTailPatch(participantId) {
+    if (!participantId) return;
+    this.#tailPatches.delete(participantId);
   }
 
   /** Lazily initializes and returns a clone of agent id's Σⁱ (Σ_0 when absent). */

@@ -57,6 +57,7 @@ export function exportTimeline(meetingId) {
     model: r.provider_id && r.model_id ? `${r.provider_id}/${r.model_id}` : null,
     provider_id: r.provider_id ?? null,
     model_id: r.model_id ?? null,
+    model_variant: r.model_variant ?? null,
     session_id: r.session_id ?? null,
     session_version: r.session_version ?? null,
     status: r.status ?? null,
@@ -238,6 +239,7 @@ export function exportTimeline(meetingId) {
       orchestrator_model: (meetingRow?.orchestrator_provider_id && meetingRow?.orchestrator_model_id)
         ? `${meetingRow.orchestrator_provider_id}/${meetingRow.orchestrator_model_id}`
         : (orchestrator?.model ?? null),
+      orchestrator_model_variant: meetingRow?.orchestrator_model_variant ?? null,
       seats,
       participant_count: seats.length,
       embedding_model: meetingRow?.embedding_model ?? null,
@@ -397,6 +399,7 @@ export function exportJSON(meetingId) {
         persona: p.persona,
         agenda: p.agenda,
         model: p.provider_id && p.model_id ? `${p.provider_id}/${p.model_id}` : null,
+        model_variant: p.model_variant ?? null,
         status: p.status,
         ...(p.state_stance ? { stance: p.state_stance, state_version: p.state_version ?? 0 } : {}),
       })),

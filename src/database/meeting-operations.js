@@ -8,8 +8,8 @@ const dbLogger = new Logger();
 export function initializeMeeting(db, meetingId, input, opts = {}) {
   const now = isoNow();
   const insertMeeting = db.prepare(
-    `INSERT INTO meetings (id, question, context, status, round, fabric, max_rounds, convergence, tags, parent_session_id, opencode_session_id, embedding_model, embedding_dim, orchestrator_provider_id, orchestrator_model_id, feature_toggles_json, orchestrator_config_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO meetings (id, question, context, status, round, fabric, max_rounds, convergence, tags, parent_session_id, opencode_session_id, embedding_model, embedding_dim, orchestrator_provider_id, orchestrator_model_id, orchestrator_model_variant, feature_toggles_json, orchestrator_config_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          question=excluded.question,
          context=excluded.context,
@@ -25,13 +25,14 @@ export function initializeMeeting(db, meetingId, input, opts = {}) {
           embedding_dim=excluded.embedding_dim,
           orchestrator_provider_id=excluded.orchestrator_provider_id,
           orchestrator_model_id=excluded.orchestrator_model_id,
+          orchestrator_model_variant=excluded.orchestrator_model_variant,
           feature_toggles_json=excluded.feature_toggles_json,
           orchestrator_config_json=excluded.orchestrator_config_json,
           updated_at=excluded.updated_at`,
   );
   const insertParticipant = db.prepare(
-    `INSERT INTO participants (id, meeting_id, name, persona, agenda, category, provider_id, model_id, session_id, known_biases, communication_style, preferred_contribution_types, anti_patterns, category_guidance, reflection_guidance, tags, expertise)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO participants (id, meeting_id, name, persona, agenda, category, provider_id, model_id, model_variant, session_id, known_biases, communication_style, preferred_contribution_types, anti_patterns, category_guidance, reflection_guidance, tags, expertise)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
 
   db.exec('BEGIN IMMEDIATE');
@@ -51,6 +52,7 @@ export function initializeMeeting(db, meetingId, input, opts = {}) {
        input.embedding_dim ?? null,
        input.orchestrator?.providerID ?? input.orchestrator_provider_id ?? null,
        input.orchestrator?.modelID ?? input.orchestrator_model_id ?? null,
+       input.orchestrator?.variant ?? input.orchestrator_model_variant ?? null,
         input.features ? JSON.stringify(input.features) : null,
         input.orchestratorConfig ? JSON.stringify(input.orchestratorConfig) : null,
         now,
@@ -67,6 +69,7 @@ export function initializeMeeting(db, meetingId, input, opts = {}) {
         p.category ?? p.tier,
         p.model?.providerID ?? null,
         p.model?.modelID ?? null,
+        p.model?.variant ?? null,
         null,
         p.known_biases ? JSON.stringify(p.known_biases) : null,
         p.communication_style ?? null,
@@ -105,6 +108,7 @@ export function upsertMeeting(db, meetingId, input) {
           tags = ?, parent_session_id = ?, opencode_session_id = ?, embedding_model = ?, embedding_dim = ?,
           orchestrator_provider_id = COALESCE(?, orchestrator_provider_id),
            orchestrator_model_id = COALESCE(?, orchestrator_model_id),
+           orchestrator_model_variant = COALESCE(?, orchestrator_model_variant),
            feature_toggles_json = COALESCE(?, feature_toggles_json),
            orchestrator_config_json = COALESCE(?, orchestrator_config_json), updated_at = ?
         WHERE id = ?
@@ -115,6 +119,7 @@ export function upsertMeeting(db, meetingId, input) {
       input.embedding_model ?? null, input.embedding_dim ?? null,
       input.orchestrator?.providerID ?? input.orchestrator_provider_id ?? null,
       input.orchestrator?.modelID ?? input.orchestrator_model_id ?? null,
+      input.orchestrator?.variant ?? input.orchestrator_model_variant ?? null,
        input.features ? JSON.stringify(input.features) : null,
        input.orchestratorConfig ? JSON.stringify(input.orchestratorConfig) : null,
        now, meetingId,
@@ -126,8 +131,8 @@ export function upsertMeeting(db, meetingId, input) {
 
 export function insertParticipants(db, meetingId, participants) {
   const insertParticipant = db.prepare(
-    `INSERT INTO participants (id, meeting_id, name, persona, agenda, category, provider_id, model_id, session_id, known_biases, communication_style, preferred_contribution_types, anti_patterns, category_guidance, reflection_guidance, tags, expertise)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO participants (id, meeting_id, name, persona, agenda, category, provider_id, model_id, model_variant, session_id, known_biases, communication_style, preferred_contribution_types, anti_patterns, category_guidance, reflection_guidance, tags, expertise)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   db.exec('BEGIN IMMEDIATE');
   try {
@@ -141,6 +146,7 @@ export function insertParticipants(db, meetingId, participants) {
         p.category ?? p.tier,
         p.model?.providerID ?? null,
         p.model?.modelID ?? null,
+        p.model?.variant ?? null,
         null,
         p.known_biases ? JSON.stringify(p.known_biases) : null,
         p.communication_style ?? null,
@@ -392,7 +398,7 @@ export function setSummoningParticipants(db, meetingId, participantIds) {
 export function getMeeting(db, meetingId) {
   const row = db
     .prepare(
-      `SELECT id, question, context, status, round, fabric, max_rounds, convergence, tags, parent_session_id, opencode_session_id, next_speaker_id, state_of_play, stats, embedding_model, embedding_dim, orchestrator_provider_id, orchestrator_model_id, feature_toggles_json, orchestrator_config_json, settled_items, created_at
+      `SELECT id, question, context, status, round, fabric, max_rounds, convergence, tags, parent_session_id, opencode_session_id, next_speaker_id, state_of_play, stats, embedding_model, embedding_dim, orchestrator_provider_id, orchestrator_model_id, orchestrator_model_variant, feature_toggles_json, orchestrator_config_json, settled_items, created_at
          FROM meetings WHERE id = ?`,
     )
     .get(meetingId);

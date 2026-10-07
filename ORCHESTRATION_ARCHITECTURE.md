@@ -63,7 +63,7 @@ When a user approves and starts a deliberation from the dashboard Setup tab, thi
    - During their turn agents can invoke **loom_\* interaction tools** (`loom_query`, `loom_vote`, `loom_summon`, `loom_pass`) alongside research tools. These are plugin-registered tools that execute server-side during `session.prompt`: peer answers, ballots, and tallies are returned **inline in the same turn** and folded back into the speaker's final contribution via an optional same-turn synthesis pass (Section 22).
 4. **Round summarization** — After all agents speak, an LLM clerk summary is generated every round (Established / Contested / Evidence / Open bullets), degrading to a deterministic digest when the LLM returns empty (Section 13).
 5. **State of play update** — The state of play is aggregated entirely from each agent's bounded `Σⁱ` state. If patch coverage is incomplete, a **type-driven** full-weave digest is merged in as a fallback; it files only peer responses and file references, and never guesses a primary turn's bucket from its prose.
-6. **Turn order planning** — `planTurnOrder()` asks the orchestrator LLM to order participants for the next round from the state of play and round summary (Section 9).
+6. **Turn order override (optional)** — the round summary is the orchestrator's single LLM call per round; it may set next round's order via the orchestrator-only `loom_set_turn_order` tool, else the default rotation stands (Section 9).
 7. **Termination** — Deterministic: (a) all participants have called `loom_pass` or failed after the configured minimum rounds, (b) the round limit reached, or (c) stall detection fires. There is no meeting-level wall-clock timeout — per-agent provider timeouts (`agentTimeoutMs`) bound each LLM call, and the stall watchdog bounds inactivity.
 8. **Synthesis** — One agent (typically the principal) synthesizes all contributions into a structured artifact with Decision, Reasoning, Action Items, Dissenting Views, Open Questions, and Confidence, then self-critiques it.
 9. **Output** — The run executes as a detached background job (HTTP returns immediately); progress streams via the dashboard Timeline tab and the final synthesis lands in the Output tab plus a full markdown report saved to `.opencode/loom/meetings/<meetingId>.md`. Nothing is returned to chat — the dashboard is the sole control plane, started with `/loom_viz`.
@@ -425,7 +425,7 @@ An agent response is **untyped prose** (or a `loom_pass` tool call). `parseAgent
 **Tool calls** are first-class: `extractAgentResponse()` returns all completed/error ToolParts, and they are mapped onto the response as `tool_calls` (tool name, callID, status, output) for audit and dashboard display. Two tool-derived behaviors:
 
 1. **Same-turn synthesis** — when `agentTools.sameTurnSynthesis` is on and the turn contains successful `loom_query`/`loom_vote`/`loom_summon` calls, a second prompt on the same ephemeral session presents the tool outputs (each bounded to ~3.5k chars) with the instruction to synthesize the final contribution citing `[#id]` — and offers **no interaction tools** (`buildToolsMapWithoutLoom`) so results can't be re-fetched. The synthesized text replaces the first-pass text when substantive; otherwise the first pass stands.
-2. **Final-action state patch (toggle on/off)** — when SKILL.state is on, every primary non-pass turn ends with one validated `loom_state_patch` call (per-agent execution state Σⁱ: stance + established/contested/open/facts/files). The tool is **not offered in the primary turn** (`buildToolsMap(..., { omitStatePatch: true })`), so the agent cannot patch before its queries. After the primary pass, same-turn synthesis, and any mandatory-capability retry, a single final pass on the same ephemeral session offers a patch-only tool map and requests the turn's one and only patch call as the agent's **last action** — peer answers are already in session history, so they can enter `stance`/`facts_add`. Misses never fail the turn — prose is preserved, state stays at its prior version, and there is no retry. Each turn records a per-turn outcome enum (§12) on `contributions.prompt_context.state_patch_outcome`; `loom_pass` turns are exempt (`exempt_pass`). Toggle: `agentTools.loom.loom_state_patch` (tool) / `features.skillState` on/off (dashboard). The server-side one-per-turn guard in `plugin/tools/state-patch.js` remains as a safety net for the single attempt.
+2. **Final-action state patch (toggle on/off)** — when SKILL.state is on, every primary non-pass turn ends with one validated `loom_state_patch` call (per-agent execution state Σⁱ: stance + established/contested/open/facts/files). The tail is pipelined: it runs concurrently with the next turn's primary pass and merges before persist (`runPatchTailPhase` + executor merge + `_settlePendingTails` join before session cleanup/summary). Tails never touch the singleton `#activeTurn` — they register in a per-participant tail channel (`beginTailTurn`/`queueTailPatch`/`takeTailPatch`), so the next turn's ownership can't misattribute or refuse the patch, and outputs equal the sequential path (`test/tail-pipeline.test.js` pins commit equivalence). The tool is **not offered in the primary turn** (`buildToolsMap(..., { omitStatePatch: true })`), so the agent cannot patch before its queries. After the primary pass, same-turn synthesis, and any mandatory-capability retry, a single final pass on the same ephemeral session offers a patch-only tool map and requests the turn's one and only patch call as the agent's **last action** — peer answers are already in session history, so they can enter `stance`/`facts_add`. Misses never fail the turn — prose is preserved, state stays at its prior version, and there is no retry. Each turn records a per-turn outcome enum (§12) on `contributions.prompt_context.state_patch_outcome`; `loom_pass` turns are exempt (`exempt_pass`). Toggle: `agentTools.loom.loom_state_patch` (tool) / `features.skillState` on/off (dashboard). The server-side one-per-turn guard in `plugin/tools/state-patch.js` remains as a safety net for the single attempt.
 
 Edge cases:
 
@@ -473,7 +473,7 @@ After the prompt phase:
 1. **Round summarization** (`summarizeRound`, Section 13) — LLM clerk summary every round; deterministic digest on empty responses.
 2. **State of play update** — `updateStateOfPlay(weave, question, tags)` regenerates the structured summary (Section 11).
 3. **No prior-transcript vector indexing** — embeddings are used for persona selection only; round text remains auditable in SQLite and is projected into bounded state.
-4. **Turn order planning** — `planTurnOrder()` asks the orchestrator to order participants for the next round (Section 9).
+4. **Turn order override (optional)** — the summary call may set next round's order via `loom_set_turn_order`; otherwise the default rotation stands (Section 9).
 5. **Termination checks** — all participants passed/failed, or `current_round >= max_rounds` (Section 10).
 6. **Contribution-mix steering** — if the round contained ≥3 challenges/dissents and no synthesis-type consolidation, a steering hint is queued for the next round's first speaker ("consolidate positions before opening a new challenge"). Cheap and prompt-level; no LLM call.
 
@@ -485,7 +485,7 @@ The round summary and state of play are persisted to the database.
 
 **Default order:** Agents speak in composition order (the order they appear in the participants array). There is no randomization.
 
-**Orchestrator-decided order:** At the end of each round, `planTurnOrder()` asks the orchestrator LLM to order participants for the next round from the state of play and round summary (Section 9). The resulting JSON array of participant IDs is stored as the `planned_turn_order` and applied by `RoundInitializer.filterActiveParticipants()` at the start of the next round (the plan is cleared after being applied). When the planner is unavailable or fails, the default composition order of non-failed participants is used.
+**Orchestrator-decided order:** The round summary call is the orchestrator's single LLM call per round. Its prompt carries a Next-round turn order block (roster + operator `turnOrderPolicy` preference); when this round's evidence warrants a different order, the orchestrator calls the orchestrator-only `loom_set_turn_order` tool once with the full ordered id list (unknown ids dropped, missing seats appended). No call means the default rotation stands. The order is stored as `planned_turn_order` (head as `next_speaker_id`) and applied by `RoundInitializer.filterActiveParticipants()` at the start of the next round (cleared after applying). When no override exists, `fallbackTurnOrder()` supplies the current composition order minus failed seats.
 
 **Skip-passed logic:** From round 3 onward, a participant who passed within the last 2 rounds (lookback window of 10 contributions) and carries no stored reflection is excluded from the active list for the next round — but only if at least one participant remains active. A progress message is emitted (e.g. *"⏭️ Skipped: Agent X (inactive, no new reflections)"*).
 
@@ -551,7 +551,7 @@ const { text, toolResults, reasoning } = extractAgentResponse(result.data);
 
 ### Prompting the Orchestrator (Persistent)
 
-Moderation rulings, LLM round summaries, and turn-order planning share **one persistent orchestrator session** per meeting (`promptOrchestrator`), with retries and empty-response treatment as transient failures:
+Moderation rulings share **one persistent orchestrator session** per meeting (`promptOrchestrator`), with retries and empty-response treatment as transient failures (round summaries run on fresh ephemeral sessions — Section 13 — so long meetings don't accumulate O(R²) context):
 
 ```javascript
 async promptOrchestrator(system, model, message) {
@@ -631,47 +631,29 @@ Terminal statuses: `converged`, `cancelled`, `timeout`, `max_rounds_reached`, `a
 
 ### How Turn Order Works
 
-Turn order is orchestrator-decided: at the end of each round, `planTurnOrder()`
-prompts the planner via `buildTurnOrderPrompt` with the state of play and round
-summary, which returns a JSON array of participant IDs:
+Turn order is orchestrator-decided without a second planning call: the
+end-of-round summary (`summarizeRound`, Section 13) is the orchestrator's
+single LLM call per round, and it carries a Next-round turn order block plus
+the orchestrator-only `loom_set_turn_order` tool (`plugin/tools/turn-order.js`).
+The tool is registered for host resolution but never appears in any
+agent-facing tool map (`buildToolsMap`/`buildToolsMapWithoutLoom` — pinned by
+test). It takes the full ordered id list plus an optional reason; the runtime
+validates (unknown ids dropped, missing non-failed seats appended in rotation
+order, failed seats excluded) and stores the result as `planned_turn_order`
+(head as `next_speaker_id`). No tool call means the default rotation stands,
+materialized by `fallbackTurnOrder()` (current composition order, failed seats
+excluded). The operator's `turnOrderPolicy` steers the summary's override block
+(`getTurnOrderGuidance`) instead of a separate prompt:
 
 ```
-Respond with ONLY a JSON array of participant IDs, e.g. ["id1", "id2", "id3"].
+Default rotation stands. If this round's evidence warrants a different speaking
+order next round, call loom_set_turn_order once with the full ordered
+participant ids. Omit it to keep the default. Order preference: <policy line>.
 
-You are the turn order planner for a multi-agent deliberation. Favor longer,
-richer deliberation — give diverse voices room. Avoid starvation.
 
-## Current State of Play
-...
+The override block the clerk sees (roster ids + policy line) and the tool description are the whole mechanism — there is no planner prompt, no `buildTurnOrderPrompt`, and no `planTurnOrder()` (both deleted). Ordering inputs are evidence, urgency, and recency; category or seniority appears nowhere by design.
 
-## Last Round Summary
-...
-
-## Active Participants
-  - senior_architect (Architect Lead, 3 contribs [has reflection])
-  - ...
-
-## Task
-Return a JSON array of participant IDs ordered by who should speak first
-to push deliberation forward thoroughly.
-
-Ranking doctrine (in order):
-1. Strong evidence-backed challenges first — tool output with
-   Strength: strong or [#id] citation signals substance
-2. Proposals introducing a new distinct option before refinements/supports
-3. Anti-starvation: anyone who spoke last without new reflection/evidence
-   is demoted one rank
-4. Tie-break: (a) who spoke least recently, then (b) fewer contributions
-   this meeting, then (c) participant id (lexical) — never seniority
-
-Constraints:
-- Include every active participant exactly once
-- Consider State of Play to avoid immediate circular re-litigation
-
-Respond with ONLY a JSON array: ["id1", "id2", "id3"]
-```
-
-No category or seniority appears anywhere in the planner prompt by design — categories are setup-phase organizational labels, not ordering inputs. The planner runs on the **fast-path model** when configured (otherwise the default seat model). The response is parsed with a balanced-bracket JSON-array scan (`extractBalancedJsonArray`) so a `]` inside a quoted ID can't truncate it, and validated against the participant list (unknown IDs dropped, missing participants appended). On LLM failure or when no model is available, the default composition order of non-failed participants is used.
+Per-meeting attribution: the summary call records `summary`/`summary_ms` and any override records `turn_order` via `recordMeetingCall`/`recordMeetingLatency` (Section 25).
 
 The ordered list is stored as `planned_turn_order` (and its head as `next_speaker_id`) and applied by `RoundInitializer.filterActiveParticipants()` next round.
 
@@ -872,11 +854,15 @@ When the meeting ends (convergence, max rounds, timeout, cancellation, or abort)
 
 ### Synthesizer Selection
 
-Priority: principal (non-failed) > senior (non-failed) > any non-failed > last participant.
+Synthesis runs on the orchestrator model (`_getOrchestratorModel()` — explicit orchestrator model, else default seat model, else healthy fallback), never on a seniority pick: categories play no role in who synthesizes.
 
 ### The Synthesis Session
 
-Unlike agent turns, synthesis uses **one persistent session** (`createSynthesizerSession`) reused across the draft, section-repair retries, and the critique pass — the same session accumulates the draft so the critique can reference it. The system prompt is `NEUTRAL_SYNTHESIZER_SYSTEM`:
+Unlike agent turns, synthesis uses **one persistent session** (`createSynthesizerSession`) reused across the draft, section-repair retries, and the critique pass — the same session accumulates the draft so the critique can reference it.
+
+### Post-Synthesis Persona Proposals
+
+After the artifact saves, one bounded call (`generatePersonaProposals`, `persona-proposals.js`, model = orchestrator model, 120 s cap) drafts persona-file additions grounded in the deliberation: at most 2 `anti_patterns` + 1 `known_biases` per persona, only when the artifact shows a concrete failure, unknown personas and filler dropped by `parseProposalResponse`. Output is a human-review file (`persona-proposals/<meetingId>.md`, atomic write like reports) — never auto-applied. Degraded syntheses skip the pass; any failure is local (meeting outcome unaffected). Toggle: `personaProposals` (default true). The system prompt is `NEUTRAL_SYNTHESIZER_SYSTEM`:
 
 ```
 You are a synthesis auditor, not a participant. You are neutral to all
@@ -1032,7 +1018,7 @@ If the draft is accurate, grounded, and complete, respond with exactly: [NO_CHAN
   objections: [],      // collected at synthesis time
   tags: ["engineering", "security"],
   next_contribution_id: 14,
-  next_speaker_id: null,          // set by planTurnOrder or loom_pass redirect
+  next_speaker_id: null,          // set by loom_set_turn_order, the default fallback, or loom_pass redirect
   planned_turn_order: [],         // planned for next round
   opencode_session_id: "...",     // for session-indexing
 }
@@ -1273,6 +1259,7 @@ Agent tooling is split between **built-in OpenCode tools** (webfetch, websearch,
 | `loom_summon` | `plugin/tools/vote-summon.js` | Summon a guest expert persona for one additive contribution |
 | `loom_pass` | `plugin/tools/pass.js` | Pass on current turn; deliberation ends when all participants pass |
 | `loom_state_patch` | `plugin/tools/state-patch.js` | Maintain private notes for next round (when toggle on: offered inline, once as the absolutely-last tool use per non-pass turn; a miss is logged and the turn stands — no follow-up call) |
+| `loom_set_turn_order` | `plugin/tools/turn-order.js` | **Orchestrator-only** — override next round's order from the summary call (Section 9). Registered for host resolution but never in any agent-facing tool map. |
 
 All loom tools resolve the current meeting from `context.sessionID` via the session-index, then delegate to the in-memory `activeLooms` engine for state/session/database access. Shared helpers `src/plugin/tools/shared.js:1` centralize `resolveCaller` (session→speaking→weave→any), `resolveModel` (borrow any healthy participant model), `buildBatchId` (`inline-${meetingId}-${round}-${callerId}`), and `TERMINAL_STATUSES` (re-exported from `src/constants.js:3`).
 
@@ -1338,6 +1325,12 @@ When loom tools are enabled, the system prompt includes:
 > `maxSummonsPerAgent` are deprecated and ignored. Telemetry still records the
 > per-turn high-water mark (`tool_calls.max_in_a_turn`) with `cap_per_turn: null`.
 
+### MCP Servers (Spike Findings — Not Implemented)
+
+The host (opencode) exposes configured MCP servers (local stdio + remote HTTP, `opencode.json` `mcp` section) as LLM tools alongside built-ins, named `<server>_<tool>`, manageable per-agent via `tools` globs. This repo's `session.prompt` takes a `tools: Record<string, boolean>` name map resolved host-side — the same mechanism built-ins already use — so requesting MCP names from plugin sessions is expected to work, but no live host was available to verify resolution, naming edge cases (e.g. hyphens), or enablement semantics for plugin-created sessions.
+
+Integration plan (when a live host confirms): loom config allowlist (default-deny, mirroring the bash-allowlist philosophy — MCP servers inflate context fast, per host docs), matched names merged into `buildToolsMap`, one ladder rung teaching when to reach for them. Verification: enable a fixture MCP server, run a turn requesting it, confirm server-side execution. Until then: no code, no config keys.
+
 ### Risk Mitigations
 
 | Risk | Mitigation |
@@ -1375,10 +1368,9 @@ const useModel = (fastPathModel && (type === "moderation" || type === "summary")
 | Call Type | Fast-Path? | Used By |
 |-----------|-----------|---------|
 | `moderation` | Yes | Moderator rulings (Section 8) |
-| `summary` | Yes | LLM round summaries (Section 13) |
-| `turn_order` | No (via planner) | `planTurnOrder` selects `fastPathModel` itself (Section 9) |
+| `summary` | Yes | LLM round summaries incl. the turn-order override block (Sections 9, 13) |
 
-Note: turn-order planning is special — `#promptOrchestrator` doesn't fast-path `turn_order`, but `planTurnOrder` picks `fastPathModel || getDefaultModel()` as its model before calling the orchestrator, so it still benefits when configured.
+There is no `turn_order` call type anymore: ordering travels inside the summary call, which is fast-path eligible like any summary.
 
 When `fastPathModel` is empty (default), all orchestrator calls use the default seat model.
 
@@ -1406,7 +1398,7 @@ One call can query multiple peers (1 per item). Each item specifies a `target` (
 
 **Execution flow:**
 1. Resolve each target (must exist, not failed/passed/muted).
-2. For each resolved target: build prompt via `buildQueryPrompt` (clarify/other modes) or `buildEvidencePrompt` (evidence mode) — the self-contained question (no draft exists mid-turn; the prompt states this explicitly), target's recent contributions plus recent room context, one-line position (`Your position (from your state vN)` + top bullets; the full Σⁱ block is the fallback only when no position exists), plus round context.
+2. For each resolved target: build prompt via `buildQueryPrompt` (clarify/other modes) or `buildEvidencePrompt` (evidence mode) — the self-contained question (no draft exists mid-turn; the prompt states this explicitly), target's recent contributions plus recent room context, one-line position (`Your position (from your state vN)` + top bullets; the full Σⁱ block is the fallback only when no position exists), a settled-items digest (`buildPeerSettledDigest`: consensus text only, capped at 4, so the peer cannot unknowingly re-litigate signed points — absent when nothing is settled, in which case the prompt is byte-identical), plus round context.
 3. Run `runEphemeralPrompt` for each target — **parallel by default** (`agentTools.parallelQueries`, Setup-tab toggle; off = serial loop). Parallel runs use batched fan-out (`src/utils/fanout.js`: default 5/batch, ~100/min budget from `TUNING.FANOUT`, order-preserving, all-settled — one slow/failed peer never blocks the others). Prompts run concurrently; persistence stays serial in request order (two-phase) so contribution IDs are monotonic.
 4. Persist each response as a typed contribution (`query_response` or `evidence_response`) under the invoker's `batch_id`.
 5. **Perspective mode side-effect:** the response replaces the target's stored `reflection` (pushed onto bounded `reflectionHistory`, max 5) and persists via `setParticipantReflection` — this is the primary write path for reflections (Section 12).
@@ -1573,8 +1565,9 @@ Dashboard-first, callbacks are intentionally silent toward chat:
 
 A simple process-wide collector exposed via `/api/metrics` and `getMetricsSnapshot()` (circular `latencyBuffers` `TUNING.LATENCY_SAMPLE_LIMIT` 100, O(1) `recordLatency`):
 
-- **Counter** — `llm_calls_by_type` (agent/synthesis), `retry_events` (`attempted`/`retry_success`/`exhausted` via `withRetry`), `breaker_events` (`open`/`half_open`/`closed`), `degradation_events`, `meeting_degraded_reasons`.
-- **Latencies** — `llm_prompt_ms`, `synthesis_ms`, `round_span_ms` (last `LATENCY_SAMPLE_LIMIT` samples; aggregated into count/avg/p50/p95/max via `latencyStats`).
+- **Counter** — `llm_calls_by_type` (agent/agent_synthesis/patch_tail/turn_order/summary/synthesis), `retry_events` (`attempted`/`retry_success`/`exhausted` via `withRetry`), `breaker_events` (`open`/`half_open`/`closed`), `degradation_events`, `meeting_degraded_reasons`.
+- **Latencies** — `llm_prompt_ms`, `llm_synthesis_ms`, `llm_patch_tail_ms`, `turn_order_ms`, `summary_ms`, `synthesis_ms`, `round_span_ms` (last `LATENCY_SAMPLE_LIMIT` samples; aggregated into count/avg/p50/p95/max via `latencyStats`).
+- **Per-meeting breakdown** — `recordMeetingCall`/`recordMeetingLatency` attribute each LLM call to its meeting at the call site (`getMeetingBreakdown` → `{calls, latencies}` with count/avg/max); process-global buckets mix meetings and cannot answer per-meeting questions. `GET /api/metrics?meeting=<id>` serves the live breakdown; the finished row persists `call_breakdown`/`latency_breakdown` inside `meeting_metrics.counters` (no schema change). Breakdowns are latency telemetry (rate-limit signal), never cost/token reporting.
 
 RoundExecution records per-call tokens and `llm_prompt_ms` per agent call; synthesis records its own bucket. `getMetricsSnapshot()` is polled by dashboard `GET /api/metrics` and persisted per-meeting via `meeting_metrics` at synthesis.
 
@@ -1637,7 +1630,7 @@ Explicit configuration always wins over automatic assignment:
 
 ### 4. Orchestrator & Fallback Model Safeguards
 
-- **Fast-path routing** (`fastPathModel`): cheap models for moderation/summary orchestrator calls; turn-order planning selects it itself (Section 21).
+- **Fast-path routing** (`fastPathModel`): cheap models for moderation/summary orchestrator calls, including the summary call that carries the turn-order override (Section 21).
 - **Model fallback** (`modelFallback.*`): a failed agent turn is retried on its model, then on a healthy fallback selected by `selectFallbackModel()` (Section 16).
 - `getDefaultModel()` acts as a safety net: `#getParticipantModel(participant, fallbackOnError)` substitutes the highest-quality healthy model whenever a participant's own model is missing or unhealthy (used by directives, votes, and synthesis).
 
@@ -1744,4 +1737,4 @@ These remain load-bearing and are tracked rather than silently tolerated:
 | `objection-collector.js` | that an objection is stale from keyword overlap; the verdict feeds `deriveConfidence`'s `dissentCount` gate |
 | `execute-turn.js` | that a second-pass synthesis is substantive from a 200-character count, overriding the first pass |
 | `state-of-play.js` `hasFileMention` | that a bare `layout.tsx` mention in prose is a file the room touched |
-| `moderation.js` `extractBalancedJsonArray` | a structural scrape, but of planner prose — the next round's speaking order |
+| `persona-proposals.js` `extractBalancedJsonArray` | a structural scrape, but of the proposal call's own JSON array — never of deliberation prose |

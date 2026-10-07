@@ -81,12 +81,27 @@ export function createStatePatchTool({ config, resolveMeeting, activeLooms }) {
           });
            if (!caller?.config?.id)
              return { output: JSON.stringify({ error: "caller identity unavailable" }), metadata: { error: true }, title: "loom_state_patch error" };
-           const activeTurn = sm.getActiveTurn?.();
-           if (activeTurn?.participantId === caller.config.id && activeTurn.passRequested) {
-             return refuse("state patch cannot follow loom_pass in the same turn", args, caller);
-           }
-           if (!activeTurn || activeTurn.participantId !== caller.config.id) {
-             return refuse("state patch requires the caller's active primary turn", args, caller);
+           // Pipelined tail channel (T2): a tail may run while the next turn
+           // owns #activeTurn. Tail calls route into the per-participant tail
+           // slot instead of the singleton — same merge semantics, no
+           // misattribution, no refusal.
+           const inTailTurn = sm.isTailTurn?.(caller.config.id) === true;
+           const activeTurn = inTailTurn ? null : sm.getActiveTurn?.();
+           const slotPendingState = () => {
+             if (inTailTurn) return sm.getTailPatch?.(caller.config.id)?.state ?? null;
+             return sm.getActiveTurn?.()?.pendingPatch?.state ?? null;
+           };
+           const slotQueue = (patch, opts) => {
+             if (inTailTurn) return sm.queueTailPatch?.(caller.config.id, patch, opts) === true;
+             return sm.queueTurnPatch?.(caller.config.id, patch, opts) === true;
+           };
+           if (!inTailTurn) {
+             if (activeTurn?.participantId === caller.config.id && activeTurn.passRequested) {
+               return refuse("state patch cannot follow loom_pass in the same turn", args, caller);
+             }
+             if (!activeTurn || activeTurn.participantId !== caller.config.id) {
+               return refuse("state patch requires the caller's active primary turn", args, caller);
+             }
            }
 
            // Shape is never a rejection reason. coerceStatePatch normalizes
@@ -120,7 +135,7 @@ export function createStatePatchTool({ config, resolveMeeting, activeLooms }) {
            // A second patch in the same turn merges with the first rather than
            // being refused: the pending patch already holds the earlier call, so
            // fold them and re-queue. Two calls is a habit, not a rule violation.
-           const pendingState = sm.getActiveTurn?.()?.pendingPatch?.state;
+           const pendingState = slotPendingState();
            if (pendingState) {
              const merged = mergeStatePatches(
                {
@@ -135,12 +150,12 @@ export function createStatePatchTool({ config, resolveMeeting, activeLooms }) {
              const { next, applied: appliedM, evicted: evictedM, overCap: overCapM, skipped: skippedM } =
                applyStatePatch(sm.getParticipantState(caller.config.id), merged);
              next.updated_round = sm.getCurrentRound?.() ?? 0;
-             const requeued = sm.queueTurnPatch?.(caller.config.id, {
-               participantId: caller.config.id,
-               state: next,
-               input: args,
-               output: { applied: true, version: next.version, added: appliedM.added, removed: appliedM.removed, evicted: evictedM, overCap: overCapM, skipped: skippedM, merged: true },
-             }, { force: true }) === true;             try {
+              const requeued = slotQueue({
+                participantId: caller.config.id,
+                state: next,
+                input: args,
+                output: { applied: true, version: next.version, added: appliedM.added, removed: appliedM.removed, evicted: evictedM, overCap: overCapM, skipped: skippedM, merged: true },
+              }, { force: true });             try {
                const { auditLoomTool } = await import("./audit.js");
                auditLoomTool({ db, stateManager: sm, caller, meetingId: meetingInfo.meetingId,
                  tool: "loom_state_patch", input: args,
@@ -160,12 +175,12 @@ export function createStatePatchTool({ config, resolveMeeting, activeLooms }) {
            const { next, applied, unmatched, evicted, overCap, skipped } = applyStatePatch(prev, coerced.patch);
             next.updated_round = sm.getCurrentRound?.() ?? 0;
 
-            const pending = sm.queueTurnPatch?.(caller.config.id, {
+            const pending = slotQueue({
               participantId: caller.config.id,
               state: next,
               input: args,
               output: { applied: true, version: next.version, added: applied.added, removed: applied.removed, evicted, overCap, skipped },
-            }) === true;
+            });
             if (!pending) {
               // Queueing failed for an infrastructure reason, not a caller error.
               // Fall back to applying in place so the agent's reasoning survives
@@ -191,7 +206,7 @@ export function createStatePatchTool({ config, resolveMeeting, activeLooms }) {
               };
             }
            const persisted = true;
-           sm.markTurnPatchApplied?.();
+           if (!inTailTurn) sm.markTurnPatchApplied?.();
            try {
              const { auditLoomTool } = await import("./audit.js");
              auditLoomTool({ db, stateManager: sm, caller, meetingId: meetingInfo.meetingId,

@@ -184,11 +184,20 @@ export function stripJsoncComments(content) {
 
 export function parseFastPathModel(modelStr) {
   if (!modelStr || typeof modelStr !== 'string' || !modelStr.includes('/')) return null;
-  const idx = modelStr.indexOf('/');
-  const providerID = modelStr.slice(0, idx).trim();
-  const modelID = modelStr.slice(idx + 1).trim();
+  let variant;
+  let base = modelStr;
+  const hash = modelStr.lastIndexOf('#');
+  if (hash !== -1) {
+    variant = modelStr.slice(hash + 1).trim() || undefined;
+    base = modelStr.slice(0, hash);
+  }
+  const idx = base.indexOf('/');
+  const providerID = base.slice(0, idx).trim();
+  const modelID = base.slice(idx + 1).trim();
   if (!providerID || !modelID) return null;
-  return { providerID, modelID };
+  const ref = { providerID, modelID };
+  if (variant) ref.variant = variant;
+  return ref;
 }
 
 export function homeOpenCodeDir() {

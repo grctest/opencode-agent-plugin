@@ -217,7 +217,7 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
                 status: p.status,
                 contributions: p.contributions_count,
                 has_reflection: !!p.reflection,
-                model: p.config.model ? `${p.config.model.providerID}/${p.config.model.modelID}` : 'unassigned',
+                model: p.config.model ? `${p.config.model.providerID}/${p.config.model.modelID}${p.config.model.variant ? `#${p.config.model.variant}` : ""}` : 'unassigned',
               }));
             }
             if (include.includes('contributions')) {
@@ -286,7 +286,7 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
                   status: p.status,
                   contributions: 0,
                   has_reflection: !!p.reflection,
-                  model: p.provider_id && p.model_id ? `${p.provider_id}/${p.model_id}` : 'unassigned',
+                  model: p.provider_id && p.model_id ? `${p.provider_id}/${p.model_id}${p.model_variant ? `#${p.model_variant}` : ""}` : 'unassigned',
                 }));
               }
               if (include.includes('contributions')) {

@@ -413,7 +413,7 @@ export async function promptChildSession(participant) {
    this._stateManager.beginTurn?.(participant.config.id);
    for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      const response = await this._executeAgentTurn(participant, activeModel, timeoutMs, promptContext);
+      const response = await this._executeAgentTurn(participant, activeModel, timeoutMs, promptContext, { deferTail: true });
       succeeded = true;
       localSucceeded = true;
       settleHint(response);

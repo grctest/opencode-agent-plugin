@@ -1,7 +1,7 @@
 import { getConfig } from "../config.js";
 import { TUNING } from "../config/defaults.js";
 import { LoomError, extractErrorInfo } from "../logger.js";
-import { getMetricsSnapshot, getMeetingDegradedReasons, recordMeetingDegradedReason } from "../metrics.js";
+import { getMetricsSnapshot, getMeetingDegradedReasons, recordMeetingDegradedReason, getMeetingBreakdown } from "../metrics.js";
 import { computeMechanismMix } from "../utils/contribution-types.js";
 import { reconcileNumericalConflicts } from "../synthesizer.js";
 
@@ -137,10 +137,10 @@ export async function _synthesize() {
     if (!orchestratorModel) {
       throw new LoomError("No orchestrator model available for final synthesis", { phase: "synthesis", recoverable: false });
     }
-    this._logger.info("orchestrator_synthesis_model", `Final synthesis assigned to orchestrator model ${orchestratorModel.providerID}/${orchestratorModel.modelID}`, {
+    this._logger.info("orchestrator_synthesis_model", `Final synthesis assigned to orchestrator model ${orchestratorModel.providerID}/${orchestratorModel.modelID}${orchestratorModel.variant ? `#${orchestratorModel.variant}` : ""}`, {
       meetingId: this._meetingId,
-      requested: this._options?.orchestratorModel ? `${this._options.orchestratorModel.providerID}/${this._options.orchestratorModel.modelID}` : null,
-      actual: `${orchestratorModel.providerID}/${orchestratorModel.modelID}`,
+      requested: this._options?.orchestratorModel ? `${this._options.orchestratorModel.providerID}/${this._options.orchestratorModel.modelID}${this._options.orchestratorModel.variant ? `#${this._options.orchestratorModel.variant}` : ""}` : null,
+      actual: `${orchestratorModel.providerID}/${orchestratorModel.modelID}${orchestratorModel.variant ? `#${orchestratorModel.variant}` : ""}`,
     });
     const transcriptData = this._database.getTranscriptData(this._meetingId);
     // getTranscriptData returns only { question, fabric, rounds } — thread the
@@ -170,6 +170,7 @@ export async function _synthesize() {
         transcriptData,
         participants: this._stateManager.getParticipants(),
         model: orchestratorModel,
+        meetingId: this._meetingId,
         onStart: () => {
           if (this._options.onSynthesisStart) this._options.onSynthesisStart();
         },
@@ -187,7 +188,7 @@ export async function _synthesize() {
       const degraded = `# Deliberation Output\n\n## Decision\nSynthesis could not be completed (${message}).\n\n## Reasoning\nThe meeting reached its end state but the synthesis step failed. The full transcript is preserved for review.\n\n## Action Items\n- Retry synthesis with the meeting data\n- Review the transcript tab for the full deliberation\n\n## Confidence\nLow (synthesis interrupted)`;
       result = {
         output: degraded,
-        artifact: { content: degraded, format: "markdown", decisions: [], action_items: [], open_questions: [], confidence: "low" },
+        artifact: { content: degraded, format: "markdown", decisions: [], action_items: [], open_questions: [], confidence: "low", degraded: true },
       };
     }
 
@@ -208,6 +209,26 @@ export async function _synthesize() {
     }
 
     this._saveArtifact(result.artifact ?? { content: finalOutput, format: "markdown", decisions: [], action_items: [], open_questions: [], confidence: null });
+    // Post-synthesis persona proposals (T6): one bounded call per meeting,
+    // review file only, never auto-applied. Best-effort — failures stay local.
+    try {
+      if (getConfig()?.personaProposals !== false && result.artifact?.content && !result.artifact?.degraded) {
+        const { generatePersonaProposals } = await import("../persona-proposals.js");
+        const { writeProposalFile } = await import("../handlers/knit/file-ops.js");
+        await generatePersonaProposals({
+          sessionManager: this._sessionManager,
+          participants: this._stateManager.getParticipants(),
+          artifact: result.artifact,
+          model: orchestratorModel,
+          meetingId: this._meetingId,
+          directory: this._directory,
+          question: this._stateManager.getQuestion?.() ?? "",
+          writeFile: (id, text) => writeProposalFile(this._directory, id, text, this._logger),
+        });
+      }
+    } catch (err) {
+      this._logger.warn("persona_proposals_skipped", "Persona proposal pass skipped", extractErrorInfo(err));
+    }
     this._saveMeetingMetrics();
     return finalOutput;
   }
@@ -303,6 +324,19 @@ export function _saveArtifact(artifact) {
     }
   }
 
+/** Per-meeting LLM call/latency breakdown for the metrics row (T1). Shaped
+ * for JSON storage inside counters — no schema change. Best-effort. */
+function meetingBreakdownCounters(ctx) {
+  try {
+    const meetingId = ctx?._stateManager?.getMeetingId?.() ?? ctx?._meetingId ?? null;
+    if (!meetingId) return {};
+    const breakdown = getMeetingBreakdown(meetingId);
+    return { call_breakdown: breakdown.calls, latency_breakdown: breakdown.latencies };
+  } catch {
+    return {};
+  }
+}
+
 export function _saveMeetingMetrics() {
     if (!this._database) return;
     try {
@@ -330,7 +364,7 @@ export function _saveMeetingMetrics() {
         latencies = snapshot.latencies ?? {};
       } catch { /* metrics unavailable — keep going */ }
       this._database.saveMeetingMetrics({
-        counters: { ...stats, ...processCounters, quality: this._computeQualityTelemetry(stats) },
+        counters: { ...stats, ...processCounters, quality: this._computeQualityTelemetry(stats), ...meetingBreakdownCounters(this) },
         latencies,
          duration_ms: Date.now() - this._startTime,
          rounds: this._stateManager.getCurrentRound(),

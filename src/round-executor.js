@@ -12,7 +12,7 @@ import { loadGlobalHealth, markGlobalUnhealthy } from "./services/global-model-h
 import { incrementKeyedCounter, recordLatency } from "./metrics.js";
 import { degrade } from "./utils/degrade.js";
 import { randomUUID } from "node:crypto";
-import { promptChildSession as promptChildSessionHelper, executeAgentTurn as executeAgentTurnHelper, recordFallbackFailure as recordFallbackFailureHelper } from "./round-executor/agent-turn.js";
+import { promptChildSession as promptChildSessionHelper, executeAgentTurn as executeAgentTurnHelper, recordFallbackFailure as recordFallbackFailureHelper, runPatchTailPhase, computePatchOutcome, TAIL_DEFERRED } from "./round-executor/agent-turn.js";
 import { buildToolsMap as buildToolsMapHelper, buildToolsMapWithoutLoom as buildToolsMapWithoutLoomHelper } from "./round-executor/tools.js";
 
 export class RoundExecutor {
@@ -175,6 +175,9 @@ export class RoundExecutor {
     const remainingSpeakers = [...activeParticipants];
     this._queuedSpeakers = remainingSpeakers;
     const spokenOrder = []; // Track agents that have spoken this round
+    // Deferred patch tails (T2) in flight: each entry settles (merge+persist)
+    // independently; the round joins them all before session cleanup/summary.
+    this._pendingTails = [];
     // Round-scoped sessions: one per participant per round (Option A) — cuts ~70% session churn
     this._roundSessionIds = new Map();
     try {
@@ -228,6 +231,9 @@ export class RoundExecutor {
       const { result, error } = promptRes;
       await this._handlePromptResult(p, result, round, error);
       }
+      // Join deferred tails BEFORE round-session cleanup and the round
+      // summary: every tail's state must be final when the clerk observes it.
+      await this._settlePendingTails();
     } finally {
         if (this._roundSessionIds) {
           await this._cleanupRoundSessions([...this._roundSessionIds.values()]);
@@ -302,15 +308,183 @@ export class RoundExecutor {
       return;
     }
 
-    this._storeContribution(p, result, round, pendingStatePatch);
+    this._handlePipelinedResult(p, result, round, pendingStatePatch);
+  }
 
+  /**
+   * Pipelined handle (T2): the turn's prose committed to the weave already by
+   * phase 1 (see executeAgentTurn deferTail), so the contribution is staged
+   * for immediate visibility and the tail runs concurrently with the next
+   * turn. The tail merge + DB persist land before the round summary observes
+   * the state (see _settlePendingTails). Outputs are identical to sequential.
+   */
+  _handlePipelinedResult(p, result, round, pendingStatePatch) {
+    const tailCtx = result[TAIL_DEFERRED] ?? null;
+    if (!tailCtx) {
+      this._storeContribution(p, result, round, pendingStatePatch);
+      const truncated = truncate(result.content, 120);
+      this._options.onProgress?.(`${p.config.name} (${(p.config.category ?? p.config.tier)}) — ${result.type}: "${truncated}"`);
+      return;
+    }
+    const { contribution } = this._stageContribution(p, result, round, pendingStatePatch);
     const truncated = truncate(result.content, 120);
     this._options.onProgress?.(`${p.config.name} (${(p.config.category ?? p.config.tier)}) — ${result.type}: "${truncated}"`);
+    this._options.onContribution?.(p.config.name, this._stateManager.getCurrentRound(), result.type);
+    const task = this._runDeferredTail(p, round, contribution, result, tailCtx, pendingStatePatch);
+    if (!Array.isArray(this._pendingTails)) this._pendingTails = [];
+    this._pendingTails.push(task);
+  }
+
+  /**
+   * Runs one deferred tail to completion: tail LLM → merge into the staged
+   * contribution (same object refs the weave holds) → apply the tail-slot
+   * patch → persist. Never rejects (failures are recorded as tail outcomes,
+   * exactly like the sequential path).
+   */
+  async _runDeferredTail(p, round, contribution, result, tailCtx, pendingStatePatch = null) {
+    const pid = p.config.id;
+    const host = {
+      stateManager: this._stateManager,
+      sessionManager: this._sessionManager,
+      logger: this._logger,
+      options: this._options,
+      callStats: this._callStats,
+      notifyCallStats: () => { try { this._notifyCallStats(); } catch {} },
+    };
+    try {
+      const tail = await runPatchTailPhase(host, tailCtx, { useTailSlot: true });
+      this._mergeTailIntoContribution(p, contribution, result, tail);
+      // Atomic patch from a pre-tail take is near-impossible here (the take
+      // runs before the tail completes), but thread it through when present.
+      // Otherwise the tail slot becomes the atomic patch — the exact shape
+      // the sequential path persists (contribution + state in one write, no
+      // separate audit row), so a crash between persist and apply is
+      // impossible by construction.
+      let atomicStatePatch = null;
+      if (pendingStatePatch?.state) {
+        try {
+          const nextState = structuredClone(pendingStatePatch.state);
+          nextState.updated_round = this._stateManager.getCurrentRound();
+          nextState.updated_contribution_id = contribution.id;
+          atomicStatePatch = {
+            participantId: pid,
+            round: this._stateManager.getCurrentRound(),
+            version: nextState.version,
+            state: nextState,
+            patchJson: pendingStatePatch.input ?? {},
+            appliedJson: pendingStatePatch.output ?? {},
+          };
+        } catch {}
+      }
+      if (!atomicStatePatch) {
+        atomicStatePatch = this._takeTailAtomic(pid, contribution);
+      }
+      this._persistStagedContribution(p, contribution, round, result, atomicStatePatch);
+    } catch (err) {
+      try {
+        this._logger.warn("deferred_tail_failed", `Deferred tail for ${p.config.name} failed unexpectedly — persisting prose without tail merge`, extractErrorInfo(err));
+      } catch {}
+      try {
+        this._persistStagedContribution(p, contribution, round, result, null);
+      } catch {}
+    } finally {
+      try {
+        if (tailCtx?.abortController && this._abortControllers) this._abortControllers.delete(tailCtx.abortController);
+      } catch {}
+      try {
+        if (tailCtx?.deleteSession && tailCtx?.ephemeralSessionId) {
+          await this._options.deleteEphemeralSession(tailCtx.ephemeralSessionId).catch((err) => {
+            this._logger.warn("ephemeral_session_delete_failed", "Failed to clean up ephemeral session", extractErrorInfo(err));
+          });
+        }
+      } catch {}
+    }
+  }
+
+  /**
+   * Merges tail output into the staged contribution in place: appended tail
+   * tool calls, state_patch version, and prompt_context outcome fields. Same
+   * values computePatchOutcome yields on the sequential path.
+   */
+  _mergeTailIntoContribution(p, contribution, result, tail) {
+    try {
+      const mappedTail = mapToolResults(tail.tailCalls ?? []);
+      // Stage stores one shared array reference (contribution.tool_calls IS
+      // result.tool_calls); unify defensively, then append tail calls once.
+      if (!Array.isArray(contribution.tool_calls)) contribution.tool_calls = [];
+      result.tool_calls = contribution.tool_calls;
+      for (const t of mappedTail) contribution.tool_calls.push(t);
+    } catch {}
+    try {
+      const { outcome, detail } = computePatchOutcome({
+        patchEnabled: true,
+        statePatchVersion: tail.statePatchVersion,
+        loomPassCall: null,
+        tailRejected: tail.tailRejected,
+        tailAttempted: tail.tailAttempted,
+        tailDetail: tail.tailDetail,
+        finalToolResults: tail.finalToolResults,
+      });
+      if (tail.statePatchVersion != null) {
+        result.state_patch = { version: tail.statePatchVersion };
+      }
+      const ctx = contribution.prompt_context;
+      if (ctx && typeof ctx === "object") {
+        ctx.state_patch_outcome = outcome;
+        if (detail) ctx.state_patch_detail = detail;
+      }
+      const rctx = result.prompt_context;
+      if (rctx && typeof rctx === "object") {
+        rctx.state_patch_outcome = outcome;
+        if (detail) rctx.state_patch_detail = detail;
+      }
+    } catch {}
+  }
+
+  /**
+   * Shapes a completed tail slot as the atomic patch the sequential path
+   * persists (contribution + state in one write, no separate audit row), so a
+   * crash between persist and apply is impossible by construction. Consumes
+   * the slot; returns null when the tail produced no patch.
+   */
+  _takeTailAtomic(pid, contribution) {
+    try {
+      const slot = this._stateManager.takeTailPatch?.(pid) ?? null;
+      if (!slot?.state) return null;
+      const nextState = structuredClone(slot.state);
+      nextState.updated_round = this._stateManager.getCurrentRound();
+      nextState.updated_contribution_id = contribution.id;
+      return {
+        participantId: pid,
+        round: this._stateManager.getCurrentRound(),
+        version: nextState.version,
+        state: nextState,
+        patchJson: slot.input ?? {},
+        appliedJson: slot.output ?? {},
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Joins all in-flight deferred tails (all-settled; failures already recorded). */
+  async _settlePendingTails() {
+    const pending = this._pendingTails ?? [];
+    this._pendingTails = [];
+    if (pending.length === 0) return;
+    await Promise.allSettled(pending);
   }
 
 
 
-  _storeContribution(participant, result, round, pendingStatePatch = null) {
+  /**
+   * In-memory stage of a contribution (T2): assigns the id, commits to the
+   * weave/round (visible to subsequent turns' transcripts immediately), and
+   * flips the seat back to listening. DB persistence happens separately so a
+   * pipelined tail can overlap the next turn.
+   * @returns {{ contribution, atomicStatePatch }}
+   */
+  _stageContribution(participant, result, round, pendingStatePatch = null) {
     const id = this._stateManager.nextContributionId();
     const safeContent = sanitizeAgentOutput(result.content);
     const batchId = participant.currentBatchId ?? randomUUID();
@@ -348,7 +522,16 @@ export class RoundExecutor {
     this._stateManager.incrementParticipantContributions(participant.config.id);
     participant.status = "listening";
     this._db.setParticipantStatus(participant.config.id, "listening");
+    return { contribution, atomicStatePatch };
+  }
 
+  /**
+   * Durable persist of a staged contribution (T2): the atomic
+   * contribution+state write plus the state-patch audit row. Runs immediately
+   * for sequential turns, or at deferred-tail completion for pipelined turns —
+   * either way before the round summary observes the state.
+   */
+  _persistStagedContribution(participant, contribution, round, result, atomicStatePatch = null) {
     let contributionPersisted = false;
     try {
       this._db.addContributionWithStatePatch(this._stateManager.getMeetingId(), {
@@ -358,23 +541,23 @@ export class RoundExecutor {
       contributionPersisted = true;
       if (atomicStatePatch) {
         this._stateManager.setParticipantState(participant.config.id, atomicStatePatch.state);
-        this._stateManager.linkStateToContribution?.(participant.config.id, id);
+        this._stateManager.linkStateToContribution?.(participant.config.id, contribution.id);
       }
     } catch (err) {
       const info = extractErrorInfo(err);
       this._logger.error("contribution_db_failed", `Failed to persist ${result.type} for ${participant.config.name} — rolling back in-memory weave; meeting continues degraded`, info);
       // Atomicity: remove the just-pushed contribution from weave/round to avoid memory/DB divergence
       try {
+        // Remove by id: with pipelined tails later turns may have staged
+        // since, so the entry is not necessarily last.
         const weave = this._stateManager.getWeave();
-        if (weave.length > 0 && weave[weave.length - 1].id === contribution.id) {
-          weave.pop();
-          // Also pop from round contributions
-          const idx = round.contributions.findIndex((c) => c.id === contribution.id);
-          if (idx >= 0) round.contributions.splice(idx, 1);
-          // Reconcile count
-          const p = this._stateManager.getParticipant(participant.config.id);
-          if (p && p.contributions_count > 0) p.contributions_count--;
-        }
+        const widx = weave.findIndex((c) => c && c.id === contribution.id);
+        if (widx >= 0) weave.splice(widx, 1);
+        const idx = round.contributions.findIndex((c) => c.id === contribution.id);
+        if (idx >= 0) round.contributions.splice(idx, 1);
+        // Reconcile count
+        const p = this._stateManager.getParticipant(participant.config.id);
+        if (p && p.contributions_count > 0) p.contributions_count--;
       } catch {}
       try { this._db.setPersistenceDegraded(true); } catch {}
       try {
@@ -392,14 +575,14 @@ export class RoundExecutor {
     try {
       const patchCall = (result.tool_calls ?? []).find((t) => t.tool === "loom_state_patch" && t.metadata?.applied === true);
       if (patchCall && contributionPersisted && !atomicStatePatch) {
-        try { this._stateManager.linkStateToContribution?.(participant.config.id, id); } catch {}
+        try { this._stateManager.linkStateToContribution?.(participant.config.id, contribution.id); } catch {}
         try {
           const v = patchCall.metadata?.version;
           if (Number.isFinite(v) && typeof this._db.addStatePatch === "function") {
             this._db.addStatePatch({
               participantId: participant.config.id,
               round: this._stateManager.getCurrentRound(),
-              contributionId: id,
+              contributionId: contribution.id,
               version: v,
               patchJson: patchCall.input,
               appliedJson: patchCall.output,
@@ -413,6 +596,18 @@ export class RoundExecutor {
       }
     } catch {}
 
+    // (No onContribution here: the caller fires it — at stage time for
+    // pipelined turns so the room sees prose immediately, at persist time
+    // for legacy sequential turns.)
+  }
+
+  /**
+   * Legacy single call: stage + persist + notify. Behavior identical to the
+   * pre-pipeline path; used for pass/fail/sequential turns.
+   */
+  _storeContribution(participant, result, round, pendingStatePatch = null) {
+    const { contribution, atomicStatePatch } = this._stageContribution(participant, result, round, pendingStatePatch);
+    this._persistStagedContribution(participant, contribution, round, result, atomicStatePatch);
     this._options.onContribution?.(participant.config.name, this._stateManager.getCurrentRound(), result.type);
   }
   async _promptChildSession(participant) {
@@ -421,8 +616,8 @@ export class RoundExecutor {
   _recordFallbackFailure(participant, originalModel, fallbackModel, error) {
     return recordFallbackFailureHelper.call(this, participant, originalModel, fallbackModel, error);
   }
-  async _executeAgentTurn(participant, model, timeoutMs, promptContext) {
-    return executeAgentTurnHelper.call(this, participant, model, timeoutMs, promptContext);
+  async _executeAgentTurn(participant, model, timeoutMs, promptContext, opts = {}) {
+    return executeAgentTurnHelper.call(this, participant, model, timeoutMs, promptContext, opts);
   }
   _buildToolsMap(config, opts = {}) {
     return buildToolsMapHelper(config, opts);

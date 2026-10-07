@@ -140,7 +140,7 @@ test("the nonhuman category is admitted everywhere a category is named", async (
   assert.match(tierMetaSrc, /CATEGORY_ORDER\s*=\s*\[[^\]]*"nonhuman"/, "the dashboard category order must list nonhuman");
   assert.match(tierMetaSrc, /nonhuman:\s*\{\s*label:/, "the dashboard needs a label for the category");
   assert.match(tierMetaSrc, /nonhuman:[\s\S]*?blurb:/, "the dashboard needs a blurb for the category");
-  assert.equal(LATEST_SCHEMA_VERSION, 16);
+  assert.equal(LATEST_SCHEMA_VERSION, 17);
   assert.equal(MIGRATIONS.length, LATEST_SCHEMA_VERSION);
 
   // Model assignment is random and category-blind: every seat draws a model.

@@ -4,7 +4,7 @@ import { finalizeSynthesis, validateSynthesisSections, NEUTRAL_SYNTHESIZER_SYSTE
 import { getConfig } from "./config.js";
 import { TUNING } from "./config/defaults.js";
 import { LoomError, extractErrorInfo } from "./logger.js";
-import { incrementKeyedCounter, recordLatency } from "./metrics.js";
+import { incrementKeyedCounter, recordLatency, recordMeetingCall, recordMeetingLatency } from "./metrics.js";
 import { withRetry, isRetryableError } from "./utils/retry.js";
 import { SUBSTANTIVE_TYPES } from "./utils/contribution-types.js";
 import { computeEngagementMetrics, findUncitedPlainContributions } from "./round-summarizer.js";
@@ -57,6 +57,7 @@ export function getEffectiveSynthesisStyle(config = {}, question, tags = []) {
 export class SynthesisCoordinator {
   #sessionManager;
   #orchestratorConfig;
+  #runMeetingId = null;
 
   constructor(sessionManager, orchestratorConfig = {}) {
     this.#sessionManager = sessionManager;
@@ -67,7 +68,8 @@ export class SynthesisCoordinator {
     return buildOrchestratorSynthesisSystem(config);
   }
 
-  async run({ transcriptData, participants, model, onStart, onComplete, stateOfPlay = "", userContext = "", onActivity = null }) {
+  async run({ transcriptData, participants, model, onStart, onComplete, stateOfPlay = "", userContext = "", onActivity = null, meetingId = null }) {
+    this.#runMeetingId = meetingId ?? null;
     if (!model?.providerID || !model?.modelID) {
       throw new LoomError("No orchestrator model available for final synthesis", { phase: "synthesis", recoverable: false });
     }
@@ -141,6 +143,9 @@ export class SynthesisCoordinator {
       incrementKeyedCounter("llm_calls_by_type", "synthesis");
       try { this.#sessionManager.recordCall?.("synthesis"); } catch {}
       recordLatency("synthesis_ms", llmMs);
+      try {
+        if (this.#runMeetingId) { recordMeetingCall(this.#runMeetingId, "synthesis"); recordMeetingLatency(this.#runMeetingId, "synthesis_ms", llmMs); }
+      } catch {}
 
       const text = result.text;
       if (!text) {
@@ -268,6 +273,7 @@ ${draftForPrompt}`;
     let prevMissing = bestMissing;
     for (let attempt = 0; attempt < getMaxCritiqueRetries(); attempt++) {
       try {
+        const critiqueStart = Date.now();
         const result = await withRetry(async () => {
           const r = await this.#sessionManager.getContract().prompt({
             sessionId,
@@ -280,8 +286,13 @@ ${draftForPrompt}`;
            if (!r.ok) throw r.error;
           return r;
         }, { maxAttempts: 3, baseDelayMs: 200, maxDelayMs: 2000, retryable: isRetryableError });
+        const critiqueMs = Date.now() - critiqueStart;
         try { this.#sessionManager.recordCall?.("synthesis"); } catch {}
         incrementKeyedCounter("llm_calls_by_type", "synthesis");
+        recordLatency("synthesis_ms", critiqueMs);
+        try {
+          if (this.#runMeetingId) { recordMeetingCall(this.#runMeetingId, "synthesis"); recordMeetingLatency(this.#runMeetingId, "synthesis_ms", critiqueMs); }
+        } catch {}
         const text2 = result.text;
         if (!text2 || !text2.trim()) return best;
 

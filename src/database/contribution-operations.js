@@ -220,7 +220,7 @@ export function getParticipantStatus(db, meetingId, participantId) {
 export function getAllParticipantsWithStatus(db, meetingId) {
   return db
     .prepare(
-      `SELECT id, name, persona, agenda, category, provider_id, model_id, session_id, session_version, status, reflection, known_biases, communication_style, preferred_contribution_types, anti_patterns, category_guidance, reflection_guidance, tags, expertise
+      `SELECT id, name, persona, agenda, category, provider_id, model_id, model_variant, session_id, session_version, status, reflection, known_biases, communication_style, preferred_contribution_types, anti_patterns, category_guidance, reflection_guidance, tags, expertise
          FROM participants WHERE meeting_id = ?`,
     )
     .all(meetingId)
@@ -232,6 +232,7 @@ export function getAllParticipantsWithStatus(db, meetingId) {
       category: r.category ?? r.tier,
       provider_id: r.provider_id,
       model_id: r.model_id,
+      model_variant: r.model_variant ?? null,
       session_id: r.session_id,
       session_version: r.session_version ?? 0,
       status: r.status,

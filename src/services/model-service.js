@@ -20,15 +20,51 @@ import { Logger, extractErrorInfo } from "../logger.js";
 const logger = new Logger();
 
 /**
- * Parses a participant-level model override string "provider/model".
+ * Extracts the variant IDs offered by a provider catalog model entry.
+ * Upstream catalogs carry them as either an array (`variants: [{id, ...}]`)
+ * or a record (`variants: { high: {...}, low: {...} }`); the pinned v1 SDK
+ * types declare neither, so this reads the raw field defensively and
+ * returns [] when the model offers no variants.
+ * @param {any} m raw catalog model entry
+ * @returns {string[]}
+ */
+export function extractVariants(m) {
+  if (!m || typeof m !== "object") return [];
+  const v = m.variants;
+  if (Array.isArray(v)) {
+    const out = [];
+    for (const entry of v) {
+      const id = typeof entry === "string" ? entry : entry?.id;
+      if (typeof id === "string" && id && !out.includes(id)) out.push(id);
+    }
+    return out;
+  }
+  if (v && typeof v === "object") {
+    return Object.keys(v).filter((k) => typeof k === "string" && k);
+  }
+  return [];
+}
+
+/**
+ * Parses a participant-level model override string "provider/model" with an
+ * optional "#variant" suffix (e.g. "openai/gpt-5.2#high").
  * @param {string} override
  * @returns {ModelRef|null}
  */
 function parseModelOverride(override) {
   if (!override || typeof override !== "string") return null;
-  const idx = override.indexOf("/");
+  let variant;
+  let base = override;
+  const hash = override.lastIndexOf("#");
+  if (hash !== -1) {
+    variant = override.slice(hash + 1) || undefined;
+    base = override.slice(0, hash);
+  }
+  const idx = base.indexOf("/");
   if (idx === -1) return null;
-  return { providerID: override.slice(0, idx), modelID: override.slice(idx + 1) };
+  const ref = { providerID: base.slice(0, idx), modelID: base.slice(idx + 1) };
+  if (variant) ref.variant = variant;
+  return ref;
 }
 
 /**
@@ -44,14 +80,18 @@ function buildOverrideMap(participants) {
   for (const p of participants) {
     if (!p) continue;
     if (p.model && p.model.providerID && p.model.modelID) {
-      map.set(p.id, { providerID: p.model.providerID, modelID: p.model.modelID });
+      const ref = { providerID: p.model.providerID, modelID: p.model.modelID };
+      if (typeof p.model.variant === "string" && p.model.variant) ref.variant = p.model.variant;
+      map.set(p.id, ref);
       continue;
     }
     const override = p.model_override;
     if (override) {
       const parsed = typeof override === "string" ? parseModelOverride(override) : override;
       if (parsed?.providerID && parsed.modelID) {
-        map.set(p.id, parsed);
+        const ref = { providerID: parsed.providerID, modelID: parsed.modelID };
+        if (typeof parsed.variant === "string" && parsed.variant) ref.variant = parsed.variant;
+        map.set(p.id, ref);
       }
     }
   }
@@ -73,6 +113,7 @@ export async function discoverModels(client, directory, sessionID) {
       sessionModel = {
         providerID: m.providerID,
         modelID: m.modelID ?? m.id,
+        ...(typeof m.variant === "string" && m.variant ? { variant: m.variant } : {}),
       };
     }
   } catch (err) {
@@ -105,6 +146,7 @@ export async function discoverModels(client, directory, sessionID) {
           cost: m.cost || { input: 0, output: 0 },
           limit: m.limit || { context: 128000, output: 4096 },
           reasoning: m.capabilities?.reasoning || m.reasoning || false,
+          variants: extractVariants(m),
         });
       }
     }
@@ -122,6 +164,7 @@ export async function discoverModels(client, directory, sessionID) {
       cost: { input: 0, output: 0 },
       limit: { context: 128000, output: 4096 },
       reasoning: false,
+      variants: [],
     });
   }
 
@@ -155,6 +198,7 @@ export function assignModelsToParticipants(participants, available, _sessionMode
     }
     const drawn = randomAssignments[randomIdx++] ?? null;
     if (drawn) {
+      // Random draws carry no variant — the server default applies.
       return { ...p, model: { providerID: drawn.providerID, modelID: drawn.modelID } };
     }
     return { ...p };
@@ -173,9 +217,21 @@ export function assignModelsToParticipants(participants, available, _sessionMode
  */
 export function getDefaultModel(participants, available = []) {
   const firstWithModel = (participants ?? []).find((p) => p?.model?.providerID && p.model.modelID);
-  if (firstWithModel) return { providerID: firstWithModel.model.providerID, modelID: firstWithModel.model.modelID };
+  if (firstWithModel) {
+    const ref = { providerID: firstWithModel.model.providerID, modelID: firstWithModel.model.modelID };
+    if (typeof firstWithModel.model.variant === "string" && firstWithModel.model.variant) {
+      ref.variant = firstWithModel.model.variant;
+    }
+    return ref;
+  }
   const firstAvailable = (available ?? []).find((m) => m?.providerID && m.modelID);
-  if (firstAvailable) return { providerID: firstAvailable.providerID, modelID: firstAvailable.modelID };
+  if (firstAvailable) {
+    const ref = { providerID: firstAvailable.providerID, modelID: firstAvailable.modelID };
+    if (typeof firstAvailable.variant === "string" && firstAvailable.variant) {
+      ref.variant = firstAvailable.variant;
+    }
+    return ref;
+  }
   return null;
 }
 
@@ -197,7 +253,14 @@ export function selectFallbackModel(currentModel, availableModels, circuitBreake
   // Deterministic: highest quality first (matches assignment scoring), stable tie-breaker
   const sorted = sortModelsByQuality(healthy);
   const picked = sorted[0];
-  return { providerID: picked.providerID, modelID: picked.modelID };
+  const ref = { providerID: picked.providerID, modelID: picked.modelID };
+  // Keep the requested variant only when the fallback model offers it;
+  // otherwise the server default applies (an unknown variant would fail resolution).
+  if (typeof currentModel?.variant === "string" && currentModel.variant
+    && Array.isArray(picked.variants) && picked.variants.includes(currentModel.variant)) {
+    ref.variant = currentModel.variant;
+  }
+  return ref;
 }
 
 // Re-export alias for model-discovery barrel expectations (Phase 3) — allows

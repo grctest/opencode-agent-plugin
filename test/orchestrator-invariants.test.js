@@ -13,9 +13,10 @@ import {
 } from "../src/orchestrator/models.js";
 import { buildOrchestratorSynthesisSystem } from "../src/synthesis-coordinator.js";
 import { buildRoundSummarySystem, buildRoundSummaryUser } from "../src/round-summarizer.js";
-import { buildTurnOrderPrompt } from "../src/prompts/turn-order.js";
 import { buildSynthesisPrompt } from "../src/prompts/synthesis.js";
-import { planTurnOrder } from "../src/moderation.js";
+import { fallbackTurnOrder } from "../src/orchestrator/round.js";
+import { createTurnOrderTool } from "../src/plugin/tools/turn-order.js";
+import { clearMeetingBreakdown } from "../src/metrics.js";
 import { LATEST_SCHEMA_VERSION, MIGRATIONS } from "../src/database/schema.js";
 
 // Orchestrator prompt-invariant suite (ORCHESTRATOR-PROMPT-AUDIT.md §7):
@@ -95,16 +96,17 @@ test("round-summary context varies with summaryStyle", () => {
   assert.match(concise, /120-200/);
 });
 
-test("turn-order context varies with turnOrderPolicy", () => {
-  const base = ["## Key Facts\n- fact one", "R".repeat(1000),
-    [{ config: { id: "a", name: "A", category: "mid", }, status: "listening", contributions_count: 3 }]];
-  const balanced = buildTurnOrderPrompt(...base, { turnOrderPolicy: "balanced" });
-  const evidence = buildTurnOrderPrompt(...base, { turnOrderPolicy: "evidence_first" });
-  const starve = buildTurnOrderPrompt(...base, { turnOrderPolicy: "anti_starvation" });
-  assert.ok(!balanced.includes("## Evidence Signals"));
-  assert.ok(evidence.includes("## Evidence Signals"));
-  assert.ok(!balanced.includes("quietest first"));
-  assert.ok(starve.includes("quietest first"));
+// The standalone turn-order planner is gone: the summary call is the
+// orchestrator's single LLM call per round, and ordering travels via the
+// orchestrator-only tool. The operator's turnOrderPolicy steers the summary's
+// override block instead of a second prompt.
+test("turn-order policy steers the summary override block", () => {
+  const round = { number: 1, contributions: [{ id: 1, participant_id: "a", type: "contribution", content: "A substantive claim with numbers 12% and 4ms here." }] };
+  const roster = { roster: [{ id: "a", contributions_count: 1 }] };
+  const evidence = buildRoundSummaryUser(round, { question: "Q", tags: [] }, [], { turnOrderPolicy: "evidence_first" }, roster);
+  assert.match(evidence, /Order preference: .*evidence/i);
+  const starve = buildRoundSummaryUser(round, { question: "Q", tags: [] }, [], { turnOrderPolicy: "anti_starvation" }, roster);
+  assert.match(starve, /Order preference: .*least recently|spoken least/i);
 });
 
 // Step 3 — posture in user doctrine; conversational rule covers files.
@@ -115,50 +117,49 @@ test("posture sits beside the doctrine rules; conversational grounding covers fi
   assert.match(conv, /Do not reference files, diffs, or code/);
 });
 
-// No-seniority — tier appears nowhere in orchestrator decision inputs.
-test("turn-order prompt carries no seniority signal", () => {
-  const prompt = buildTurnOrderPrompt(
-    "## Key Facts\n- fact one",
-    "summary",
-    [
-      { config: { id: "junior_0", name: "Jun", category: "junior", }, status: "listening", contributions_count: 1 },
-      { config: { id: "principal_0", name: "Prin", category: "principal", }, status: "listening", contributions_count: 9 },
+// No-seniority — category appears nowhere in orchestrator decision inputs;
+// the summary roster carries ids only.
+test("summary roster carries no seniority signal", () => {
+  const round = { number: 1, contributions: [{ id: 1, participant_id: "junior_0", type: "contribution", content: "A substantive claim with numbers 12% and 4ms recorded." }] };
+  const prompt = buildRoundSummaryUser(round, { question: "Q", tags: [] }, [], { turnOrderPolicy: "balanced" }, {
+    roster: [
+      { id: "junior_0", contributions_count: 1 },
+      { id: "principal_0", contributions_count: 9 },
     ],
-    { turnOrderPolicy: "balanced" },
-  );
+  });
   assert.doesNotMatch(prompt, /\(junior|\(principal|\(senior|\(mid\)|\(civilian/);
-  assert.doesNotMatch(prompt, /seniority principal/);
-  assert.match(prompt, /never seniority/);
+  assert.match(prompt, /orchestrator-only override/);
 });
 
-test("turn-order fallback keeps composition order", async () => {
+test("turn-order default keeps composition order (no planner call)", () => {
   const participants = [
     { config: { id: "junior_0", name: "Jun", category: "junior", }, status: "listening", contributions_count: 1 },
     { config: { id: "principal_0", name: "Prin", category: "principal", }, status: "listening", contributions_count: 9 },
   ];
-  const ordered = await planTurnOrder({
-    stateOfPlay: "",
-    roundSummary: "",
-    participants,
-    promptFn: async () => { throw new Error("force fallback"); },
-    getDefaultModel: () => null,
-  });
-  assert.deepEqual(ordered.slice(0, 2), ["junior_0", "principal_0"]);
+  assert.deepEqual(fallbackTurnOrder(participants), ["junior_0", "principal_0"]);
 });
 
-test("turn-order uses the orchestrator decision when available", async () => {
-  const participants = [
-    { config: { id: "a", name: "A", category: "mid", }, status: "listening", contributions_count: 1 },
-    { config: { id: "b", name: "B", category: "mid", }, status: "listening", contributions_count: 9 },
-  ];
-  const ordered = await planTurnOrder({
-    stateOfPlay: "",
-    roundSummary: "",
-    participants,
-    promptFn: async () => '["b", "a"]',
-    getDefaultModel: () => ({ providerID: "p", modelID: "m" }),
+test("turn-order override applies the orchestrator order when available", async () => {
+  const applied = {};
+  const tools = createTurnOrderTool({
+    resolveMeeting: async () => ({ meetingId: "m-inv" }),
+    activeLooms: new Map([["m-inv", {
+      getStateManager: () => ({
+        getMeetingId: () => "m-inv",
+        getParticipants: () => [
+          { config: { id: "a", name: "A" }, status: "listening" },
+          { config: { id: "b", name: "B" }, status: "listening" },
+        ],
+        setPlannedTurnOrder: (order) => { applied.order = order; },
+        setNextSpeakerId: (id) => { applied.next = id; },
+      }),
+    }]]),
   });
-  assert.deepEqual(ordered.slice(0, 2), ["b", "a"]);
+  const res = await tools.loom_set_turn_order.execute({ order: ["b", "a"] }, { sessionID: "s1" });
+  assert.deepEqual(JSON.parse(res.output).order, ["b", "a"]);
+  assert.deepEqual(applied.order, ["b", "a"]);
+  assert.equal(applied.next, "b");
+  clearMeetingBreakdown("m-inv");
 });
 
 test("synthesis participants and dissent carry no tier", () => {

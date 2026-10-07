@@ -277,9 +277,18 @@ export class DashboardApi {
       .get(contributionId);
     if (!contribution) return null;
 
-    const participant = this._db
-      .prepare(`SELECT name, persona, agenda, category, provider_id, model_id, reflection FROM participants WHERE id = ?`)
-      .get(contribution.participant_id);
+    const participant = (() => {
+      try {
+        return this._db
+          .prepare(`SELECT name, persona, agenda, category, provider_id, model_id, model_variant, reflection FROM participants WHERE id = ?`)
+          .get(contribution.participant_id);
+      } catch {
+        // Pre-v17 DBs lack participants.model_variant.
+        return this._db
+          .prepare(`SELECT name, persona, agenda, category, provider_id, model_id, reflection FROM participants WHERE id = ?`)
+          .get(contribution.participant_id);
+      }
+    })();
 
     let toolCalls = normalizeToolCalls(contribution.tool_calls, null) ?? [];
     // Merge durable forum audits for this contribution's participant+round+batch (Q3: parent shows trigger)
@@ -317,7 +326,7 @@ export class DashboardApi {
       participant_persona: participant?.persona ?? "",
       participant_agenda: participant?.agenda ?? "",
       participant_model: participant?.provider_id && participant?.model_id
-        ? `${participant.provider_id}/${participant.model_id}` : null,
+        ? `${participant.provider_id}/${participant.model_id}${participant?.model_variant ? `#${participant.model_variant}` : ""}` : null,
       participant_reflection: participant?.reflection ?? "",
       round: contribution.round,
       type: contribution.type,
@@ -333,9 +342,18 @@ export class DashboardApi {
       const meeting = this._db
         .prepare(`SELECT fabric, question FROM meetings WHERE id = ?`)
         .get(meetingId);
-      const participant = this._db
-        .prepare(`SELECT name, persona, agenda, category, provider_id, model_id FROM participants WHERE id = ? AND meeting_id = ?`)
-        .get(participantId, meetingId);
+      const participant = (() => {
+        try {
+          return this._db
+            .prepare(`SELECT name, persona, agenda, category, provider_id, model_id, model_variant FROM participants WHERE id = ? AND meeting_id = ?`)
+            .get(participantId, meetingId);
+        } catch {
+          // Pre-v17 DBs lack participants.model_variant.
+          return this._db
+            .prepare(`SELECT name, persona, agenda, category, provider_id, model_id FROM participants WHERE id = ? AND meeting_id = ?`)
+            .get(participantId, meetingId);
+        }
+      })();
       return { meeting, participant };
     });
   }

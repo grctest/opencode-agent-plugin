@@ -4,7 +4,7 @@ import {
 } from "./api.js";
 import { join, resolve, sep, extname } from "node:path";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { getMetricsSnapshot } from "../metrics.js";
+import { getMetricsSnapshot, getMeetingBreakdown } from "../metrics.js";
 import { getRecentLogs } from "../logger.js";
 import { getConfig } from "../config.js";
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_QUANT } from "../services/model-manager.js";
@@ -531,7 +531,14 @@ export function startDashboard(directory, port, runtimeOpts = null) {
         }
 
         if (url.pathname === "/api/metrics") {
-          return Response.json(getMetricsSnapshot());
+          const meeting = url.searchParams.get("meeting");
+          const snapshot = getMetricsSnapshot();
+          if (meeting) {
+            try {
+              snapshot.meeting = { id: meeting, ...getMeetingBreakdown(meeting) };
+            } catch { /* global snapshot still serves */ }
+          }
+          return Response.json(snapshot);
         }
 
         if (url.pathname === "/api/logs") {

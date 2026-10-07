@@ -348,6 +348,7 @@ export async function handleListLlmModels(url = null) {
         cost: m.cost ?? { input: 0, output: 0 },
         context: m.limit?.context ?? 128000,
         reasoning: !!m.reasoning,
+        variants: Array.isArray(m.variants) ? [...m.variants] : [],
         enabled: !disabledSet || !disabledSet.has(key),
         unhealthy: globalUnhealthy.has(key),
       };
@@ -377,6 +378,7 @@ export async function handleListLlmModels(url = null) {
       models,
       disabled: disabledSet instanceof Set ? [...disabledSet] : [],
        session_model: sessionModel ? `${sessionModel.providerID}/${sessionModel.modelID}` : null,
+       session_variant: typeof sessionModel?.variant === "string" && sessionModel.variant ? sessionModel.variant : null,
        suggested,
        suggested_orchestrator: suggestedOrchestrator,
      });
@@ -446,6 +448,18 @@ export async function handleModelFilter(req) {
 }
 
 // --- Meeting lifecycle ---
+
+/**
+ * Revalidates a stored model variant against the current catalog for
+ * resume/extend paths. A variant the model no longer offers is dropped (the
+ * caller warns) so the run continues on the server default instead of
+ * failing model resolution. Returns the variant string or null.
+ */
+function storedVariantFor(modelKey, storedVariant, variantsByKey) {
+  if (typeof storedVariant !== "string" || !storedVariant) return null;
+  if ((variantsByKey.get(modelKey) ?? []).includes(storedVariant)) return storedVariant;
+  return null;
+}
 
 function validateParticipants(list) {
   if (!Array.isArray(list) || list.length < 2) {
@@ -648,6 +662,10 @@ async function handleStartMeetingInternal(req) {
     logger.warn("dashboard_legacy_models_ignored", "Per-tier `models[]` are no longer supported — seats use per-seat models or random assignment");
   }
   const allowedKeys = new Set(available.map((m) => `${m.providerID}/${m.modelID}`));
+  // Variants offered per model key. Health/filtering stay at `provider/model`
+  // granularity — a variant is an overlay on its model, not a separate model.
+  const variantsByKey = new Map(available.map((m) => [`${m.providerID}/${m.modelID}`, Array.isArray(m.variants) ? m.variants : []]));
+  const readVariant = (raw) => (raw && typeof raw.variant === "string" && raw.variant ? raw.variant : null);
   const rawOrchestrator = body?.orchestrator_model ?? (orchestratorConfig.model ? {
     provider_id: orchestratorConfig.model.split("/")[0],
     model_id: orchestratorConfig.model.split("/").slice(1).join("/"),
@@ -657,6 +675,10 @@ async function handleStartMeetingInternal(req) {
   const orchestratorKey = orchestratorProvider && orchestratorModel ? `${orchestratorProvider}/${orchestratorModel}` : null;
   if (!orchestratorKey || !allowedKeys.has(orchestratorKey) || (disabledSet instanceof Set && disabledSet.has(orchestratorKey)) || globalUnhealthy.has(orchestratorKey)) {
     return Response.json({ error: "orchestrator_model must be an enabled, healthy model" }, { status: 400 });
+  }
+  const orchestratorVariant = readVariant(rawOrchestrator);
+  if (orchestratorVariant && !(variantsByKey.get(orchestratorKey) ?? []).includes(orchestratorVariant)) {
+    return Response.json({ error: `unknown variant "${orchestratorVariant}" for model ${orchestratorKey}` }, { status: 400 });
   }
   const resolvedOrchestratorConfig = { ...orchestratorConfig, model: orchestratorKey };
 
@@ -671,12 +693,19 @@ async function handleStartMeetingInternal(req) {
     seenIds.add(id);
     // Per-seat model wins when valid (dashboard assigns one per persona row);
     // otherwise assignModelsToParticipants draws a random available model.
+    // A variant rides along only when the seat's model offers it; an unknown
+    // variant is dropped (with a warning) rather than discarding the model
+    // choice — the model itself is valid, only the overlay is stale.
     let seatModel = null;
     const rawModel = p.model;
     if (rawModel && typeof rawModel === "object") {
       const providerId = rawModel.provider_id ?? rawModel.providerID;
       const modelId = rawModel.model_id ?? rawModel.modelID;
-      if (providerId && modelId) seatModel = { providerID: providerId, modelID: modelId };
+      if (providerId && modelId) {
+        seatModel = { providerID: providerId, modelID: modelId };
+        const v = readVariant(rawModel);
+        if (v) seatModel.variant = v;
+      }
     }
     if (seatModel) {
       const seatKey = `${seatModel.providerID}/${seatModel.modelID}`;
@@ -684,6 +713,9 @@ async function handleStartMeetingInternal(req) {
       if (!allowedKeys.has(seatKey) || blocked) {
         logger.warn("dashboard_seat_model_blocked", `Per-seat model ${seatKey} for ${p.name} is disabled/unhealthy/unknown — falling back to random assignment`);
         seatModel = null;
+      } else if (seatModel.variant && !(variantsByKey.get(seatKey) ?? []).includes(seatModel.variant)) {
+        logger.warn("dashboard_seat_variant_unknown", `Variant "${seatModel.variant}" for ${p.name} is not offered by ${seatKey} — using the server default`);
+        delete seatModel.variant;
       }
     }
     return {
@@ -713,6 +745,8 @@ async function handleStartMeetingInternal(req) {
     return Response.json({ error: "model assignment failed — no model for every seat" }, { status: 500 });
   }
 
+  const resolvedOrchestrator = { providerID: orchestratorProvider, modelID: orchestratorModel };
+  if (orchestratorVariant) resolvedOrchestrator.variant = orchestratorVariant;
   const meetingId = crypto.randomUUID();
   const sessionID = runtime.ownerSessionId || `dashboard-${meetingId.slice(0, 8)}`;
   const probe = probeMeetingsDir();
@@ -739,7 +773,7 @@ async function handleStartMeetingInternal(req) {
         opencodeSessionId: sessionID,
         embedding_model: null,
         embedding_dim: null,
-        orchestrator: { providerID: orchestratorProvider, modelID: orchestratorModel },
+        orchestrator: resolvedOrchestrator,
         orchestratorConfig: resolvedOrchestratorConfig,
         features,
         participants: [],
@@ -771,7 +805,7 @@ async function handleStartMeetingInternal(req) {
     participants,
     maxRounds,
      tags: [],
-     orchestratorModel: { providerID: orchestratorProvider, modelID: orchestratorModel },
+     orchestratorModel: resolvedOrchestrator,
      orchestratorConfig: resolvedOrchestratorConfig,
      agentTools: buildMeetingAgentTools(features),
      availableModels: available,
@@ -884,15 +918,24 @@ async function handleExtendMeetingInternal(req) {
     available = (await discoverFiltered()).available;
   } catch {}
   const allowedKeys = new Set(available.map((m) => `${m.providerID}/${m.modelID}`));
+  const variantsByKey = new Map(available.map((m) => [`${m.providerID}/${m.modelID}`, Array.isArray(m.variants) ? m.variants : []]));
   let storedFeatures = {};
   try { storedFeatures = existingMeeting?.feature_toggles_json ? JSON.parse(existingMeeting.feature_toggles_json) : {}; } catch {}
   const extensionFeatures = normalizeFeatures(storedFeatures);
   let storedOrchestrator = {};
   try { storedOrchestrator = existingMeeting?.orchestrator_config_json ? JSON.parse(existingMeeting.orchestrator_config_json) : {}; } catch {}
   const extensionOrchestratorConfig = normalizeOrchestratorConfig(storedOrchestrator);
-  const extensionOrchestrator = existingMeeting?.orchestrator_provider_id && existingMeeting?.orchestrator_model_id
-    && allowedKeys.has(`${existingMeeting.orchestrator_provider_id}/${existingMeeting.orchestrator_model_id}`)
-    ? { providerID: existingMeeting.orchestrator_provider_id, modelID: existingMeeting.orchestrator_model_id }
+  const extensionOrchestratorKey = existingMeeting?.orchestrator_provider_id && existingMeeting?.orchestrator_model_id
+    ? `${existingMeeting.orchestrator_provider_id}/${existingMeeting.orchestrator_model_id}`
+    : null;
+  const extensionOrchestrator = extensionOrchestratorKey && allowedKeys.has(extensionOrchestratorKey)
+    ? {
+      providerID: existingMeeting.orchestrator_provider_id,
+      modelID: existingMeeting.orchestrator_model_id,
+      ...(storedVariantFor(extensionOrchestratorKey, existingMeeting?.orchestrator_model_variant, variantsByKey)
+        ? { variant: existingMeeting.orchestrator_model_variant }
+        : {}),
+    }
     : null;
   const resolvedExtensionOrchestratorConfig = {
     ...extensionOrchestratorConfig,
@@ -921,13 +964,16 @@ async function handleExtendMeetingInternal(req) {
     opencodeSessionId: sessionID,
     participants: existingParts.map((p) => {
       const modelKey = p.provider_id && p.model_id ? `${p.provider_id}/${p.model_id}` : null;
+      const variant = modelKey ? storedVariantFor(modelKey, p.model_variant, variantsByKey) : null;
       return {
         id: p.id,
         name: p.name,
         persona: p.persona,
         agenda: p.agenda,
         category: p.category ?? p.tier,
-        model: modelKey && allowedKeys.has(modelKey) ? { providerID: p.provider_id, modelID: p.model_id } : undefined,
+        model: modelKey && allowedKeys.has(modelKey)
+          ? { providerID: p.provider_id, modelID: p.model_id, ...(variant ? { variant } : {}) }
+          : undefined,
         tags: Array.isArray(p.tags) ? p.tags : [],
         expertise: Array.isArray(p.expertise) ? p.expertise : [],
         known_biases: Array.isArray(p.known_biases) ? p.known_biases : [],
@@ -1073,6 +1119,7 @@ async function loadRecoveryContext(meetingId) {
     available = (await discoverFiltered()).available;
   } catch {}
   const allowedKeys = new Set(available.map((m) => `${m.providerID}/${m.modelID}`));
+  const variantsByKey = new Map(available.map((m) => [`${m.providerID}/${m.modelID}`, Array.isArray(m.variants) ? m.variants : []]));
   let storedFeatures = {};
   try { storedFeatures = existingMeeting?.feature_toggles_json ? JSON.parse(existingMeeting.feature_toggles_json) : {}; } catch {}
   const features = normalizeFeatures(storedFeatures);
@@ -1087,6 +1134,12 @@ async function loadRecoveryContext(meetingId) {
   if (storedOrchKey) {
     if (allowedKeys.has(storedOrchKey)) {
       orchestrator = { providerID: existingMeeting.orchestrator_provider_id, modelID: existingMeeting.orchestrator_model_id };
+      const storedVariant = storedVariantFor(storedOrchKey, existingMeeting?.orchestrator_model_variant, variantsByKey);
+      if (storedVariant) {
+        orchestrator.variant = storedVariant;
+      } else if (typeof existingMeeting?.orchestrator_model_variant === "string" && existingMeeting.orchestrator_model_variant) {
+        warnings.push({ type: "model_substituted", seat: "orchestrator", requested: `${storedOrchKey}#${existingMeeting.orchestrator_model_variant}`, detail: "stored orchestrator variant unavailable — server default applies" });
+      }
     } else {
       warnings.push({ type: "model_substituted", seat: "orchestrator", requested: storedOrchKey, detail: "stored orchestrator model unavailable — fallback resolution applies at run time" });
     }
@@ -1100,13 +1153,18 @@ async function loadRecoveryContext(meetingId) {
     if (modelKey && !allowedKeys.has(modelKey)) {
       warnings.push({ type: "model_substituted", seat: p.name, requested: modelKey, detail: "stored seat model unavailable — fallback resolution applies at run time" });
     }
+    const ok = modelKey && allowedKeys.has(modelKey);
+    const variant = ok ? storedVariantFor(modelKey, p.model_variant, variantsByKey) : null;
+    if (ok && !variant && typeof p.model_variant === "string" && p.model_variant) {
+      warnings.push({ type: "model_substituted", seat: p.name, requested: `${modelKey}#${p.model_variant}`, detail: "stored seat variant unavailable — server default applies" });
+    }
     return {
       id: p.id,
       name: p.name,
       persona: p.persona,
       agenda: p.agenda,
       category: p.category ?? p.tier,
-      model: modelKey && allowedKeys.has(modelKey) ? { providerID: p.provider_id, modelID: p.model_id } : undefined,
+      model: ok ? { providerID: p.provider_id, modelID: p.model_id, ...(variant ? { variant } : {}) } : undefined,
       tags: Array.isArray(p.tags) ? p.tags : [],
       expertise: Array.isArray(p.expertise) ? p.expertise : [],
       known_biases: Array.isArray(p.known_biases) ? p.known_biases : [],

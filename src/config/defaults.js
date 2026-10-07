@@ -58,6 +58,10 @@ export const DEFAULT_CONFIG = {
   retryBaseDelayMs: 1000,
   retryMaxDelayMs: 8000,
   synthesisMaxRetries: 1,
+  // Post-synthesis persona proposals (T6): one bounded LLM call per meeting
+  // drafts persona-file additions grounded in the deliberation, written to a
+  // human-review file. Never auto-applied. Disable to skip the extra call.
+  personaProposals: true,
   // Must exceed agentTimeoutMs or the watchdog kills meetings while a legal
   // long turn is still thinking (heartbeat touches keep it alive, this is the
   // backstop for zero-progress hangs).
@@ -162,6 +166,7 @@ export const CONFIG_SCHEMA = {
   retryMaxDelayMs: { type: 'number', min: 1000, max: 60000 },
   stallTimeoutMs: { type: 'number', min: 30000, max: 3600000 },
   synthesisMaxRetries: { type: 'number', min: 0, max: 5 },
+  personaProposals: { type: 'boolean' },
 };
 
 export const NESTED_SCHEMA = {

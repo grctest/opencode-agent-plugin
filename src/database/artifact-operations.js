@@ -155,10 +155,12 @@ export function getTranscriptData(db, meetingId, getRoundSummariesFn) {
 
 export function getParticipantModel(db, meetingId, participantId) {
   const row = db
-    .prepare(`SELECT provider_id, model_id FROM participants WHERE id = ? AND meeting_id = ?`)
+    .prepare(`SELECT provider_id, model_id, model_variant FROM participants WHERE id = ? AND meeting_id = ?`)
     .get(participantId, meetingId);
   if (!row || !row.provider_id || !row.model_id) return null;
-  return { providerID: row.provider_id, modelID: row.model_id };
+  const ref = { providerID: row.provider_id, modelID: row.model_id };
+  if (typeof row.model_variant === "string" && row.model_variant) ref.variant = row.model_variant;
+  return ref;
 }
 
 export function saveMeetingMetrics(db, meetingId, metrics) {

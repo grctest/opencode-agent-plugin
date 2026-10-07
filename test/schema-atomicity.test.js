@@ -39,7 +39,7 @@ function v12Db() {
 
 test("LATEST_SCHEMA_VERSION and MIGRATIONS stay in lockstep", () => {
   assert.equal(MIGRATIONS.length, LATEST_SCHEMA_VERSION);
-  assert.equal(LATEST_SCHEMA_VERSION, 16);
+  assert.equal(LATEST_SCHEMA_VERSION, 17);
 });
 
 test("a migrated v12 DB and a fresh DB have identical shapes", () => {

@@ -63,31 +63,55 @@ export class MeetingDatabase {
 
   static async readParticipants(dbPath) {
     await ensureDb();
-    const { result } = withReadonlyDb(dbPath, (db) =>
-      db.prepare(
-        `SELECT id, name, persona, agenda, category, provider_id, model_id, session_id, session_version, status, reflection, known_biases, communication_style, preferred_contribution_types, anti_patterns, category_guidance, reflection_guidance, tags, expertise
-         FROM participants WHERE status != 'summoned' ORDER BY category ASC`
-      ).all().map((row) => ({
-        ...row,
-        known_biases: safeParseJsonArray(row.known_biases) ?? [],
-        preferred_contribution_types: safeParseJsonArray(row.preferred_contribution_types) ?? [],
-        anti_patterns: safeParseJsonArray(row.anti_patterns) ?? [],
-        tags: safeParseJsonArray(row.tags) ?? [],
-        expertise: safeParseJsonArray(row.expertise) ?? [],
-      })),
-    );
-    return result;
+    const mapRow = (row) => ({
+      ...row,
+      model_variant: row.model_variant ?? null,
+      known_biases: safeParseJsonArray(row.known_biases) ?? [],
+      preferred_contribution_types: safeParseJsonArray(row.preferred_contribution_types) ?? [],
+      anti_patterns: safeParseJsonArray(row.anti_patterns) ?? [],
+      tags: safeParseJsonArray(row.tags) ?? [],
+      expertise: safeParseJsonArray(row.expertise) ?? [],
+    });
+    try {
+      const { result } = withReadonlyDb(dbPath, (db) =>
+        db.prepare(
+          `SELECT id, name, persona, agenda, category, provider_id, model_id, model_variant, session_id, session_version, status, reflection, known_biases, communication_style, preferred_contribution_types, anti_patterns, category_guidance, reflection_guidance, tags, expertise
+           FROM participants WHERE status != 'summoned' ORDER BY category ASC`
+        ).all().map(mapRow),
+      );
+      return result;
+    } catch {
+      // Pre-v17 DBs lack participants.model_variant — degrade to no variant.
+      const { result } = withReadonlyDb(dbPath, (db) =>
+        db.prepare(
+          `SELECT id, name, persona, agenda, category, provider_id, model_id, session_id, session_version, status, reflection, known_biases, communication_style, preferred_contribution_types, anti_patterns, category_guidance, reflection_guidance, tags, expertise
+           FROM participants WHERE status != 'summoned' ORDER BY category ASC`
+        ).all().map(mapRow),
+      );
+      return result;
+    }
   }
 
   static async readMeeting(dbPath) {
     await ensureDb();
-    const { result } = withReadonlyDb(dbPath, (db) =>
-      db.prepare(
-        `SELECT id, question, context, status, round, max_rounds, convergence, fabric, parent_session_id, opencode_session_id, orchestrator_provider_id, orchestrator_model_id, feature_toggles_json, orchestrator_config_json
-         FROM meetings LIMIT 1`
-      ).get(),
-    );
-    return result ?? null;
+    try {
+      const { result } = withReadonlyDb(dbPath, (db) =>
+        db.prepare(
+          `SELECT id, question, context, status, round, max_rounds, convergence, fabric, parent_session_id, opencode_session_id, orchestrator_provider_id, orchestrator_model_id, orchestrator_model_variant, feature_toggles_json, orchestrator_config_json
+           FROM meetings LIMIT 1`
+        ).get(),
+      );
+      return result ?? null;
+    } catch {
+      // Pre-v17 DBs lack meetings.orchestrator_model_variant.
+      const { result } = withReadonlyDb(dbPath, (db) =>
+        db.prepare(
+          `SELECT id, question, context, status, round, max_rounds, convergence, fabric, parent_session_id, opencode_session_id, orchestrator_provider_id, orchestrator_model_id, feature_toggles_json, orchestrator_config_json
+           FROM meetings LIMIT 1`
+        ).get(),
+      );
+      return result ?? null;
+    }
   }
 
   constructor(dbPath, meetingId) {

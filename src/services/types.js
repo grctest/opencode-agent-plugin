@@ -6,6 +6,7 @@
  * @typedef {Object} ModelRef
  * @property {string} providerID
  * @property {string} modelID
+ * @property {string} [variant] - Optional opencode model variant overlay (e.g. "low"/"high"). Omit for server default.
  */
 
 /**

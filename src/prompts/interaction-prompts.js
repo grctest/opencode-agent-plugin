@@ -1,7 +1,7 @@
 import { sanitizeForDisplay } from "../utils/sanitize.js";
 import { LENGTH_LIMITS } from "./constants.js";
 import { QUERY_MODES } from "./query-modes.js";
-import { getRecentContributionsBlock, buildSubAgentStateLine, buildSubAgentToolGuidance, buildRoundContext, buildTargetPositionContext } from "./blocks.js";
+import { getRecentContributionsBlock, buildSubAgentStateLine, buildSubAgentToolGuidance, buildRoundContext, buildTargetPositionContext, buildPeerSettledDigest } from "./blocks.js";
 import { delimitContext } from "./delimiters.js";
 
 /** Builds a prompt for a queried agent to respond to a direct question from another agent.
@@ -9,7 +9,7 @@ import { delimitContext } from "./delimiters.js";
  * 1-line stance + task + accurate tool guidance. No SoP, seniority, round
  * doctrine, or state-patch directives — those belong to primary turns only.
  * mode: one of QUERY_MODES keys (clarify | perspective | evidence | critique | risks | assumptions | alternatives). */
-export function buildQueryPrompt(sourceAgent, targetAgent, sourceContribution, question, roundContributions, currentRound, maxRounds, stateOfPlay = "", mode = "clarify", targetState = null) {
+export function buildQueryPrompt(sourceAgent, targetAgent, sourceContribution, question, roundContributions, currentRound, maxRounds, stateOfPlay = "", mode = "clarify", targetState = null, opts = {}) {
   const meta = QUERY_MODES[mode] ?? QUERY_MODES.clarify;
   const safeSourceName = sanitizeForDisplay(sourceAgent.config.name);
   const safeQuestion = sanitizeForDisplay(question);
@@ -19,6 +19,8 @@ export function buildQueryPrompt(sourceAgent, targetAgent, sourceContribution, q
 
   const recentMine = getRecentContributionsBlock(roundContributions, targetAgent.config.id, { mineCount: 0, mineBudget: 0, othersCount: 3, othersBudget: 300 });
   const stateLine = buildSubAgentStateLine(targetAgent, targetState);
+  const settledDigest = buildPeerSettledDigest(opts.settledItems);
+  const settledBlock = settledDigest ? `${settledDigest}\n` : "";
   // reflection_guidance is consumed here (audit N2/P2-G): perspective-mode
   // targets answer through their persona's reflection lens. Other modes ignore it.
   const reflectionGuidance = mode === "perspective" && typeof targetAgent?.config?.reflection_guidance === "string" && targetAgent.config.reflection_guidance.trim()
@@ -32,7 +34,7 @@ ${delimitContext(safeContribution, "PEER_CONTRIBUTION")}
 ${delimitContext(safeQuestion, "PEER_QUESTION")}
 
 ${recentMine ? recentMine + "\n\n" : ""}${stateLine}
-
+${settledBlock}
 ## Task
 ${meta.taskBlock(reflectionGuidance)}
 ${toolSection}`;
@@ -44,7 +46,7 @@ ${toolSection}`;
  * Cut-back sub-agent contract (same as buildQueryPrompt): no SoP, seniority,
  * round doctrine, or state directives.
  */
-export function buildEvidencePrompt(sourceAgent, targetAgent, sourceContribution, question, roundContributions, currentRound, maxRounds, targetState = null) {
+export function buildEvidencePrompt(sourceAgent, targetAgent, sourceContribution, question, roundContributions, currentRound, maxRounds, targetState = null, opts = {}) {
   const safeSourceName = sanitizeForDisplay(sourceAgent.config.name);
   const safeQuestion = sanitizeForDisplay(question);
   const safeContribution = sanitizeForDisplay(sourceContribution);
@@ -53,6 +55,8 @@ export function buildEvidencePrompt(sourceAgent, targetAgent, sourceContribution
 
   const recentMine = getRecentContributionsBlock(roundContributions, targetAgent.config.id, { mineCount: 0, mineBudget: 0, othersCount: 3, othersBudget: 300 });
   const stateLine = buildSubAgentStateLine(targetAgent, targetState);
+  const settledDigest = buildPeerSettledDigest(opts.settledItems);
+  const settledBlock = settledDigest ? `${settledDigest}\n` : "";
 
   return `## Evidence Request — to ${sanitizeForDisplay(targetAgent.config.name)} (${targetAgent.config.category ?? targetAgent.config.tier}) from ${safeSourceName} (${sourceAgent.config.category ?? sourceAgent.config.tier})
 
@@ -61,7 +65,7 @@ ${delimitContext(safeContribution, "PEER_CONTRIBUTION")}
 ${delimitContext(safeQuestion, "EVIDENCE_QUESTION")}
 
 ${recentMine ? recentMine + "\n\n" : ""}${stateLine}
-
+${settledBlock}
 ## Task
 Provide grounded evidence (${LENGTH_LIMITS.evidenceWords} words). No contribution tags.
 Required structure:

@@ -139,7 +139,15 @@ export class SessionContract {
         path: { id: sessionId },
         body: {
           system: outSystem,
-          model,
+          // Upstream sends model and variant as separate fields
+          // (v2 `session.prompt({model, variant})`); the pinned v1 SDK types
+          // declare no `variant` slot, so forward it defensively: a server
+          // that understands variants applies the overlay, one that does not
+          // ignores the unknown key and uses the base model.
+          model: model?.providerID && model?.modelID
+            ? { providerID: model.providerID, modelID: model.modelID }
+            : model,
+          ...(typeof model?.variant === "string" && model.variant ? { variant: model.variant } : {}),
           parts: outParts,
           tools: outTools,
         },

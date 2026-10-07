@@ -203,13 +203,17 @@ export class SessionManager {
    * orchestrator calls in a meeting. Falls back to ephemeral if persistent creation fails.
    * @returns {Promise<{ text: string, tokens?: { input: number; output: number } }>}
    */
-  async #promptOrchestratorOnce(sessionId, system, model, message, timeoutMs) {
+  async #promptOrchestratorOnce(sessionId, system, model, message, timeoutMs, opts = {}) {
+    const tools = opts?.tools ?? {};
+    if (opts?.meetingId) {
+      try { this.registerSessionMeeting(sessionId, opts.meetingId); } catch {}
+    }
     const result = await withRetry(async () => {
       const res = await this.#contract.prompt({
         sessionId,
         system,
         model,
-        tools: {},
+        tools,
         parts: [{ type: "text", text: message }],
         timeoutMs,
       });
@@ -268,11 +272,12 @@ export class SessionManager {
    * the persistent session, where cross-round awareness is the point. Do not
    * "optimise" summaries back onto the shared session.
    */
-  async promptOrchestratorEphemeral(system, model, message, timeoutMs) {
+  async promptOrchestratorEphemeral(system, model, message, timeoutMs, opts = {}) {
     const ephemeralId = await this.#createSessionWithRetry("Loom · Orchestrator (ephemeral summary)");
     try {
-      return await this.#promptOrchestratorOnce(ephemeralId, system, model, message, timeoutMs);
+      return await this.#promptOrchestratorOnce(ephemeralId, system, model, message, timeoutMs, opts);
     } finally {
+      // deleteEphemeralSession unregisters the meeting mapping first.
       await this.deleteEphemeralSession(ephemeralId).catch(() => {});
     }
   }

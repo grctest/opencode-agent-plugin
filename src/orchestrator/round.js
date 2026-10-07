@@ -8,6 +8,20 @@ import { isHardRateLimitError } from "../utils/retry.js";
 // MeetingOrchestrator owns the round helpers' shared state (Phase 3 centralization).
 
 /**
+ * Default turn order for next round: current composition order, failed seats
+ * excluded. Used when the orchestrator's summary call sets no override via
+ * the orchestrator-only loom_set_turn_order tool (the old planner's own
+ * fallback, minus the extra LLM call). Pure — unit-tested directly.
+ * @param {Array} participants state-manager participant rows
+ * @returns {string[]} ordered participant ids
+ */
+export function fallbackTurnOrder(participants) {
+  return (participants ?? [])
+    .filter((p) => p?.status !== "failed" && p?.config?.id)
+    .map((p) => p.config.id);
+}
+
+/**
  * Continue a round left partial by a sudden server kill.
  *
  * Normal `runRound()` always starts a NEW round (initializeRound increments),
@@ -215,24 +229,17 @@ export async function _finalizeRound(updatedRound) {
       }
       this._notifyUpdate();
 
-      // Plan turn order for next round — the orchestrator decides the order
-      // from the state of play and round summary. Agents no longer request
-      // speaking priority.
-      const { planTurnOrder } = await import("../moderation.js");
-      const orderedParticipants = await planTurnOrder({
-        stateOfPlay: this._stateManager.getStateOfPlay(),
-        roundSummary: updatedRound.summary || "",
-        participants: this._stateManager.getParticipants(),
-        promptFn: async (system, model, message) => this._promptOrchestrator(system, model, message, "turn_order", updatedRound.number),
-           ...(this._options.orchestratorModel ? { getOrchestratorModel: () => this._getOrchestratorModel() } : {}),
-           orchestratorConfig: this._options.orchestratorConfig,
-           getDefaultModel: () => this._getOrchestratorModel(),
-      });
-
-      // Store planned order for next round
-      if (orderedParticipants.length > 0) {
-        this._stateManager.setNextSpeakerId(orderedParticipants[0]);
-        this._stateManager.setPlannedTurnOrder(orderedParticipants);
+      // Turn order for next round: the orchestrator's summary call above is its
+      // single LLM call per round and may have set an override via the
+      // orchestrator-only loom_set_turn_order tool. When it did not, fall back
+      // to the current composition order (the old planner's own fallback).
+      // Agents never request speaking priority.
+      if (this._stateManager.getPlannedTurnOrder().length === 0) {
+        const fallbackOrder = fallbackTurnOrder(this._stateManager.getParticipants());
+        if (fallbackOrder.length > 0) {
+          this._stateManager.setNextSpeakerId(fallbackOrder[0]);
+          this._stateManager.setPlannedTurnOrder(fallbackOrder);
+        }
       }
 
       const participants = this._stateManager.getParticipants();

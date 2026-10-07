@@ -103,6 +103,22 @@ ${base}
 }
 
 /**
+ * Peer settled digest (T4'): the consensus subset for queried peers. A peer
+ * answering inline never sees the State of Play, so without this it can
+ * unknowingly re-litigate a signed point and force the invoker to filter the
+ * damage during synthesis. Text-only (no holder lists) and hard-capped —
+ * typically a few lines, never kilobytes.
+ */
+export function buildPeerSettledDigest(items, cap = 4) {
+  const list = (Array.isArray(items) ? items : []).filter((it) => it && typeof it.text === "string" && it.text.trim());
+  if (list.length === 0) return "";
+  const shown = list.slice(0, Math.max(1, cap));
+  const lines = shown.map((it) => `- ${sanitizeForDisplay(String(it.text).trim(), 300).replace(/\n/g, " ")}`);
+  const more = list.length > shown.length ? `\n(+${list.length - shown.length} more settled — see State of Play via the asker)` : "";
+  return `## Settled — signed, do not re-argue\n\n${delimitContext(lines.join("\n") + more, "SETTLED_ITEMS")}\n\nChallenge a settled point only with new evidence (Source/tool output) plus [#id]; otherwise build on it.\n`;
+}
+
+/**
  * Peer-facing position context (audit B5): prefer the one-line position
  * (stance + top bullets) over the full Σⁱ block. The full block (≈11 kB worst
  * case) is the wrong trade inside a 60 s peer sub-prompt; the one-liner is the

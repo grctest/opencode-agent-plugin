@@ -73,7 +73,7 @@ export function restoreStateFromDb({ db, stateManager, meetingId, options }) {
       persona: r.persona,
       agenda: r.agenda,
       category: r.category ?? r.tier,
-      model: r.provider_id && r.model_id ? { providerID: r.provider_id, modelID: r.model_id } : undefined,
+      model: r.provider_id && r.model_id ? { providerID: r.provider_id, modelID: r.model_id, ...(typeof r.model_variant === "string" && r.model_variant ? { variant: r.model_variant } : {}) } : undefined,
       tags: Array.isArray(r.tags) && r.tags.length ? r.tags : ["general"],
       expertise: Array.isArray(r.expertise) ? r.expertise : [],
        known_biases: r.known_biases,

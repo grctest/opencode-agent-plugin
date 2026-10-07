@@ -61,6 +61,73 @@ export function incrementKeyedCounter(category, key, amount = 1) {
   }
 }
 
+// Per-meeting call/latency breakdown (T1): the process-global buckets above
+// mix meetings together, so a per-meeting report cannot be derived from them.
+// These maps attribute each LLM call to its meeting at the point of the call.
+// meetingId -> { type -> count }
+const meetingCalls = new Map();
+// meetingId -> Map<bucket, { sum, count, max }>
+const meetingLatencies = new Map();
+
+/**
+ * Records one LLM call of a given type against a meeting. Best-effort and
+ * additive: never throws, never affects the call itself.
+ * @param {string} meetingId
+ * @param {string} type e.g. "agent", "agent_synthesis", "patch_tail", "turn_order", "summary", "synthesis"
+ * @param {number} [amount=1]
+ */
+export function recordMeetingCall(meetingId, type, amount = 1) {
+  try {
+    if (!meetingId || !type) return;
+    let entry = meetingCalls.get(meetingId);
+    if (!entry) { entry = {}; meetingCalls.set(meetingId, entry); }
+    entry[type] = (entry[type] ?? 0) + amount;
+  } catch { /* telemetry must never break a turn */ }
+}
+
+/**
+ * Records a latency sample (ms) against a meeting.
+ * @param {string} meetingId
+ * @param {string} bucket e.g. "llm_prompt_ms", "llm_synthesis_ms", "llm_patch_tail_ms", "turn_order_ms", "summary_ms", "synthesis_ms"
+ * @param {number} ms
+ */
+export function recordMeetingLatency(meetingId, bucket, ms) {
+  try {
+    if (!meetingId || !bucket || !Number.isFinite(ms)) return;
+    let entry = meetingLatencies.get(meetingId);
+    if (!entry) { entry = new Map(); meetingLatencies.set(meetingId, entry); }
+    let agg = entry.get(bucket);
+    if (!agg) { agg = { sum: 0, count: 0, max: 0 }; entry.set(bucket, agg); }
+    agg.sum += ms;
+    agg.count += 1;
+    if (ms > agg.max) agg.max = ms;
+  } catch { /* telemetry must never break a turn */ }
+}
+
+/**
+ * Per-meeting latency/call breakdown for reports and the meeting-metrics row.
+ * @param {string} meetingId
+ * @returns {{ calls: Record<string, number>, latencies: Record<string, {count:number, avg:number, max:number}> }}
+ */
+export function getMeetingBreakdown(meetingId) {
+  const calls = { ...(meetingCalls.get(meetingId) ?? {}) };
+  const latencies = {};
+  for (const [bucket, agg] of (meetingLatencies.get(meetingId) ?? new Map()).entries()) {
+    latencies[bucket] = {
+      count: agg.count,
+      avg: agg.count > 0 ? Math.round(agg.sum / agg.count) : 0,
+      max: agg.max,
+    };
+  }
+  return { calls, latencies };
+}
+
+/** Drops a meeting's breakdown (meeting deleted). */
+export function clearMeetingBreakdown(meetingId) {
+  meetingCalls.delete(meetingId);
+  meetingLatencies.delete(meetingId);
+}
+
 function getLatencyCap() { try { return getConfig()?.tuning?.LATENCY_SAMPLE_LIMIT ?? TUNING.LATENCY_SAMPLE_LIMIT; } catch { return TUNING.LATENCY_SAMPLE_LIMIT; } }
 function ensureLatencyBuffer(bucket) {
   if (!latencyBuffers[bucket]) latencyBuffers[bucket] = { buf: new Array(getLatencyCap()), head: 0, count: 0 };

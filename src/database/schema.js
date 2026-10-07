@@ -23,7 +23,7 @@
 
 import { parseSplitConfidence } from "../utils/confidence.js";
 
-export const LATEST_SCHEMA_VERSION = 16;
+export const LATEST_SCHEMA_VERSION = 17;
 
 /**
  * Ordered migrations. MIGRATIONS[n] upgrades a DB at user_version n to n+1.
@@ -366,6 +366,29 @@ export const MIGRATIONS = [
       );
     }
   },
+  // v16 → v17: persist the opencode model variant overlay per seat and for the
+  // orchestrator. Nullable TEXT, no backfill (absent = server default, same as
+  // a seat created before the variant picker existed). Plain ADD COLUMN keeps
+  // fresh and migrated DBs identical, so the schema-parity invariant holds.
+  (db) => {
+    // Partial-shape DBs (like the v12 test fixture, which only has artifacts)
+    // have neither table — there is nothing to alter.
+    const tables = new Set(
+      db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name),
+    );
+    if (tables.has("participants")) {
+      const partCols = new Set(
+        db.prepare("PRAGMA table_info(participants)").all().map((c) => c.name),
+      );
+      if (!partCols.has("model_variant")) db.exec("ALTER TABLE participants ADD COLUMN model_variant TEXT");
+    }
+    if (tables.has("meetings")) {
+      const meetingCols = new Set(
+        db.prepare("PRAGMA table_info(meetings)").all().map((c) => c.name),
+      );
+      if (!meetingCols.has("orchestrator_model_variant")) db.exec("ALTER TABLE meetings ADD COLUMN orchestrator_model_variant TEXT");
+    }
+  },
 ];
 
 export function initSchema(db) {
@@ -392,16 +415,17 @@ export function initSchema(db) {
       next_speaker_id TEXT,
       state_of_play TEXT,
       stats TEXT,
-      embedding_model TEXT,
-      embedding_dim INTEGER,
-      reflecting_participants TEXT,
-      querying_participants TEXT,
-      evidence_participants TEXT,
-      summoning_participants TEXT,
+       embedding_model TEXT,
+       embedding_dim INTEGER,
+       reflecting_participants TEXT,
+       querying_participants TEXT,
+       evidence_participants TEXT,
+       summoning_participants TEXT,
        semantic_degraded INTEGER NOT NULL DEFAULT 0,
        persistence_degraded INTEGER NOT NULL DEFAULT 0,
        orchestrator_provider_id TEXT,
        orchestrator_model_id TEXT,
+       orchestrator_model_variant TEXT,
       feature_toggles_json TEXT,
       orchestrator_config_json TEXT,
       rate_limit_state TEXT,
@@ -419,6 +443,7 @@ export function initSchema(db) {
       category TEXT NOT NULL,
       provider_id TEXT,
       model_id TEXT,
+      model_variant TEXT,
       session_id TEXT,
       session_version INTEGER NOT NULL DEFAULT 1,
       status TEXT NOT NULL DEFAULT 'listening' CHECK(status IN ('listening','speaking','passed','failed','summoned')),

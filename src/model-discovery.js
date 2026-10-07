@@ -16,6 +16,7 @@
  * @property {{ input: number; output: number; cache_read?: number; cache_write?: number }} cost
  * @property {{ context: number; output: number }} limit
  * @property {boolean} reasoning
+ * @property {string[]} [variants] - Variant IDs offered by this model (may be absent/empty)
  */
 
 /**
@@ -23,6 +24,7 @@
  * @property {string} providerID
  * @property {string} modelID
  * @property {string} modelName
+ * @property {string} [variant]
  */
 
 /**

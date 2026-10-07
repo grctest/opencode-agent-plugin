@@ -107,7 +107,7 @@ const Sidebar = memo(function Sidebar({
   const firstSeatModel = useMemo(() => {
     if (!participants || participants.length === 0) return null;
     const p = participants.find((pp) => pp.model_id);
-    if (p) return `${p.provider_id}/${p.model_id}`;
+    if (p) return `${p.provider_id}/${p.model_id}${p.model_variant ? `#${p.model_variant}` : ""}`;
     return null;
   }, [participants]);
 
@@ -293,7 +293,7 @@ const Sidebar = memo(function Sidebar({
             {selectedParticipant.model_id && (
               <div>
                 <span className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">Model</span>
-                <p className="text-sm text-muted-foreground mt-1">{selectedParticipant.provider_id}/{selectedParticipant.model_id}</p>
+                <p className="text-sm text-muted-foreground mt-1">{selectedParticipant.provider_id}/{selectedParticipant.model_id}{selectedParticipant.model_variant ? `#${selectedParticipant.model_variant}` : ""}</p>
               </div>
             )}
             <div>

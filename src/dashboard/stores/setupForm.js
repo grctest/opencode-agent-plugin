@@ -11,7 +11,7 @@ import { persistentAtom } from "@nanostores/persistent";
  * dialogs, catalog/LLM snapshots) stays in useState and is refetched.
  */
 
-const FORM_VERSION = 9;
+const FORM_VERSION = 10;
 const CATEGORY_SLUG = /^[a-z0-9][a-z0-9-]*$/;
 const FEATURE_MODES = new Set(["disabled", "optional", "mandatory"]);
 // SKILL.state is an off/on toggle (not a 3-state mode): on = every non-pass
@@ -27,6 +27,7 @@ const ORCHESTRATOR_MODES = {
 };
 const DEFAULT_ORCHESTRATOR = {
   model: null,
+  variant: null,
   role: "neutral_facilitator",
   customInstructions: "",
   turnOrderPolicy: "balanced",
@@ -103,10 +104,28 @@ function enumValue(value, allowed, fallback) {
   return typeof value === "string" && allowed.has(value) ? value : fallback;
 }
 
+function asVariant(v) {
+  if (typeof v !== "string") return null;
+  const t = v.trim();
+  return t ? t : null;
+}
+
+// Splits a legacy "provider/model#variant" string into its parts so stored
+// forms from before the variant picker keep working.
+function splitModelRef(value) {
+  if (typeof value !== "string" || !value) return { model: null, variant: null };
+  const hash = value.lastIndexOf("#");
+  if (hash === -1) return { model: value, variant: null };
+  const variant = value.slice(hash + 1).trim();
+  return { model: value.slice(0, hash) || null, variant: variant || null };
+}
+
 function sanitizeOrchestrator(raw, legacyModel) {
   const value = raw && typeof raw === "object" ? raw : {};
+  const split = splitModelRef(typeof value.model === "string" ? value.model : (typeof legacyModel === "string" ? legacyModel : ""));
   return {
-    model: asString(value.model || legacyModel) || null,
+    model: asString(value.model || legacyModel) ? split.model : null,
+    variant: asVariant(value.variant ?? split.variant),
     role: enumValue(value.role, ORCHESTRATOR_MODES.roles, DEFAULT_ORCHESTRATOR.role),
     customInstructions: asString(value.customInstructions).slice(0, 4000),
     turnOrderPolicy: enumValue(value.turnOrderPolicy, ORCHESTRATOR_MODES.turnOrderPolicies, DEFAULT_ORCHESTRATOR.turnOrderPolicy),
@@ -123,6 +142,7 @@ function sanitizeSeat(raw) {
   if (!raw.name || !raw.persona || !raw.agenda || typeof category !== "string" || !CATEGORY_SLUG.test(category)) return null;
   const tags = Array.isArray(raw.tags) ? raw.tags.filter((t) => typeof t === "string") : [];
   const expertise = Array.isArray(raw.expertise) ? raw.expertise.filter((t) => typeof t === "string") : [];
+  const split = splitModelRef(typeof raw.model === "string" ? raw.model : "");
   return {
     id: asString(raw.id),
     name: String(raw.name),
@@ -137,7 +157,8 @@ function sanitizeSeat(raw) {
     anti_patterns: Array.isArray(raw.anti_patterns) ? raw.anti_patterns.filter((v) => typeof v === "string") : [],
     category_guidance: asString(categoryGuidance),
     reflection_guidance: asString(raw.reflection_guidance),
-    model: typeof raw.model === "string" ? raw.model : null,
+    model: split.model,
+    variant: asVariant(raw.variant ?? split.variant),
     approved: raw.approved !== false,
   };
 }
