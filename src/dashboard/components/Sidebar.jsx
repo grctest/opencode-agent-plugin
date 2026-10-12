@@ -205,7 +205,7 @@ const Sidebar = memo(function Sidebar({
                 </div>
                 {embeddingStatus?.state === "error" && (
                   <div className="text-xs text-muted-foreground flex items-center gap-1" title={embeddingStatus.message}>
-                     <TriangleAlertIcon className="size-3" /> Embedding model unavailable — using keyword fallback
+                     <TriangleAlertIcon className="size-3" /> Embedding model unavailable — room auto-select disabled, pick seats manually
                   </div>
                 )}
               </Card>
