@@ -390,7 +390,7 @@ export function useSetupState({ selectedMeeting, onStarted, meetingState, meetin
   const totalCount = (llm?.models ?? []).length;
 
   const questionOk = question.trim().length >= 3;
-  const roomOk = seats.length >= 2;
+  const roomOk = seats.length >= 1;
   const personasOk = roomOk;
   const filterOk = enabledKeys.size >= 1;
   const seatsMapped = !roomOk || seats.every((s) => s.model && enabledKeys.has(s.model));
@@ -404,7 +404,7 @@ export function useSetupState({ selectedMeeting, onStarted, meetingState, meetin
   const requirements = useMemo(() => ([
     { key: "question", met: questionOk, label: "Enter a question" },
     { key: "models", met: modelsOk, label: !filterOk ? "Enable at least 1 model" : (!variantsOk ? "Fix invalid model variants" : (!roomOk ? `Models ready (${enabledCount} enabled)` : seatsMapped ? `Models ready (${seats.length} seats mapped)` : "Pick a model for every seat")) },
-    { key: "personas", met: personasOk, label: roomOk ? `Personas selected (${seats.length} seats)` : "Add at least 2 persona seats (auto-select or manual)" },
+    { key: "personas", met: personasOk, label: roomOk ? `Personas selected (${seats.length} seats)` : "Add at least 1 persona seat (auto-select or manual)" },
     { key: "capabilities", met: true, label: "Persona capabilities configured" },
     { key: "orchestrator", met: orchestratorOk, label: orchestratorOk ? "Orchestrator ready" : "Choose an orchestrator model" },
     { key: "idle", met: idleOk, label: "No deliberation running" },

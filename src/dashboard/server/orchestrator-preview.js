@@ -103,10 +103,12 @@ export function buildOrchestratorPromptPreview(input = {}) {
   const context = previewText(input.context, 2000);
   const supplied = Array.isArray(input.participants) ? input.participants : [];
   const participants = supplied.map(sanitizePreviewParticipant).filter(Boolean).slice(0, MAX_PREVIEW_PARTICIPANTS);
-  const usedSetupParticipants = participants.length >= 2;
+  const usedSetupParticipants = participants.length >= 1;
   const usedSetupQuestion = String(input.question ?? "").trim().length > 0;
   const usedSetupContext = String(input.context ?? "").trim().length > 0;
-  const sampleParticipants = usedSetupParticipants ? participants.slice(0, 2) : fallbackPreviewParticipants();
+  const sampleParticipants = usedSetupParticipants
+    ? (participants.length >= 2 ? participants.slice(0, 2) : [participants[0], fallbackPreviewParticipants()[1]])
+    : fallbackPreviewParticipants();
   const contributions = sampleContributions(sampleParticipants, question);
   const participantStates = sampleParticipantStates(sampleParticipants);
   const sampleRound = { number: 1, contributions };

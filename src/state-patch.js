@@ -62,6 +62,34 @@ export const PATCH_KEYS = ["stance", ...PATCH_LIST_KEYS];
 const MAX_COERCE_DEPTH = 8;
 
 /**
+ * Strip a Markdown fenced-code wrapper, if present. A quoted JSON payload
+ * tends to arrive fenced (```json [...] ```), and the fence is transport,
+ * not content.
+ */
+function unfenceJson(text) {
+  const fenced = /^\s*```[a-zA-Z]*\s*([\s\S]*?)\s*```\s*$/.exec(text);
+  return fenced === null ? text : fenced[1];
+}
+
+/**
+ * Parse a string that JSON-encodes a list of bullets. Returns the parsed
+ * array, or null when the string is not a JSON array (plain prose stays
+ * verbatim — only an array result is ever unpacked, so a bullet that merely
+ * looks like JSON, e.g. "42" or '{"a":1}', is never mangled).
+ */
+function tryParseJsonListString(raw) {
+  if (typeof raw !== "string") return null;
+  const text = unfenceJson(raw).trim();
+  if (!text.startsWith("[")) return null;
+  try {
+    const parsed = JSON.parse(text);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Collect every string leaf under `value`, depth-first, preserving order.
  *
  * A small model asked for `established_add: string[]` will sometimes answer
@@ -110,6 +138,7 @@ function collectStrings(value, out, depth = 0, seen = new Set()) {
  *
  * Handles, at minimum, every failure observed in production:
  *   - string where a string[] was expected            → wrapped
+ *   - JSON-encoded list string (incl. fenced)         → parsed to its items
  *   - nested object where a string[] was expected     → string leaves collected
  *   - more bullets than the (now advisory) per-call cap → all kept, FIFO caps them
  *   - stance/bullet longer than any previous max()     → kept, trimmed on store
@@ -138,7 +167,19 @@ export function coerceStatePatch(input) {
   // stance: any scalar/collection that can yield one string.
   if (src.stance !== undefined && src.stance !== null) {
     const leaves = [];
-    collectStrings(src.stance, leaves);
+    if (typeof src.stance === "string") {
+      // A stance sent as a JSON-encoded list ("[\"held\",\"because…\"]" or
+      // fenced) is a formatting habit, not two stances: parse and join.
+      const parsed = tryParseJsonListString(src.stance);
+      if (parsed !== null) {
+        collectStrings(parsed, leaves);
+        notes.push("stance arrived as a JSON-encoded list string — parsed and joined");
+      } else {
+        collectStrings(src.stance, leaves);
+      }
+    } else {
+      collectStrings(src.stance, leaves);
+    }
     if (leaves.length) {
       out.stance = leaves.join(" ");
       if (leaves.length > 1) notes.push("stance was not a single string — joined its parts");
@@ -152,11 +193,23 @@ export function coerceStatePatch(input) {
     if (raw === undefined || raw === null) continue;
     if (typeof raw !== "string" && !Array.isArray(raw) && typeof raw !== "object") continue;
     const items = [];
-    collectStrings(raw, items);
-    if (!Array.isArray(raw) && typeof raw === "string") {
-      notes.push(`${k} was a bare string — wrapped in a list`);
-    } else if (!Array.isArray(raw) && typeof raw === "object") {
-      notes.push(`${k} was an object, not a list — flattened to its text`);
+    if (typeof raw === "string") {
+      // A list field sent as one JSON-encoded array string is the host-gate
+      // trap: the model meant a list, so unpack it. Anything that is not a
+      // JSON array stays a single bullet verbatim.
+      const parsed = tryParseJsonListString(raw);
+      if (parsed !== null) {
+        collectStrings(parsed, items);
+        notes.push(`${k} arrived as a JSON-encoded list string — parsed to its items`);
+      } else {
+        collectStrings(raw, items);
+        notes.push(`${k} was a bare string — wrapped in a list`);
+      }
+    } else {
+      collectStrings(raw, items);
+      if (!Array.isArray(raw)) {
+        notes.push(`${k} was an object, not a list — flattened to its text`);
+      }
     }
     // Advisory only: the per-call caps are NOT enforced. applyStatePatch dedups
     // and FIFO-caps each bucket, so an over-long add list degrades by evicting

@@ -184,7 +184,14 @@ export function trimPayloadToBudget(payload, model, availableModels, opts) {
   const before = target.len;
   const marker = `\n\n[...trimmed to fit this model's ${resolveContextLimit(model, availableModels) ?? "?"}-token input window]`;
   const room = Math.max(1, keep - marker.length);
-  const trimmedText = String(list[target.i].text).slice(0, room);
+  // Whole-unit preference: cut at the last line boundary inside the budget so
+  // the surviving prefix never ends mid-line (a half-line reads as complete).
+  // Falls back to a hard cut only when a single line exceeds the budget.
+  let cutLen = room;
+  const rawText = String(list[target.i].text);
+  const nl = rawText.lastIndexOf("\n", room);
+  if (nl > room * 0.5) cutLen = nl;
+  const trimmedText = rawText.slice(0, cutLen);
   list[target.i] = { ...list[target.i], text: `${trimmedText}${marker}` };
-  return { system, parts: list, trimmedChars: before - room, trimmed: true, marker };
+  return { system, parts: list, trimmedChars: before - cutLen, trimmed: true, marker };
 }

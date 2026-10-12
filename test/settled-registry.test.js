@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
 import { parseSettledBullet, mergeSettledBullet } from "../src/lib/settled-registry.js";
 import { getSettledItemsRaw, setSettledItemsRaw } from "../src/database/meeting-operations.js";
+import { initSchema } from "../src/database/schema.js";
 
 // parseSettledBullet — extracts clerk-designated consensus items from a round
 // summary. The clerk emits a **Settled:** bullet with one-line claims + [#id].
@@ -72,54 +74,15 @@ test("mergeSettledBullet caps the registry for prompt size", () => {
   assert.match(items[items.length - 1].text, /number 15/);
 });
 
-// Regression: a DB created while CREATE TABLE lacked settled_items (stamped
-// v12 without the column) must self-heal instead of throwing "no such
-// column" and aborting the meeting. Fake db simulates the pre-migration
-// schema, then the ALTER, then normal operation.
-function preMigrationDb() {
-  const columns = new Set(["id", "question", "status"]);
-  const store = {};
-  return {
-    prepare(sql) {
-      if (sql.startsWith("PRAGMA table_info")) {
-        return { all: () => [...columns].map((name) => ({ name })) };
-      }
-      if (sql.startsWith("ALTER TABLE")) {
-        return { run: () => { columns.add("settled_items"); } };
-      }
-      if (sql.startsWith("SELECT settled_items")) {
-        return {
-          get: () => {
-            if (!columns.has("settled_items")) throw new Error("no such column: settled_items");
-            return { settled_items: store.settled ?? null };
-          },
-        };
-      }
-      if (sql.startsWith("UPDATE meetings SET settled_items")) {
-        return {
-          run: (json) => {
-            if (!columns.has("settled_items")) throw new Error("no such column: settled_items");
-            store.settled = json;
-          },
-        };
-      }
-      throw new Error(`unexpected SQL in fake: ${sql}`);
-    },
-    exec(sql) {
-      if (sql.startsWith("ALTER TABLE")) columns.add("settled_items");
-      else throw new Error(`unexpected exec: ${sql}`);
-    },
-  };
-}
-
-test("settled accessors self-heal a DB missing the column", () => {
-  const db = preMigrationDb();
-  // Read on a column-less DB returns "" instead of throwing.
+test("settled accessors round-trip on a v1 DB (column always present)", () => {
+  const db = new DatabaseSync(":memory:");
+  initSchema(db);
+  db.prepare("INSERT INTO meetings (id, question, status, max_rounds, convergence, created_at, updated_at) VALUES (?,?,?,?,?,?,?)")
+    .run("m1", "q", "initializing", 4, "agent_driven", "t", "t");
+  // Read before any write returns "" instead of throwing.
   assert.equal(getSettledItemsRaw(db, "m1"), "");
-  // Write self-heals (ALTER) then persists.
   setSettledItemsRaw(db, "m1", JSON.stringify([{ text: "x [#1]", holders: [], round: 1 }]));
-  const back = getSettledItemsRaw(db, "m1");
-  const parsed = JSON.parse(back);
+  const parsed = JSON.parse(getSettledItemsRaw(db, "m1"));
   assert.equal(parsed.length, 1);
   assert.match(parsed[0].text, /x \[#1\]/);
 });

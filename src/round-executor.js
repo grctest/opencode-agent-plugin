@@ -14,6 +14,7 @@ import { degrade } from "./utils/degrade.js";
 import { randomUUID } from "node:crypto";
 import { promptChildSession as promptChildSessionHelper, executeAgentTurn as executeAgentTurnHelper, recordFallbackFailure as recordFallbackFailureHelper, runPatchTailPhase, computePatchOutcome, TAIL_DEFERRED } from "./round-executor/agent-turn.js";
 import { buildToolsMap as buildToolsMapHelper, buildToolsMapWithoutLoom as buildToolsMapWithoutLoomHelper } from "./round-executor/tools.js";
+import { persistParticipantState } from "./services/state-persist.js";
 
 export class RoundExecutor {
   _db;
@@ -591,7 +592,7 @@ export class RoundExecutor {
         } catch {}
         try {
           const st = this._stateManager.getParticipantState?.(participant.config.id);
-          if (st && typeof this._db.setParticipantState === "function") this._db.setParticipantState(participant.config.id, st);
+          if (st) persistParticipantState(this._db, this._stateManager, participant.config.id, this._logger);
         } catch {}
       }
     } catch {}

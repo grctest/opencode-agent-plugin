@@ -13,8 +13,8 @@ export function storedVariantFor(modelKey, storedVariant, variantsByKey) {
 }
 
 export function validateParticipants(list) {
-  if (!Array.isArray(list) || list.length < 2) {
-    return "participants must be an array of at least 2 entries";
+  if (!Array.isArray(list) || list.length < 1) {
+    return "participants must be an array of at least 1 entry";
   }
   for (let i = 0; i < list.length; i++) {
     const p = list[i];

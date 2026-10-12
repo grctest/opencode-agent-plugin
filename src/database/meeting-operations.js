@@ -1,5 +1,4 @@
 import { Logger, extractErrorInfo } from "../logger.js";
-import { initSchema, runMigrations } from "./schema.js";
 import { isoNow, safeParseJsonArray } from "./connection.js";
 import { indexMeeting as _indexMeeting } from "./session-index.js";
 
@@ -235,25 +234,8 @@ export function setStateOfPlay(db, meetingId, stateOfPlay) {
     .run(stateOfPlay, isoNow(), meetingId);
 }
 
-/**
- * Self-healing column guard (settled_items post-dates some deployed DBs:
- * the v11→v12 migration covers pre-v12 DBs, but DBs created while the CREATE
- * TABLE lacked the column were stamped v12 without it and would otherwise
- * throw "no such column" forever). Cheap PRAGMA check; runs inside the
- * caller's transaction without issue (SQLite DDL is transactional).
- */
-function ensureSettledColumn(db) {
-  try {
-    const cols = new Set(
-      db.prepare("PRAGMA table_info(meetings)").all().map((c) => c.name),
-    );
-    if (!cols.has("settled_items")) db.exec("ALTER TABLE meetings ADD COLUMN settled_items TEXT");
-  } catch {}
-}
-
 export function getSettledItemsRaw(db, meetingId) {
   try {
-    ensureSettledColumn(db);
     const row = db
       .prepare("SELECT settled_items FROM meetings WHERE id = ?")
       .get(meetingId);
@@ -264,7 +246,6 @@ export function getSettledItemsRaw(db, meetingId) {
 }
 
 export function setSettledItemsRaw(db, meetingId, settledItemsJson) {
-  ensureSettledColumn(db);
   db
     .prepare("UPDATE meetings SET settled_items = ?, updated_at = ? WHERE id = ?")
     .run(settledItemsJson, isoNow(), meetingId);

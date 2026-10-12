@@ -188,7 +188,8 @@ export function createStatePatchTool({ config, resolveMeeting, activeLooms }) {
               try { sm.setParticipantState(caller.config.id, next); } catch {}
               try { sm.markStateDirty?.(caller.config.id); } catch {}
               try {
-                if (typeof db.setParticipantState === "function") db.setParticipantState(caller.config.id, next);
+                const { persistParticipantState } = await import("../../services/state-persist.js");
+                persistParticipantState(db, sm, caller.config.id);
               } catch {}
               try {
                 const { auditLoomTool } = await import("./audit.js");

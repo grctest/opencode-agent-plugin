@@ -14,6 +14,7 @@ import { sanitizeForPrompt, sanitizeForDisplay } from "../../../utils/sanitize.j
 import { writeReportFile as writeReportFileHelper } from "../../../handlers/knit/file-ops.js";
 import { isControlReady, logger, runtime, jobs, serverState, getDirectory, readJsonBody } from "./runtime.js";
 import { probeMeetingsDir } from "./filters.js";
+import { registerMeetingEngine } from "../../../utils/engine-registry.js";
 import { discoverFiltered, discoverRaw } from "./discovery.js";
 import { validateParticipants, normalizeFeatures, buildMeetingAgentTools, dashboardCallbacks } from "./forms.js";
 
@@ -227,7 +228,10 @@ async function handleStartMeetingInternal(req) {
     ...dashboardCallbacks(),
   });
 
-  runtime.activeLooms.set(meetingId, engine);
+  if (!registerMeetingEngine(runtime.activeLooms, meetingId, engine, { logger })) {
+    try { await engine.close(); } catch {}
+    return Response.json({ error: "server busy — too many live deliberations, retry after the current one finishes" }, { status: 503 });
+  }
   serverState.runningMeetingId = meetingId;
   jobs.set(meetingId, { phase: "running", startedAt: new Date().toISOString(), extended: false });
 

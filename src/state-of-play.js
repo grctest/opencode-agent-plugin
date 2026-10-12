@@ -286,8 +286,14 @@ function formatRoundLines(round, participants) {
 export function formatFinalRoundTranscript(data, participants) {
   const truncForTranscript = (s, lim) => {
     if (s.length <= lim) return s;
-    // Avoid cutting surrogate pairs
+    // Whole-unit cut: prefer a line boundary so a contribution line is never
+    // left half-rendered — a silent half-line reads as complete to the
+    // synthesizer, an explicit marker does not. Falls back to a hard cut only
+    // when a single line exceeds half the budget (uncapped single unit).
     let cut = s.slice(0, lim);
+    const nl = cut.lastIndexOf("\n");
+    if (nl > lim * 0.5) cut = cut.slice(0, nl);
+    // Avoid cutting surrogate pairs
     const last = cut.charCodeAt(cut.length - 1);
     if (last >= 0xD800 && last <= 0xDBFF) cut = cut.slice(0, -1);
     return cut + "\n...[truncated]";

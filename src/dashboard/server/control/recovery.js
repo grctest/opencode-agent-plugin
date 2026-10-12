@@ -16,6 +16,7 @@ import { writeReportFile as writeReportFileHelper } from "../../../handlers/knit
 import { repairDatabase } from "../../../database/connection.js";
 import { TERMINAL_STATUSES } from "../../../constants.js";
 import { resetPollCursorsForMeeting } from "../poll-cursors.js";
+import { registerMeetingEngine } from "../../../utils/engine-registry.js";
 import { isControlReady, logger, runtime, jobs, serverState, getDirectory, readJsonBody } from "./runtime.js";
 import { discoverFiltered } from "./discovery.js";
 import { storedVariantFor, normalizeFeatures, buildMeetingAgentTools, dashboardCallbacks } from "./forms.js";
@@ -251,7 +252,10 @@ async function handleResumeWithContext(req, _mode) {
     ...dashboardCallbacks(),
   });
 
-  runtime.activeLooms.set(meetingId, resumeEngine);
+  if (!registerMeetingEngine(runtime.activeLooms, meetingId, resumeEngine, { logger })) {
+    try { await resumeEngine.close(); } catch {}
+    return Response.json({ error: "server busy — too many live deliberations, retry after the current one finishes" }, { status: 503 });
+  }
   serverState.runningMeetingId = meetingId;
   jobs.set(meetingId, { phase: "running", startedAt: new Date().toISOString(), resumed: true });
   try { invalidateMeetingsCache(getDirectory()); } catch {}
@@ -366,7 +370,10 @@ async function handleFinishMeetingInternal(req) {
     ...dashboardCallbacks(),
   });
 
-  runtime.activeLooms.set(meetingId, finishEngine);
+  if (!registerMeetingEngine(runtime.activeLooms, meetingId, finishEngine, { logger })) {
+    try { await finishEngine.close(); } catch {}
+    return Response.json({ error: "server busy — too many live deliberations, retry after the current one finishes" }, { status: 503 });
+  }
   serverState.runningMeetingId = meetingId;
   jobs.set(meetingId, { phase: "running", startedAt: new Date().toISOString(), finishing: true });
   try { invalidateMeetingsCache(getDirectory()); } catch {}

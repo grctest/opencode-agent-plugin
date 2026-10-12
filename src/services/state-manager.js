@@ -195,7 +195,15 @@ export class StateManager {
     this.#tailPatches.delete(participantId);
   }
 
-  /** Lazily initializes and returns a clone of agent id's Σⁱ (Σ_0 when absent). */
+  /** Lazily initializes and returns a clone of agent id's Σⁱ (Σ_0 when absent).
+   *
+   * Seed → commit → render ordering (SKILL.state Alg. 1): the lazy seed below
+   * runs once, the queued patch commits via queueTurnPatch/queueTailPatch, and
+   * rendering reads the committed state. The dirty-projection below is render
+   * only — it rewrites the returned clone's stance, never the stored state —
+   * so two renders of the same committed state are byte-identical and storage
+   * order (recency, which FIFO eviction depends on) is never re-sorted.
+   */
   getParticipantState(id) {
     const existing = this.participantStates.get(id);
     if (existing) {

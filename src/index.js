@@ -51,8 +51,8 @@ export const Loom = async (input) => {
   // Initialize the real embedding model in the plugin process so
   // room composition (PersonaIndex) uses real embeddings rather than
   // placeholder noise. Persona vectors live in process memory (no DB
-  // tables). Failures are non-fatal: composition degrades to
-  // keyword/tag fallback.
+  // tables). Failures are non-fatal: auto-select is unavailable without
+  // an embedder (manual persona selection still works).
   const startupValues = config.get();
   const resolvedModel = startupValues.embeddingModel ?? DEFAULT_EMBEDDING_MODEL;
   const resolvedQuant = startupValues.embeddingQuant ?? DEFAULT_EMBEDDING_QUANT;
@@ -63,7 +63,7 @@ export const Loom = async (input) => {
     .catch((err) => {
       logger.warn(
         "embedder_init_failed",
-        `Failed to initialize embedding model — room composition will degrade to keyword fallback: ${err.message}`,
+        `Failed to initialize embedding model — auto-select is unavailable without an embedder (manual selection still works): ${err.message}`,
       );
     });
   // Expose for handlers to await when composition is imminent

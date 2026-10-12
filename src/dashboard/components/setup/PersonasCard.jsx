@@ -21,8 +21,8 @@ export function PersonasCard({
             <CardDescription>
               {seats.length === 0
                 ? embedderReady
-                  ? "Auto-select from all personas ranked by similarity, or add them one by one — at least 2 seats to start."
-                  : "Add personas manually — at least 2 seats to start."
+                  ? "Auto-select from all personas ranked by similarity, or add them one by one — at least 1 seat to start."
+                  : "Add personas manually — at least 1 seat to start."
                 : `${seats.length} seat${seats.length === 1 ? "" : "s"} in the room — swap or remove to adjust.`}
             </CardDescription>
           </div>

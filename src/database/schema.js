@@ -1,400 +1,24 @@
 /**
- * Schema + ordered migrations (audit 04 PD2).
+ * Schema v1.
  *
- * The per-meeting DB is wiped when a session is deleted, but existing DBs must
- * survive plugin updates — so schema evolution goes through PRAGMA user_version
- * and an ordered migration list. New deployments start at LATEST_SCHEMA_VERSION
- * directly; older files run only the migrations they are missing.
+ * No userbase yet, so there are no migrations and no back-compat shims:
+ * every database is created fresh at version 1 by initSchema() below.
+ * runMigrations() is a version guard only — it stamps unmarked databases
+ * and rejects anything that is not v1 (delete the file and let it be
+ * recreated).
  *
- * N2 (schema changes ship atomically): any change to the DDL below REQUIRES
- * `LATEST_SCHEMA_VERSION += 1` and a matching entry in MIGRATIONS[] in the
- * same change, so two structurally different databases can never claim the
- * same user_version. `runMigrations` enforces the length invariant, and
- * `schemaParityReport()` (exported for tests) checks that a fresh DB and a
- * migrated v12 DB agree on every table.
- *
- * `participants.tier` widened in v13→v14 through the documented SQLite table
- * rebuild (foreign keys off, rebuild under a temp name, foreign_key_check
- * before commit) because a CHECK constraint cannot be altered in place.
- * v15→v16 renames `participants.tier` → `category` and
- * `participants.tier_guidance` → `category_guidance`, dropping the seniority
- * CHECK whitelist entirely (categories are open organizational labels).
+ * When a userbase exists and the DDL must change, reintroduce an ordered
+ * migration list here (v1 → v2 first) and bump SCHEMA_VERSION alongside it.
  */
 
-import { parseSplitConfidence } from "../utils/confidence.js";
+export const SCHEMA_VERSION = 1;
 
-export const LATEST_SCHEMA_VERSION = 17;
-
-/**
- * Ordered migrations. MIGRATIONS[n] upgrades a DB at user_version n to n+1.
- * Each entry receives the raw bun:sqlite handle.
- */
-export const MIGRATIONS = [
-  // v0 → v1: degradation flags on the meeting row (audit 07 EH2)
-  (db) => {
-    const cols = new Set(
-      db.prepare("PRAGMA table_info(meetings)").all().map((c) => c.name),
-    );
-    if (!cols.has("semantic_degraded")) {
-      db.exec(`ALTER TABLE meetings ADD COLUMN semantic_degraded INTEGER NOT NULL DEFAULT 0`);
-    }
-    if (!cols.has("persistence_degraded")) {
-      db.exec(`ALTER TABLE meetings ADD COLUMN persistence_degraded INTEGER NOT NULL DEFAULT 0`);
-    }
-  },
-  // v1 → v2: add CHECK constraints for status/tier (no users yet, fresh DBs get them via initSchema; existing v1 DBs keep permissive schema)
-  (db) => {
-    // No-op migration for existing DBs — CHECKs are enforced at application layer via StateManager TRANSITIONS; fresh DBs get them in initSchema
-  },
-  // v2 → v3: remove muted status — convert any existing muted rows to listening
-  (db) => {
-    try {
-      const cols = new Set(db.prepare("PRAGMA table_info(participants)").all().map((c) => c.name));
-      if (cols.has("status")) {
-        db.exec(`UPDATE participants SET status = 'listening' WHERE status = 'muted'`);
-      }
-    } catch {}
-  },
-  // v3 → v4: add forum tables for agent sub-discussions
-  (db) => {
-    const tables = new Set(
-      db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name),
-    );
-    if (!tables.has("forum_topics")) {
-      db.exec(`
-        CREATE TABLE IF NOT EXISTS forum_topics (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
-          title TEXT NOT NULL,
-          body TEXT NOT NULL,
-          tags TEXT,
-          author_id TEXT NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_forum_topics_meeting ON forum_topics(meeting_id);
-
-        CREATE TABLE IF NOT EXISTS forum_comments (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          topic_id INTEGER NOT NULL REFERENCES forum_topics(id) ON DELETE CASCADE,
-          author_id TEXT NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
-          body TEXT NOT NULL,
-          created_at TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_forum_comments_topic ON forum_comments(topic_id);
-      `);
-    }
-  },
-  // v4 → v5: durable audit for loom tool invocations (especially forum) — survives even if ToolPart extraction fails
-  (db) => {
-    const tables = new Set(
-      db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name),
-    );
-    if (!tables.has("tool_audit")) {
-      db.exec(`
-        CREATE TABLE IF NOT EXISTS tool_audit (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
-          participant_id TEXT NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
-          round INTEGER NOT NULL,
-          batch_id TEXT,
-          tool TEXT NOT NULL,
-          input TEXT,
-          output TEXT,
-          status TEXT NOT NULL DEFAULT 'completed',
-          title TEXT,
-          created_at TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_tool_audit_meeting ON tool_audit(meeting_id);
-        CREATE INDEX IF NOT EXISTS idx_tool_audit_participant_round ON tool_audit(meeting_id, participant_id, round);
-        CREATE INDEX IF NOT EXISTS idx_tool_audit_batch ON tool_audit(batch_id);
-      `);
-    }
-  },
-  // v5 → v6: SKILL.state per-agent execution state — participants.state_json + state_patches audit
-  (db) => {
-    const SEED = '{"stance":"","established":[],"contested":[],"open":[],"facts":[],"files":[],"version":0,"updated_round":0,"updated_contribution_id":null}';
-    try {
-      const cols = new Set(
-        db.prepare("PRAGMA table_info(participants)").all().map((c) => c.name),
-      );
-      if (!cols.has("state_json")) {
-        db.exec(`ALTER TABLE participants ADD COLUMN state_json TEXT NOT NULL DEFAULT '${SEED}'`);
-      }
-    } catch {}
-    const tables = new Set(
-      db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name),
-    );
-    if (!tables.has("state_patches")) {
-      db.exec(`
-        CREATE TABLE IF NOT EXISTS state_patches (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
-          participant_id TEXT NOT NULL,
-          round INTEGER NOT NULL,
-          contribution_id INTEGER,
-          version INTEGER NOT NULL,
-          patch_json TEXT NOT NULL,
-          applied_json TEXT NOT NULL,
-          created_at TEXT NOT NULL DEFAULT (datetime('now')),
-          UNIQUE(meeting_id, participant_id, version)
-        );
-        CREATE INDEX IF NOT EXISTS idx_state_patches_meeting ON state_patches(meeting_id);
-        CREATE INDEX IF NOT EXISTS idx_state_patches_participant ON state_patches(meeting_id, participant_id);
-      `);
-    }
-  },
-  (db) => {
-    const cols = new Set(
-      db.prepare("PRAGMA table_info(participants)").all().map((c) => c.name),
-    );
-    if (!cols.has("anti_patterns")) db.exec("ALTER TABLE participants ADD COLUMN anti_patterns TEXT");
-    if (!cols.has("category_guidance") && !cols.has("tier_guidance")) db.exec("ALTER TABLE participants ADD COLUMN category_guidance TEXT");
-    if (!cols.has("reflection_guidance")) db.exec("ALTER TABLE participants ADD COLUMN reflection_guidance TEXT");
-  },
-  (db) => {
-    const cols = new Set(
-      db.prepare("PRAGMA table_info(meetings)").all().map((c) => c.name),
-    );
-    if (!cols.has("orchestrator_provider_id")) db.exec("ALTER TABLE meetings ADD COLUMN orchestrator_provider_id TEXT");
-    if (!cols.has("orchestrator_model_id")) db.exec("ALTER TABLE meetings ADD COLUMN orchestrator_model_id TEXT");
-    if (!cols.has("feature_toggles_json")) db.exec("ALTER TABLE meetings ADD COLUMN feature_toggles_json TEXT");
-  },
-  (db) => {
-    const cols = new Set(
-      db.prepare("PRAGMA table_info(meetings)").all().map((c) => c.name),
-    );
-    if (!cols.has("orchestrator_config_json")) db.exec("ALTER TABLE meetings ADD COLUMN orchestrator_config_json TEXT");
-  },
-  // v9 → v10: stamp the effective orchestrator config on the artefacts it
-  // shapes, so a summary/artifact read later is attributable to the options
-  // that produced it (audit O13/Step 7).
-  (db) => {
-    const roundCols = new Set(
-      db.prepare("PRAGMA table_info(rounds)").all().map((c) => c.name),
-    );
-    if (!roundCols.has("orchestrator_config_json")) db.exec("ALTER TABLE rounds ADD COLUMN orchestrator_config_json TEXT");
-    const artifactCols = new Set(
-      db.prepare("PRAGMA table_info(artifacts)").all().map((c) => c.name),
-    );
-    if (!artifactCols.has("orchestrator_config")) db.exec("ALTER TABLE artifacts ADD COLUMN orchestrator_config TEXT");
-  },
-  // v10 → v11: rate limit state for free tier / Go subscription limits
-  (db) => {
-    const cols = new Set(
-      db.prepare("PRAGMA table_info(meetings)").all().map((c) => c.name),
-    );
-    if (!cols.has("rate_limit_state")) db.exec("ALTER TABLE meetings ADD COLUMN rate_limit_state TEXT");
-  },
-  // v11 → v12: meeting-level settled registry (clerk-designated consensus
-  // items, retrospective P0-2). JSON array of { text, holders[], round }.
-  (db) => {
-    const cols = new Set(
-      db.prepare("PRAGMA table_info(meetings)").all().map((c) => c.name),
-    );
-    if (!cols.has("settled_items")) db.exec("ALTER TABLE meetings ADD COLUMN settled_items TEXT");
-  },
-  // v12 → v13 (N2 — finishes the two half-landed schema changes):
-  //   a) drop the orphaned `artifacts.dissent` column. P16 removed it from
-  //      initSchema without a version bump, so v12 meant two different shapes.
-  //      DROP COLUMN needs SQLite ≥ 3.35; a runtime that lacks it raises here
-  //      rather than silently converging on a different shape.
-  //   b) land P9 in the schema: confidence_name / confidence_number, with
-  //      `confidence` becoming a computed roll-up of the two. A machine reader
-  //      must never see "high" for a deliberation whose own prose says the
-  //      number-confidence is Low.
-  (db) => {
-    const artifactCols = new Set(
-      db.prepare("PRAGMA table_info(artifacts)").all().map((c) => c.name),
-    );
-    if (artifactCols.has("dissent")) {
-      db.exec("ALTER TABLE artifacts DROP COLUMN dissent");
-    }
-    if (!artifactCols.has("confidence_name")) db.exec("ALTER TABLE artifacts ADD COLUMN confidence_name TEXT");
-    if (!artifactCols.has("confidence_number")) db.exec("ALTER TABLE artifacts ADD COLUMN confidence_number TEXT");
-    // Backfill the split for artifacts that predate the columns, from the
-    // prose the synthesizer already wrote ("Name: High; Number: Low").
-    const rows = db.prepare("SELECT meeting_id, content FROM artifacts").all();
-    const update = db.prepare("UPDATE artifacts SET confidence_name = ?, confidence_number = ? WHERE meeting_id = ?");
-    for (const row of rows) {
-      const { name, number } = parseSplitConfidence(row.content ?? "");
-      if (!name && !number) continue;
-      update.run(name ?? null, number ?? null, row.meeting_id);
-    }
-  },
-  // v13 → v14: widen `participants.tier` to admit the `nonhuman` tier, so a
-  // seat held by a non-human persona persists with the tier it was selected
-  // for instead of being coerced into a human one.
-  //
-  // SQLite cannot ALTER a CHECK, so this is the documented 12-step rebuild:
-  // foreign keys OFF, create the new shape under a temp name, copy, drop the
-  // old parent, rename into place, then foreign_key_check before COMMIT.
-  //
-  // The details that matter, because getting one wrong silently orphans rows:
-  //  - foreign_keys=OFF is what lets the parent be dropped without cascading
-  //    away the contributions/agent_errors that point at it.
-  //  - the new table is created under a TEMP name and renamed last, so the
-  //    rename rewrites no child REFERENCES clause (renaming a name children
-  //    already reference is what corrupts their FK targets).
-  //  - every index on the old table is dropped with it and must be recreated.
-  //  - foreign_key_check runs inside the migration: if the rebuild left a
-  //    dangling reference, the whole migration throws and the transaction
-  //    rolls back rather than committing a half-migrated database.
-  (db) => {
-    const row = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='participants'").get();
-    if (!row?.sql) return;
-    // Already admits nonhuman (fresh initSchema, or an interrupted-then-retried
-    // migration): the rebuild is idempotent and must be a no-op.
-    if (/nonhuman/.test(String(row.sql))) return;
-
-    const cols = db.prepare("PRAGMA table_info(participants)").all().map((c) => c.name);
-    const indexes = db
-      .prepare("SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name='participants' AND sql IS NOT NULL")
-      .all();
-
-    const widened = String(row.sql).replace(
-      /CHECK\s*\(\s*tier\s+IN\s*\(([^)]*)\)\s*\)/i,
-      (_m, tiers) => `CHECK(tier IN (${tiers.replace(/\s*,\s*$/, "")},'nonhuman'))`,
-    );
-    if (widened === String(row.sql)) return;
-
-    // column list, in declaration order, so the copy matches positionally.
-    const colList = cols.map((c) => `"${c}"`).join(", ");
-
-    // SQLite's documented rebuild order, and the order is load-bearing:
-    //  1. the NEW table is created under a TEMP name and the OLD one is dropped
-    //     only at the end. Renaming the old parent first would make SQLite
-    //     rewrite every child's REFERENCES clause to the temp name (modern
-    //     ALTER TABLE RENAME behaviour), leaving them pointing at a table that
-    //     no longer exists once the rename completes.
-    //  2. dropping the old parent is safe only because runMigrations() has
-    //     turned foreign_keys OFF for the run — with enforcement on, the drop
-  //     cascades and silently deletes every contribution and
-  //     agent_error pointing at the participants.
-    //  3. the final rename retargets nothing, because nothing references the
-    //     temp name.
-    //  4. foreign_key_check runs before COMMIT, so a rebuild that left a
-    //     dangling reference throws and rolls the whole migration back rather
-    //     than committing a half-migrated database.
-    // This migration joins runMigrations()'s transaction; it never opens one.
-    db.exec(`CREATE TABLE participants_v14 ${widened.replace(/CREATE TABLE\s+(IF NOT EXISTS\s+)?participants\b/i, "").replace(/^\s*\(/, "(")}`);
-    db.exec(`INSERT INTO participants_v14 (${colList}) SELECT ${colList} FROM participants`);
-    db.exec("DROP TABLE participants");
-    db.exec("ALTER TABLE participants_v14 RENAME TO participants");
-    for (const idx of indexes) {
-      // Indexes die with the old table; the stored DDL already names the
-      // table, so it recreates verbatim.
-      db.exec(String(idx.sql));
-    }
-    const violations = db.prepare("PRAGMA foreign_key_check").all();
-    if (violations.length > 0) {
-      throw new Error(
-        `v13→v14 participants rebuild left ${violations.length} dangling foreign key(s): ${JSON.stringify(violations.slice(0, 3))}`,
-      );
-    }
-  },
-  // v14 → v15: drop the turn_requests table. The loom_request_next tool is
-  // removed and turn order is orchestrator-decided, so nothing writes or
-  // reads turn requests. Indexes on the table die with it.
-  (db) => {
-    db.exec("DROP TABLE IF EXISTS turn_requests");
-  },
-  // v15 → v16: rename `participants.tier` → `category` and
-  // `participants.tier_guidance` → `category_guidance`, and drop the seniority
-  // CHECK whitelist (categories are open organizational labels — any folder
-  // name is valid, so no whitelist CHECK may remain).
-  //
-  // Same documented rebuild as v13→v14 (temp name, copy, drop, rename,
-  // foreign_key_check) because the CHECK cannot be dropped in place and
-  // RENAME COLUMN would carry it over under the new name.
-  (db) => {
-    const cols = db.prepare("PRAGMA table_info(participants)").all().map((c) => c.name);
-    if (!cols.includes("tier") && !cols.includes("tier_guidance") && cols.includes("category")) return;
-    const row = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='participants'").get();
-    if (!row?.sql) return;
-    const indexes = db
-      .prepare("SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name='participants' AND sql IS NOT NULL")
-      .all();
-    // Target shape mirrors initSchema below (no CHECK on category).
-    db.exec(`CREATE TABLE participants_v16 (
-      id TEXT PRIMARY KEY,
-      meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
-      name TEXT NOT NULL,
-      persona TEXT NOT NULL,
-      agenda TEXT NOT NULL,
-      category TEXT NOT NULL,
-      provider_id TEXT,
-      model_id TEXT,
-      session_id TEXT,
-      session_version INTEGER NOT NULL DEFAULT 1,
-      status TEXT NOT NULL DEFAULT 'listening' CHECK(status IN ('listening','speaking','passed','failed','summoned')),
-      reflection TEXT NOT NULL DEFAULT '',
-      state_json TEXT NOT NULL DEFAULT '{"stance":"","established":[],"contested":[],"open":[],"facts":[],"files":[],"version":0,"updated_round":0,"updated_contribution_id":null}',
-      known_biases TEXT,
-      communication_style TEXT,
-      preferred_contribution_types TEXT,
-      anti_patterns TEXT,
-      category_guidance TEXT,
-      reflection_guidance TEXT,
-      tags TEXT,
-      expertise TEXT,
-      UNIQUE(meeting_id, name)
-    )`);
-    const has = (c) => cols.includes(c);
-    const srcCategory = has("category") ? '"category"' : has("tier") ? '"tier"' : "''";
-    const srcGuidance = has("category_guidance") ? '"category_guidance"' : has("tier_guidance") ? '"tier_guidance"' : "NULL";
-    const copyCols = ["id", "meeting_id", "name", "persona", "agenda"];
-    const copyVals = ["id", "meeting_id", "name", "persona", "agenda"];
-    copyCols.push("category"); copyVals.push(srcCategory);
-    for (const c of ["provider_id", "model_id", "session_id", "session_version", "status", "reflection", "state_json", "known_biases", "communication_style", "preferred_contribution_types", "anti_patterns"]) {
-      if (has(c)) { copyCols.push(c); copyVals.push(`"${c}"`); }
-    }
-    copyCols.push("category_guidance"); copyVals.push(srcGuidance);
-    for (const c of ["reflection_guidance", "tags", "expertise"]) {
-      if (has(c)) { copyCols.push(c); copyVals.push(`"${c}"`); }
-    }
-    db.exec(`INSERT INTO participants_v16 (${copyCols.map((c) => `"${c}"`).join(", ")}) SELECT ${copyVals.join(", ")} FROM participants`);
-    db.exec("DROP TABLE participants");
-    db.exec("ALTER TABLE participants_v16 RENAME TO participants");
-    for (const idx of indexes) {
-      try { db.exec(String(idx.sql)); } catch {}
-    }
-    const violations = db.prepare("PRAGMA foreign_key_check").all();
-    if (violations.length > 0) {
-      throw new Error(
-        `v15→v16 participants rebuild left ${violations.length} dangling foreign key(s): ${JSON.stringify(violations.slice(0, 3))}`,
-      );
-    }
-  },
-  // v16 → v17: persist the opencode model variant overlay per seat and for the
-  // orchestrator. Nullable TEXT, no backfill (absent = server default, same as
-  // a seat created before the variant picker existed). Plain ADD COLUMN keeps
-  // fresh and migrated DBs identical, so the schema-parity invariant holds.
-  (db) => {
-    // Partial-shape DBs (like the v12 test fixture, which only has artifacts)
-    // have neither table — there is nothing to alter.
-    const tables = new Set(
-      db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name),
-    );
-    if (tables.has("participants")) {
-      const partCols = new Set(
-        db.prepare("PRAGMA table_info(participants)").all().map((c) => c.name),
-      );
-      if (!partCols.has("model_variant")) db.exec("ALTER TABLE participants ADD COLUMN model_variant TEXT");
-    }
-    if (tables.has("meetings")) {
-      const meetingCols = new Set(
-        db.prepare("PRAGMA table_info(meetings)").all().map((c) => c.name),
-      );
-      if (!meetingCols.has("orchestrator_model_variant")) db.exec("ALTER TABLE meetings ADD COLUMN orchestrator_model_variant TEXT");
-    }
-  },
-];
+/** Alias kept so existing imports keep working; prefer SCHEMA_VERSION. */
+export const LATEST_SCHEMA_VERSION = SCHEMA_VERSION;
 
 export function initSchema(db) {
-  // Only a brand-new DB (no meetings table yet) is born at the latest version.
-  // Pre-existing tables keep their user_version so pending migrations still run
-  // against them in runMigrations().
+  // Only a brand-new DB (no meetings table yet) gets stamped. Pre-existing
+  // tables keep their user_version so the guard in runMigrations() sees them.
   const isNewDb = !db.prepare(
     "SELECT name FROM sqlite_master WHERE type='table' AND name='meetings'",
   ).get();
@@ -609,68 +233,36 @@ export function initSchema(db) {
   `);
 
   if (isNewDb) {
-    // Fresh deployments are born at the latest version — otherwise runMigrations
-    // would re-apply v0→v1 against tables that already contain those columns.
-    db.exec(`PRAGMA user_version = ${LATEST_SCHEMA_VERSION}`);
+    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   }
 }
 
 /**
- * Brings a database to the latest schema version, running any pending migrations.
- * Safe to call on brand-new DBs (schema init + version stamp) and existing ones
- * (migrations applied in order inside a transaction).
+ * Version guard (no migrations pre-userbase). Safe to call on brand-new DBs
+ * (schema init + version stamp) and existing v1 ones (no-op validation).
+ * Anything else throws: delete the database file and let it be recreated.
  * @param {import("bun:sqlite").Database} rawDb
  * @param {{ logger?: { info?: Function, warn?: Function } }} [opts]
  */
 export function runMigrations(rawDb, opts = {}) {
-  if (MIGRATIONS.length !== LATEST_SCHEMA_VERSION) {
-    throw new Error(`MIGRATIONS.length (${MIGRATIONS.length}) must equal LATEST_SCHEMA_VERSION (${LATEST_SCHEMA_VERSION}) — forgot to bump version or add migration`);
-  }
-  const log = opts.logger ?? {};
   const row = rawDb.prepare("PRAGMA user_version").get();
   const current = Number(row?.user_version ?? 0);
 
-  if (current > LATEST_SCHEMA_VERSION) {
-    throw new Error(
-      `Database schema version ${current} is newer than this plugin supports (${LATEST_SCHEMA_VERSION}) — update the plugin.`
-    );
+  if (current === SCHEMA_VERSION) return current;
+
+  if (current === 0) {
+    rawDb.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+    return SCHEMA_VERSION;
   }
 
-  if (current === LATEST_SCHEMA_VERSION) return current;
-
-  // Foreign keys OFF for the duration: at least one migration (v13→v14) must
-  // rebuild a parent table that four child tables reference, and dropping that
-  // parent with enforcement on cascades the child rows away. The pragma is a
-  // no-op inside a transaction, so it has to be set before BEGIN and restored
-  // after COMMIT/ROLLBACK. Every migration is expected to leave the schema
-  // consistent on its own; the rebuild additionally runs foreign_key_check to
-  // prove it rather than trusting this.
-  const fkWasOn = Number(rawDb.prepare("PRAGMA foreign_keys").get()?.foreign_keys ?? 0) === 1;
-  if (fkWasOn) rawDb.exec("PRAGMA foreign_keys=OFF");
-  try {
-    rawDb.exec("BEGIN IMMEDIATE");
-    try {
-      for (let v = current; v < MIGRATIONS.length; v++) {
-        MIGRATIONS[v](rawDb);
-        if (log.info) log.info("db_migration_applied", `Applied database migration v${v} → v${v + 1}`);
-      }
-      rawDb.exec(`PRAGMA user_version = ${LATEST_SCHEMA_VERSION}`);
-      rawDb.exec("COMMIT");
-    } catch (err) {
-      try { rawDb.exec("ROLLBACK"); } catch {}
-      throw err;
-    }
-  } finally {
-    if (fkWasOn) rawDb.exec("PRAGMA foreign_keys=ON");
-  }
-  return LATEST_SCHEMA_VERSION;
+  throw new Error(
+    `Database schema version ${current} is not supported (current: ${SCHEMA_VERSION}) — delete the database file and let it be recreated. No migrations are provided pre-userbase.`
+  );
 }
 
 /**
- * N2 acceptance helper: a normalized `{ table: [column, ...] }` map of a
- * database's shape, plus its user_version. Tests assert that a fresh DB and a
- * DB migrated from v12 produce identical reports — the invariant that two
- * structurally different databases can no longer share one version number.
+ * A normalized `{ table: [column, ...] }` map of a database's shape, plus
+ * its user_version. Tests assert a fresh DB reports v1 with the v1 shape.
  * @param {any} rawDb
  * @returns {{ user_version: number, tables: Record<string, string[]> }}
  */

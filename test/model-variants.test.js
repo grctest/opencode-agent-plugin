@@ -12,11 +12,11 @@ import {
   selectFallbackModel,
 } from "../src/services/model-service.js";
 import { parseFastPathModel } from "../src/config/utils.js";
-import { initSchema, runMigrations, LATEST_SCHEMA_VERSION } from "../src/database/schema.js";
+import { initSchema, LATEST_SCHEMA_VERSION } from "../src/database/schema.js";
 
 // Model variants (opencode reasoning-effort overlays, e.g. low/medium/high):
 // discovery preserves the catalog list, assignment threads the selection,
-// the server validates it, and v17 persists it. Unknown variants must never
+// the server validates it, and v1 persists it. Unknown variants must never
 // be forwarded blindly — upstream fails model resolution on those.
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -128,40 +128,20 @@ test("parseFastPathModel accepts an optional #variant suffix", () => {
   assert.equal(parseFastPathModel("novariant"), null);
 });
 
-test("v17 persists seat and orchestrator variants; pre-v17 rows read as default", () => {
-  assert.equal(LATEST_SCHEMA_VERSION, 17);
+test("v1 persists seat and orchestrator variants; absent rows read as default", () => {
+  assert.equal(LATEST_SCHEMA_VERSION, 1);
   const db = new DatabaseSync(":memory:");
   initSchema(db);
   const cols = (t) => db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
   assert.ok(cols("participants").includes("model_variant"), "fresh participants carry model_variant");
   assert.ok(cols("meetings").includes("orchestrator_model_variant"), "fresh meetings carry orchestrator_model_variant");
 
-  // A v16-shape DB gains the columns through the migration with no backfill.
-  const old = new DatabaseSync(":memory:");
-  old.exec(`CREATE TABLE participants (
-    id TEXT PRIMARY KEY, meeting_id TEXT NOT NULL, name TEXT NOT NULL, persona TEXT NOT NULL,
-    agenda TEXT NOT NULL, category TEXT NOT NULL, provider_id TEXT, model_id TEXT, session_id TEXT,
-    session_version INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'listening', reflection TEXT NOT NULL DEFAULT '',
-    state_json TEXT NOT NULL DEFAULT '{}', known_biases TEXT, communication_style TEXT,
-    preferred_contribution_types TEXT, anti_patterns TEXT, category_guidance TEXT,
-    reflection_guidance TEXT, tags TEXT, expertise TEXT, UNIQUE(meeting_id, name));
-    CREATE TABLE meetings (id TEXT PRIMARY KEY, question TEXT NOT NULL, context TEXT,
-    status TEXT NOT NULL, round INTEGER NOT NULL DEFAULT 0, fabric TEXT, max_rounds INTEGER NOT NULL,
-    convergence TEXT NOT NULL, tags TEXT, parent_session_id TEXT, opencode_session_id TEXT,
-    next_speaker_id TEXT, state_of_play TEXT, stats TEXT, embedding_model TEXT, embedding_dim INTEGER,
-    reflecting_participants TEXT, querying_participants TEXT, evidence_participants TEXT,
-    summoning_participants TEXT, semantic_degraded INTEGER NOT NULL DEFAULT 0,
-    persistence_degraded INTEGER NOT NULL DEFAULT 0, orchestrator_provider_id TEXT,
-    orchestrator_model_id TEXT, feature_toggles_json TEXT, orchestrator_config_json TEXT,
-    rate_limit_state TEXT, settled_items TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-    PRAGMA user_version = 16;`);
-  assert.equal(runMigrations(old), LATEST_SCHEMA_VERSION);
-  const migratedCols = (t) => old.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
-  assert.ok(migratedCols("participants").includes("model_variant"));
-  assert.ok(migratedCols("meetings").includes("orchestrator_model_variant"));
-  old.prepare("INSERT INTO participants (id, meeting_id, name, persona, agenda, category, provider_id, model_id) VALUES (?,?,?,?,?,?,?,?)")
+  // A seat created without a variant reads as the server default (null).
+  db.prepare("INSERT INTO meetings (id, question, status, max_rounds, convergence, created_at, updated_at) VALUES (?,?,?,?,?,?,?)")
+    .run("m1", "q", "initializing", 4, "agent_driven", "t", "t");
+  db.prepare("INSERT INTO participants (id, meeting_id, name, persona, agenda, category, provider_id, model_id) VALUES (?,?,?,?,?,?,?,?)")
     .run("s1", "m1", "Ada", "p", "a", "mid", "p", "m");
-  assert.equal(old.prepare("SELECT model_variant FROM participants WHERE id = ?").get("s1").model_variant, null);
+  assert.equal(db.prepare("SELECT model_variant FROM participants WHERE id = ?").get("s1").model_variant, null);
 });
 
 // The dashboard setup UI is JSX (no DOM in node:test), so its contract is

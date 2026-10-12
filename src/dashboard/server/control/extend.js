@@ -12,6 +12,7 @@ import { writeReportFile as writeReportFileHelper } from "../../../handlers/knit
 import { isControlReady, logger, runtime, jobs, serverState, getDirectory, readJsonBody } from "./runtime.js";
 import { discoverFiltered } from "./discovery.js";
 import { storedVariantFor, normalizeFeatures, buildMeetingAgentTools, dashboardCallbacks } from "./forms.js";
+import { registerMeetingEngine } from "../../../utils/engine-registry.js";
 
 export async function handleExtendMeeting(req) {
   if (serverState.runningMeetingId || serverState.startInFlight) {
@@ -138,7 +139,10 @@ async function handleExtendMeetingInternal(req) {
     ...dashboardCallbacks(),
   });
 
-  runtime.activeLooms.set(meetingId, extEngine);
+  if (!registerMeetingEngine(runtime.activeLooms, meetingId, extEngine, { logger })) {
+    try { await extEngine.close(); } catch {}
+    return Response.json({ error: "server busy — too many live deliberations, retry after the current one finishes" }, { status: 503 });
+  }
   serverState.runningMeetingId = meetingId;
   jobs.set(meetingId, { phase: "running", startedAt: new Date().toISOString(), extended: true });
   try { invalidateMeetingsCache(getDirectory()); } catch {}

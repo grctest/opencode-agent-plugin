@@ -162,14 +162,28 @@ export async function promptChildSession(participant) {
     } catch { return ""; }
   })();
 
+  // SKILL.state seed → render ordering: meeting-level reads are snapshotted
+  // ONCE per turn, before the fit loop. buildFitPrompt re-assembles on every
+  // sacrifice step, and a concurrent tail from another participant may commit
+  // between iterations — re-reading getters inside assemble() would render
+  // different bytes per iteration and defeat both determinism and the provider
+  // prefix cache. Storage order is preserved as-is (recency is semantic for
+  // FIFO); nothing here re-sorts state.
+  const fitQuestion = this._stateManager.getQuestion();
+  const fitTags = this._stateManager.getTags();
+  const fitContext = this._stateManager.getContext?.() ?? "";
+  const fitMaxRounds = (() => { try { return this._stateManager.getMaxRounds?.(); } catch { return undefined; } })();
+  const fitAllStates = (() => { try { return this._stateManager.getAllParticipantStates?.() ?? []; } catch { return []; } })();
+  const fitSettledItems = (() => { try { return this._stateManager.getSettledItems?.() ?? []; } catch { return []; } })();
+
   const buildFitPrompt = () => buildAgentUserPrompt(
     participant,
     fitSop,
     fitRecent,
     currentRound,
-    this._stateManager.getQuestion(),
-    this._stateManager.getTags(),
-    this._stateManager.getContext?.() ?? "",
+    fitQuestion,
+    fitTags,
+    fitContext,
     fitForum,
     otherParticipantsForPrompt,
      myState,
@@ -181,12 +195,12 @@ export async function promptChildSession(participant) {
      mandatoryCapabilities,
       {
         contextWindow: participantWindow,
-        maxRounds: (() => { try { return this._stateManager.getMaxRounds?.(); } catch { return undefined; } })(),
+        maxRounds: fitMaxRounds,
         // Settled registry (F-A): all roster states for the exact-match
         // fallback, plus the meeting-level clerk-designated registry
         // (retrospective P0-2) which is the primary source.
-        allStates: (() => { try { return this._stateManager.getAllParticipantStates?.() ?? []; } catch { return []; } })(),
-        settledItems: (() => { try { return this._stateManager.getSettledItems?.() ?? []; } catch { return []; } })(),
+        allStates: fitAllStates,
+        settledItems: fitSettledItems,
        // Steering hint renders inside the builder, before the final patch line,
        // so recency keeps the mandatory call (audit P1-D). Empty = no block.
        steeringHint,
@@ -209,11 +223,21 @@ export async function promptChildSession(participant) {
     // 4. Older forum topics — topic list is navigation aid, not evidence.
     () => { fitForum = fitForum.slice(-Math.max(1, Math.ceil(fitForum.length / 2))); },
     // 5. Oldest SoP entries — the digest is append-ordered, so the head is the
-    //    superseded part; drop it at a line boundary to keep entries whole.
+    //    superseded part; drop it at an entry boundary to keep entries whole.
+    //    A mid-entry cut leaves a fragment that reads as complete (paper Table 5:
+    //    naive truncation destroys the relational dependencies state preserves).
     () => {
       const lines = String(fitSop ?? "").split("\n");
       if (lines.length <= 4) { fitSop = ""; return; }
-      fitSop = lines.slice(Math.floor(lines.length / 2)).join("\n");
+      let cut = Math.floor(lines.length / 2);
+      while (cut < lines.length && !(lines[cut].startsWith("- ") || lines[cut].startsWith("## "))) cut++;
+      if (cut >= lines.length) {
+        // No entry boundary ahead (one huge entry): drop the head half at a
+        // line boundary anyway — still strictly shrinks, and a single huge
+        // entry is capped upstream by per-item slice limits.
+        cut = Math.floor(lines.length / 2);
+      }
+      fitSop = lines.slice(cut).join("\n");
     },
   ];
 

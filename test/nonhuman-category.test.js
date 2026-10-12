@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { getPersonas, lintPersonaStyle, lintTruncation, lintRunons, lintCircularity, lintEmbodiment } from "../src/composer/persona-loader.js";
 import { buildRankingResult } from "../src/composer/room.js";
-import { initSchema, runMigrations, LATEST_SCHEMA_VERSION, MIGRATIONS } from "../src/database/schema.js";
+import { initSchema, runMigrations, LATEST_SCHEMA_VERSION } from "../src/database/schema.js";
 import { BASE_RIGHTS } from "../src/utils/category.js";
 
 
@@ -140,8 +140,7 @@ test("the nonhuman category is admitted everywhere a category is named", async (
   assert.match(tierMetaSrc, /CATEGORY_ORDER\s*=\s*\[[^\]]*"nonhuman"/, "the dashboard category order must list nonhuman");
   assert.match(tierMetaSrc, /nonhuman:\s*\{\s*label:/, "the dashboard needs a label for the category");
   assert.match(tierMetaSrc, /nonhuman:[\s\S]*?blurb:/, "the dashboard needs a blurb for the category");
-  assert.equal(LATEST_SCHEMA_VERSION, 17);
-  assert.equal(MIGRATIONS.length, LATEST_SCHEMA_VERSION);
+  assert.equal(LATEST_SCHEMA_VERSION, 1);
 
   // Model assignment is random and category-blind: every seat draws a model.
   const plan = await import("../src/model-discovery.js");
@@ -162,49 +161,22 @@ test("a fresh database accepts a nonhuman participant", () => {
   assert.equal(db.prepare("SELECT category FROM participants WHERE id='p1'").get().category, "nonhuman");
 });
 
-test("the v13→v14 migration widens the CHECK and preserves participants and their children", () => {
-  // The rebuild drops and recreates a parent table that child tables
-  // reference. Get this wrong and a migration silently cascades away every
-  // contribution and error for every existing meeting.
+test("v1 stores categories with no seniority whitelist", () => {
+  // Categories are open organizational labels: any folder name is valid, so
+  // no whitelist CHECK may exist on the column.
   const db = new DatabaseSync(":memory:");
   initSchema(db);
-  db.exec("INSERT INTO meetings (id,question,status,max_rounds,convergence,created_at,updated_at) VALUES ('m1','q','initializing',4,0,'t','t')");
-  db.exec("DROP TABLE participants");
-  db.exec(`CREATE TABLE participants (
-      id TEXT PRIMARY KEY, meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
-      name TEXT NOT NULL, persona TEXT NOT NULL, agenda TEXT NOT NULL,
-      tier TEXT NOT NULL CHECK(tier IN ('junior','mid','senior','principal','civilian')),
-      provider_id TEXT, model_id TEXT, session_id TEXT,
-      session_version INTEGER NOT NULL DEFAULT 1,
-      status TEXT NOT NULL DEFAULT 'listening' CHECK(status IN ('listening','speaking','passed','failed','summoned')),
-      reflection TEXT NOT NULL DEFAULT '', state_json TEXT NOT NULL DEFAULT '{}',
-      known_biases TEXT, communication_style TEXT, preferred_contribution_types TEXT,
-      anti_patterns TEXT, tier_guidance TEXT, reflection_guidance TEXT, tags TEXT, expertise TEXT,
-      UNIQUE(meeting_id, name))`);
-  db.exec("CREATE INDEX idx_participants_meeting ON participants(meeting_id)");
-  db.exec("PRAGMA user_version = 13");
-  db.exec("INSERT INTO participants (id,meeting_id,name,persona,agenda,tier,session_version) VALUES ('old1','m1','Old','x','y','mid',3)");
-  db.exec("INSERT INTO contributions (meeting_id,participant_id,round,type,content,created_at) VALUES ('m1','old1',0,'contribution','hello','t')");
-  db.exec("INSERT INTO agent_errors (meeting_id,participant_id,round,error_type,created_at) VALUES ('m1','old1',0,'boom','t')");
-
-  assert.equal(runMigrations(db), LATEST_SCHEMA_VERSION);
   const sql = db.prepare("SELECT sql FROM sqlite_master WHERE name='participants'").get().sql;
-  assert.match(sql, /\bcategory TEXT NOT NULL/, "the column must be renamed to category after migration");
-  assert.doesNotMatch(sql, /CHECK\s*\(\s*(tier|category)\s+IN/i, "no seniority whitelist may survive the migration");
+  assert.match(sql, /\bcategory TEXT NOT NULL/, "participants carry a category column");
+  assert.doesNotMatch(sql, /CHECK\s*\(\s*(tier|category)\s+IN/i, "no seniority whitelist may exist");
+  db.exec("INSERT INTO meetings (id,question,status,max_rounds,convergence,created_at,updated_at) VALUES ('m1','q','initializing',4,0,'t','t')");
   db.exec("INSERT INTO participants (id,meeting_id,name,persona,agenda,category) VALUES ('nh','m1','The Whale','x','y','nonhuman')");
   // An arbitrary new category is accepted too — the whitelist is gone.
   db.exec("INSERT INTO participants (id,meeting_id,name,persona,agenda,category) VALUES ('w','m1','The Wizard','x','y','wizard')");
-  // The row survived the rebuild, with its non-default column intact.
-  assert.equal(db.prepare("SELECT session_version FROM participants WHERE id='old1'").get().session_version, 3);
-  // The children did NOT cascade away — this is the failure the rebuild risks.
-  assert.equal(db.prepare("SELECT count(*) c FROM contributions").get().c, 1);
-  assert.equal(db.prepare("SELECT count(*) c FROM agent_errors").get().c, 1);
-  assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
-  // Indexes are dropped with the old table and must come back.
-  assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='participants' AND name='idx_participants_meeting'").get());
+  assert.equal(db.prepare("SELECT category FROM participants WHERE id='nh'").get().category, "nonhuman");
 });
 
-test("migrations are a no-op on an up-to-date database", () => {
+test("schema guard is a no-op on an up-to-date database", () => {
   const db = new DatabaseSync(":memory:");
   initSchema(db);
   const before = db.prepare("SELECT sql FROM sqlite_master WHERE name='participants'").get().sql;

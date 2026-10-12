@@ -17,7 +17,7 @@ import { buildSynthesisPrompt } from "../src/prompts/synthesis.js";
 import { fallbackTurnOrder } from "../src/orchestrator/round.js";
 import { createTurnOrderTool } from "../src/plugin/tools/turn-order.js";
 import { clearMeetingBreakdown } from "../src/metrics.js";
-import { LATEST_SCHEMA_VERSION, MIGRATIONS } from "../src/database/schema.js";
+import { LATEST_SCHEMA_VERSION } from "../src/database/schema.js";
 
 // Orchestrator prompt-invariant suite (ORCHESTRATOR-PROMPT-AUDIT.md §7):
 // every option-safety and option-coupling property, as deterministic
@@ -204,8 +204,7 @@ test("invalid orchestrator values are reported with the normalized config", () =
   assert.deepEqual(validateOrchestratorConfig({}).rejected, []);
 });
 
-// Schema invariant: migration list length must equal the latest version.
-test("schema migrations stay in lockstep with the latest version", () => {
-  assert.equal(MIGRATIONS.length, LATEST_SCHEMA_VERSION);
-  assert.ok(LATEST_SCHEMA_VERSION >= 10);
+// Schema invariant: a single version, no migrations pre-userbase.
+test("schema stays a single version", () => {
+  assert.equal(LATEST_SCHEMA_VERSION, 1);
 });
