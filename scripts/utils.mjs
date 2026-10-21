@@ -77,9 +77,14 @@ export function isLoomCommand(filename) {
   // regex here used to delete unrelated user files whose names merely started
   // with "knit_"/"loom_".
   // NOTE: knit.md / *_knit_models.md were removed (dashboard-first: the Setup
-  // tab owns room preview, personas, and models). Their names stay listed here
-  // so install/update still cleans up stale copies from existing user installs.
-  const loomCommands = ["knit.md", "list_knit_models.md", "enable_knit_models.md", "disable_knit_models.md", "reset_knit_models.md", "loom_viz.md", "loom_stop.md"];
+  // tab owns room preview, personas, and models). loom_viz.md / loom_stop.md
+  // were renamed to the hyphenated dashboard command names. The old names stay
+  // listed here so install/update still cleans up stale copies from existing
+  // user installs.
+  const loomCommands = [
+    "launch-deliberation-dashboard.md",
+    "shutdown-deliberation-dashboard.md",
+  ];
   if (loomCommands.includes(filename)) return true;
   // Legacy single-file command — must be cleaned up on update/install
   if (filename === "knit_models.md") return true;

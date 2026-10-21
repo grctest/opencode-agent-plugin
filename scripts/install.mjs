@@ -288,7 +288,7 @@ console.log("══════════════════════�
 console.log("");
 console.log("Next steps:");
 console.log("  1. Restart opencode or reload plugins");
-console.log("  2. Run /loom_viz and open the printed URL");
+console.log("  2. Run /launch-deliberation-dashboard and open the printed URL");
 console.log("  3. In the Setup tab: preview the room, approve personas and models, then start the deliberation");
 console.log("");
 logInfo("Done.");

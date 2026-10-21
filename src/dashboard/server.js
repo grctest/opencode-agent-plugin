@@ -208,7 +208,7 @@ export function startDashboard(directory, port, runtimeOpts = null) {
   const capabilityCookie = `loom_dashboard_${port}`;
   // Deterministic token: SHA-256 of the owning opencode session id (or the
   // resolved base dir + port for standalone dashboards). Deriving instead of
-  // generating means a server restart (plugin reload, /loom_stop → /loom_viz)
+  // generating means a server restart (plugin reload, /shutdown-deliberation-dashboard → /launch-deliberation-dashboard)
   // keeps the browser's capability cookie valid — previously every start
   // rotated the token and all /api/* calls 401'd until a manual refresh.
   const stableId = runtimeOpts?.ownerSessionId && String(runtimeOpts.ownerSessionId).trim()

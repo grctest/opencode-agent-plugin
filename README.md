@@ -35,7 +35,7 @@ The installer downloads a small embedding model (~23MB) used to suggest rooms. I
 Then, in opencode:
 
 ```
-loom_viz
+/launch-deliberation-dashboard
 ```
 
 Open the printed URL. In **Setup**:
@@ -50,8 +50,8 @@ Open the printed URL. In **Setup**:
 
 | Command | Description |
 |---------|-------------|
-| `/loom_viz` | Start the dashboard (default port 3210, `port` arg optional) |
-| `/loom_stop` | Stop the dashboard (runs keep their state; cancel from the dashboard) |
+| `/launch-deliberation-dashboard` | Start the dashboard (default port 3210, `port` arg optional) |
+| `/shutdown-deliberation-dashboard` | Stop the dashboard (runs keep their state; cancel from the dashboard) |
 
 ## Personas
 

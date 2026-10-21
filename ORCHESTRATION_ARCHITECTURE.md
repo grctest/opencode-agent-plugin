@@ -66,7 +66,7 @@ When a user approves and starts a deliberation from the dashboard Setup tab, thi
 6. **Turn order override (optional)** — the round summary is the orchestrator's single LLM call per round; it may set next round's order via the orchestrator-only `loom_set_turn_order` tool, else the default rotation stands (Section 9).
 7. **Termination** — Deterministic: (a) all participants have called `loom_pass` or failed after the configured minimum rounds, (b) the round limit reached, or (c) stall detection fires. There is no meeting-level wall-clock timeout — per-agent provider timeouts (`agentTimeoutMs`) bound each LLM call, and the stall watchdog bounds inactivity.
 8. **Synthesis** — One agent (typically the principal) synthesizes all contributions into a structured artifact with Decision, Reasoning, Action Items, Dissenting Views, Open Questions, and Confidence, then self-critiques it.
-9. **Output** — The run executes as a detached background job (HTTP returns immediately); progress streams via the dashboard Timeline tab and the final synthesis lands in the Output tab plus a full markdown report saved to `.opencode/loom/meetings/<meetingId>.md`. Nothing is returned to chat — the dashboard is the sole control plane, started with `/loom_viz`.
+9. **Output** — The run executes as a detached background job (HTTP returns immediately); progress streams via the dashboard Timeline tab and the final synthesis lands in the Output tab plus a full markdown report saved to `.opencode/loom/meetings/<meetingId>.md`. Nothing is returned to chat — the dashboard is the sole control plane, started with `/launch-deliberation-dashboard`.
 
 ---
 
@@ -1455,7 +1455,7 @@ All response types flow into the weave and appear in later agents' recent contri
 
 ## 23. Dashboard System
 
-`/loom_viz` starts a lightweight static web dashboard (default port 3210) that renders a live view of all meetings under `.opencode/loom/meetings/`.
+`/launch-deliberation-dashboard` starts a lightweight static web dashboard (default port 3210) that renders a live view of all meetings under `.opencode/loom/meetings/`.
 
 ### How It Works
 
@@ -1491,7 +1491,7 @@ All response types flow into the weave and appear in later agents' recent contri
 
 ### Dashboard Security
 
-All `/api/*` routes are gated by a capability check (`src/dashboard/security.js`): loopback host allow-list, same-origin/`sec-fetch-site` validation, and a token presented via the `x-loom-dashboard-token` header or the `loom_dashboard_<port>` cookie (`HttpOnly; SameSite=Strict; Path=/`, set on the HTML shell). The token is **deterministic**: `SHA-256(ownerSessionId)` (`@noble/hashes/sha256`), falling back to `SHA-256(<loomBaseDir>:<port>)` for standalone dashboards with no owning session. Deriving the token instead of generating a random one per process means a server restart (plugin reload, `/loom_stop` → `/loom_viz`) never invalidates the browser's cookie — previously every start rotated the token and all API calls 401'd ("dashboard authentication required") until a manual refresh. As a safety net, the client (`src/dashboard/auth.js`) reloads the page once per 30s when any API call returns 401, which re-fetches the current cookie; a timestamp guard in `sessionStorage` prevents reload loops when auth genuinely fails.
+All `/api/*` routes are gated by a capability check (`src/dashboard/security.js`): loopback host allow-list, same-origin/`sec-fetch-site` validation, and a token presented via the `x-loom-dashboard-token` header or the `loom_dashboard_<port>` cookie (`HttpOnly; SameSite=Strict; Path=/`, set on the HTML shell). The token is **deterministic**: `SHA-256(ownerSessionId)` (`@noble/hashes/sha256`), falling back to `SHA-256(<loomBaseDir>:<port>)` for standalone dashboards with no owning session. Deriving the token instead of generating a random one per process means a server restart (plugin reload, `/shutdown-deliberation-dashboard` → `/launch-deliberation-dashboard`) never invalidates the browser's cookie — previously every start rotated the token and all API calls 401'd ("dashboard authentication required") until a manual refresh. As a safety net, the client (`src/dashboard/auth.js`) reloads the page once per 30s when any API call returns 401, which re-fetches the current cookie; a timestamp guard in `sessionStorage` prevents reload loops when auth genuinely fails.
 
 ### Embedding Model Panel
 
@@ -1503,7 +1503,7 @@ On dashboard start, the embedding model is initialized eagerly (status tracked: 
 
 ### The Setup Tab (sole control plane)
 
-Deliberations are created exclusively from the dashboard Setup tab. The plugin exposes only `/loom_viz` (start server) and `/loom_stop`. The Setup flow is:
+Deliberations are created exclusively from the dashboard Setup tab. The plugin exposes only `/launch-deliberation-dashboard` (start server) and `/shutdown-deliberation-dashboard`. The Setup flow is:
 
 1. **Question** — user enters `question` (required, ≥3 chars), optional `context`, `max_rounds` (default from config: 4).
 2. **Models** — the user toggles the enable/disable filter (`POST /api/llm-models/filter`). At least one model must be enabled before personas can be added. No per-category pickers here — models are chosen per persona seat in step 3.
@@ -1534,7 +1534,7 @@ Dashboard-first, callbacks are intentionally silent toward chat:
 - `loom_status` — check a running Loom (status, round, contributions, meeting ID)
 - `loom_cancel` — request cancellation (current round completes, then synthesis runs)
 - `loom_debug` — dump internal state of a running Loom (optional `include` filter)
-- `loom_viz` / `loom_stop` — start/stop the dashboard (the only user commands)
+- `launch-deliberation-dashboard` / `shutdown-deliberation-dashboard` — start/stop the dashboard (the only user commands)
 - `GET /api/llm-models` — discover available models with cost/context/reasoning, enabled/unhealthy status, and a random suggested model. `POST /api/llm-models/filter` (`enable`/`disable`/`reset`) — manage the **dashboard-global model filter** (persisted as `models-filter.json`). The filter restricts which discovered models Loom agents may use. (See Section 26.)
 - `GET /api/personas`, `POST /api/room/preview`, `POST /api/meetings/start|-cancel|extend`, `GET /api/jobs` — the Setup control plane.
 

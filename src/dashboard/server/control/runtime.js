@@ -6,7 +6,7 @@ import { Logger } from "../../../logger.js";
 
 export const logger = new Logger();
 
-// Injected by the plugin host (src/plugin/return.js loom_viz execute).
+// Injected by the plugin host (src/plugin/return.js launch-deliberation-dashboard execute).
 export const runtime = {
   client: null,
   directory: null,

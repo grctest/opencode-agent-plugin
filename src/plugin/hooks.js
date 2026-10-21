@@ -6,7 +6,7 @@ export const PROGRESS_PATTERN =
   /^\[(?:info|warn|error)\] (?:🎬|⚠️|ℹ️|📋|🔄|⏭️|✅|🛑|⏱️|💰|🧵|.*is thinking\.\.\.|Round \d+|Synthesizing|Completed|Error:)/;
 
 const TOOL_REQUIRED_OVERRIDES = {
-  loom_viz: [],
+  "launch-deliberation-dashboard": [],
   loom_debug: ["loom_id"],
   loom_forum_create_topic: ["title", "body"],
   loom_forum_list_topics: [],
@@ -55,11 +55,17 @@ event: async ({ event }) => {
       // Tool use tab by mergeAuditsIntoContributions (queries.js), which dedups
       // against ToolPart-captured calls so each call appears exactly once.
       // loom_* tools are skipped — their execute functions already audit via
-      // auditLoomTool with richer context.
+      // auditLoomTool with richer context. The dashboard control tools are
+      // likewise skipped: they do not audit themselves, but they must not
+      // gain audit rows under the built-in-tool safety net either.
+      const DASHBOARD_CONTROL_TOOLS = new Set([
+        "launch-deliberation-dashboard",
+        "shutdown-deliberation-dashboard",
+      ]);
       try {
         if (!resolveMeeting || !input?.sessionID || !input?.tool) return;
         const toolName = input.tool;
-        if (toolName.startsWith("loom_")) return;
+        if (toolName.startsWith("loom_") || DASHBOARD_CONTROL_TOOLS.has(toolName)) return;
         const meeting = await resolveMeeting(input.sessionID);
         if (!meeting) return;
         const engine = activeLooms?.get(meeting.meetingId);

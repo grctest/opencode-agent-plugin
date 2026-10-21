@@ -93,7 +93,7 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
         },
       }),
 
-      loom_viz: tool({
+      "launch-deliberation-dashboard": tool({
         description:
           "Start the Loom deliberation dashboard server. " +
           "The dashboard is the sole control plane: compose and approve the room, " +
@@ -135,7 +135,7 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
             return [
               "Dashboard already running!",
               `Open: ${url}`,
-              "Run /loom_stop to stop the current dashboard first.",
+              "Run /shutdown-deliberation-dashboard to stop the current dashboard first.",
             ].join("\n");
           }
 
@@ -157,7 +157,7 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
               "",
               "Use the Setup tab to preview the room, approve personas and models, then start the deliberation.",
               "All output stays in the dashboard (Timeline / Output tabs).",
-              "Run /loom_stop when done to free the port.",
+              "Run /shutdown-deliberation-dashboard when done to free the port.",
             ].join("\n");
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
@@ -166,7 +166,7 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
         },
       }),
 
-      loom_stop: tool({
+      "shutdown-deliberation-dashboard": tool({
         description: "Stop the running Loom dashboard server and free the port.",
         args: {},
         execute: async () => {
