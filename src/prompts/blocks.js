@@ -4,19 +4,41 @@ import { escapeDelimiters, delimitContext } from "./delimiters.js";
 import { renderMyStateMarkdown } from "../state-patch.js";
 import { TOOL_LADDER_LINE, TOOL_FAILURE_LINE, CITATION_LINE } from "./constants.js";
 
+/**
+ * Recent-contributions block — the target's own echo and the room's.
+ *
+ * Two surfaces, one helper:
+ *   - `mineCount > 0`  → the target's own last N contributions. The strongest
+ *     restatement prime when it is wanted: a peer that can see its own prior
+ *     words answers in context.
+ *   - `mineCount <= 0` → NO own-turn echo. This is the deliberate
+ *     anti-near-copy setting for the query/evidence/vote sub-prompts: a
+ *     self-echo made perspective answers restate the target's previous turn
+ *     (audit B). The target's position still arrives — through the stored
+ *     stance line and its state bullets (see buildSubAgentStateLine).
+ *
+ * A zero count means "omit the block", never "render every own contribution as
+ * an empty row": `slice(-0)` returns the WHOLE array and a zero-length sanitize
+ * budget truncates each row to "", which shipped as a literal
+ * `Your last contributions:\n- ""` in every peer-facing prompt.
+ */
 export function getRecentContributionsBlock(contributions, participantId, opts = {}) {
   if (!contributions || contributions.length === 0) return "";
-  // Sub-prompts (query/evidence/vote/summon targets) get a trimmed echo surface:
-  // the target's own last two full contributions are the strongest restatement
-  // prime (audit: perspective answers that near-copy the target's previous turn).
-  const mineCount = opts.mineCount ?? 2;
+  const mineCount = Number.isFinite(opts.mineCount) ? Math.max(0, opts.mineCount) : 2;
   const mineBudget = opts.mineBudget ?? 1200;
   const othersCount = opts.othersCount ?? 6;
   const othersBudget = opts.othersBudget ?? 600;
-  const mine = contributions
-    .filter((c) => c.participant_id === participantId && c.type !== "pass")
-    .slice(-mineCount)
-    .map((c) => sanitizeForDisplay(c.content, mineBudget).slice(0, mineBudget));
+  const parts = [];
+  if (mineCount > 0) {
+    // One cut only: sanitizeForDisplay truncates by code point, so the row is
+    // surrogate-safe (a second String.slice here could split an emoji).
+    const mine = contributions
+      .filter((c) => c.participant_id === participantId && c.type !== "pass")
+      .slice(-mineCount)
+      .map((c) => sanitizeForDisplay(c.content, mineBudget).replace(/\n/g, " ").trim())
+      .filter((c) => c.length > 0);
+    if (mine.length > 0) parts.push(`Your last contributions:\n${mine.map((c) => `- "${c}"`).join("\n")}`);
+  }
   // The room, not just the mirror: a peer answering inline needs the
   // conversation to answer in context. Previously the two-round ≤12 window
   // collapsed to filter-to-self and the other fetched contributions were thrown
@@ -25,9 +47,9 @@ export function getRecentContributionsBlock(contributions, participantId, opts =
   const others = contributions
     .filter((c) => c.participant_id !== participantId && c.type !== "pass" && c.type !== "vote_response" && c.type !== "reflection")
     .slice(-othersCount)
-    .map((c) => `- "${sanitizeForDisplay(c.content, othersBudget).replace(/\n/g, " ").slice(0, othersBudget)}" [${c.participant_id}]`);
-  const parts = [];
-  if (mine.length > 0) parts.push(`Your last contributions:\n${mine.map((c) => `- "${c.slice(0, 600)}"`).join("\n")}`);
+    .map((c) => ({ id: c.participant_id, text: sanitizeForDisplay(c.content, othersBudget).replace(/\n/g, " ").trim() }))
+    .filter((c) => c.text.length > 0)
+    .map((c) => `- "${c.text}" [${c.id}]`);
   if (others.length > 0) parts.push(`Recent from the room:\n${others.join("\n")}`);
   return parts.join("\n\n");
 }
@@ -67,6 +89,11 @@ export function buildAgentStateBlock(state) {
  * room lines. Sub-agents never patch (primary-tail-only) — they must never
  * write "State patched" in prose either.
  * Empty state is the normal round-1 case — it must not hijack the task.
+ *
+ * The stance line is the target's POSITION and nothing more: the settled
+ * digest carries consensus, and a peer prompt must never surface a solo
+ * position as if it were shared ground (audit T4', test: a queried peer sees
+ * consensus points but not solo positions).
  */
 export function buildSubAgentStateLine(targetAgent, targetState) {
   const stance = typeof targetState?.stance === "string" && targetState.stance.trim()
@@ -266,6 +293,20 @@ export function buildRoundContext(currentRound, maxRounds) {
 }
 
 /**
+ * A plain round label for SUB-AGENT prompts (vote targets, summoned guests).
+ *
+ * The round doctrine above is a primary-turn contract — "file a critique",
+ * "map the spectrum", "end with Position:" — and a voter or a guest expert
+ * cannot act on any of it. The cut-back sub-agent contract says sub-prompts
+ * carry no round doctrine; this is the one line that tells them where in the
+ * deliberation they are, without the instructions that do not apply.
+ */
+export function buildRoundLabel(currentRound, maxRounds) {
+  if (!currentRound) return "Round: unknown";
+  return maxRounds ? `Round: ${currentRound} of ${maxRounds}` : `Round: ${currentRound}`;
+}
+
+/**
  * Settled-registry block (F-A): renders consensus items (≥2 holders) as a
  * cite-and-delta guard. Late rounds get the hard block; earlier rounds get a
  * one-line pointer at most. Item text is model prose — delimited as DATA, with
@@ -275,7 +316,7 @@ export function buildSettledBlock(items, late = false) {
   const list = Array.isArray(items) ? items : [];
   if (list.length === 0) return "";
   if (!late) {
-    return `## Settled Watch\n\n${list.length} point(s) already have ≥2 holders in State of Play (see Agreements) — cite by [#id], don't restate.\n`;
+    return `## Settled Watch\n\n${list.length} point(s) already have ≥2 holders in State of Play (see Agreements & Proposals) — cite by [#id], don't restate.\n`;
   }
   const lines = list.map((it) => {
     const text = sanitizeForDisplay(String(it?.text ?? ""), 500).replace(/\n/g, " ").trim() || "(empty)";

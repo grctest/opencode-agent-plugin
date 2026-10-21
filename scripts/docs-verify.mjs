@@ -5,8 +5,11 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { STATE_PATCH_CAPS } from "../src/state-patch.js";
+import { SOP_CAPS, SOP_SECTIONS } from "../src/state-of-play.js";
 import { LENGTH_LIMITS } from "../src/prompts/constants.js";
 import { TUNING } from "../src/config/defaults.js";
+import { ORCHESTRATOR_SUMMARY_ALWAYS, ORCHESTRATOR_SUMMARY_BANDS } from "../src/orchestrator/models.js";
+import { buildNeutralSynthesizerSystem } from "../src/synthesis/sections.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const doc = readFileSync(join(root, "ORCHESTRATION_ARCHITECTURE.md"), "utf8");
@@ -45,6 +48,51 @@ check(
 check(
   "doc does not claim a round-summary 8k cap",
   !/round summary.*8k|8k.*round summar/i.test(doc),
+);
+// State-of-Play render caps: the doc states them, the code owns them
+// (SOP_CAPS), and this check fails if either side moves alone.
+check(
+  `doc states the SoP section caps (${SOP_CAPS.items} items / ${SOP_CAPS.itemChars} chars)`,
+  new RegExp(`\\*\\*${SOP_CAPS.items} most recent\\*\\*`).test(doc) && doc.includes(String(SOP_CAPS.itemChars)),
+  "doc must state the SoP item and character caps",
+);
+check(
+  "doc does not claim the stale 5/300 SoP caps",
+  !/\*\*5 most recent\*\*/.test(doc) && !/truncated to \*\*300 characters\*\*/.test(doc),
+);
+// One consensus section, not two: the doc must not document the split.
+check(
+  "doc documents the single consensus section",
+  doc.includes(SOP_SECTIONS.agreed[0]),
+  `doc must name the consensus section "${SOP_SECTIONS.agreed[0]}"`,
+);
+check(
+  "doc does not present a separate '## Agreements' section",
+  !/^## Agreements$/m.test(doc),
+  "the shared SoP has ONE consensus section",
+);
+// The summary style drives the output contract, not only the word band.
+check(
+  "doc states the summary-style output contract",
+  doc.includes(ORCHESTRATOR_SUMMARY_ALWAYS) && doc.includes(ORCHESTRATOR_SUMMARY_BANDS.concise.shape),
+  "doc must state the band-driven bullet contract and the never-omitted slots",
+);
+// The synthesizer's window claim is resolved from the model, never hardcoded.
+const neutralSystem = buildNeutralSynthesizerSystem(null);
+check(
+  "the synthesizer system prompt does not hardcode a window",
+  !/use the 200k window/.test(neutralSystem) && /use the large window/.test(neutralSystem),
+  "an unknown window must stay honest, not become 200k",
+);
+check(
+  "the synthesizer system prompt states a resolved window",
+  /use the 32k window/.test(buildNeutralSynthesizerSystem(32000)),
+);
+// The closing-round steer is ratchet-aware.
+check(
+  "doc describes the confirmation-ballot steer",
+  /re-poll the superseded question/.test(doc),
+  "the closing-round steer must ask for a confirmation ballot when one was already held",
 );
 
 if (failures > 0) {

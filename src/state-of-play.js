@@ -160,7 +160,58 @@ function classifyContribution(type, mode = "", hasToolBacking = true) {
 
 
 /**
- * Formats structured state-of-play sections into a markdown summary — thorough, not terse.
+ * Section names for the shared State of Play. The consensus section is ONE
+ * bucket, not two: the per-agent patch channel files both "proposals" and
+ * "agreements" in the same `established` bucket, so rendering them under
+ * separate headings printed the same list twice and let a merely two-holder
+ * claim wear the authority of consensus. Legacy headings are still READ (old
+ * DBs) and folded into the same bucket.
+ */
+export const SOP_SECTIONS = {
+  agreed: ["Agreements & Proposals", "Agreements", "Decisions & Proposals"],
+  disagreements: ["Disagreements & Concerns", "Disagreements"],
+  openQuestions: ["Open Questions"],
+  keyFacts: ["Key Facts"],
+  filesInvolved: ["Files Involved"],
+};
+
+/**
+ * Reads the "- " items of a State-of-Play section as complete multi-line
+ * strings. An item runs from its "- " line to the next "- " or "## " line —
+ * without this, multi-line items are truncated to their first line and
+ * perspective/evidence prefixes survive as standalone fragments
+ * (retrospective P0-1 safety net).
+ *
+ * @param {string} markdown
+ * @param {string|string[]} names heading names to read, in priority order
+ * @returns {string[]} raw item texts (no leading "- ")
+ */
+export function readSoPSectionItems(markdown, names) {
+  const wanted = Array.isArray(names) ? names : [names];
+  const lines = String(markdown ?? "").split("\n");
+  const out = [];
+  for (const name of wanted) {
+    const start = lines.findIndex((line) => line.trim() === `## ${name}`);
+    if (start < 0) continue;
+    const items = [];
+    let current = null;
+    for (const line of lines.slice(start + 1)) {
+      if (line.startsWith("## ")) break;
+      if (line.trim().startsWith("- ")) {
+        if (current !== null) items.push(current);
+        current = line.trim().slice(2);
+      } else if (current !== null && line.trim()) {
+        current += `\n${line.trim()}`;
+      }
+    }
+    if (current !== null) items.push(current);
+    out.push(...items);
+  }
+  return out;
+}
+
+/**
+ * Merges a declared State of Play with a legacy fallback, section by section.
  */
 export function mergeStateOfPlay(primary, fallback) {
   if (!primary) return fallback || "";
@@ -176,33 +227,11 @@ export function mergeStateOfPlay(primary, fallback) {
     }
     return values.join("\n").trim();
   };
-  // Reads the raw "- " items of a section as complete multi-line strings. An
-  // item runs from its "- " line to the next "- " or "## " line — without this,
-  // multi-line items are truncated to their first line and perspective/evidence
-  // prefixes survive as standalone fragments (retrospective P0-1 safety net).
-  const readSectionItems = (markdown, name) => {
-    const lines = String(markdown).split("\n");
-    const start = lines.findIndex((line) => line.trim() === `## ${name}`);
-    if (start < 0) return [];
-    const items = [];
-    let current = null;
-    for (const line of lines.slice(start + 1)) {
-      if (line.startsWith("## ")) break;
-      if (line.trim().startsWith("- ")) {
-        if (current !== null) items.push(current);
-        current = line.trim().slice(2);
-      } else if (current !== null && line.trim()) {
-        current += `\n${line.trim()}`;
-      }
-    }
-    if (current !== null) items.push(current);
-    return items;
-  };
-  const mergeList = (name, limit = 8) => {
+  const mergeList = (names, limit = 8) => {
     const values = [];
     const seen = new Set();
     for (const source of [primary, fallback]) {
-      for (const value of readSectionItems(source, name)) {
+      for (const value of readSoPSectionItems(source, names)) {
         // Strip the aggregation's " (N holders)" attribution suffix before keying,
         // or `foo` and `foo (2 holders)` never dedupe and both leak through (audit A6).
         const key = value.replace(/\s*\(\d+ holders\)\s*$/i, "").replace(/\s+/g, " ").toLowerCase();
@@ -217,44 +246,101 @@ export function mergeStateOfPlay(primary, fallback) {
   };
   const question = readSection(primary, "Question") || readSection(fallback, "Question");
   const tags = readSection(primary, "Tags") || readSection(fallback, "Tags");
-  const sectionKey = {
-    decisions: "Decisions & Proposals",
-    agreements: "Agreements",
-    disagreements: "Disagreements & Concerns",
-    openQuestions: "Open Questions",
-    keyFacts: "Key Facts",
-    filesInvolved: "Files Involved",
+  const sections = {
+    // Legacy "Agreements" and "Decisions & Proposals" fold into the one
+    // consensus bucket — reading both keeps old DBs merging correctly.
+    decisions: mergeList(SOP_SECTIONS.agreed),
+    agreements: [],
+    disagreements: mergeList(SOP_SECTIONS.disagreements),
+    openQuestions: mergeList(SOP_SECTIONS.openQuestions),
+    keyFacts: mergeList(SOP_SECTIONS.keyFacts),
+    filesInvolved: mergeList(SOP_SECTIONS.filesInvolved),
   };
-  const sections = {};
-  for (const [key, name] of Object.entries(sectionKey)) sections[key] = mergeList(name);
   return formatStateOfPlay(sections, question, tags ? tags.split(",").map((tag) => tag.trim()).filter(Boolean) : []);
 }
 
+/**
+ * Render caps for the shared State of Play. One source of truth: the
+ * architecture doc states these numbers, and `scripts/docs-verify.mjs` pins
+ * the doc against THIS object, so the two cannot drift apart again.
+ */
+export const SOP_CAPS = { items: 8, itemChars: 500, fileChars: 160 };
+
+/**
+ * Removes one section (its heading and body) from a State-of-Play markdown
+ * string, matching the heading by name even when it carries a suffix
+ * ("## Forum Threads (cite in prose as [#T{id}])").
+ *
+ * Used by the agent prompt: the forum digest lives in the SoP so the clerk and
+ * the synthesizer read it, but the agent also gets a dedicated, richer forum
+ * block — rendering both duplicated every thread in every turn (audit C1).
+ *
+ * @param {string} markdown
+ * @param {string} name heading name to remove
+ * @returns {string}
+ */
+export function stripSopSection(markdown, name) {
+  const text = String(markdown ?? "");
+  if (!text.trim()) return text;
+  const lines = text.split("\n");
+  const out = [];
+  let skipping = false;
+  for (const line of lines) {
+    if (/^##\s/.test(line)) {
+      const heading = line.replace(/^##\s*/, "").trim();
+      skipping = heading === name || heading.startsWith(`${name} `) || heading.startsWith(`${name}(`);
+    }
+    if (!skipping) out.push(line);
+  }
+  return out.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd();
+}
+
+/**
+ * Formats structured state-of-play sections into a markdown summary — thorough, not terse.
+ */
 export function formatStateOfPlay(sections, question, tags) {
   const lines = [];
   if (question) lines.push(`## Question\n${question}`);
   if (tags?.length > 0) lines.push(`## Tags\n${tags.join(", ")}`);
 
-  if (sections.decisions.length > 0) {
-    lines.push(`## Decisions & Proposals\n${sections.decisions.slice(-8).map((d) => `- ${d.slice(0, 500)}`).join("\n")}`);
-  }
-  if (sections.agreements.length > 0) {
-    lines.push(`## Agreements\n${sections.agreements.slice(-8).map((a) => `- ${a.slice(0, 500)}`).join("\n")}`);
+  // ONE consensus section. The patch channel cannot tell a "proposal" from an
+  // "agreement" (both live in `established`), so the old two-heading render
+  // printed the same rows twice and let a merely two-holder claim read as
+  // settled consensus. The per-row "(N holders)" suffix still shows how many
+  // agents stand behind each item.
+  const agreed = dedupeSoPItems([...(sections.decisions ?? []), ...(sections.agreements ?? [])]);
+  if (agreed.length > 0) {
+    lines.push(`## Agreements & Proposals\n${agreed.slice(-SOP_CAPS.items).map((d) => `- ${d.slice(0, SOP_CAPS.itemChars)}`).join("\n")}`);
   }
   if (sections.disagreements.length > 0) {
-    lines.push(`## Disagreements & Concerns\n${sections.disagreements.slice(-8).map((d) => `- ${d.slice(0, 500)}`).join("\n")}`);
+    lines.push(`## Disagreements & Concerns\n${sections.disagreements.slice(-SOP_CAPS.items).map((d) => `- ${d.slice(0, SOP_CAPS.itemChars)}`).join("\n")}`);
   }
   if (sections.openQuestions.length > 0) {
-    lines.push(`## Open Questions\n${sections.openQuestions.slice(-8).map((q) => `- ${q.slice(0, 500)}`).join("\n")}`);
+    lines.push(`## Open Questions\n${sections.openQuestions.slice(-SOP_CAPS.items).map((q) => `- ${q.slice(0, SOP_CAPS.itemChars)}`).join("\n")}`);
   }
   if (sections.keyFacts.length > 0) {
-    lines.push(`## Key Facts\n${sections.keyFacts.slice(-8).map((f) => `- ${f.slice(0, 500)}`).join("\n")}`);
+    lines.push(`## Key Facts\n${sections.keyFacts.slice(-SOP_CAPS.items).map((f) => `- ${f.slice(0, SOP_CAPS.itemChars)}`).join("\n")}`);
   }
   if (sections.filesInvolved && sections.filesInvolved.length > 0) {
-    lines.push(`## Files Involved\n${sections.filesInvolved.slice(-8).map((f) => `- ${f.slice(0, 160)}`).join("\n")}`);
+    lines.push(`## Files Involved\n${sections.filesInvolved.slice(-SOP_CAPS.items).map((f) => `- ${f.slice(0, SOP_CAPS.fileChars)}`).join("\n")}`);
   }
 
   return lines.join("\n\n");
+}
+
+/** Drops duplicate rows (same text, ignoring the holder-count suffix). */
+function dedupeSoPItems(items) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of items ?? []) {
+    const item = String(raw ?? "").trim();
+    if (!item) continue;
+    const key = item.replace(/\s*\(\d+ holders\)\s*$/i, "").replace(/\s+/g, " ").toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
 }
 
 /** Formats a single round's contributions into markdown lines. */

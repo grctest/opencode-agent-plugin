@@ -114,6 +114,24 @@ test("a queried peer sees consensus points but not solo positions", async () => 
   assert.doesNotMatch(capturedPrompt, /responder solo point/);
 });
 
+test("peer prompts never render empty echo rows (audit B1)", () => {
+  // The target has spoken before: the old helper rendered
+  // `Your last contributions:\n- ""` for every own contribution because
+  // `slice(-0)` returns the whole array and a zero-length sanitize budget
+  // truncates each row to "".
+  const roundContributions = [
+    { id: 1, participant_id: "t", type: "contribution", content: "target earlier claim" },
+    { id: 2, participant_id: "a", type: "contribution", content: "asker claim" },
+  ];
+  const q = buildQueryPrompt(caller, target, "note", "Q?", roundContributions, 1, 3, "", "clarify", null);
+  const e = buildEvidencePrompt(caller, target, "note", "Q?", roundContributions, 1, 3, null);
+  for (const prompt of [q, e]) {
+    assert.doesNotMatch(prompt, /- ""/, "empty echo row rendered");
+    assert.doesNotMatch(prompt, /Your last contributions/);
+    assert.match(prompt, /Recent from the room/);
+  }
+});
+
 test("no digest when nothing is settled", async () => {
   const responder = participant("responder", "listening");
   const asker = participant("asker", "speaking", "asker-session");

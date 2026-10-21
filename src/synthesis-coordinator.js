@@ -1,6 +1,6 @@
 import { buildSynthesisPrompt, resolveTaskMode } from "./prompts/synthesis.js";
 import { formatFinalRoundTranscript } from "./state-of-play.js";
-import { finalizeSynthesis, validateSynthesisSections, NEUTRAL_SYNTHESIZER_SYSTEM, SYNTHESIS_SECTION_CONTRACT } from "./synthesizer.js";
+import { finalizeSynthesis, validateSynthesisSections, buildNeutralSynthesizerSystem, SYNTHESIS_SECTION_CONTRACT } from "./synthesizer.js";
 import { getConfig } from "./config.js";
 import { TUNING } from "./config/defaults.js";
 import { LoomError, extractErrorInfo } from "./logger.js";
@@ -31,13 +31,13 @@ export function computeEngagementLedger(transcriptData) {
   };
 }
 
-export function buildOrchestratorSynthesisSystem(config = {}) {
+export function buildOrchestratorSynthesisSystem(config = {}, contextWindow = null) {
   // Scoped operator block (role + custom only; posture lives in the user-prompt
   // doctrine) injected here because synthesis bypasses _promptOrchestrator and
   // calls the contract directly — this remains the single injection point for
   // this path, so the verbatim duplication is gone (audit O2/Step 1).
   const instruction = buildOrchestratorInstruction(config, "synthesis");
-  const body = `${NEUTRAL_SYNTHESIZER_SYSTEM}\n\n${getSynthesisGuidance(config)}`;
+  const body = `${buildNeutralSynthesizerSystem(contextWindow)}\n\n${getSynthesisGuidance(config)}`;
   return instruction ? `${instruction}\n\n${body}` : body;
 }
 
@@ -58,6 +58,10 @@ export class SynthesisCoordinator {
   #sessionManager;
   #orchestratorConfig;
   #runMeetingId = null;
+  // The orchestrator model's real context window, resolved by the caller.
+  // Both the system prompt and the user prompt announce it, so the
+  // synthesizer never writes to a budget it does not have (audit C3).
+  #contextWindow = null;
 
   constructor(sessionManager, orchestratorConfig = {}) {
     this.#sessionManager = sessionManager;
@@ -65,11 +69,12 @@ export class SynthesisCoordinator {
   }
 
   #orchestratorSynthesisSystem(config = this.#orchestratorConfig) {
-    return buildOrchestratorSynthesisSystem(config);
+    return buildOrchestratorSynthesisSystem(config, this.#contextWindow);
   }
 
-  async run({ transcriptData, participants, model, onStart, onComplete, stateOfPlay = "", userContext = "", onActivity = null, meetingId = null }) {
+  async run({ transcriptData, participants, model, onStart, onComplete, stateOfPlay = "", userContext = "", onActivity = null, meetingId = null, contextWindow = null }) {
     this.#runMeetingId = meetingId ?? null;
+    this.#contextWindow = Number.isFinite(contextWindow) ? contextWindow : null;
     if (!model?.providerID || !model?.modelID) {
       throw new LoomError("No orchestrator model available for final synthesis", { phase: "synthesis", recoverable: false });
     }
@@ -83,15 +88,17 @@ export class SynthesisCoordinator {
 
     let artifactText;
     let synthSessionId = null;
+    // Effective style: technical_audit is clamped to its code-free variant on
+    // non-code questions (audit O8). Threaded through draft + critique, and
+    // into the final artifact validation (audit B4) — so it is built BEFORE
+    // the try block, not inside it.
+    const effectiveConfig = {
+      ...this.#orchestratorConfig,
+      synthesisStyle: getEffectiveSynthesisStyle(this.#orchestratorConfig, transcriptData.question, transcriptData.tags, transcriptData.taskMode),
+    };
     try {
       synthSessionId = await this.#sessionManager.createOrchestratorSynthesisSession();
       const transcript = formatFinalRoundTranscript(transcriptData, participants);
-      // Effective style: technical_audit is clamped to its code-free variant on
-      // non-code questions (audit O8). Threaded through draft + critique.
-      const effectiveConfig = {
-        ...this.#orchestratorConfig,
-        synthesisStyle: getEffectiveSynthesisStyle(this.#orchestratorConfig, transcriptData.question, transcriptData.tags, transcriptData.taskMode),
-      };
       artifactText = await this.#promptWithRetry(synthSessionId, transcriptData, transcript, model, participants, stateOfPlay, userContext, effectiveConfig, heartbeat);
       artifactText = await this.#critique(synthSessionId, artifactText, transcript, transcriptData, model, participants, effectiveConfig, heartbeat);
     } catch (err) {
@@ -104,7 +111,7 @@ export class SynthesisCoordinator {
       }
     }
 
-    const result = finalizeSynthesis(artifactText, transcriptData, participants);
+    const result = finalizeSynthesis(artifactText, transcriptData, participants, { synthesisStyle: effectiveConfig?.synthesisStyle });
 
     await this.#sessionManager.postProgress("✅ Synthesis complete");
 
@@ -123,7 +130,7 @@ export class SynthesisCoordinator {
       // than only in the round clerk's summary.
       const engagement = computeEngagementLedger(transcriptData);
       const userPrompt =
-        buildSynthesisPrompt(transcriptData.question, transcript, allParticipants, transcriptData.tags ?? [], stateOfPlay, userContext, { buildMode: transcriptData.buildMode, taskMode: transcriptData.taskMode, decisionPosture: effectiveConfig?.decisionPosture, engagement }) +
+        buildSynthesisPrompt(transcriptData.question, transcript, allParticipants, transcriptData.tags ?? [], stateOfPlay, userContext, { buildMode: transcriptData.buildMode, taskMode: transcriptData.taskMode, decisionPosture: effectiveConfig?.decisionPosture, engagement, contextWindow: this.#contextWindow }) +
         additionalFeedback;
 
       const llmStart = Date.now();
@@ -257,8 +264,7 @@ If corrections are needed, output the FULL revised synthesis with ALL required s
 ## Decision
 ## Decision Rule (required when the draft maps a spectrum without a single Decision)
 ## Reasoning
-${text.toLowerCase().includes("proposed fix") || resolveTaskMode(transcriptData?.question, transcriptData?.tags ?? [], { taskMode: transcriptData?.taskMode }) === "code-analysis" ? "## Proposed Fix\n## Action Items\n" : "## Action Items\n"}## Dissenting Views
-## Open Questions
+${text.toLowerCase().includes("proposed fix") || resolveTaskMode(transcriptData?.question, transcriptData?.tags ?? [], { taskMode: transcriptData?.taskMode }) === "code-analysis" ? "## Proposed Fix\n## Action Items\n" : "## Action Items\n"}## Open Questions
 ## Confidence
 
 If the draft is accurate, grounded, human-readable, and complete, respond with exactly: [NO_CHANGES]
@@ -363,13 +369,19 @@ Low (synthesis incomplete — State of Play fallback)`;
     output += `## Reasoning\nFallback synthesis was used due to an error in the synthesis session.\n\n`;
     output += `## Action Items\n- Review the key proposals below\n- Re-run synthesis if needed\n\n`;
     output += `## Key Proposals\n${proposals.map((c) => `- ${oneLine(c)}`).join("\n")}\n\n`;
-    if (challenges.length > 0) {
-      output += `## Open Questions\n${challenges.map((c) => `- ${oneLine(c)}`).join("\n")}\n\n`;
+    // ONE Open Questions section: two sections with the same heading left the
+    // second orphaned below the first (audit D4).
+    const openQuestions = [
+      ...challenges.map((c) => `- ${oneLine(c)}`),
+      ...questions.map((c) => `- ${oneLine(c)}`),
+    ];
+    if (openQuestions.length > 0) {
+      output += `## Open Questions\n${openQuestions.join("\n")}\n\n`;
     }
-    if (questions.length > 0) {
-      output += `## Open Questions\n${questions.map((c) => `- ${oneLine(c)}`).join("\n")}\n\n`;
-    }
-    output += `## Confidence\nMedium (synthesis incomplete due to error)`;
+    // A failed synthesis is Low confidence, matching the other degraded paths
+    // (audit D4) — "Medium" for an artifact the synthesizer never wrote was
+    // generous.
+    output += `## Confidence\nLow (synthesis incomplete due to error)`;
 
     return output;
   }

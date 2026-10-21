@@ -7,6 +7,7 @@ import { SynthesisCoordinator } from "../src/synthesis-coordinator.js";
 import { buildSynthesisPrompt } from "../src/prompts/synthesis.js";
 import { buildOrchestratorPromptPreview } from "../src/dashboard/server/orchestrator-preview.js";
 import { emptyAgentState } from "../src/state-patch.js";
+import { computeSteeringHint } from "../src/orchestrator/round.js";
 
 function makeManager() {
   const participant = {
@@ -183,6 +184,94 @@ test("clerk prompt carries a forum snapshot taken from the passed rows, absent w
     { roster: [{ id: "a", contributions_count: 1, status: "listening" }], forumTopics: [] },
   );
   assert.doesNotMatch(emptyForum, /Forum Threads/);
+});
+
+// Audit C2 — the clerk's State-of-Play excerpt must carry WHOLE items. It
+// used to be a 600-char slice of the document, which — because the SoP opens
+// with `## Question` and `## Tags` — usually carried the question and cut the
+// consensus section mid-bullet.
+test("the clerk's prior-state excerpt carries whole items", () => {
+  const round = {
+    number: 2,
+    contributions: [{ id: 1, participant_id: "agent", type: "contribution", content: "A substantive position with numbers 12% and 4ms." }],
+  };
+  const sop = [
+    "## Question", "A question long enough to push the consensus section past a 600-character slice of the document.", "",
+    "## Tags", "engineering, security, planning, migration, rollout, operations", "",
+    "## Agreements & Proposals", "- Phased rollout over Q1-Q2", "- Short-lived access tokens are essential", "",
+    "## Disagreements & Concerns", "- Token revocation remains unsolved",
+  ].join("\n");
+  const prompt = buildRoundSummaryUser(round, { question: "Q", tags: [] }, [], {}, { stateOfPlay: sop, roster: [], maxRounds: 4 });
+  const excerpt = prompt.split("<<<LOOM_PRIOR_STATE_OF_PLAY>>>_BEGIN_")[1]?.split("<<<LOOM_PRIOR_STATE_OF_PLAY>>>_END_")[0] ?? "";
+  assert.match(excerpt, /Phased rollout over Q1-Q2/);
+  assert.match(excerpt, /Short-lived access tokens are essential/);
+  assert.match(excerpt, /Token revocation remains unsolved/);
+  // The question is not what the excerpt is for.
+  assert.doesNotMatch(excerpt, /A question long enough/);
+  // Every line is a whole item (a bullet), never a fragment.
+  for (const line of excerpt.split("\n").filter((l) => l.trim())) {
+    assert.ok(line.trim().startsWith("- "), `excerpt line is not a whole item: ${JSON.stringify(line)}`);
+  }
+});
+
+// Audit C3 — the synthesis prompt must announce the window the ORCHESTRATOR
+// model actually has, not a hardcoded 200k.
+test("the synthesis prompt states the orchestrator model's real window", () => {
+  const coordinator = new SynthesisCoordinator({ async postProgress() {} }, {});
+  const system = coordinator["#orchestratorSynthesisSystem"]?.({});
+  // The private-field path is not reachable from a test; assert on the public
+  // builders instead.
+  const withWindow = buildSynthesisPrompt("Q", "t", [], [], "", "", { contextWindow: 32000 });
+  assert.match(withWindow, /32k window/);
+  assert.doesNotMatch(withWindow, /200k window/);
+  const without = buildSynthesisPrompt("Q", "t", [], [], "", "", {});
+  assert.doesNotMatch(without, /200k window/, "an unknown window must not be invented");
+  assert.match(without, /large window/);
+});
+
+// Audit D3 — the closing-round steer is ratchet-aware: when a ballot was
+// already held, it asks for a CONFIRMATION ballot on the superseded question
+// (the synthesis doctrine's rule 6 expects that ballot to exist).
+test("the closing-round steer asks for a confirmation ballot", () => {
+  const base = { roundNumber: 4, maxRounds: 4, voteEnabled: true, contributionsThisRound: 3, critiqueCount: 0, hasSynthesis: false };
+  const first = computeSteeringHint({ ...base, votesHeld: 0, votesThisRound: 0 });
+  assert.match(first, /no ballot has been held/);
+  const ratchet = computeSteeringHint({ ...base, votesHeld: 1, votesThisRound: 0 });
+  assert.match(ratchet, /re-poll the superseded question/);
+  assert.match(ratchet, /latest ballot, not the original/);
+  // A ballot cast in THIS round needs no nudge.
+  assert.equal(computeSteeringHint({ ...base, votesHeld: 2, votesThisRound: 1 }), null);
+  // The mid-deliberation nudge is unchanged.
+  const mid = computeSteeringHint({ roundNumber: 2, maxRounds: 4, votesHeld: 0, votesThisRound: 0, voteEnabled: true, contributionsThisRound: 2 });
+  assert.match(mid, /nothing has been priced as a decision/);
+  // The consolidation nudge fires when the decision-shaped nudge does not
+  // (a vote was already held) and the round was critique-heavy.
+  const consol = computeSteeringHint({ roundNumber: 2, maxRounds: 4, votesHeld: 1, votesThisRound: 1, voteEnabled: true, contributionsThisRound: 4, critiqueCount: 3, hasSynthesis: false });
+  assert.match(consol, /synthesize positions/);
+  // …and not when the round already synthesized.
+  const consolSkip = computeSteeringHint({ roundNumber: 2, maxRounds: 4, votesHeld: 1, votesThisRound: 1, voteEnabled: true, contributionsThisRound: 4, critiqueCount: 3, hasSynthesis: true });
+  assert.equal(consolSkip, null);
+});
+
+// Audit D4 — the degraded fallback must not emit two sections with the same
+// heading, and must not claim "Medium" confidence for an artifact the
+// synthesizer never wrote.
+test("the degraded fallback synthesis has one Open Questions section", () => {
+  const coordinator = new SynthesisCoordinator({ async postProgress() {} }, {});
+  const out = coordinator.fallbackSynthesis({
+    question: "Q",
+    tags: [],
+    rounds: [{
+      number: 1,
+      contributions: [
+        { id: 1, participant_id: "a", type: "contribution", content: "We should adopt the incremental plan." },
+        { id: 2, participant_id: "b", type: "critique_response", content: "The rollback path is unsafe." },
+        { id: 3, participant_id: "c", type: "contribution", content: "Is the migration reversible?" },
+      ],
+    }],
+  }, "");
+  assert.equal((out.match(/## Open Questions/g) ?? []).length, 1, "two Open Questions sections leaked");
+  assert.match(out, /## Confidence\nLow \(synthesis incomplete due to error\)/);
 });
 
 test("round service snapshots state after prompt execution, not from the pre-round state", async () => {

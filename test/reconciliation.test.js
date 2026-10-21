@@ -40,6 +40,39 @@ test("extractNumericClaims drops round/version/line noise", () => {
   assert.ok(claims.some((c) => c.value === 10.8));
 });
 
+// Audit Q2 — the unit vocabulary is domain-general, not F1-only, and the
+// extractor does not read identifiers as quantities.
+test("numeric claims cover engineering units, not only racing ones", () => {
+  const claims = extractNumericClaims("The cache serves 3 stale requests; 12 endpoints, 4 failures, 2 services.");
+  const byUnit = Object.fromEntries(claims.map((c) => [c.unit, c]));
+  assert.equal(byUnit.request.value, 3, "an adjective between number and unit still counts");
+  assert.equal(byUnit.endpoint.value, 12);
+  assert.equal(byUnit.failure.value, 4);
+  assert.equal(byUnit.service.value, 2);
+  // A claim with a unit survives; the quantity label carries the rest.
+  assert.equal(byUnit.request.quantity, "cache serves stale");
+});
+
+test("numbers inside identifiers and expressions are not claims", () => {
+  // utf8 / sha256 / v2 / N+1 are text, not quantities.
+  const claims = extractNumericClaims("utf8 and sha256 hashes, schema v2, N+1 queries on the hot path.");
+  assert.equal(claims.length, 0, `expected no claims, got ${JSON.stringify(claims)}`);
+});
+
+test("currency is one unit however it is written", () => {
+  const claims = extractNumericClaims("The migration costs $500; the other estimate is 500 dollars.");
+  assert.equal(claims.length, 2);
+  assert.ok(claims.every((c) => c.unit === "$"), `units: ${JSON.stringify(claims.map((c) => c.unit))}`);
+  assert.ok(claims.every((c) => c.value === 500));
+});
+
+test("magnitude units are read as units", () => {
+  const claims = extractNumericClaims("p99 latency is 200ms; the bundle is 15 MB.");
+  const byUnit = Object.fromEntries(claims.map((c) => [c.unit, c]));
+  assert.equal(byUnit.ms.value, 200);
+  assert.equal(byUnit.mb.value, 15);
+});
+
 test("findNumericalConflicts groups by phrase and by count unit", () => {
   const w = weave(
     [1, "a", 1, "Antonelli will win 8 races."],

@@ -5,6 +5,7 @@ import { escapeDelimiters, delimitContext } from "./delimiters.js";
 import { LENGTH_LIMITS, TOOL_LADDER_LINE, TOOL_FAILURE_LINE, windowLabel } from "./constants.js";
 import { buildCategoryLens, buildRoundContext, buildSettledBlock } from "./blocks.js";
 import { renderMyStateMarkdown, getSettledItems } from "../state-patch.js";
+import { stripSopSection } from "../state-of-play.js";
 import { formatEvidenceCacheForPrompt } from "../evidence-cache.js";
 
 import { TUNING } from "../config/defaults.js";
@@ -56,7 +57,7 @@ function fnv1a64(str) {
   return h.toString(16).padStart(16, "0");
 }
 
-function hashConfig(cfg, { activeCount, agentTools, contextWindow } = {}) {
+function hashConfig(cfg, { activeCount, agentTools, contextWindow, codeContext } = {}) {
   let toolsDigest = "";
   try {
     const t = getEffectiveAgentTools(agentTools);
@@ -69,6 +70,15 @@ function hashConfig(cfg, { activeCount, agentTools, contextWindow } = {}) {
   } catch {}
   const soloFlag = Number.isFinite(activeCount) && activeCount <= 1 ? "|solo" : "";
   const windowFlag = windowLabel(contextWindow) ? `|win:${windowLabel(contextWindow)}` : "";
+  // The task-mode knob changes the Mode section, the tool ladder, and the
+  // write/edit bullets — so it MUST be part of the key. Without it the first
+  // mode rendered for a participant wins for the life of the process: a
+  // programming meeting could be served the "discussion meeting: read-only,
+  // do not create or modify files" scaffold, and a discussion meeting could be
+  // handed the code ladder and write/edit bullets (audit A1). Participant ids
+  // are persona-derived and recur across meetings, and the dashboard declares
+  // the mode per meeting — so the two modes really do meet in one cache.
+  const codeFlag = typeof codeContext === "boolean" ? `|code:${codeContext}` : "";
   // Every persona field rendered into the prompt must participate in the key:
   // omitting persona/agenda/style served stale prompts after user edits
   // (audit N6 — verified: edited persona returned the pre-edit prompt).
@@ -80,7 +90,7 @@ function hashConfig(cfg, { activeCount, agentTools, contextWindow } = {}) {
     (cfg.preferred_contribution_types ?? []).join("|"),
     (cfg.known_biases ?? []).join("|"),
     (cfg.anti_patterns ?? []).join("|"),
-    toolsDigest, soloFlag, windowFlag,
+    toolsDigest, soloFlag, windowFlag, codeFlag,
   ].join("~");
   return fnv1a64(key);
 }
@@ -97,7 +107,7 @@ export function buildAgentSystemPrompt(participant, { activeCount, agentTools, c
   // meetings with no taskMode in their tool config) preserves the exact
   // pre-knob rendering — legacy output stays byte-identical.
   const showCodeGuide = typeof codeContext === "boolean" ? codeContext : true;
-  const cacheKey = `${cfg.id}|${hashConfig(cfg, { activeCount, agentTools, contextWindow })}`;
+  const cacheKey = `${cfg.id}|${hashConfig(cfg, { activeCount, agentTools, contextWindow, codeContext })}`;
   const cached = systemPromptCache.get(cacheKey);
   if (cached !== undefined) {
     systemPromptCache.delete(cacheKey);
@@ -223,11 +233,17 @@ Quality — be thorough; depth over brevity. Length caps in the OUTPUT CONTRACT 
   const allBiases = Array.isArray(cfg.known_biases) && cfg.known_biases.length > 0
     ? cfg.known_biases.map((b) => escapeDelimiters(sanitizeForDisplay(b, 300)))
     : [];
+  // The bias line names the tendencies this persona must watch for, so it
+  // surfaces at most three — the same cap the anti-patterns use. The order is
+  // rotated per persona (by a hash of the name) so two agents with the same
+  // bias list do not all lead with the same one; the SET is stable, the
+  // order is not (audit E2 — the rotation previously changed nothing because
+  // every bias was rendered anyway).
   let biasList = allBiases;
   if (allBiases.length > 2) {
     const hash = [...(cfg.name || "")].reduce((a,c)=>a+c.charCodeAt(0),0);
     const start = hash % allBiases.length;
-    biasList = [...allBiases.slice(start), ...allBiases.slice(0, start)].slice(0, allBiases.length);
+    biasList = [...allBiases.slice(start), ...allBiases.slice(0, start)].slice(0, 3);
   }
   const biasCheck = biasList.length > 0
     ? `Bias awareness — watch for these tendencies in your own reasoning: ${biasList.join("; ")}. If one is material and you have not already acknowledged it this meeting (your carried state and prior rounds count), acknowledge it in one clause (“my lens over-weights X, however …”) then steelman the counter-view before returning to your lens. Bias clauses are a tax when repeated — once per meeting is enough.`
@@ -285,7 +301,7 @@ ${modeSection}
 
   Call the loom_pass tool when:
   - You have no new evidence, data, or tool output to introduce
-  - Your perspective is already represented in State of Play (check Agreements/Decisions)
+  - Your perspective is already represented in State of Play (check Agreements & Proposals)
   - The last round covered your expertise angle thoroughly
   - You're repeating a point already made (check Recent Contributions)
 
@@ -312,10 +328,10 @@ ${modeSection}
   7. Collaboration — ${showCodeGuide ? "(open-ended & programming): for debates, map spectrum and steelman counter-views before concluding; for code, read then propose diff (or write in BUILD), then handoff: **Handoff: @role — verify file=X covers case Y**." : "for debates, map the spectrum and steelman counter-views before concluding."}
   7a. Test craft — when you propose a test, threshold, or numeric bar: (a) Calibrate it — name the base rate, historical precedent, or data that justifies the number; if you don’t know, say so and propose the cheap test that would measure it. (b) Check internal consistency — a minimum-game floor, a percentage share, and an absolute-minute estimate must be mutually possible; if your floor makes your share unreachable (or trivial), fix one of the three. (c) Prefer a test whose every branch can actually fire — a threshold that can never trigger is not falsifiable, it’s decoration.
   7b. Ladder atomicity — when you propose or vote on a decision ladder, the trigger, order, owner, full date (year included), and re-pricing conditions form ONE atomic object: the vote assigns all five or adopts nothing. Never propose a partial ladder (a trigger with no owner, or an owner with no date).
-  7c. Versioned base tables — when you state a recurring number set (leaderboard, standings, win totals, season stats), publish it as a versioned base table: “leaderboard vN” with the full scope (season length, per-team/driver wins, sources, as-of round). In later rounds, cite the existing version or publish v(N+1) with a diff line showing what changed. Never restate numbers without either citing the current version or superseding it.
+  7c. Versioned base tables — when you state a recurring number set (a table, tally, or enumerated list the room keeps re-quoting), publish it as a versioned base table: “<name> vN” with the full scope (what the numbers count, the counting/scoring rule, the window or population they cover, sources, as-of round). In later rounds, cite the existing version or publish v(N+1) with a diff line showing what changed. Never restate numbers without either citing the current version or superseding it.
   8. State carry-forward — a follow-up step saves your stance and bullets automatically from this turn; do not call any state tool now and never write about patching in prose: no "Patched", "state", "stance", "bullets", or version numbers — write the deliberation itself.
   9. Newness — every contribution must add at least one of: (a) new evidence with Source: or tool output, (b) a new argument or objection, (c) a refinement that changes a number, threshold, or scope, (d) a synthesis that resolves or narrows a contested point. Re-stating settled points or your own prior position without a delta is a violation — cite [#id] and move on. In rounds 3+ this rule is strict; in rounds 1–2 thoroughness takes precedence.
-  10. Frozen terms — the question's load-bearing terms (event set, scoring body, season shape, roster date, and other key definitions) must be settled in round 1, not silently assumed: unless the room received an explicit glossary, the first contribution of round 1 states how it reads each load-bearing term in 1-3 lines. Other participants adopt or amend each definition in one clause when they first rely on it; the clerk signs converged definitions into Settled at the end of round 1. After that they are cited by [#id], never re-argued — flagging a divergence from a definition nobody wrote helps nobody: either accept a stated definition, propose yours in its place, or say the term is undefined and needs settling. Definition-adjacent disputes are clerk-flagged, not debated — don't spend rounds re-litigating what a term means.
+  10. Frozen terms — the question's load-bearing terms (whatever fixes the MEANING of its numbers and scope — the underlying set, the scoring or evaluation rule, the window or population, the as-of date, and other key definitions) must be settled in round 1, not silently assumed: unless the room received an explicit glossary, the first contribution of round 1 states how it reads each load-bearing term in 1-3 lines. Other participants adopt or amend each definition in one clause when they first rely on it; the clerk signs converged definitions into Settled at the end of round 1. After that they are cited by [#id], never re-argued — flagging a divergence from a definition nobody wrote helps nobody: either accept a stated definition, propose yours in its place, or say the term is undefined and needs settling. Definition-adjacent disputes are clerk-flagged, not debated — don't spend rounds re-litigating what a term means.
   11. Citation engagement — each contribution must engage with at least one other contribution via [#id] (a peer's claim, a State-of-Play item, or a prior contribution). Isolated contributions that cite nothing are flagged by the clerk. If you genuinely have no peer contribution to engage (round 1, first speaker), say so explicitly and open the strongest thread from your lens.
   12. No naked numbers — every percentage or rate you state must ship with (n, window, source): the sample size, the time/scope window it covers, and where it came from ([#id], State-of-Play, or Source:). A rate with n<10 may illustrate a point but never license a conclusion — label it "n=X, illustrative only" and don't build a decision on it. Projections inherit this: multiplying a rate by a denominator ("X of 24") additionally requires naming the reference class the rate comes from, with its n; a reference class with n<3 (a single precedent, a single era) yields an illustrative band only — label it "illustrative, reference-class n=X" and never book it as a working interval. If you cannot source a number, strike it or qualify it ("in my experience…"); the clerk strikes what you leave naked.
   13. Calibration sheet at authorship — when you propose a gate ladder (a decision rule with triggers), each trigger threshold ships with its calibration: the base rate, historical precedent, or data that justifies the number — or the cheap test that would measure it, named explicitly. A trigger you cannot calibrate at authorship is proposed as uncalibrated ("Gate 1 uncalibrated — needs base rate from X"), never presented as a working gate. Calibration added two rounds later is not calibration.
@@ -390,7 +406,13 @@ export function buildAgentUserPrompt(participant, stateOfPlay, recentContributio
   // likely to carry attacker-shaped text. Bounds (26000/12000) sit above the
   // ~26k/~11k structural maxima so they clean without truncating. delimitContext
   // already escapes fence markers; sanitizeForDisplay preserves [#id]/[PASS].
-  const stateOfPlayDelimited = stateOfPlay ? delimitContext(sanitizeForDisplay(stateOfPlay, 26000), "STATE_OF_PLAY") : "";
+  //
+  // The forum digest is stripped here: it lives in the SoP so the clerk and the
+  // synthesizer read it, but the agent also gets a dedicated forum block with
+  // ids, previews and read instructions — rendering both duplicated every
+  // thread in every turn (audit C1).
+  const sopForPrompt = stripSopSection(stateOfPlay, "Forum Threads");
+  const stateOfPlayDelimited = sopForPrompt ? delimitContext(sanitizeForDisplay(sopForPrompt, 26000), "STATE_OF_PLAY") : "";
   const transcriptDelimited = delimitContext(transcript, "CONTRIBUTIONS");
   const safeQuestion = delimitContext(escapeDelimiters(sanitizeForDisplay(question, 10000)), "QUESTION");
   const tagContext = tags?.length > 0 ? escapeDelimiters(sanitizeForDisplay(tags.join(", "), 1000)) : null;

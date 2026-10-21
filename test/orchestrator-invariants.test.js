@@ -18,6 +18,7 @@ import { fallbackTurnOrder } from "../src/orchestrator/round.js";
 import { createTurnOrderTool } from "../src/plugin/tools/turn-order.js";
 import { clearMeetingBreakdown } from "../src/metrics.js";
 import { LATEST_SCHEMA_VERSION } from "../src/database/schema.js";
+import { validateSynthesisSections, finalizeSynthesis } from "../src/synthesizer.js";
 
 // Orchestrator prompt-invariant suite (ORCHESTRATOR-PROMPT-AUDIT.md §7):
 // every option-safety and option-coupling property, as deterministic
@@ -67,16 +68,46 @@ test("role rename is backward compatible and custom requires instructions", () =
 });
 
 // O7/Step 6 — style drives word band and context budget, not just emphasis.
-test("summary style drives word band and context budget", () => {
-  assert.deepEqual(getSummaryBand({ summaryStyle: "concise" }), { words: "120-200", budget: 6000 });
-  assert.deepEqual(getSummaryBand({ summaryStyle: "balanced" }), { words: "180-350", budget: 12000 });
-  assert.deepEqual(getSummaryBand({ summaryStyle: "exhaustive" }), { words: "350-600", budget: 20000 });
+// Audit B1 — it also drives the OUTPUT SHAPE: the word band and the bullet
+// contract were two independent instructions, so "concise" (120-200 words) was
+// asked for 5-7 bullets of 1-3 sentences plus six sections — a contradiction
+// the model resolved by dropping sections, and the two it dropped first
+// (Settled, Next) are the two the rest of the system consumes.
+test("summary style drives word band, context budget, and output shape", () => {
+  const concise = getSummaryBand({ summaryStyle: "concise" });
+  const balanced = getSummaryBand({ summaryStyle: "balanced" });
+  const exhaustive = getSummaryBand({ summaryStyle: "exhaustive" });
+  assert.equal(concise.words, "120-200");
+  assert.equal(concise.budget, 6000);
+  assert.equal(balanced.words, "180-350");
+  assert.equal(balanced.budget, 12000);
+  assert.equal(exhaustive.words, "350-600");
+  assert.equal(exhaustive.budget, 20000);
+  // The shape is a real instruction, and it moves with the band.
+  assert.match(concise.shape, /3-4 bullets/);
+  assert.match(balanced.shape, /5-7 bullets/);
+  assert.match(exhaustive.shape, /7-9 bullets/);
   assert.match(buildRoundSummarySystem({ summaryStyle: "exhaustive" }), /350-600 words/);
   assert.match(buildRoundSummarySystem({ summaryStyle: "concise" }), /120-200 words/);
   const policy = orchestratorContextPolicy({ summaryStyle: "exhaustive" }, "summary");
   assert.equal(policy.budget, 20000);
+  assert.equal(policy.shape, exhaustive.shape);
   const plain = orchestratorContextPolicy({ summaryStyle: "concise" }, "summary");
   assert.equal(plain.budget, 6000);
+  // The clerk prompt states the band and its shape together, and never asks
+  // for a bullet count the band cannot hold.
+  const round = { number: 1, contributions: [{ id: 1, participant_id: "a", type: "contribution", content: "A substantive claim with numbers 12% and 4ms." }] };
+  const concisePrompt = buildRoundSummaryUser(round, { question: "Q", tags: [] }, [], { summaryStyle: "concise" });
+  assert.match(concisePrompt, /## Output — 3-4 bullets, one line each/);
+  assert.doesNotMatch(concisePrompt, /## Output — 5-7 bullets/);
+  assert.match(concisePrompt, /Settled and Next are never omitted/);
+  // The band owns the bullet LIST too — a concise summary is not asked for six
+  // sections with six long descriptions.
+  assert.doesNotMatch(concisePrompt, /- \*\*Evidence:\*\* Tool or vec-grounded evidence introduced/);
+  assert.match(concisePrompt, /- \*\*Settled:\*\* one line per newly converged item/);
+  const balancedPrompt = buildRoundSummaryUser(round, { question: "Q", tags: [] }, [], { summaryStyle: "balanced" });
+  assert.match(balancedPrompt, /- \*\*Evidence:\*\* Tool or vec-grounded evidence introduced/);
+  assert.match(balancedPrompt, /## Output — 5-7 bullets, each 1-3 sentences/);
 });
 
 // O1/Step 6 — context now VARIES with the relevant option (the property that
@@ -115,6 +146,40 @@ test("posture sits beside the doctrine rules; conversational grounding covers fi
   assert.match(user, /Operator decision posture:.*defensible consensus/);
   const conv = buildSynthesisPrompt("Should we adopt a four-day week?", "t", [], [], "",  "", {});
   assert.match(conv, /Do not reference files, diffs, or code/);
+});
+
+// Audit C3 — the synthesizer's system prompt announces the window the
+// ORCHESTRATOR MODEL actually has. It used to hardcode "200k", which told a
+// 32k model to write to a budget it did not have.
+test("the synthesizer system prompt states the real context window", () => {
+  const small = buildOrchestratorSynthesisSystem({}, 32000);
+  assert.match(small, /32k window/);
+  assert.doesNotMatch(small, /200k window/);
+  const large = buildOrchestratorSynthesisSystem({}, 200000);
+  assert.match(large, /200k window/);
+  // Unknown window: honest, not invented.
+  const unknown = buildOrchestratorSynthesisSystem({}, null);
+  assert.doesNotMatch(unknown, /200k window/);
+  assert.match(unknown, /large window/);
+});
+
+// Audit B4 — the FINAL artifact check keeps the style-aware rules. It used to
+// run without the style, so an artifact that still lacked a Decision Rule
+// passed the last gate.
+test("the final artifact check keeps the Decision Rule requirement", () => {
+  const spectrum = [
+    "## Executive Summary", "The room split.", "",
+    "## Decision", "No single decision — spectrum below:", "",
+    "## Reasoning", "- discussed", "",
+    "## Open Questions", "- none", "",
+    "## Action Items", "- none", "",
+    "## Confidence", "Medium.",
+  ].join("\n");
+  const missing = validateSynthesisSections(spectrum, "decision_oriented");
+  assert.ok(missing.includes("Decision Rule"), `expected the Decision Rule to be missing, got ${JSON.stringify(missing)}`);
+  // The finalizer (which is what ships) must surface it too.
+  const { output } = finalizeSynthesis(spectrum, { question: "Q", rounds: [] }, [], { synthesisStyle: "decision_oriented" });
+  assert.match(output, /did not generate the following sections: Decision Rule/);
 });
 
 // No-seniority — category appears nowhere in orchestrator decision inputs;

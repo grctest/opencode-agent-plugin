@@ -186,12 +186,66 @@ export function getTurnOrderGuidance(config = {}) {
  * Round-summary depth bands (audit O7/Step 6): the style option drives BOTH the
  * context budget and the output word band. A style that cannot change either is
  * decoration; bands make it a genuine quality lever.
+ *
+ * The band also carries the SHAPE of the output (audit B1): the word band and
+ * the bullet contract were two independent instructions, so "concise"
+ * (120-200 words) was asked to produce 5-7 bullets of 1-3 sentences plus six
+ * labelled sections — a contradiction the model resolves by dropping sections,
+ * and the two it dropped first (Settled, Next) are the two the rest of the
+ * system consumes. `shape` therefore moves with the band, and two slots are
+ * never dropped at any band.
  */
+const BULLET_DETAIL = {
+  established: "- **Established:** What gained support this round, with holder [#id] and why it matters (1-2 sentences)",
+  settled: "- **Settled:** Items the room converged on this round that now have multi-holder agreement — each as a one-line claim with [#id] refs (e.g. \"- Both name the same two riskiest failure modes: token refresh and stale-cache invalidation — identical scope, different severity rating [#9][#12]\"). These feed the meeting-level settled registry. If nothing newly converged, write \"None this round\". Converged term definitions (what counts, how scored, scope) belong here from round 1 — write them plainly so later rounds cite them by [#id].",
+  contested: "- **Contested:** What remains disputed — name holders and their distinct positions [#id]; map the spectrum, don’t collapse to “disagreement”. Include a stance audit from the Agent States block below: when a participant's recorded stance contradicts a concession they made in-room this round, name them (\"retains X despite conceding Y in [#id]\").",
+  evidence: "- **Evidence:** Tool or vec-grounded evidence introduced (Source or [#id] with Strength: strong/weak/inconclusive); or “None — no new evidence this round” — never emit vec: / vec round traces, use State-of-Play or [#id]",
+  open: "- **Open:** Unresolved questions and what would resolve them (missing evidence / decision needed). If an open question from a prior round is still open and has no new source attached, flag it “still un-researched”.",
+  next: "- **Next:** One line — the single decision or output the next round must produce: who must defend, concede, or produce what, against which gate. Direct, not descriptive.",
+  code: "- **Code/Files:** Files touched or proposed (file=src/...), diffs status, and test/verification notes",
+};
+
 export const ORCHESTRATOR_SUMMARY_BANDS = Object.freeze({
-  concise: Object.freeze({ words: "120-200", budget: 6000 }),
-  balanced: Object.freeze({ words: "180-350", budget: 12000 }),
-  exhaustive: Object.freeze({ words: "350-600", budget: 20000 }),
+  concise: Object.freeze({
+    words: "120-200",
+    budget: 6000,
+    shape: "3-4 bullets, one line each — required: Settled, Contested, Next. Add Established only when something genuinely gained support; fold the evidence into the bullet that carries it; keep Open to one line only when something is genuinely open.",
+    bullets: Object.freeze([
+      "- **Settled:** one line per newly converged item, with [#id] refs — or \"None this round\"",
+      "- **Contested:** what remains disputed — name the holders and their positions [#id]",
+      "- **Next:** one line — the single decision or output the next round must produce",
+      "- **Established** (only if something genuinely gained support) and **Open** (only if something is genuinely open): one line each, with the evidence folded into the bullet that carries it",
+    ]),
+  }),
+  balanced: Object.freeze({
+    words: "180-350",
+    budget: 12000,
+    shape: "5-7 bullets, each 1-3 sentences — Established, Settled, Contested, Evidence, Open, Next",
+    bullets: Object.freeze([
+      BULLET_DETAIL.established, BULLET_DETAIL.settled, BULLET_DETAIL.contested,
+      BULLET_DETAIL.evidence, BULLET_DETAIL.open, BULLET_DETAIL.next,
+    ]),
+  }),
+  exhaustive: Object.freeze({
+    words: "350-600",
+    budget: 20000,
+    shape: "7-9 bullets, each 2-4 sentences with named holders — Established, Settled, Contested, Evidence, Open, Next (+ Code/Files)",
+    bullets: Object.freeze([
+      BULLET_DETAIL.established, BULLET_DETAIL.settled, BULLET_DETAIL.contested,
+      BULLET_DETAIL.evidence, BULLET_DETAIL.open, BULLET_DETAIL.next, BULLET_DETAIL.code,
+    ]),
+  }),
 });
+
+/**
+ * Slots the room depends on. The settled registry is fed by the clerk's
+ * Settled bullet and the next round's steer by its Next bullet — so they are
+ * written as "None this round" rather than omitted (audit B1).
+ */
+export const ORCHESTRATOR_SUMMARY_ALWAYS = "Settled and Next are never omitted — write \"None this round\" instead of leaving the slot out.";
+
+/** The Code/Files bullet — added to a code round at any band that does not carry it. */
+export const ORCHESTRATOR_SUMMARY_CODE_BULLET = BULLET_DETAIL.code;
 
 export function getSummaryBand(config = {}) {
   const value = normalizeOrchestratorConfig(config);
@@ -208,14 +262,12 @@ export function orchestratorContextPolicy(config = {}, task) {
   const value = normalizeOrchestratorConfig(config);
   if (task === "summary") {
     const band = getSummaryBand(value);
-    return { words: band.words, budget: band.budget };
+    return { words: band.words, budget: band.budget, shape: band.shape };
   }
-  if (task === "turn_order") {
-    return {
-      evidenceBlock: value.turnOrderPolicy === "evidence_first",
-      recencyBlock: value.turnOrderPolicy === "anti_starvation",
-    };
-  }
+  // The old "turn_order" task is gone: the summary call is the orchestrator's
+  // single LLM call per round and it sets the next round's order through the
+  // loom_set_turn_order tool, steered by getTurnOrderGuidance(). There is no
+  // separate planner context to shape (audit E3).
   return {};
 }
 

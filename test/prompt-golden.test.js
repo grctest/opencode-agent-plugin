@@ -76,13 +76,22 @@ const EXPECTED_SYS = {
   // "prior [#id]" ladder line now names the [#T{id}] thread-cite form so the
   // forum satisfies the citation contract instead of grading as uncited.
   "Research Tools — Tool Ladder": "d6a2f7cd1588",
-  "WHEN TO PASS": "4013ac9d695b",
+  // 2026-10-21 (audit Q3): the pass criterion now names the section that
+  // actually exists — the shared State of Play has ONE consensus section,
+  // "Agreements & Proposals", not a "Decisions & Proposals" / "Agreements" pair.
+  "WHEN TO PASS": "b57e580c80cf",
   // Tool calls are unlimited: the contract states no per-turn tool-call limit.
   // Category rename: clause 5 precedence reads persona/category guidance.
   // 2026-10-21 (P2/P3/P4/P6/P7): contract gains the citation budget (§2),
   // round-1 frozen-terms obligation (§10), stance-diff patch rule, projection
   // licensing (§12), and binding query acceptance.
-  "OUTPUT CONTRACT — read last, it governs; in conflict it wins": "5f06e547062b",
+  // 2026-10-21 (audit Q1): items 7c and 10 were re-worded off the F1 domain
+  // they were fitted to ("leaderboard, standings, win totals, season stats",
+  // "per-team/driver wins", "event set, scoring body, season shape, roster
+  // date") into domain-neutral wording. The MECHANISMS are unchanged — a
+  // versioned base table with a diff line, and round-1 frozen terms — only
+  // the examples the model imitates. Hash moves because the bytes moved.
+  "OUTPUT CONTRACT — read last, it governs; in conflict it wins": "f5ad04a12f9f",
 };
 
 const EXPECTED_USER = {

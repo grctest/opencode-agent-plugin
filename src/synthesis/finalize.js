@@ -59,7 +59,10 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, op
     finalOutput = `${finalOutput}\n\n## Refusals\n${refusalsText}`;
   }
 
-  const missingSections = validateSynthesisSections(finalOutput);
+  // Style-aware: the "Decision Rule" requirement is only checked for the
+  // decision_oriented style, and dropping the style here let an artifact
+  // without the rule pass the final check (audit B4).
+  const missingSections = validateSynthesisSections(finalOutput, opts.synthesisStyle ?? null);
   if (missingSections.length > 0) {
     finalOutput = supplementMissingSections(finalOutput, missingSections);
   }

@@ -15,6 +15,17 @@ const QUANTITY_CONNECTOR_WORDS = new Set(
   "vs versus v per pro con versus cf versus than then about roughly approx approximately around near over under plus minus and or but so if when while because since although though yet nor also both either neither each every any all some no not only own same such as at by for from into onto with without within without across through during before after above below between among plus minus equal equals roughly about".split(" ")
 );
 
+/**
+ * Unit vocabulary. Domain-general by construction: the F1 set (win / race /
+ * podium / pole / season) stays because it is still real vocabulary, and the
+ * engineering + product set that was missing joins it (tests, rows, requests,
+ * endpoints, failures, MB, p95, rps …).
+ *
+ * A unit listed here is a COUNTABLE unit: when it is the last word of a
+ * quantity label ("requests failed: 3") it becomes the claim's unit, so two
+ * contributors who state the same count in different words reconcile instead
+ * of sailing past each other.
+ */
 const UNIT_NORMALIZE = {
   percent: "%", win: "win", wins: "win", won: "win", race: "race", races: "race",
   round: "round", rounds: "round", point: "point", points: "point",
@@ -26,22 +37,120 @@ const UNIT_NORMALIZE = {
   day: "d", days: "d", week: "w", weeks: "w", x: "x", k: "k", m: "m",
   pp: "pp", ppt: "pp", "percentage point": "pp", "percentage points": "pp",
   bps: "bps", "basis point": "bps", "basis points": "bps",
+  usd: "$",
+  // Engineering / product counts.
+  test: "test", tests: "test", row: "row", rows: "row",
+  request: "request", requests: "request", query: "query", queries: "query",
+  endpoint: "endpoint", endpoints: "endpoint", field: "field", fields: "field",
+  bug: "bug", bugs: "bug", error: "error", errors: "error",
+  failure: "failure", failures: "failure", user: "user", users: "user",
+  session: "session", sessions: "session", ticket: "ticket", tickets: "ticket",
+  task: "task", tasks: "task", commit: "commit", commits: "commit",
+  branch: "branch", branches: "branch", file: "file", files: "file",
+  module: "module", modules: "module", service: "service", services: "service",
+  deploy: "deploy", deploys: "deploy", incident: "incident", incidents: "incident",
+  vote: "vote", votes: "vote", agent: "agent", agents: "agent",
+  seat: "seat", seats: "seat", option: "option", options: "option",
+  risk: "risk", risks: "risk", concern: "concern", concerns: "concern",
+  hypothesis: "hypothesis", hypotheses: "hypothesis",
+  assumption: "assumption", assumptions: "assumption",
+  idea: "idea", ideas: "idea", fix: "fix", fixes: "fix",
+  regression: "regression", regressions: "regression",
+  migration: "migration", migrations: "migration",
+  retry: "retry", retries: "retry", timeout: "timeout", timeouts: "timeout",
+  // Magnitudes.
+  kb: "kb", mb: "mb", gb: "gb", tb: "tb", kib: "kib", mib: "mib", gib: "gib",
+  p50: "p50", p95: "p95", p99: "p99", rps: "rps", qps: "qps",
+  ns: "ns", "µs": "µs", eur: "eur", gbp: "gbp",
 };
 
-const COUNT_UNITS = new Set(["win", "race", "round", "point", "event", "podium", "pole", "game", "match", "season"]);
+const COUNT_UNITS = new Set([
+  "win", "race", "round", "point", "event", "podium", "pole", "game", "match", "season",
+  "test", "row", "request", "query", "endpoint", "field", "bug", "error", "failure",
+  "user", "session", "ticket", "task", "commit", "branch", "file", "module", "service",
+  "deploy", "incident", "vote", "agent", "seat", "option", "risk", "concern",
+  "hypothesis", "assumption", "idea", "fix", "regression", "migration", "retry", "timeout",
+]);
 
-const CLAIM_RE = /(?:\b([A-Za-z][\w'’-]*(?:\s+(?:[A-Za-z][\w'’-]*|of|in|for|to|at|by|with|the|a|an|per)){0,4})\s+)?(\d+(?:\.\d+)?)\s*(%|percentage\s+points?|percent|pp|ppt|basis\s+points?|bps|wins?|races?|rounds?|points?|events?|podiums?|poles?|games?|matches?|seasons?|dollars?|ms|seconds?|minutes?|hours?|days?|weeks?|x|k|m)?/gi;
+// Groups: 1 = quantity label, 2 = currency prefix, 3 = number, 4 = unit.
+// Longer unit words come first so "mb" is not read as "m" and "matches" is not
+// read as "matche".
+const CLAIM_RE = /(?:\b([A-Za-z][\w'’-]*(?:\s+(?:[A-Za-z][\w'’-]*|of|in|for|to|at|by|with|the|a|an|per)){0,4})\s+)?(\$)?(\d+(?:\.\d+)?)\s*(%|percentage\s+points?|percent|pp|ppt|basis\s+points?|bps|wins?|races?|rounds?|points?|events?|podiums?|poles?|games?|matches?|seasons?|tests?|rows?|requests?|queries|endpoints?|fields?|bugs?|errors?|failures?|users?|sessions?|tickets?|tasks?|commits?|branches|files?|modules?|services?|deploys?|incidents?|votes?|agents?|seats?|options?|risks?|concerns?|hypotheses|assumptions?|ideas?|fixes|regressions?|migrations?|retries?|timeouts?|dollars?|ms|seconds?|minutes?|hours?|days?|weeks?|kb|mb|gb|tb|kib|mib|gib|p50|p95|p99|rps|qps|ns|µs|usd|eur|gbp|x|k|m)?/gi;
+
+/**
+ * A digit run that belongs to an identifier or an expression is not a claim:
+ * "v2", "utf8", "sha256", "base64", "N+1", "3-2" ranges. Without this guard,
+ * widening the unit vocabulary would turn "N+1 queries" into a claim of one
+ * query — a false conflict waiting to be reported to the room.
+ */
+function isEmbeddedNumber(text, match) {
+  const raw = match[0] ?? "";
+  const num = match[3] ?? "";
+  if (!raw || !num) return false;
+  // The number is the LAST occurrence of its digits in the match (the unit
+  // group holds no digits), so a label like "gpt 8 wins 8" cannot shift the
+  // offset onto the label's own digits.
+  const numIdx = raw.lastIndexOf(num);
+  if (numIdx < 0) return false;
+  const abs = (match.index ?? 0) + numIdx;
+  const before = abs > 0 ? text[abs - 1] : "";
+  if (/[A-Za-z0-9_+]/.test(before)) return true;
+  // A range ("3-2") is not a second quantity.
+  if (before === "-" && abs > 1 && /[0-9]/.test(text[abs - 2])) return true;
+  return false;
+}
+
+/**
+ * A unit can sit one or two adjectives away from its number ("3 stale
+ * requests", "12 large endpoints"). The claim regex only sees a unit that
+ * directly follows the number, so the gap is closed here — strictly: the
+ * trailing word must be a KNOWN unit alias, and at most two lowercase words
+ * may sit between. "3 of the 12 endpoints" and "3 in 2027" find no unit and
+ * stay unclaimed.
+ */
+const UNIT_ALIASES = new Set(Object.keys(UNIT_NORMALIZE));
+
+function findDeferredUnit(text, afterIndex) {
+  const rest = text.slice(afterIndex);
+  // Up to three intervening words, then the candidate unit.
+  const m = /^\s*([a-z][a-z-]*(?:\s+[a-z][a-z-]*){0,3})/i.exec(rest);
+  if (!m) return null;
+  const words = (m[1] ?? "").trim().split(/\s+/).filter(Boolean);
+  // Closest unit wins: "3 stale requests per second" is a count of requests,
+  // not a count of seconds.
+  for (let i = 0; i < words.length; i++) {
+    const unitWord = words[i].toLowerCase();
+    if (!UNIT_ALIASES.has(unitWord)) continue;
+    return { adjectives: words.slice(0, i), unit: UNIT_NORMALIZE[unitWord] ?? unitWord };
+  }
+  return null;
+}
 
 export function extractNumericClaims(text) {
   const claims = [];
-  for (const m of String(text ?? "").matchAll(CLAIM_RE)) {
-    const value = Number(m[2]);
+  const src = String(text ?? "");
+  for (const m of src.matchAll(CLAIM_RE)) {
+    const value = Number(m[3]);
     if (!Number.isFinite(value)) continue;
-    const unitRaw = (m[3] ?? "").trim().toLowerCase();
-    const unit = UNIT_NORMALIZE[unitRaw] ?? (unitRaw || null);
+    if (isEmbeddedNumber(src, m)) continue;
+    const currency = (m[2] ?? "").trim();
+    let unitRaw = (m[4] ?? "").trim().toLowerCase();
+    let adjectives = [];
+    if (!unitRaw && !currency) {
+      const numIdx = (m[0] ?? "").lastIndexOf(m[3] ?? "");
+      const numEnd = (m.index ?? 0) + (numIdx < 0 ? 0 : numIdx) + (m[3] ?? "").length;
+      const deferred = findDeferredUnit(src, numEnd);
+      if (deferred) { unitRaw = deferred.unit; adjectives = deferred.adjectives; }
+    }
+    const unit = currency ? "$" : (UNIT_NORMALIZE[unitRaw] ?? (unitRaw || null));
     const words = (m[1] ?? "").toLowerCase().split(/\s+/).filter(Boolean)
       .map((w) => UNIT_NORMALIZE[w] ?? w)
       .filter((w) => !QUANTITY_STOPWORDS.has(w) && !QUANTITY_NOISE_WORDS.has(w) && !QUANTITY_CONNECTOR_WORDS.has(w));
+    for (const adj of adjectives) {
+      const w = UNIT_NORMALIZE[adj] ?? adj;
+      if (QUANTITY_STOPWORDS.has(w) || QUANTITY_NOISE_WORDS.has(w) || QUANTITY_CONNECTOR_WORDS.has(w)) continue;
+      words.push(w);
+    }
     const quantity = words.join(" ");
     if (!quantity && !unit) continue;
     const lastWord = words[words.length - 1];

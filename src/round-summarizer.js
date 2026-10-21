@@ -5,9 +5,10 @@ import { SUBSTANTIVE_TYPES } from "./utils/contribution-types.js";
 import { renderMyStateMarkdown, STATE_PATCH_CAPS } from "./state-patch.js";
 import { sanitizeForPrompt } from "./utils/sanitize.js";
 import { delimitContext, escapeDelimiters } from "./prompts/delimiters.js";
-import { getSummaryGuidance, orchestratorContextPolicy, getSummaryBand, getTurnOrderGuidance } from "./orchestrator/models.js";
+import { getSummaryGuidance, orchestratorContextPolicy, getSummaryBand, getTurnOrderGuidance, ORCHESTRATOR_SUMMARY_ALWAYS, ORCHESTRATOR_SUMMARY_CODE_BULLET } from "./orchestrator/models.js";
 import { incrementKeyedCounter, recordLatency, recordMeetingCall, recordMeetingLatency } from "./metrics.js";
 import { buildRoundContext } from "./prompts/blocks.js";
+import { readSoPSectionItems, SOP_SECTIONS } from "./state-of-play.js";
 import { sanitizeForDisplay } from "./utils/sanitize.js";
 
 const summarizerLogger = new Logger();
@@ -253,8 +254,22 @@ export function buildRoundSummaryUser(round, state, participantStates = [], orch
     : "";
   // State-of-Play excerpt so "newly established vs already carried" is
   // decidable from prior-round outcomes, not just positions (audit O9/Step 5).
+  // Whole ITEMS, not a character slice: the SoP opens with `## Question` and
+  // `## Tags`, so a 600-char cut usually carried the question and cut the
+  // consensus section mid-bullet — the clerk then judged "newly established"
+  // against a half-line that read as complete (audit C2). The same
+  // whole-unit convention the transcript builder uses.
   const sopExcerpt = opts.stateOfPlay
-    ? `\n## State of Play (prior rounds — what was already established)\n${delimitContext(sanitizeForDisplay(String(opts.stateOfPlay), 600), "PRIOR_STATE_OF_PLAY")}\n`
+    ? (() => {
+        const items = [
+          ...readSoPSectionItems(opts.stateOfPlay, SOP_SECTIONS.agreed).slice(0, 4),
+          ...readSoPSectionItems(opts.stateOfPlay, SOP_SECTIONS.disagreements).slice(0, 2),
+        ]
+          .map((item) => `- ${sanitizeForDisplay(item.replace(/\n/g, " ").trim(), 200)}`)
+          .filter((line) => line !== "- ");
+        if (items.length === 0) return "";
+        return `\n## State of Play (prior rounds — what was already established)\n${delimitContext(items.join("\n"), "PRIOR_STATE_OF_PLAY")}\n`;
+      })()
     : "";
   // Forum snapshot (read passes 5 latest-activity topics; absent when the
   // caller has no forum surface — covered meetings keep the block out). One
@@ -292,15 +307,12 @@ ${roundContextLine}${rosterBlock}${turnOrderBlock}${sopExcerpt}${forumBlock}
 ${formattedContributions}
 ${uncitedBlock}${evidenceHint}${stateHint}
 
-## Output — 5-7 bullets, each 1-3 sentences (human-readable, then auditable):
+## Output — ${band.shape}
 
-- **Established:** What gained support this round, with holder [#id] and why it matters (1-2 sentences)
-- **Settled:** Items the room converged on this round that now have multi-holder agreement — each as a one-line claim with [#id] refs (e.g. "- Mercedes HPP best engine shop, McLaren best whole team on identical PU [#9][#12]"). These feed the meeting-level settled registry. If nothing newly converged, write "None this round". Converged term definitions (what counts, how scored, scope) belong here from round 1 — write them plainly so later rounds cite them by [#id].
-- **Contested:** What remains disputed — name holders and their distinct positions [#id]; map the spectrum, don’t collapse to “disagreement”. Include a stance audit from the Agent States block below: when a participant's recorded stance contradicts a concession they made in-room this round, name them ("retains X despite conceding Y in [#id]").
-- **Evidence:** Tool or vec-grounded evidence introduced (Source or [#id] with Strength: strong/weak/inconclusive); or “None — no new evidence this round” — never emit vec: / vec round traces, use State-of-Play or [#id]
-- **Open:** Unresolved questions and what would resolve them (missing evidence / decision needed). If an open question from a prior round is still open and has no new source attached, flag it “still un-researched”.
-- **Next:** One line — the single decision or output the next round must produce: who must defend, concede, or produce what, against which gate. Direct, not descriptive.
-${isCodeRound ? `- **Code/Files:** Files touched or proposed (file=src/...), diffs status, and test/verification notes` : ""}
+${band.bullets.join("\n")}
+${isCodeRound && !band.bullets.some((b) => b.includes("Code/Files")) ? ORCHESTRATOR_SUMMARY_CODE_BULLET : ""}
+
+${ORCHESTRATOR_SUMMARY_ALWAYS}
 
 Rules: Agent States are remembered positions and standing context, not independent evidence. Attribute them to the named holder. Use uncited state only as context; place it under Evidence only when an explicit Source: or [#id] resolves to a listed contribution or tool signal. Distinguish newly established support from claims already carried in state, and do not add a separate Agent States bullet. Cite [#id] once per bullet when attributing (grouped, not per clause). Keep Contested holders explicit. Evidence must distinguish “None” from “weak/inconclusive”. Never emit vec: / vec round traces — use [#id] or State-of-Play. Preserve numbers verbatim — do not round, estimate, or invent figures not in contributions. When this round carries two or more mutually overlapping thresholds, projections, or repeated numeric tables, consolidate under Established/Contested: name the single live version (or the tiered ladder they compose) and mark older ones superseded by [#id] — do not list four gates as if parallel. Concise but thorough.`
     : `Summarize this deliberation round. The round contained ${contribCount} contribution(s) but no substantive positions were staked.
@@ -313,7 +325,7 @@ Contribution types: ${round.contributions.map((c) => c.type).join(", ")}
 ${evidenceHint}${stateHint}
 
 ## Instructions
-Provide ${band.words} word summary with 4-5 bullets (Established / Contested / Evidence / Open / Code if applicable) noting no substantive deliberation but mentioning contribution types. Agent States are remembered positions and standing context, not independent evidence; attribute them to their named holder and do not add a separate Agent States bullet. Use uncited state only as context, and place it under Evidence only when an explicit Source: or [#id] resolves to a listed contribution or tool signal. Sentence style, human-readable. Preserve numbers verbatim.`;
+Provide a ${band.words} word summary — 2-3 bullets, one line each — noting that no substantive deliberation happened and listing the contribution types. Agent States are remembered positions and standing context, not independent evidence; attribute them to their named holder and do not add a separate Agent States bullet. Use uncited state only as context, and place it under Evidence only when an explicit Source: or [#id] resolves to a listed contribution or tool signal. Sentence style, human-readable. Preserve numbers verbatim.`;
 }
 
 /**

@@ -4,6 +4,7 @@ import { LoomError, extractErrorInfo } from "../logger.js";
 import { getMetricsSnapshot, getMeetingDegradedReasons, recordMeetingDegradedReason, getMeetingBreakdown } from "../metrics.js";
 import { computeMechanismMix } from "../utils/contribution-types.js";
 import { reconcileNumericalConflicts } from "../synthesizer.js";
+import { resolveContextLimit } from "../utils/context-budget.js";
 
 /**
  * N9 — round-budget floor, first half: make the closing round measurable.
@@ -170,11 +171,16 @@ export async function _synthesize() {
 
     let result;
     try {
+      // The synthesizer's window claim must be the window the orchestrator
+      // model actually has (audit C3): a hardcoded "200k" told a 32k model to
+      // write to a budget it did not have.
+      const contextWindow = resolveContextLimit(orchestratorModel, this._availableModels) ?? undefined;
       result = await this._synthesisCoordinator.run({
         transcriptData,
         participants: this._stateManager.getParticipants(),
         model: orchestratorModel,
         meetingId: this._meetingId,
+        contextWindow,
         onStart: () => {
           if (this._options.onSynthesisStart) this._options.onSynthesisStart();
         },

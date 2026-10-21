@@ -127,13 +127,24 @@ export async function promptChildSession(participant) {
   const declaredTaskMode = effectiveAgentTools?.taskMode;
   const codeContext = declaredTaskMode === "programming" ? true : declaredTaskMode === "discussion" ? false : null;
   const activeCountPS = (() => { try { return this._stateManager.getActiveParticipants().length; } catch { return undefined; }})();
+  // The window the prompt is SIZED against and ANNOUNCES must be the window of
+  // the model that will actually run this turn. The assigned model is right
+  // until the circuit breaker swaps in a fallback — then the fallback's window
+  // is the truth, and the prompt has to say so (audit R1). A 32k fallback that
+  // inherited a 1M budget was being handed a prompt it could not accept.
+  const effectiveModel = activeModel
+    ?? this._getParticipantModel?.(participant)
+    ?? participant?.config?.model
+    ?? null;
+  const buildSystemFor = (model) => buildAgentSystemPrompt(participant, {
+    activeCount: activeCountPS,
+    agentTools: effectiveAgentTools,
+    contextWindow: resolveContextLimit(model ?? effectiveModel, this._availableModels),
+    codeContext,
+  });
   // Assigned-model context window for the prompt's window claim (audit 3.4).
   // Unknown models yield null and builders keep their default text unchanged.
-  const participantWindow = resolveContextLimit(
-    this._getParticipantModel?.(participant) ?? participant?.config?.model,
-    this._availableModels,
-  );
-  const systemPrompt = buildAgentSystemPrompt(participant, { activeCount: activeCountPS, agentTools: effectiveAgentTools, contextWindow: participantWindow, codeContext });
+  const participantWindow = resolveContextLimit(effectiveModel, this._availableModels);
   let steeringHint = "";
   let consumedHint = "";
   // Atomic consume — hintLocked flag prevents double-consume if two promptChildSessions race
@@ -182,7 +193,7 @@ export async function promptChildSession(participant) {
   const fitAllStates = (() => { try { return this._stateManager.getAllParticipantStates?.() ?? []; } catch { return []; } })();
   const fitSettledItems = (() => { try { return this._stateManager.getSettledItems?.() ?? []; } catch { return []; } })();
 
-  const buildFitPrompt = () => buildAgentUserPrompt(
+  const buildFitPrompt = (model) => buildAgentUserPrompt(
     participant,
     fitSop,
     fitRecent,
@@ -200,7 +211,9 @@ export async function promptChildSession(participant) {
      (!!(effectiveAgentTools?.enabled && effectiveAgentTools?.loom?.loom_query) && !(Number.isFinite(activeCountPS) && activeCountPS <= 1)),
      mandatoryCapabilities,
       {
-        contextWindow: participantWindow,
+        // The window this prompt is sized for — the model's, not the
+        // assignment's, so a fallback attempt announces its own window.
+        contextWindow: resolveContextLimit(model ?? effectiveModel, this._availableModels) ?? participantWindow,
         // Task-type knob (P9): declared Discussion/Programming trims or keeps
         // the code scaffold; null (undeclared) keeps byte-identical legacy.
         codeContext,
@@ -250,40 +263,73 @@ export async function promptChildSession(participant) {
     },
   ];
 
-  const fitBudgetChars = budgetCharsFor(activeModel, this._availableModels);
-  const fitted = fitPromptToBudget({
-    assemble: buildFitPrompt,
-    budgetChars: fitBudgetChars,
-    overheadChars: systemPrompt.length,
-    steps: fitSteps,
-  });
-  const userPrompt = fitted.value;
-  if (fitted.stepsApplied > 0) {
-    this._logger.info("prompt_trimmed_to_context", `Dropped ${fitted.stepsApplied} prompt block tier(s) to fit ${fitBudgetChars} chars for ${activeModel?.providerID}/${activeModel?.modelID}`, {
-      participant: participant.config.id,
-      model: `${activeModel?.providerID}/${activeModel?.modelID}`,
-      tiersDropped: fitted.stepsApplied,
-      chars: userPrompt.length,
-      stillOverBudget: fitted.overBudget,
-    });
-    try { this._onPromptTrimmed?.(fitBudgetChars - (userPrompt.length + systemPrompt.length), activeModel); } catch {}
-  }
-
-  const promptContext = {
-    type: "agent_turn",
-    system_prompt: systemPrompt,
-    user_prompt: userPrompt,
-    state_of_play: this._stateManager.getStateOfPlay(),
-    recent_contributions: recentForPrompt.map((c) => ({
-      id: c.id, participant_id: c.participant_id, type: c.type,
-      content: c.content, targets_which: c.targets_which,
-    })),
-    reflection: participant.reflection || null,
-    state_version: myState?.version ?? 0,
-    question: this._stateManager.getQuestion(),
-    tags: this._stateManager.getTags(),
-    round: currentRound,
+  // Every fit starts from the SAME pre-fit block set. Without this, a second
+  // fit (for a fallback model) would compound the first model's trims instead
+  // of re-deriving the prompt for the new budget.
+  const fitBase = {
+    evidence: fitEvidence,
+    recent: fitRecent,
+    forum: fitForum,
+    sop: fitSop,
+    lastSummary: fitLastSummary,
   };
+  const restoreFitBase = () => {
+    fitEvidence = fitBase.evidence;
+    fitRecent = fitBase.recent;
+    fitForum = fitBase.forum;
+    fitSop = fitBase.sop;
+    fitLastSummary = fitBase.lastSummary;
+  };
+
+  // Fit the prompt to ONE model's window. Called again for a fallback model:
+  // a smaller window gets a smaller prompt, and the system prompt is rebuilt
+  // so its announced window matches the model that will actually run (audit R1).
+  const fitFor = (model) => {
+    restoreFitBase();
+    const sys = buildSystemFor(model);
+    const budgetChars = budgetCharsFor(model, this._availableModels);
+    const fitted = fitPromptToBudget({
+      assemble: () => buildFitPrompt(model),
+      budgetChars,
+      overheadChars: sys.length,
+      steps: fitSteps,
+    });
+    if (fitted.stepsApplied > 0) {
+      this._logger.info("prompt_trimmed_to_context", `Dropped ${fitted.stepsApplied} prompt block tier(s) to fit ${budgetChars} chars for ${model?.providerID}/${model?.modelID}`, {
+        participant: participant.config.id,
+        model: `${model?.providerID}/${model?.modelID}`,
+        tiersDropped: fitted.stepsApplied,
+        chars: fitted.value.length,
+        stillOverBudget: fitted.overBudget,
+      });
+      try { this._onPromptTrimmed?.(budgetChars - (fitted.value.length + sys.length), model); } catch {}
+    }
+    return { systemPrompt: sys, userPrompt: fitted.value };
+  };
+
+  // The context for ONE model. A fallback attempt rebuilds it for the fallback
+  // model, so the prompt it receives is sized for — and announces — the
+  // window that model actually has (audit R1).
+  const buildContextFor = (model) => {
+    const { systemPrompt: sys, userPrompt: user } = fitFor(model);
+    return {
+      type: "agent_turn",
+      system_prompt: sys,
+      user_prompt: user,
+      state_of_play: this._stateManager.getStateOfPlay(),
+      recent_contributions: recentForPrompt.map((c) => ({
+        id: c.id, participant_id: c.participant_id, type: c.type,
+        content: c.content, targets_which: c.targets_which,
+      })),
+      reflection: participant.reflection || null,
+      state_version: myState?.version ?? 0,
+      question: this._stateManager.getQuestion(),
+      tags: this._stateManager.getTags(),
+      round: currentRound,
+    };
+  };
+
+  const promptContext = buildContextFor(activeModel);
 
 
   const maxRetries = fallbackConfig.enabled ? fallbackConfig.maxRetriesPerModel : 0;
@@ -520,7 +566,11 @@ export async function promptChildSession(participant) {
   const fallbackAttempts = fallbackConfig.maxFallbackAttempts;
   for (let attempt = 0; attempt < fallbackAttempts; attempt++) {
     try {
-      const response = await this._executeAgentTurn(participant, fallbackModel, timeoutMs, promptContext);
+      // Re-fit for the fallback model: a smaller window needs a smaller
+      // prompt, and the system prompt must announce the fallback's window
+      // rather than the failed model's (audit R1).
+      const fallbackContext = buildContextFor(fallbackModel);
+      const response = await this._executeAgentTurn(participant, fallbackModel, timeoutMs, fallbackContext);
       response._fallback = {
         from: this._modelKey(activeModel),
         to: this._modelKey(fallbackModel),

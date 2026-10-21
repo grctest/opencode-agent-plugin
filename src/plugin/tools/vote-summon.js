@@ -23,9 +23,9 @@ const BALLOT_INTERPRETATION_NOTE = "Ballots are returned verbatim and you are th
 export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
   return {
     loom_vote: tool({
-      description: "Call a vote with a lettered question (e.g. 'A) ... B) ...'). All other active participants will vote.",
+      description: "Call a vote with a lettered question (e.g. 'A) ... B) ...'). All other active participants will vote. If the options cannot be enumerated, ask the question in prose — the room then votes on the numbered State of Play items.",
       args: {
-        question: tool.schema.string().min(1).max(500).describe("Vote question with lettered options, e.g. 'A) yes B) no'"),
+        question: tool.schema.string().min(1).max(500).describe("Vote question with lettered options, e.g. 'A) yes B) no'. If the options cannot be enumerated, ask the question in prose and the room votes on the numbered State of Play items."),
       },
        async execute(args, context) {
          const globalCfg = config.getValue("agentTools");
@@ -177,7 +177,18 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
                  stateManager.getStateOfPlay?.() ?? "",
                  voterState
                );
-              const systemPrompt = `You are ${voter.config.name} (${voter.config.category ?? voter.config.tier}) — voting in Loom.\n\nChoose one letter (A/B/C…) as listed in the vote question. Open with your choice as the first token — [Vote: X] — then one sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No contribution tags, 1-2 sentences total, in character.\nYour prose IS the vote and is stored verbatim — the invoker reads it directly, so there is no parser to satisfy. State your reasoning, not only the letter.`;
+              // The ballot format follows the poll: a lettered poll is voted by
+              // letter, an unlettered one by the number of the item in the
+              // State of Play list. The system prompt used to say "choose one
+              // letter" unconditionally while the user prompt said "letter or
+              // SoP number" — on an unlettered poll the model anchored on the
+              // system prompt and voted "[Vote: A]" for an option that does not
+              // exist (audit Q5).
+              const lettered = /\b[A-Z]\)/.test(String(args.question ?? ""));
+              const ballotFormat = lettered
+                ? "Choose one letter (A/B/C…) exactly as listed in the vote question. Open with your choice as the first token — [Vote: A]"
+                : "Choose one option exactly as listed in the vote prompt (a numbered State of Play item when the poll is unlettered). Open with your choice as the first token — [Vote: 2]";
+              const systemPrompt = `You are ${voter.config.name} (${voter.config.category ?? voter.config.tier}) — voting in Loom.\n\n${ballotFormat}, then one sentence criterion (cost/risk/time/reversibility) reflecting your agenda. No contribution tags, 1-2 sentences total, in character.\nYour prose IS the vote and is stored verbatim — the invoker reads it directly, so there is no parser to satisfy. State your reasoning, not only the choice.`;
               const effectiveSourceId = caller?.config?.id ?? callerForPrompt.config.id;
               const promptContext = {
                 type: "vote_response",

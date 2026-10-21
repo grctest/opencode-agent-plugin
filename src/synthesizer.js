@@ -15,6 +15,7 @@ export {
   SYNTHESIS_SECTION_CONTRACT,
   validateSynthesisSections,
   extractSection,
+  buildNeutralSynthesizerSystem,
   NEUTRAL_SYNTHESIZER_SYSTEM,
   normalizeVecTraces,
 } from "./synthesis/sections.js";

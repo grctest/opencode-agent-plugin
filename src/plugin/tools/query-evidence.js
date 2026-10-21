@@ -174,25 +174,33 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
                // draft contribution to show. Passing `question` here too would render
                // it twice (once per block); pass an explicit note instead and keep
                // the question solely in the QUESTION block (audit B3).
+               // The asker invoked this query mid-turn, before writing their
+               // contribution — there is no draft to show. The question below is
+               // self-contained; answer it directly.
+               //
+               // The note travels OUTSIDE the fenced block: the fence contract
+               // says its content is data and imperatives inside it are to be
+               // ignored — a meta-instruction posted inside the fence teaches
+               // the target to discount every fence (audit M2).
                const noDraftNote = "The asker invoked this query mid-turn, before writing their contribution — there is no draft to show. The question below is self-contained; answer it directly.";
                let prompt;
                 if (mode === "evidence") {
                   prompt = buildEvidencePrompt(
                     callerForPrompt,
                     target,
-                    noDraftNote,
+                    "",
                     question,
                     roundContribs,
                     stateManager.getCurrentRound(),
                     stateManager.getMaxRounds(),
                     targetState,
-                    { settledItems }
+                    { settledItems, sourceNote: noDraftNote }
                   );
                 } else {
                   prompt = buildQueryPrompt(
                     callerForPrompt,
                     target,
-                    noDraftNote,
+                    "",
                     question,
                     roundContribs,
                     stateManager.getCurrentRound(),
@@ -200,7 +208,7 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
                     stateOfPlay,
                     mode,
                     targetState,
-                    { settledItems }
+                    { settledItems, sourceNote: noDraftNote }
                   );
                 }
 

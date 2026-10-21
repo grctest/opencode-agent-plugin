@@ -507,8 +507,8 @@ export function takeStateSlots(ranked, cap = STATE_PATCH_CAPS.buckets, perHolder
 /**
  * Settled registry (F-A): the consensus subset of per-agent `established`
  * buckets — items held by ≥2 agents, ranked and capped exactly like the SoP
- * Agreements section. Derived per turn from live state (never stored), so it
- * cannot go stale. Returns [{ text, holders: [names] }].
+ * Agreements & Proposals section. Derived per turn from live state (never
+ * stored), so it cannot go stale. Returns [{ text, holders: [names] }].
  */
 export function getSettledItems(allStates, { cap = STATE_PATCH_CAPS.buckets } = {}) {
   const entries = buildStateEntries(allStates);
@@ -525,15 +525,18 @@ export function aggregateStateOfPlay(allStates, question, tags) {
 
   const collect = (get, opts) => takeStateSlots(rankStateSlots(nonEmpty, get, opts)).map(slotText);
 
-  const established = collect((s) => s.established);
   const contested = collect((s) => s.contested);
   const open = collect((s) => s.open);
-  // Decisions & Proposals and Agreements both require ≥2 holders — a single
-  // agent's self-assertion must not render with the visual authority of
-  // consensus. Single-holder established items remain in the agent's private
-  // state but are excluded from the shared SoP (audit A4, P11 fix).
-  const decisions = collect((s) => s.established, { minHolders: 2 });
-  const agreements = collect((s) => s.established, { minHolders: 2 });
+  // ONE consensus section, and it requires ≥2 holders — a single agent's
+  // self-assertion must not render with the visual authority of consensus.
+  // Single-holder established items remain in the agent's private state but
+  // are excluded from the shared SoP (audit A4, P11 fix).
+  //
+  // This bucket is both "proposals" and "agreements": the patch channel files
+  // both in `established`, so splitting them produced two identical lists
+  // under two headings (audit Q3). The per-row "(N holders)" suffix still
+  // reports how many agents stand behind each item.
+  const agreed = collect((s) => s.established, { minHolders: 2 });
 
   // Key Facts: stances ranked alongside evidence with an evidence floor, never
   // 8/0 in either direction (audit A3). Stances lead (positions first), then
@@ -583,8 +586,8 @@ export function aggregateStateOfPlay(allStates, question, tags) {
 
   return formatStateOfPlay(
     {
-      decisions,
-      agreements,
+      decisions: agreed,
+      agreements: [],
       disagreements: contested,
       openQuestions: open,
       keyFacts,

@@ -177,6 +177,42 @@ test("control: the same evidence block survives on a 1M-window model", async () 
 
 // ------------------------------------------------ the degradation is recorded
 
+// A fallback model is a DIFFERENT model: it has its own window, and a prompt
+// assembled for the failed model can be larger than the fallback can accept.
+// The fit therefore runs again for the fallback, and the system prompt states
+// the fallback's window rather than the failed model's (audit R1).
+test("a fallback model gets a prompt fitted for its own window", async () => {
+  const weave = Array.from({ length: 12 }, (_, i) => ({
+    id: `c${i}`, participant_id: "p2", type: "contribution", round: 2,
+    content: `contribution ${i} ` + "x".repeat(12000), targets_which: null,
+  }));
+  // Primary: a 1M-window model. The fallback the ladder picks is smaller.
+  const { ctx, participant, captured } = fakeExecutor({ model: AVAILABLE[2], weave });
+  ctx._executeAgentTurn = async (p, m, timeoutMs, promptContext) => {
+    captured.push({ model: m, promptContext });
+    if (m.modelID === AVAILABLE[2].modelID) throw new Error("provider exploded");
+    return { ok: true, text: "Acknowledged.", result: null, error: null };
+  };
+
+  await promptChildSession.call(ctx, participant);
+
+  const primary = captured.find((c) => c.model.modelID === AVAILABLE[2].modelID);
+  const fallback = captured.find((c) => c.model.modelID !== AVAILABLE[2].modelID);
+  assert.ok(primary, "the primary model was tried");
+  assert.ok(fallback, "the ladder must have tried a fallback model");
+  assert.notEqual(fallback.model.modelID, primary.model.modelID);
+
+  const fallbackModel = AVAILABLE.find((m) => m.modelID === fallback.model.modelID);
+  const budget = budgetFor(fallbackModel);
+  const total = fallback.promptContext.user_prompt.length + fallback.promptContext.system_prompt.length;
+  assert.ok(
+    total <= budget,
+    `fallback prompt of ${total} chars exceeds the ${fallbackModel.limit.context}-token window budget of ${budget}`,
+  );
+  // The system prompt announces the FALLBACK's window, not the failed model's.
+  assert.match(fallback.promptContext.system_prompt, /32k window|8k window/);
+  assert.doesNotMatch(fallback.promptContext.system_prompt, /1M window/);
+});
 // A guard that shortens a prompt invisibly is worse than no guard, so both
 // outcomes are recorded as named degradation reasons at the orchestrator.
 import { getMeetingDegradedReasons, getMetricsSnapshot } from "../src/metrics.js";
