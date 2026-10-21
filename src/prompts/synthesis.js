@@ -22,9 +22,21 @@ export function detectTaskMode(question, tags = []) {
   return "conversational";
 }
 
+/**
+ * Declared task type beats inferred (P9): dashboard meetings always declare
+ * their mode via the Setup radio ("discussion" | "programming"), and it maps
+ * straight onto the synthesis modes. Meetings with no declaration (CLI/API)
+ * keep the legacy text-signal inference.
+ */
+export function resolveTaskMode(question, tags = [], opts = {}) {
+  if (opts?.taskMode === "programming") return "code-analysis";
+  if (opts?.taskMode === "discussion") return "conversational";
+  return detectTaskMode(question, tags);
+}
+
 /** Builds a prompt for synthesizing the final deliberation artifact from all contributions. */
 export function buildSynthesisPrompt(question, transcript, participants = [], tags = [], stateOfPlay = "", userContext = "", opts = {}) {
-  const mode = detectTaskMode(question, tags);
+  const mode = resolveTaskMode(question, tags, opts);
   const isCode = mode === "code-analysis";
   const windowNote = `${windowLabel(opts.contextWindow) ?? "200k"} window`;
   const safeQuestion = escapeDelimiters(sanitizeForDisplay(question, 20000));
@@ -88,7 +100,7 @@ export function buildSynthesisPrompt(question, transcript, participants = [], ta
 - Reasoning: ${L.synthesisReasoning} words — 4-8 bullets, who argued what + evidence + tradeoff, group cites; deduplicate vs Decision table (map vs narrative)
 - Proposed Fix: ${L.synthesisProposedFix} words — Files: \`path\` + diffs \`\`\`tsx file=src/...\`\`\` + why, mark Proposed if synthesized, note live edits vs proposals, include tests
 - Action Items: ${L.synthesisActionItems} words — verbs with owners or “proposed: X → handoff to @role” + block cites; distribute owners, max 2 per holder (may be “None — see Proposed Fix”)
-- Open Questions: ${L.synthesisOpenQuestions} words — why remains + suggested probe
+- Open Questions: ${L.synthesisOpenQuestions} words — why remains + suggested probe: name the single concrete query, dataset, or experiment that would close it
 - Confidence: ${L.synthesisConfidence} words — one word + rubric justification (High may have dissent if bounded and grounded)
 Total 1600-3500 words welcome; concise but thorough — preserve numbers/code verbatim, no invented figures.\n`
     : `## Length — concise but thorough (${windowNote} — verbose welcome, yapping not)
@@ -96,7 +108,7 @@ Total 1600-3500 words welcome; concise but thorough — preserve numbers/code ve
 - Decision / Synthesis: ${L.synthesisDecision} words — one paragraph OR spectrum table if no consensus; group citations per block; table cells concise (Evidence 30-35w + one grouped cite, Tradeoff 30-35w)
 - Reasoning: ${L.synthesisReasoning} words — 4-8 bullets, each who argued what + evidence + tradeoff, group cites; DEDUPLICATE vs Decision — Decision maps positions, Reasoning explains why they emerged/diverged, do not copy-paste numbers verbatim thrice
 - Action Items: ${L.synthesisActionItems} words — verbs with owners or “proposed: X → handoff to @role” + block cites; distribute owners (max 2 per holder unless justified)
-- Open Questions: ${L.synthesisOpenQuestions} words — why remains + suggested probe/next step
+- Open Questions: ${L.synthesisOpenQuestions} words — why remains + suggested probe: name the single concrete query, dataset, or experiment that would close it
 - Confidence: ${L.synthesisConfidence} words — one word + rubric justification
 Total 1500-3500 words welcome; concise but thorough — preserve numbers verbatim, no invented figures.\n`;
 
@@ -107,7 +119,7 @@ Total 1500-3500 words welcome; concise but thorough — preserve numbers verbati
 Human-first plain narrative (no citations). 2-4 sentences: what was asked, what the deliberation found, and the key tradeoff/next step. For code: also state files touched and whether live edits occurred.
 
 ## Decision
-If convergent: one-paragraph direct answer citing key [#id]s (grouped per block, no vec: leak). If divergent / open-ended: write “No single decision — spectrum below” then map options in a table | Option | Holder(s) | Evidence (30-35w + one grouped cite) | Tradeoff (30-35w) | — still cite [#id]s per option. Tables MUST include the GFM delimiter row as the second line (| --- | --- | --- | --- |) or they will not render. Preserve numbers verbatim. Dissent does not force a decision. Keep cells concise, not paragraphs.
+If convergent: one-paragraph direct answer citing key [#id]s (grouped per block, no vec: leak). If divergent / open-ended: write “No single decision — spectrum below” then map options in a table | Option | Holder(s) | Evidence (30-35w + one grouped cite) | Tradeoff (30-35w) | — still cite [#id]s per option. Tables MUST include the GFM delimiter row as the second line (| --- | --- | --- | --- |) or they will not render. Preserve numbers verbatim. Dissent does not force a decision. Keep cells concise, not paragraphs. If any ballot or straw-poll tally exists in the transcript, record it first under Decision — a held vote outranks the "No single decision" framing; map the dissenting positions after the tally, and superseded votes are re-opened per the Ratchet rule below.
 
 ## Decision Rule
 Required when there is no single Decision above. State the rule that WILL resolve the spectrum — Trigger, Order, Owner, Date, Default, Re-pricing. If a single Decision was reached above, write "None — decided above."
@@ -132,14 +144,14 @@ Files involved + diffs with \`\`\`tsx file=src/...\`\`\` blocks. Mark any novel 
 (Empty → “None — see Proposed Fix.”) Distribute owners; max 2 per holder.
 
 ## Open Questions
-- {question that remains} — why it remains (missing evidence / unresolved tradeoff) — how to resolve`
+- {question that remains} — why it remains (missing evidence / unresolved tradeoff) — suggested next probe: name the single concrete query, dataset, or experiment that would close it`
     : `## Required Sections — output these exact headings in this order, even if empty (write “None” where appropriate)
 
 ## Executive Summary
 Human-first plain narrative (no citations). 2-4 sentences: what was asked, what the deliberation found, and the key open tradeoff. Write for a busy human scanning — concise.
 
 ## Decision
-If convergent: one-paragraph direct answer citing key [#id]s (grouped per block, never vec:). If divergent / open-ended: write “No single decision — spectrum below” then present a table | Position | Holder(s) | Evidence (30-35w max + one grouped cite) | Tradeoff (30-35w max) | — still cite [#id]s per row. **Label each Position by its content, never by its ballot letter** — letters are scoped to one question and shift meaning between rounds, so “ballot C” is not an identifier. A row keyed only by a letter is a defect. Tables MUST include the GFM delimiter row as the second line (| --- | --- | --- | --- |) or they will not render. Preserve numbers verbatim. Do not force consensus; mapping the disagreement is a valid outcome. Keep cells concise.
+If convergent: one-paragraph direct answer citing key [#id]s (grouped per block, never vec:). If divergent / open-ended: write “No single decision — spectrum below” then present a table | Position | Holder(s) | Evidence (30-35w max + one grouped cite) | Tradeoff (30-35w max) | — still cite [#id]s per row. **Label each Position by its content, never by its ballot letter** — letters are scoped to one question and shift meaning between rounds, so “ballot C” is not an identifier. A row keyed only by a letter is a defect. Tables MUST include the GFM delimiter row as the second line (| --- | --- | --- | --- |) or they will not render. Preserve numbers verbatim. Do not force consensus; mapping the disagreement is a valid outcome. Keep cells concise. If any ballot or straw-poll tally exists in the transcript, record it first under Decision — a held vote outranks the "No single decision" framing; map the dissenting positions after the tally, and superseded votes are re-opened per the Ratchet rule below.
 
 ## Decision Rule
 Required when there is no single Decision above. State the rule that WILL resolve the spectrum — Trigger, Order, Owner, Date, Default, Re-pricing. If a single Decision was reached above, write "None — decided above."
@@ -161,8 +173,7 @@ Required when there is no single Decision above. State the rule that WILL resolv
 (Empty → “None — deliberation surfaced no actionable consensus; see Open Questions for next step.”) Distribute owners; max 2 per holder unless justified.
 
 ## Open Questions
-- {question that remains} — why it remains (missing evidence / unresolved tradeoff) — suggested next probe or experiment`;
-
+- {question that remains} — why it remains (missing evidence / unresolved tradeoff) — suggested next probe: name the single concrete query, dataset, or experiment that would close it`;
   return `You are the synthesis auditor. The deliberation is complete. Produce the final artifact — human-readable FIRST, then citation-grounded detail. Thoroughness welcome; dissent is valuable, not a failure.
 ${modeNote}
 ## Original Question
@@ -177,7 +188,7 @@ ${participantsSection}
 You are not a participant. You are an auditor. Every claim you make must be traceable, but human readability comes first.
 ${opts.decisionPosture ? `\nOperator decision posture: ${getOrchestratorDecisionSentence({ decisionPosture: opts.decisionPosture }).replace(/^Decision posture: /, "").replace(/\.$/, "")}. This is emphasis only — it is outranked by every numbered rule below.\n` : ""}
 ${groundingRule}2. **No invention:** Do not invent numbers, dates, costs, tool results, or participant positions not in transcript/State-of-Play. If evidence conflicts, state both and set Confidence accordingly. For code, do not invent file contents not read via tool.
-3. **Actionability:** Action Items are verbs with owners or “proposed owner: …” if unattributed. ‘Verify’ and ‘track’ are not action items unless they name what changes when they complete.
+3. **Actionability:** Action Items are verbs with owners or “proposed owner: …” if unattributed. ‘Verify’ and ‘track’ are not action items unless they name what changes when they complete. Owners and handoff targets must be names that appear in ## Participants (activity) — never invent @handle/@role placeholders (no "@technical-analysis"-style invented teams); if no seated participant fits the work, write 'proposed: X — needs a participant with domain Y'.
 4. **Open-ended discipline:** Do NOT force a single Decision if transcript shows spectrum. “No single decision — spectrum below” + table is correct. Mapping disagreement is a success.
 5. **Versioned base tables:** When a recurring number set (leaderboard, standings, win totals) is published as a versioned base table (e.g. “leaderboard v1” with season length, per-team/driver wins, sources, as-of round), later contributions cite that version or publish the next version with a diff line. Cite only the LATEST version — never mix figures from different versions. If versions conflict, state both and set Confidence accordingly.
 6. **Ratchet votes:** A ballot is never final against new evidence. If later contributions supersede a voted question — new data, a corrected figure, a changed premise — record the vote as re-opened and state which evidence re-opened it. When new evidence has emerged since the last ballot, the final round closes with a confirmation ballot on the superseded question; record its outcome, not just the original tally.

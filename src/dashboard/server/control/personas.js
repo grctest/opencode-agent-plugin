@@ -129,6 +129,7 @@ export async function handleOrchestratorPreview(req) {
       question: body?.question,
       context: body?.context,
       participants: body?.participants,
+      features: body?.features,
     }));
   } catch (err) {
     return Response.json({ error: extractErrorInfo(err).message }, { status: 400 });

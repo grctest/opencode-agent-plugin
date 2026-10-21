@@ -45,6 +45,7 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
         question={s.question} setQuestion={s.setQuestion}
         context={s.context} setContext={s.setContext}
         maxRounds={s.maxRounds} setMaxRounds={s.setMaxRounds}
+        taskMode={s.taskMode} setTaskMode={s.setTaskMode}
         disabled={questionDisabled} sectionRef={registerSection("question")}
       />
 

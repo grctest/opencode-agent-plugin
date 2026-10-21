@@ -87,6 +87,48 @@ export function getTopic(db, meetingId, topicId) {
   };
 }
 
+/**
+ * Cold-start seed (post-mortem 7811b8db §8, cause 1): `optional` forums stayed
+ * at 0 uses because no one wants to be the first to populate an empty forum
+ * when the live transcript already carries shared memory, and the single
+ * `loom_forum_list_topics` probe returned empty → "nothing to see, move on".
+ * The orchestrator opens one designated side-channel topic at init so the
+ * forum starts with a job (park sub-problems / data asides) and a reader (the
+ * State-of-Play forum digest). Idempotent — call only creates when the forum
+ * has no topics yet, so resume paths reuse the existing seed.
+ *
+ * Accepts either the high-level MeetingDatabase facade (as wired in
+ * orchestrator/init.js) or a raw database handle; existence checks and
+ * creation route to whichever layer is present.
+ */
+export function seedSubProblemsTopic(db, meetingId, question = "") {
+  let existing;
+  try {
+    if (typeof db?.listForumTopics === "function") existing = db.listForumTopics({}) ?? [];
+    else existing = listTopics(db, meetingId, {});
+  } catch {
+    return null;
+  }
+  if (existing.length > 0) return null;
+  const clean = String(question ?? "").replace(/\s+/g, " ").trim();
+  const title = clean
+    ? `Sub-problems & data needs — ${clean.slice(0, 64)}${clean.length > 64 ? "…" : ""}`
+    : "Sub-problems & data needs";
+  const body = [
+    "The room's async side-channel — a designated place for anything that deserves its own space:",
+    "a sub-problem someone opened that never got an answer, a data need (missing figure, source check, scope test),",
+    "or a deep dive too large for a main contribution.",
+    "",
+    "To use it:",
+    "- Comment on THIS topic (loom_forum_add_comment with topic_id) for general side-notes; cite threads in your prose as [#T{id}].",
+    "- Open a NEW topic per sub-problem (loom_forum_create_topic) so each keeps its own record.",
+    "- Threads (ids + latest comments) digest into the State of Play each round and reach the final synthesis — writing here is writing to the room.",
+  ].join("\n");
+  const input = { title, body, tags: ["seed"], authorId: "orchestrator" };
+  if (typeof db?.createForumTopic === "function") return db.createForumTopic(input);
+  return createTopic(db, meetingId, input);
+}
+
 export function addComment(db, meetingId, topicId, { body, authorId }) {
   const topic = qq(db,
     `SELECT id FROM forum_topics WHERE id = ? AND meeting_id = ?`,

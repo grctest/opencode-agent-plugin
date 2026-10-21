@@ -1,4 +1,4 @@
-import { buildSynthesisPrompt, detectTaskMode } from "./prompts/synthesis.js";
+import { buildSynthesisPrompt, resolveTaskMode } from "./prompts/synthesis.js";
 import { formatFinalRoundTranscript } from "./state-of-play.js";
 import { finalizeSynthesis, validateSynthesisSections, NEUTRAL_SYNTHESIZER_SYSTEM, SYNTHESIS_SECTION_CONTRACT } from "./synthesizer.js";
 import { getConfig } from "./config.js";
@@ -46,9 +46,9 @@ export function buildOrchestratorSynthesisSystem(config = {}) {
  * O8/Step 3): the file-centric framing otherwise invites fabricated file
  * references that the conversational grounding rule does not forbid.
  */
-export function getEffectiveSynthesisStyle(config = {}, question, tags = []) {
+export function getEffectiveSynthesisStyle(config = {}, question, tags = [], taskMode) {
   const style = normalizeOrchestratorConfig(config).synthesisStyle;
-  if (style === "technical_audit" && detectTaskMode(question, tags) !== "code-analysis") {
+  if (style === "technical_audit" && resolveTaskMode(question, tags, { taskMode }) !== "code-analysis") {
     return "technical_audit_conversational";
   }
   return style;
@@ -90,7 +90,7 @@ export class SynthesisCoordinator {
       // non-code questions (audit O8). Threaded through draft + critique.
       const effectiveConfig = {
         ...this.#orchestratorConfig,
-        synthesisStyle: getEffectiveSynthesisStyle(this.#orchestratorConfig, transcriptData.question, transcriptData.tags),
+        synthesisStyle: getEffectiveSynthesisStyle(this.#orchestratorConfig, transcriptData.question, transcriptData.tags, transcriptData.taskMode),
       };
       artifactText = await this.#promptWithRetry(synthSessionId, transcriptData, transcript, model, participants, stateOfPlay, userContext, effectiveConfig, heartbeat);
       artifactText = await this.#critique(synthSessionId, artifactText, transcript, transcriptData, model, participants, effectiveConfig, heartbeat);
@@ -123,7 +123,7 @@ export class SynthesisCoordinator {
       // than only in the round clerk's summary.
       const engagement = computeEngagementLedger(transcriptData);
       const userPrompt =
-        buildSynthesisPrompt(transcriptData.question, transcript, allParticipants, transcriptData.tags ?? [], stateOfPlay, userContext, { buildMode: transcriptData.buildMode, decisionPosture: effectiveConfig?.decisionPosture, engagement }) +
+        buildSynthesisPrompt(transcriptData.question, transcript, allParticipants, transcriptData.tags ?? [], stateOfPlay, userContext, { buildMode: transcriptData.buildMode, taskMode: transcriptData.taskMode, decisionPosture: effectiveConfig?.decisionPosture, engagement }) +
         additionalFeedback;
 
       const llmStart = Date.now();
@@ -257,7 +257,7 @@ If corrections are needed, output the FULL revised synthesis with ALL required s
 ## Decision
 ## Decision Rule (required when the draft maps a spectrum without a single Decision)
 ## Reasoning
-${text.toLowerCase().includes("proposed fix") || detectTaskMode(transcriptData?.question, transcriptData?.tags) === "code-analysis" ? "## Proposed Fix\n## Action Items\n" : "## Action Items\n"}## Dissenting Views
+${text.toLowerCase().includes("proposed fix") || resolveTaskMode(transcriptData?.question, transcriptData?.tags ?? [], { taskMode: transcriptData?.taskMode }) === "code-analysis" ? "## Proposed Fix\n## Action Items\n" : "## Action Items\n"}## Dissenting Views
 ## Open Questions
 ## Confidence
 

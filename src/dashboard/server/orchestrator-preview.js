@@ -10,6 +10,7 @@ import {
 import { buildRoundSummarySystem, buildRoundSummaryUser } from "../../round-summarizer.js";
 import { buildOrchestratorSynthesisSystem } from "../../synthesis-coordinator.js";
 import { buildSynthesisPrompt } from "../../prompts/synthesis.js";
+import { normalizeFeatures } from "./control/forms.js";
 import { formatFinalRoundTranscript } from "../../state-of-play.js";
 import { sanitizeForDisplay } from "../../utils/sanitize.js";
 
@@ -131,7 +132,7 @@ export function buildOrchestratorPromptPreview(input = {}) {
     [],
     sampleStateOfPlay,
     context,
-    { decisionPosture: config.decisionPosture },
+    { decisionPosture: config.decisionPosture, taskMode: normalizeFeatures(input.features ?? {}).taskMode },
   );
   const customSentence = getOrchestratorCustomSentence(config);
   return {

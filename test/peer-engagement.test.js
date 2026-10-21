@@ -31,6 +31,22 @@ test("findUncitedPlainContributions ignores responses and ballots", () => {
   assert.equal(findUncitedPlainContributions([WEAVE[2]]).length, 0);
 });
 
+test("a plain contribution citing a forum thread counts as engaged", () => {
+  // Post-mortem 7811b8db §8 cause 2: a `[#T{id}]` thread cite carried no credit
+  // in the [#id] economy, so the graded contract pushed agents to peer queries
+  // over the forum. A thread is a peer channel (its authors are participants),
+  // so a thread cite now satisfies the engagement check.
+  const threadEngaged = WEAVE[1] ? [...WEAVE, { id: 7, type: "contribution", round: 2, participant_id: "c", content: "Parked the data-need on the side channel [#T12] until the floor lands." }] : WEAVE;
+  const uncited = findUncitedPlainContributions(threadEngaged);
+  assert.deepEqual(uncited.map((c) => c.id), [2]);
+  // A thread cite still doesn't count as weave coverage or a self-cite —
+  // those metrics stay contribution-id keyed.
+  const metrics = computeEngagementMetrics([{ id: 7, type: "contribution", round: 2, participant_id: "c", content: "Cites a thread [#T20]." }]);
+  assert.equal(metrics.plain_contributions, 1);
+  assert.equal(metrics.peer_uncited, 0);
+  assert.equal(metrics.self_cites, 0);
+});
+
 test("computeEngagementMetrics counts self-cites and coverage", () => {
   const withSelfCite = [...WEAVE, { id: 6, type: "contribution", round: 2, participant_id: "a", content: "Restating my own point [#6] for the record." }];
   const metrics = computeEngagementMetrics(withSelfCite);

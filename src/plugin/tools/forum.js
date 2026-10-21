@@ -55,7 +55,8 @@ export function createForumTools({ config, resolveMeeting, activeLooms }) {
     loom_forum_create_topic: tool({
       description:
         "Create a forum topic for async sub-discussion. Other participants can comment on it later. " +
-        "Use for proposing a sub-problem, requesting input on a specific sub-topic, or flagging an issue for group attention.",
+        "Use for proposing a sub-problem, requesting input on a specific sub-topic, or flagging an issue for group attention. " +
+        "The returned topic id is citable in your prose as [#T{id}] — threads digest into the State of Play each round and reach the final synthesis, so recording here is not lost.",
       args: {
         title: tool.schema.string().min(1).max(200).describe("Topic title (1-200 chars)"),
         body: tool.schema.string().min(1).max(4000).describe("Topic body — your full question or proposal (1-4000 chars)"),
@@ -89,13 +90,13 @@ export function createForumTools({ config, resolveMeeting, activeLooms }) {
           }
           const existing = (db.listForumTopics({}) ?? []).find((topic) => String(topic.title ?? "").trim().toLowerCase() === title.toLowerCase());
           if (existing) {
-            const payload = { topic_id: existing.id, title: existing.title, created_at: existing.created_at, reused: true };
+            const payload = { topic_id: existing.id, title: existing.title, created_at: existing.created_at, reused: true, cite_as: `[#T${existing.id}]` };
             const outputStr = JSON.stringify(payload);
             auditForumTool({ db, stateManager, caller, meetingId: runtime.meetingId, tool: "loom_forum_create_topic", input: args, output: outputStr, status: "completed", title: `loom_forum_create_topic: #${existing.id} reused` });
             return { output: outputStr, metadata: { topic_id: existing.id, reused: true }, title: `loom_forum_create_topic: #${existing.id} reused` };
           }
           const result = db.createForumTopic({ title, body, tags: args.tags ?? [], authorId });
-          const payload = { topic_id: result.id, title, created_at: result.created_at };
+          const payload = { topic_id: result.id, title, created_at: result.created_at, cite_as: `[#T${result.id}]` };
           const outputStr = JSON.stringify(payload);
           auditForumTool({ db, stateManager, caller, meetingId: runtime.meetingId, tool: "loom_forum_create_topic", input: args, output: outputStr, status: "completed", title: `loom_forum_create_topic: #${result.id}` });
           return { output: outputStr, metadata: { topic_id: result.id }, title: `loom_forum_create_topic: #${result.id}` };
@@ -191,7 +192,8 @@ export function createForumTools({ config, resolveMeeting, activeLooms }) {
     loom_forum_add_comment: tool({
       description:
         "Add a comment to an existing forum topic — contribute to the sub-discussion. " +
-        "Use to answer a question, provide evidence, or push back on a proposal.",
+        "Use to answer a question, provide evidence, or push back on a proposal. " +
+        "Cite the thread in your prose as [#T{topic_id}] — the State of Play digest and the final synthesis read threads by that id.",
       args: {
         topic_id: tool.schema.number().int().describe("Topic ID to comment on"),
         body: tool.schema.string().min(1).max(4000).describe("Your comment (1-4000 chars)"),
@@ -224,7 +226,7 @@ export function createForumTools({ config, resolveMeeting, activeLooms }) {
             auditForumTool({ db, stateManager, caller, meetingId: runtime.meetingId, tool: "loom_forum_add_comment", input: args, output: errPayload, status: "error", title: "loom_forum_add_comment error" });
             return { output: errPayload, metadata: { error: true }, title: "loom_forum_add_comment error" };
           }
-          const payload = { comment_id: result.id, topic_id: args.topic_id, created_at: result.created_at };
+          const payload = { comment_id: result.id, topic_id: args.topic_id, created_at: result.created_at, cite_as: `[#T${args.topic_id}]` };
           const outputStr = JSON.stringify(payload);
           auditForumTool({ db, stateManager, caller, meetingId: runtime.meetingId, tool: "loom_forum_add_comment", input: args, output: outputStr, status: "completed", title: `loom_forum_add_comment: #${result.id} on #${args.topic_id}` });
           return { output: outputStr, metadata: { comment_id: result.id, topic_id: args.topic_id }, title: `loom_forum_add_comment: #${result.id} on #${args.topic_id}` };

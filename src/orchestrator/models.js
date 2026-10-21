@@ -226,13 +226,11 @@ export function getSummaryGuidance(config = {}) {
     balanced: "Be thorough but compact: preserve nuance, evidence, dissent, and unresolved tradeoffs.",
     exhaustive: "Be exhaustive: retain material details, competing positions, evidence, and open threads.",
   };
-  // Default density tail: the round clerk is the only participant that sees the
-  // whole round, so it carries the re-litigation + decision-rule observation
-  // duty when the operator hasn't supplied customInstructions (plan §4.8).
-  const densityTail = value.customInstructions
-    ? ""
-    : " In late rounds (3+), note contributions that re-state State of Play without new evidence, and state whether a decision rule (trigger + date + owner) exists for the final artifact.";
-  return styles[value.summaryStyle] + densityTail;
+  // Contract-enforcement tail — always on, independent of customInstructions:
+  // restatement/gate consolidation are referee duties, not style preferences
+  // (the clerk is the only participant that sees the whole round).
+  const refereeTail = " Enforce the room's own contract in what you read: note any contribution that re-states State of Play or its own prior position without a delta — name the largest by [#id]. When two or more contributions carry mutually overlapping thresholds or projections, name the single live version (or the tiered ladder they compose) and mark older ones superseded — never record parallel duplicates as if equally live. In late rounds (3+), state whether a decision rule (trigger + date + owner) exists for the final artifact.";
+  return styles[value.summaryStyle] + refereeTail;
 }
 
 const SYNTHESIS_GUIDANCE_STYLES = {

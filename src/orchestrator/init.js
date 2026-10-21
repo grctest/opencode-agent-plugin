@@ -1,6 +1,7 @@
 import { getConfig } from "../config.js";
 import { resolveContextLimit } from "../utils/context-budget.js";
 import { MeetingDatabase } from "../database.js";
+import { seedSubProblemsTopic } from "../database/forum-operations.js";
 import { SessionManager } from "../session-manager.js";
 import { SynthesisCoordinator } from "../synthesis-coordinator.js";
 import { PersonaIndex } from "../services/persona-index.js";
@@ -74,6 +75,24 @@ import { extractErrorInfo } from "../logger.js";
         };
         db.upsertMeeting(meetingInput);
         this._logger.info("meeting_upserted", "Meeting row ensured in database");
+
+        // Forum cold-start seed (post-mortem 7811b8db §8): an optional forum
+        // with zero topics stays at zero uses — nobody volunteers to be the
+        // first writer over a live transcript that already carries shared
+        // memory. Seeding one orchestrator-owned side-channel topic gives the
+        // forum a designated job and a first reader via the State-of-Play
+        // forum digest. Never fatal: a seed failure only degrades the forum to
+        // its old cold-start behavior.
+        try {
+          const toolsCfg = this._options.agentTools ?? getConfig().agentTools;
+          const forumEnabled = !!(toolsCfg?.enabled && toolsCfg?.loom?.loom_forum);
+          if (forumEnabled) {
+            const seed = seedSubProblemsTopic(db, this._meetingId, this._options.question);
+            if (seed?.id) this._logger.info("forum_seeded", `Seeded forum side-channel topic #${seed.id}`);
+          }
+        } catch (err) {
+          this._logger.warn("forum_seed_failed", "Forum seed skipped — forum still usable, just without a starter topic", extractErrorInfo(err));
+        }
       }
 
       // Ensure a real embedder is loaded; guard with 5s timeout so init never hangs indefinitely (init runs outside stall watchdog)
@@ -138,7 +157,7 @@ import { extractErrorInfo } from "../logger.js";
       });
       this._roundExecutor._onPromptTrimmed = (charsTrimmed, model) => this._recordPromptTrim(charsTrimmed, model);
 
-      this._roundService = new RoundService({ roundExecutor: this._roundExecutor, stateManager: this._stateManager });
+      this._roundService = new RoundService({ roundExecutor: this._roundExecutor, stateManager: this._stateManager, db });
 
       this._logger.info("initialized", `Meeting ${this._resume ? "resumed" : "initialized"}`, { participants: this._stateManager.getParticipants().length, resumed: this._resume });
     } catch (err) {

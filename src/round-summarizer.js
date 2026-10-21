@@ -112,7 +112,12 @@ export function filterRoundSummaryContributions(contributions = []) {
   });
 }
 
-const PEER_CITATION_RE = /\[#\d+\]/;
+// Peer engagement regex: plain `[#id]` citations plus `[#T{id}]` thread cites
+// (the forum side-channel is a peer channel — a thread authored by another
+// participant counts as engagement, and a thread an agent opened and cited
+// back still implies sub-discussion; self-cite tracking stays id-keyed to the
+// weave below, where topics never appear).
+const PEER_CITATION_RE = /\[#T?\d+\]/;
 
 /**
  * P7 — Citation engagement check: returns plain (non-response) contributions
@@ -251,6 +256,22 @@ export function buildRoundSummaryUser(round, state, participantStates = [], orch
   const sopExcerpt = opts.stateOfPlay
     ? `\n## State of Play (prior rounds — what was already established)\n${delimitContext(sanitizeForDisplay(String(opts.stateOfPlay), 600), "PRIOR_STATE_OF_PLAY")}\n`
     : "";
+  // Forum snapshot (read passes 5 latest-activity topics; absent when the
+  // caller has no forum surface — covered meetings keep the block out). One
+  // bounded line per thread so a lively forum can't crowd the clerk budget.
+  const forumRows = Array.isArray(opts.forumTopics) ? opts.forumTopics : [];
+  const forumActivity = forumRows
+    .map((t) => {
+      const id = t.id;
+      if (id === undefined || id === null || id === "") return null;
+      const title = sanitizeForDisplay(String(t.title ?? ""), 80).replace(/\s+/g, " ").trim() || "(untitled)";
+      const count = Number(t.comment_count ?? 0);
+      return `- [#T${id}] “${title}” — ${count} ${count === 1 ? "reply" : "replies"}`;
+    })
+    .filter(Boolean);
+  const forumBlock = forumActivity.length > 0
+    ? `\n## Forum Threads (async side-channel)\n${forumActivity.join("\n")}\n\n_If a thread moved positions this round, say so in an Established/Contested bullet: was it opened/answered, and by whom._\n`
+    : "";
   // P7 — Citation engagement: report plain contributions that have no peer
   // [#id] citation so the clerk can flag isolated contributions.
   const uncitedPlains = findUncitedPlainContributions(round.contributions);
@@ -266,21 +287,22 @@ export function buildRoundSummaryUser(round, state, participantStates = [], orch
 
 ## Question
 ${state.question || "(no question provided)"}
-${roundContextLine}${rosterBlock}${turnOrderBlock}${sopExcerpt}
+${roundContextLine}${rosterBlock}${turnOrderBlock}${sopExcerpt}${forumBlock}
 ## Round ${round.number || "?"} Contributions
 ${formattedContributions}
 ${uncitedBlock}${evidenceHint}${stateHint}
 
-## Output — 5-6 bullets, each 1-3 sentences (human-readable, then auditable):
+## Output — 5-7 bullets, each 1-3 sentences (human-readable, then auditable):
 
 - **Established:** What gained support this round, with holder [#id] and why it matters (1-2 sentences)
-- **Settled:** Items the room converged on this round that now have multi-holder agreement — each as a one-line claim with [#id] refs (e.g. "- Mercedes HPP best engine shop, McLaren best whole team on identical PU [#9][#12]"). These feed the meeting-level settled registry. If nothing newly converged, write "None this round".
-- **Contested:** What remains disputed — name holders and their distinct positions [#id]; map the spectrum, don’t collapse to “disagreement”
+- **Settled:** Items the room converged on this round that now have multi-holder agreement — each as a one-line claim with [#id] refs (e.g. "- Mercedes HPP best engine shop, McLaren best whole team on identical PU [#9][#12]"). These feed the meeting-level settled registry. If nothing newly converged, write "None this round". Converged term definitions (what counts, how scored, scope) belong here from round 1 — write them plainly so later rounds cite them by [#id].
+- **Contested:** What remains disputed — name holders and their distinct positions [#id]; map the spectrum, don’t collapse to “disagreement”. Include a stance audit from the Agent States block below: when a participant's recorded stance contradicts a concession they made in-room this round, name them ("retains X despite conceding Y in [#id]").
 - **Evidence:** Tool or vec-grounded evidence introduced (Source or [#id] with Strength: strong/weak/inconclusive); or “None — no new evidence this round” — never emit vec: / vec round traces, use State-of-Play or [#id]
 - **Open:** Unresolved questions and what would resolve them (missing evidence / decision needed). If an open question from a prior round is still open and has no new source attached, flag it “still un-researched”.
+- **Next:** One line — the single decision or output the next round must produce: who must defend, concede, or produce what, against which gate. Direct, not descriptive.
 ${isCodeRound ? `- **Code/Files:** Files touched or proposed (file=src/...), diffs status, and test/verification notes` : ""}
 
-Rules: Agent States are remembered positions and standing context, not independent evidence. Attribute them to the named holder. Use uncited state only as context; place it under Evidence only when an explicit Source: or [#id] resolves to a listed contribution or tool signal. Distinguish newly established support from claims already carried in state, and do not add a separate Agent States bullet. Cite [#id] once per bullet when attributing (grouped, not per clause). Keep Contested holders explicit. Evidence must distinguish “None” from “weak/inconclusive”. Never emit vec: / vec round traces — use [#id] or State-of-Play. Preserve numbers verbatim — do not round, estimate, or invent figures not in contributions. Concise but thorough.`
+Rules: Agent States are remembered positions and standing context, not independent evidence. Attribute them to the named holder. Use uncited state only as context; place it under Evidence only when an explicit Source: or [#id] resolves to a listed contribution or tool signal. Distinguish newly established support from claims already carried in state, and do not add a separate Agent States bullet. Cite [#id] once per bullet when attributing (grouped, not per clause). Keep Contested holders explicit. Evidence must distinguish “None” from “weak/inconclusive”. Never emit vec: / vec round traces — use [#id] or State-of-Play. Preserve numbers verbatim — do not round, estimate, or invent figures not in contributions. When this round carries two or more mutually overlapping thresholds, projections, or repeated numeric tables, consolidate under Established/Contested: name the single live version (or the tiered ladder they compose) and mark older ones superseded by [#id] — do not list four gates as if parallel. Concise but thorough.`
     : `Summarize this deliberation round. The round contained ${contribCount} contribution(s) but no substantive positions were staked.
 
 ## Question

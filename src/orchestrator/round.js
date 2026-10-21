@@ -1,6 +1,7 @@
 import { getConfig } from "../config.js";
 import { LoomError, extractErrorInfo } from "../logger.js";
 import { updateStateOfPlay, mergeStateOfPlay } from "../state-of-play.js";
+import { formatForumSideThreadsSection } from "../utils/forum-digest.js";
 import { mergeSettledBullet } from "../lib/settled-registry.js";
 import { truncate } from "../shared.js";
 import { SUMMARY_TRUNCATE_LEN } from "./constants.js";
@@ -187,6 +188,22 @@ export async function _finalizeRound(updatedRound) {
         );
         newStateOfPlay = mergeStateOfPlay(newStateOfPlay, weaveStateOfPlay);
       }
+      // Forum read-through (post-mortem 7811b8db §8): forum content previously
+      // reached nothing downstream — a write-only sink agents rationally
+      // ignored when the tool was optional (0 uses in 400). Appending a bounded
+      // [#T{id}]-labelled digest makes the forum a reader-backed channel: this
+      // SoP ships into every agent turn, the round clerk, and the final
+      // synthesis. Digest failure degrades to no section — never to a failed
+      // finalization.
+      try {
+        const toolsCfg = this._roundExecutor?.getEffectiveAgentTools?.() ?? getConfig().agentTools;
+        const forumEnabled = !!(toolsCfg?.enabled && toolsCfg?.loom?.loom_forum);
+        const topics = forumEnabled
+          ? this._database?.listForumTopicsForPrompt?.(5) ?? []
+          : [];
+        const forumSection = formatForumSideThreadsSection(topics);
+        if (forumSection) newStateOfPlay = newStateOfPlay ? `${newStateOfPlay}\n\n${forumSection}` : forumSection;
+      } catch {}
       this._stateManager.setStateOfPlay(newStateOfPlay);
       // Settled registry (retrospective P0-2): merge the clerk's Settled bullet
       // into the meeting-level list. The clerk detects paraphrased consensus
@@ -277,14 +294,30 @@ export async function _finalizeRound(updatedRound) {
         return false;
       }
 
+      // Steering hints (soft, ≤300 chars, consumed once by next round's first
+      // speaker). Priority: final-round ballot nudge > decision-shaped nudge >
+      // consolidation. Conditions are computed inline from round rows + weave —
+      // deliberately NOT via computeMechanismMix, whose telemetry contract
+      // ("read-only, no caller gates or steers") stays intact.
+      const votesHeld = this._stateManager.getWeave().filter((c) => c.type === "vote_response").length;
+      const currentRoundNum = this._stateManager.getCurrentRound();
+      const maxRoundsTotal = this._stateManager.getMaxRounds?.() ?? null;
+      const toolsCfg = this._roundExecutor?.getEffectiveAgentTools?.() ?? getConfig().agentTools;
+      const voteEnabled = !!(toolsCfg?.enabled && toolsCfg?.loom?.loom_vote);
       const critiqueCount = updatedRound.contributions.filter((c) => c.type === "critique_response").length;
-      if (critiqueCount >= 3) {
+      let steeringHint = null;
+      if (Number.isFinite(maxRoundsTotal) && currentRoundNum >= maxRoundsTotal - 1 && votesHeld === 0 && voteEnabled) {
+        steeringHint = "Steering note for the next speaker (closing round): no ballot has been held. If the live disagreement is a scalar threshold or binary the room has priced, open by calling loom_vote on the discriminating question — a held tally outranks another restatement round; if a vote would change nothing, open your contribution by saying why.";
+      } else if (currentRoundNum >= 2 && votesHeld === 0 && updatedRound.contributions.length > 0) {
+        steeringHint = "Steering note for the next speaker: two rounds in, nothing has been priced as a decision. Open with the decision-shaped move — your top option, its price (numbers + reference class), and its kill line — even if contested. A prose straw poll on the discriminating question is a valid opener.";
+      } else if (critiqueCount >= 3) {
         const hasSynthesis = updatedRound.contributions.some(c => c.type === "synthesize");
         if (!hasSynthesis) {
-          this._stateManager.setNextRoundSteering(
-            "Steering note for the next speaker: last round had multiple disagreements with no consolidation. Please synthesize positions — cite [#id] — before opening a new challenge."
-          );
+          steeringHint = "Steering note for the next speaker: last round had multiple disagreements with no consolidation. Please synthesize positions — cite [#id] — before opening a new challenge.";
         }
+      }
+      if (steeringHint) {
+        this._stateManager.setNextRoundSteering(steeringHint);
       }
 
       await this._persistState();

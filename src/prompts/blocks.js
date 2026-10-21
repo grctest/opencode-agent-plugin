@@ -251,9 +251,10 @@ export function buildRoundContext(currentRound, maxRounds) {
     return `Early deliberation (round ${currentRound}/${maxRounds}) — DIVERGE. Surface assumptions, name hidden constraints, introduce distinct options. Don't converge yet; explore the full spectrum. Thoroughness welcome.
 - Stake your own position first, in your own terms — do not build on the first speaker's frame or vocabulary. If you disagree with the emerging frame, say so and name the frame you'd use instead.
 - Before critiquing a front-runner, spend one passage on the strongest case for a *different* option than the current leader.
-- Frozen terms: the question's load-bearing terms (event set, scoring body, season shape, roster date, key definitions) are frozen before round 1. If you use a term that differs from the frozen definition, flag the divergence in one clause — definition-adjacent disputes are clerk-flagged, not debated.`;
+- Frozen terms: nothing is frozen yet. If you are the first speaker, state in 1-3 lines how you read the question's load-bearing terms (what counts, how scored, scope). If a definition is already on the table (State of Play / Live), adopt it or amend yours in one clause — divergence is flagged once, definition disputes are not debated.`;
   } else if (progress <= 0.66) {
     return `Mid deliberation (round ${currentRound}/${maxRounds}) — MAP & REFINE. Identify what’s settled vs contested, bundle related proposals, steelman opposing views, surface tradeoffs with numbers where possible. Name what would unlock next steps but don’t force consensus.
+- File at least one critique of a peer's load-bearing claim this round (in prose or loom_query mode 'critique') — a round spent only restating your view is a round spent restating.
 - When you build on a settled point, cite its [#id] once and add a delta — don’t restate it.`;
   } else {
     return `Late deliberation (round ${currentRound}/${maxRounds}) — CONSOLIDATE or LEAVE OPEN.

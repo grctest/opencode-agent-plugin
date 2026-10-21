@@ -46,6 +46,11 @@ const DEFAULT_FEATURES = {
   // Deliberation mode: false = Plan (read-only), true = Build (agents may
   // write/edit project files). Defaults to Plan — writing is opt-in.
   buildMode: false,
+  // Task type, declared by the user in Setup (radio beside Max rounds):
+  // "discussion" = agents deliberate in prose (no code scaffold in prompts);
+  // "programming" = code collaboration (diffs, files, handoffs). Declared
+  // beats inferred — the prompts never guess the task from the question text.
+  taskMode: "discussion",
 };
 
 export const DEFAULT_SETUP_FORM = {
@@ -194,6 +199,7 @@ function sanitizeForm(raw) {
     agentCommands: typeof rawFeatures.agentCommands === "boolean" ? rawFeatures.agentCommands : DEFAULT_FEATURES.agentCommands,
     parallelQueries: typeof rawFeatures.parallelQueries === "boolean" ? rawFeatures.parallelQueries : DEFAULT_FEATURES.parallelQueries,
     buildMode: rawFeatures.buildMode === true,
+    taskMode: rawFeatures.taskMode === "programming" ? "programming" : "discussion",
   };
   return {
     version: FORM_VERSION,

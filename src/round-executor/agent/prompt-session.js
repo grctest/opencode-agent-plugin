@@ -120,6 +120,12 @@ export async function promptChildSession(participant) {
     }
   } catch { evidenceCache = []; }
 
+  // Task-type knob: the dashboard's Discussion/Programming radio declares the
+  // meeting's scaffold — declared beats inferred. Meetings without a declared
+  // value (CLI/API runs, legacy tool configs) get `null`, and both prompt
+  // builders preserve their exact pre-knob rendering for that case.
+  const declaredTaskMode = effectiveAgentTools?.taskMode;
+  const codeContext = declaredTaskMode === "programming" ? true : declaredTaskMode === "discussion" ? false : null;
   const activeCountPS = (() => { try { return this._stateManager.getActiveParticipants().length; } catch { return undefined; }})();
   // Assigned-model context window for the prompt's window claim (audit 3.4).
   // Unknown models yield null and builders keep their default text unchanged.
@@ -127,7 +133,7 @@ export async function promptChildSession(participant) {
     this._getParticipantModel?.(participant) ?? participant?.config?.model,
     this._availableModels,
   );
-  const systemPrompt = buildAgentSystemPrompt(participant, { activeCount: activeCountPS, agentTools: effectiveAgentTools, contextWindow: participantWindow });
+  const systemPrompt = buildAgentSystemPrompt(participant, { activeCount: activeCountPS, agentTools: effectiveAgentTools, contextWindow: participantWindow, codeContext });
   let steeringHint = "";
   let consumedHint = "";
   // Atomic consume — hintLocked flag prevents double-consume if two promptChildSessions race
@@ -195,6 +201,9 @@ export async function promptChildSession(participant) {
      mandatoryCapabilities,
       {
         contextWindow: participantWindow,
+        // Task-type knob (P9): declared Discussion/Programming trims or keeps
+        // the code scaffold; null (undeclared) keeps byte-identical legacy.
+        codeContext,
         maxRounds: fitMaxRounds,
         // Settled registry (F-A): all roster states for the exact-match
         // fallback, plus the meeting-level clerk-designated registry
@@ -345,7 +354,7 @@ export async function promptChildSession(participant) {
     if (!loomOutputsRaw.trim()) return null;
     // Lossless: the recovery synthesis parses complete peer answers.
     const loomOutputs = loomOutputsRaw;
-    const synthesisInstruction = `Loom tool results RECOVERED from earlier attempt (reused, not re-executed — ${existing.length} peer contribution(s) already persisted for batch ${participant.currentBatchId}):\n${loomOutputs}\n\nNow synthesize your final contribution incorporating these responses. Cite [#id] when referencing peer answers. Do not re-call loom_query/loom_vote/loom_summon — you have the results. Stay in character and follow OUTPUT CONTRACT.`;
+    const synthesisInstruction = `Loom tool results RECOVERED from earlier attempt (reused, not re-executed — ${existing.length} peer contribution(s) already persisted for batch ${participant.currentBatchId}):\n${loomOutputs}\n\nNow synthesize your final contribution incorporating these responses. For EACH answer that bears on your move, take a position — accept / reject / partially accept with a one-clause reason, citing its [#id]; an answer you neither accept nor reject was not engaged. Cite [#id] when referencing peer answers. Do not re-call loom_query/loom_vote/loom_summon — you have the results. Stay in character and follow OUTPUT CONTRACT.`;
     const activeCountExec = (() => { try { return this._stateManager.getActiveParticipants().length; } catch { return undefined; }})();
     const synthesisToolsMap = buildToolsMapWithoutLoom(config, { activeCount: activeCountExec });
     // Always create a fresh ephemeral session for recovery — reusing the round-scoped

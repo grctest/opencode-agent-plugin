@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { StateManager } from "../src/services/state-manager.js";
-import { buildAgentStatesContext, buildRoundSummarySystem, summarizeRound } from "../src/round-summarizer.js";
+import { buildAgentStatesContext, buildRoundSummarySystem, buildRoundSummaryUser, summarizeRound } from "../src/round-summarizer.js";
 import { RoundService } from "../src/services/round-service.js";
 import { SynthesisCoordinator } from "../src/synthesis-coordinator.js";
 import { buildSynthesisPrompt } from "../src/prompts/synthesis.js";
@@ -136,13 +136,53 @@ test("round summary prompt receives current attributed states and evidence rules
   assert.doesNotMatch(prompt, /## Agent States \(carried\)/);
 });
 
-test("clerk guidance carries the density tail only when customInstructions is empty (plan §4.8)", () => {
+test("clerk referee duties are always-on, even when operator customInstructions are set (O1)", () => {
   const bare = buildRoundSummarySystem({ summaryStyle: "balanced", customInstructions: "" });
-  assert.match(bare, /In late rounds \(3\+\), note contributions that re-state State of Play without new evidence/);
+  assert.match(bare, /note any contribution that re-states State of Play or its own prior position without a delta/);
   assert.match(bare, /state whether a decision rule \(trigger \+ date \+ owner\) exists/);
   const custom = buildRoundSummarySystem({ summaryStyle: "balanced", customInstructions: "Challenge weak evidence." });
-  assert.doesNotMatch(custom, /In late rounds \(3\+\), note contributions that re-state/);
-  assert.doesNotMatch(custom, /decision rule \(trigger \+ date \+ owner\) exists/);
+  // Plan §O1: restatement/gate duties are contract enforcement, not a style
+  // preference — they survive operator customInstructions on purpose.
+  assert.match(custom, /note any contribution that re-states State of Play or its own prior position without a delta/);
+  assert.match(custom, /decision rule \(trigger \+ date \+ owner\) exists/);
+});
+
+test("clerk prompt carries a forum snapshot taken from the passed rows, absent without them", () => {
+  // Post-mortem 7811b8db §8: the summary was the third reader the forum
+  // content never reached. The block appears only when the caller supplied
+  // topic rows (round-service with a db), so covered meetings shift nothing.
+  const withForum = buildRoundSummaryUser(
+    { number: 2, contributions: [{ id: 1, participant_id: "agent", type: "contribution", content: "Position." }] },
+    { question: "Q", tags: [] },
+    [],
+    {},
+    { roster: [{ id: "a", contributions_count: 1, status: "listening" }], forumTopics: [
+      { id: 12, title: "Denominator collapses", comment_count: 3 },
+      { id: 15, title: "Data need", comment_count: 0 },
+    ] },
+  );
+  assert.match(withForum, /## Forum Threads \(async side-channel\)/);
+  assert.match(withForum, /\[#T12\] “Denominator collapses” — 3 replies/);
+  assert.match(withForum, /\[#T15\] “Data need” — 0 replies/);
+  assert.match(withForum, /was it opened\/answered/);
+
+  const withoutForum = buildRoundSummaryUser(
+    { number: 2, contributions: [{ id: 1, participant_id: "agent", type: "contribution", content: "Position." }] },
+    { question: "Q", tags: [] },
+    [],
+    {},
+    { roster: [{ id: "a", contributions_count: 1, status: "listening" }] },
+  );
+  assert.doesNotMatch(withoutForum, /Forum Threads/);
+
+  const emptyForum = buildRoundSummaryUser(
+    { number: 2, contributions: [{ id: 1, participant_id: "agent", type: "contribution", content: "Position." }] },
+    { question: "Q", tags: [] },
+    [],
+    {},
+    { roster: [{ id: "a", contributions_count: 1, status: "listening" }], forumTopics: [] },
+  );
+  assert.doesNotMatch(emptyForum, /Forum Threads/);
 });
 
 test("round service snapshots state after prompt execution, not from the pre-round state", async () => {

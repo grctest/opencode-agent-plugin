@@ -15,6 +15,7 @@ export function useSetupState({ selectedMeeting, onStarted, meetingState, meetin
   const setQuestion = (v) => { patchForm({ question: v }); setGuidance(null); };
   const setContext = (v) => { patchForm({ context: v }); setGuidance(null); };
   const setMaxRounds = (v) => patchForm({ maxRounds: v });
+  const setTaskMode = (v) => setFeature("taskMode", v === "programming" ? "programming" : "discussion");
   const setStartedId = (v) => patchForm({ startedId: v });
   const setOrchestratorField = (key, value) => patchForm({ orchestrator: { ...orchestrator, [key]: value } });
   const setFeature = (key, value) => patchForm({ features: { ...features, [key]: value } });
@@ -362,6 +363,7 @@ export function useSetupState({ selectedMeeting, onStarted, meetingState, meetin
         question: current.question,
         context: current.context,
         participants: current.seats,
+        features: current.features,
       }));
     } catch (err) {
       setPreviewError(err.message);
@@ -537,6 +539,7 @@ export function useSetupState({ selectedMeeting, onStarted, meetingState, meetin
 
   return {
     question, context, maxRounds, seats, startedId, orchestrator, features,
+    taskMode: features.taskMode === "programming" ? "programming" : "discussion", setTaskMode,
     setQuestion, setContext, setMaxRounds, setStartedId, setOrchestratorField, setFeature, setSeats, patchForm,
     clearForm, catalog, llm, suggestedModels, busy, error, guidance, swapIdx, setSwapIdx,
     addOpen, setAddOpen, rankOpen, setRankOpen, ranked, rankAutoSelect, rankSuggestedModels,

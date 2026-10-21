@@ -66,6 +66,9 @@ export function normalizeFeatures(raw = {}) {
     agentCommands: raw.agentCommands !== false,
     parallelQueries: raw.parallelQueries !== false,
     buildMode: raw.buildMode === true,
+    // Task type declared by the user (Program/Discuss radio). One of two
+    // declared values or the default — never inferred from the question text.
+    taskMode: raw.taskMode === "programming" ? "programming" : "discussion",
   };
 }
 
@@ -78,6 +81,9 @@ export function buildMeetingAgentTools(features, base = getConfig().agentTools) 
   const buildMode = features.buildMode === true;
   tools.enabled = true;
   tools.buildMode = buildMode;
+  // Declared task type rides the effective tool config: the prompt builders
+  // read it from agentTools (single plumbing path, like buildMode above).
+  tools.taskMode = features.taskMode === "programming" ? "programming" : "discussion";
   tools.builtIn = {
     ...(tools.builtIn ?? {}),
     read: localSearchEnabled,

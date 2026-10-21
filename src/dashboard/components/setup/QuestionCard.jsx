@@ -1,9 +1,10 @@
+import { Button } from "../ui/button.tsx";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "../ui/card.tsx";
 import { Input } from "../ui/input.tsx";
 import { Textarea } from "../ui/textarea.tsx";
 import { Label } from "../ui/label.tsx";
 
-export function QuestionCard({ question, setQuestion, context, setContext, maxRounds, setMaxRounds, disabled, sectionRef }) {
+export function QuestionCard({ question, setQuestion, context, setContext, maxRounds, setMaxRounds, taskMode, setTaskMode, disabled, sectionRef }) {
   return (
     <Card ref={sectionRef}>
       <CardHeader>
@@ -46,6 +47,35 @@ export function QuestionCard({ question, setQuestion, context, setContext, maxRo
               className="w-20"
               disabled={disabled}
             />
+          </div>
+          <div className="flex items-center gap-2">
+            <Label htmlFor="loom-task-mode">Task type</Label>
+            <div className="flex shrink-0 items-center gap-1" role="group" aria-label="Task type" id="loom-task-mode">
+              <Button
+                type="button"
+                size="sm"
+                variant={taskMode === "discussion" ? "default" : "outline"}
+                disabled={disabled}
+                onClick={() => setTaskMode("discussion")}
+                aria-pressed={taskMode === "discussion"}
+                title="Agents deliberate in prose — research, cite, and argue. No code scaffolding in the prompts."
+                className="px-2 text-[11px]"
+              >
+                Discussion
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={taskMode === "programming" ? "default" : "outline"}
+                disabled={disabled}
+                onClick={() => setTaskMode("programming")}
+                aria-pressed={taskMode === "programming"}
+                title="Code collaboration: agents read files, propose or apply diffs, and hand off work."
+                className="px-2 text-[11px]"
+              >
+                Programming
+              </Button>
+            </div>
           </div>
         </div>
       </CardContent>

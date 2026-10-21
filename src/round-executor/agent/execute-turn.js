@@ -315,7 +315,7 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
         const out = typeof tc.output === "string" ? tc.output : JSON.stringify(tc.output);
         return `Tool ${tc.tool} (${tc.callID}) returned:\n${out}`;
       }).join("\n\n");
-      const synthesisInstruction = `Loom tool results (${loomOutputs.length} chars, complete — not truncated):\n${loomOutputs}\n\nNow synthesize your final contribution incorporating these responses. Cite [#id] when referencing peer answers. Do not re-call loom_query/loom_vote/loom_summon — you have the results. Stay in character and follow OUTPUT CONTRACT.`;
+      const synthesisInstruction = `Loom tool results (${loomOutputs.length} chars, complete — not truncated):\n${loomOutputs}\n\nNow synthesize your final contribution incorporating these responses. For EACH answer that bears on your move, take a position — accept / reject / partially accept with a one-clause reason, citing its [#id]; an answer you neither accept nor reject was not engaged, and restating it back without a position is a contract violation. Cite [#id] when referencing peer answers. Do not re-call loom_query/loom_vote/loom_summon — you have the results. Stay in character and follow OUTPUT CONTRACT.`;
       if (!loomOutputs.trim()) {
         this._logger.warn("synthesis_empty_outputs", `Skipping synthesis for ${participant.config.name} — loom outputs empty after budget cap`);
       } else {

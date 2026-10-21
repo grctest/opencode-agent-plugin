@@ -417,7 +417,7 @@ test("late-round density wording is phase-gated", () => {
     { maxRounds: 5, contextWindow: 200000 },
   );
   assert.doesNotMatch(earlyUser, /density beats volume/);
-  assert.match(lateUser, /density beats volume — 350–500 words unless you are introducing new evidence or a decision-relevant synthesis/);
+  assert.match(lateUser, /density beats volume — 350–500 words unless you are introducing new evidence or decision-relevant synthesis/);
 });
 
 // 27. F-A — settled registry: only ≥2-holder established items surface.

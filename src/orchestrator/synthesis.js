@@ -151,7 +151,11 @@ export async function _synthesize() {
     try {
       const at = this._roundExecutor?.getEffectiveAgentTools?.() ?? getConfig()?.agentTools;
       transcriptData.buildMode = !!(at?.enabled && (at?.buildMode === true || at?.builtIn?.write === true || at?.builtIn?.edit === true));
-    } catch { transcriptData.buildMode = false; }
+      // Declared task type (P9): the dashboard's Discussion/Programming radio,
+      // carried on the effective tool config. undefined for CLI/API meetings —
+      // those keep the legacy text-signal inference in the synthesis prompt.
+      transcriptData.taskMode = at?.taskMode ?? null;
+    } catch { transcriptData.buildMode = false; transcriptData.taskMode = null; }
 
     // P10 — pre-synthesis reconciliation pass: a pre-synthesis scan of the
     // weave for numerical conflicts. Here we surface the round-headroom signal

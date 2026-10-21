@@ -14,14 +14,18 @@ export class RoundService {
   /** @type {import("../logger.js").Logger} */
   #logger;
   #stateManager;
+  #db;
 
   /**
    * @param {Object} params
    * @param {import("../round-executor.js").RoundExecutor} params.roundExecutor
+   * @param {import("../database.js").MeetingDatabase} [params.db] — read-only
+   *   surface for the clerk's forum snapshot (optional; tests may omit it).
    */
-  constructor({ roundExecutor, stateManager }) {
+  constructor({ roundExecutor, stateManager, db = null }) {
     this.#roundExecutor = roundExecutor;
     this.#stateManager = stateManager;
+    this.#db = db;
     this.#logger = new Logger();
   }
 
@@ -67,6 +71,10 @@ export class RoundService {
             }))
           : [],
         stateOfPlay: typeof sm?.getStateOfPlay === "function" ? sm.getStateOfPlay() : "",
+        // Forum snapshot taken HERE, not from the prior SoP: the SoP is
+        // recomputed after this call, so a thread opened/commented this round
+        // would otherwise be invisible to the clerk who should report it.
+        forumTopics: this.#db?.listForumTopicsForPrompt?.(5) ?? null,
       };
     } catch {}
     try {
