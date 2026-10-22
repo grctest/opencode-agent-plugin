@@ -101,7 +101,7 @@ export function getTopic(db, meetingId, topicId) {
  * orchestrator/init.js) or a raw database handle; existence checks and
  * creation route to whichever layer is present.
  */
-export function seedSubProblemsTopic(db, meetingId, question = "") {
+export function seedSubProblemsTopic(db, meetingId, question = "", { authorId = null } = {}) {
   let existing;
   try {
     if (typeof db?.listForumTopics === "function") existing = db.listForumTopics({}) ?? [];
@@ -124,9 +124,45 @@ export function seedSubProblemsTopic(db, meetingId, question = "") {
     "- Open a NEW topic per sub-problem (loom_forum_create_topic) so each keeps its own record.",
     "- Threads (ids + latest comments) digest into the State of Play each round and reach the final synthesis — writing here is writing to the room.",
   ].join("\n");
-  const input = { title, body, tags: ["seed"], authorId: "orchestrator" };
+  // The author must be a REAL seat: forum_topics.author_id REFERENCES
+  // participants(id).
+  //
+  // The orchestrator is NOT a participant. It has its own area, it is called
+  // last, and it must never be injected into the participants table. An
+  // earlier version of this seed tried to satisfy the foreign key by creating
+  // a participant row for the synthetic author "orchestrator" — which put a
+  // phantom "Orchestrator" seat into the participants table, and the
+  // dashboard's participant list (unlike the read-only meeting snapshot) did
+  // not filter the 'summoned' status, so the orchestrator appeared in the
+  // active participant list the moment a meeting started.
+  //
+  // So the seed is authored by a real seat, and when no seat row exists it
+  // declines to seed rather than inventing one. The topic keeps its "seed"
+  // tag, and its body already frames it as the room's side-channel.
+  if (!authorId || !participantRowExists(db, meetingId, authorId)) return null;
+  const input = { title, body, tags: ["seed"], authorId };
   if (typeof db?.createForumTopic === "function") return db.createForumTopic(input);
   return createTopic(db, meetingId, input);
+}
+
+/**
+ * Does a REAL seat row exist for this author? The 'summoned' status is
+ * reserved for rows that are not seats (summoned guest experts), so it is
+ * excluded here as well.
+ */
+function participantRowExists(db, meetingId, participantId) {
+  try {
+    if (typeof db?.getAllParticipantsWithStatus === "function") {
+      return (db.getAllParticipantsWithStatus() ?? []).some((p) => p?.id === participantId && p?.status !== "summoned");
+    }
+    return !!qq(db, "SELECT 1 FROM participants WHERE id = ? AND meeting_id = ? AND status != 'summoned'").get(participantId, meetingId);
+  } catch {
+    // A handle that cannot answer the question is not evidence AGAINST the
+    // author — let the insert decide. The foreign key is the real guarantee
+    // that a non-seat author can never be written: the seed no longer creates
+    // participant rows at all, so a missing author simply means no topic.
+    return true;
+  }
 }
 
 export function addComment(db, meetingId, topicId, { body, authorId }) {

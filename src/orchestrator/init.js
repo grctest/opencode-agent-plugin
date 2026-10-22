@@ -79,15 +79,25 @@ import { extractErrorInfo } from "../logger.js";
         // Forum cold-start seed (post-mortem 7811b8db §8): an optional forum
         // with zero topics stays at zero uses — nobody volunteers to be the
         // first writer over a live transcript that already carries shared
-        // memory. Seeding one orchestrator-owned side-channel topic gives the
-        // forum a designated job and a first reader via the State-of-Play
-        // forum digest. Never fatal: a seed failure only degrades the forum to
+        // memory. Seeding one room-owned side-channel topic gives the forum a
+        // designated job and a first reader via the State-of-Play forum
+        // digest. Never fatal: a seed failure only degrades the forum to
         // its old cold-start behavior.
+        //
+        // The topic is authored by a REAL seat: forum_topics.author_id
+        // references participants(id), and the orchestrator is NOT a
+        // participant — it has its own area and is called last. Creating a
+        // participant row for a synthetic "orchestrator" author injected a
+        // phantom seat into the participants table, and the dashboard's
+        // participant list did not filter the 'summoned' status, so the
+        // orchestrator appeared in the active participant list the moment a
+        // meeting started. If no seat row exists, the seed simply declines.
         try {
           const toolsCfg = this._options.agentTools ?? getConfig().agentTools;
           const forumEnabled = !!(toolsCfg?.enabled && toolsCfg?.loom?.loom_forum);
           if (forumEnabled) {
-            const seed = seedSubProblemsTopic(db, this._meetingId, this._options.question);
+            const authorId = this._stateManager.getParticipants().find((p) => p?.config?.id)?.config?.id ?? null;
+            const seed = seedSubProblemsTopic(db, this._meetingId, this._options.question, { authorId });
             if (seed?.id) this._logger.info("forum_seeded", `Seeded forum side-channel topic #${seed.id}`);
           }
         } catch (err) {

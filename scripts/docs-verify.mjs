@@ -10,6 +10,11 @@ import { LENGTH_LIMITS } from "../src/prompts/constants.js";
 import { TUNING } from "../src/config/defaults.js";
 import { ORCHESTRATOR_SUMMARY_ALWAYS, ORCHESTRATOR_SUMMARY_BANDS } from "../src/orchestrator/models.js";
 import { buildNeutralSynthesizerSystem } from "../src/synthesis/sections.js";
+import { buildSettledBlock } from "../src/prompts/blocks.js";
+import { isProviderUnavailableError } from "../src/utils/retry.js";
+import { readFileSync as readFile } from "node:fs";
+import { renderClerkAccount } from "../src/lib/clerk-summary.js";
+import { SYNTHESIS_SECTION_CONTRACT } from "../src/synthesis/sections.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const doc = readFileSync(join(root, "ORCHESTRATION_ARCHITECTURE.md"), "utf8");
@@ -93,6 +98,97 @@ check(
   "doc describes the confirmation-ballot steer",
   /re-poll the superseded question/.test(doc),
   "the closing-round steer must ask for a confirmation ballot when one was already held",
+);
+// The shared consensus section is the ORCHESTRATOR's judgement, and the room
+// sees it in every round.
+const settledItems = [{ text: "The room converged that scopes are Sundays [#4]", holders: ["Ada", "Ben"] }];
+const settledEarly = buildSettledBlock(settledItems, false);
+check(
+  "the settled block carries the items in every phase",
+  /The room converged/.test(settledEarly) && !/see Agreements & Proposals/.test(settledEarly),
+  "the early-phase pointer named a section that was empty in every recorded meeting",
+);
+check(
+  "doc states that the consensus section is the orchestrator's",
+  /consensus section, and it is the orchestrator's/.test(doc) || /it is the \*\*round clerk's\*\* consensus judgement/.test(doc),
+  "doc must state who owns the shared consensus section",
+);
+// The room receives the clerk's JUDGEMENT, not a prose prefix.
+const clerkSummary = [
+  "- **Established:** the migration landed behind a flag",
+  "- **Settled:** scope is 24 Sundays excluding Sprints [#4]",
+  "- **Contested:** token revocation is unresolved [#7]",
+  "- **Next:** the CRO prices the parity question",
+].join("\n");
+const account = renderClerkAccount(clerkSummary);
+check(
+  "the room's copy of the clerk's account carries its action-bearing bullets",
+  /Settled:.*24 Sundays/.test(account) && /Contested:.*revocation/.test(account) && /Next:.*parity/.test(account),
+  "the 600-char prefix contained only the Established bullet (0/10 rounds)",
+);
+check(
+  "doc states the clerk's account reaches the room as bullets",
+  /clerk's account reaches the room as its BULLETS/.test(doc),
+  "doc must describe how the room receives the clerk's account",
+);
+// The dissent slot is a slot, and it is sourced from the orchestrator.
+check(
+  "the dissent slot is part of the section contract",
+  SYNTHESIS_SECTION_CONTRACT.always.includes("Dissenting Views"),
+  "the artifact must always have a dissent slot",
+);
+check(
+  "doc states the dissent slot is the orchestrator's judgement",
+  /Dissenting Views\*\* is a SLOT, not a detector/.test(doc) || /is a SLOT, not a detector/.test(doc),
+  "doc must state that dissent is carried, not re-derived",
+);
+// A provider outage is its own class, and a cancelled meeting makes no calls.
+check(
+  "a provider outage is classified as one",
+  isProviderUnavailableError(Object.assign(new Error("Upstream request failed: Endpoint is unavailable."), { status: 402, providerError: "APIError" })),
+  "the endpoint-unavailable shape must be recognised so the turn routes to a fallback",
+);
+check(
+  "a transient 5xx is not a provider outage",
+  !isProviderUnavailableError(Object.assign(new Error("upstream error"), { status: 503 })),
+  "per-request flakiness keeps its backoff",
+);
+check(
+  "doc states the provider-outage class and the abort rule",
+  /Provider outages are their own class/.test(doc) && /cancelled meeting makes no further calls/i.test(doc),
+  "doc must state how the failure ladder treats an outage and an abort",
+);
+// The orchestrator is not a participant: it has its own area and is called
+// last. It must never be injected into the participants table, and every
+// participant list must exclude non-seat rows.
+const queriesSrc = readFile(join(root, "src/dashboard/api/queries.js"), "utf8");
+const exportsSrc = readFile(join(root, "src/dashboard/api/exports.js"), "utf8");
+const contribSrc = readFile(join(root, "src/database/contribution-operations.js"), "utf8");
+check(
+  "the dashboard participant list excludes non-seat rows",
+  /FROM participants WHERE status != 'summoned'/.test(queriesSrc),
+  "a participant list without the filter shows a phantom seat",
+);
+check(
+  "the export bundle's seat rows exclude non-seat rows",
+  /FROM participants WHERE status != 'summoned'/.test(exportsSrc),
+  "the evaluation bundle must carry seats only",
+);
+check(
+  "the runtime participant reader excludes non-seat rows",
+  /FROM participants WHERE meeting_id = \? AND status != 'summoned'/.test(contribSrc),
+  "the runtime roster must carry seats only",
+);
+const forumSrc = readFile(join(root, "src/database/forum-operations.js"), "utf8");
+check(
+  "the forum seed never creates a participant row",
+  !/ensureParticipantRow/.test(forumSrc),
+  "the seed must author with a real seat, not invent a participant",
+);
+check(
+  "doc states that the orchestrator is not a participant",
+  /the orchestrator is never a participant/i.test(doc),
+  "doc must record the orchestrator's isolation",
 );
 
 if (failures > 0) {

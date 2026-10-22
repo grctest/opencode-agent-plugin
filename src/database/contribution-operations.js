@@ -221,7 +221,7 @@ export function getAllParticipantsWithStatus(db, meetingId) {
   return db
     .prepare(
       `SELECT id, name, persona, agenda, category, provider_id, model_id, model_variant, session_id, session_version, status, reflection, known_biases, communication_style, preferred_contribution_types, anti_patterns, category_guidance, reflection_guidance, tags, expertise
-         FROM participants WHERE meeting_id = ?`,
+         FROM participants WHERE meeting_id = ? AND status != 'summoned'`,
     )
     .all(meetingId)
      .map((r) => ({

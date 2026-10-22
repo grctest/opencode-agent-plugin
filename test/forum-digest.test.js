@@ -103,17 +103,19 @@ test("seedSubProblemsTopic creates one topic titled from the question and is ide
     },
   };
   const longQuestion = "Which design keeps the denominator stable across re-publications while preserving per-team wins in this season's standings table conventions";
-  const seed = seedSubProblemsTopic(db, 7, longQuestion);
+  // The seed is authored by a REAL seat: forum_topics.author_id references
+  // participants(id), and the orchestrator is not a participant.
+  const seed = seedSubProblemsTopic(db, 7, longQuestion, { authorId: "p-1" });
   assert.ok(seed?.id === 1);
   assert.match(created[0].title, /^Sub-problems & data needs — .+…$/);
   assert.ok(created[0].title.length < 100, "seed title stays bounded");
   assert.match(created[0].body, /loom_forum_create_topic/);
   assert.match(created[0].body, /\[#T\{id\}\]/);
   assert.match(created[0].body, /State of Play/);
-  assert.equal(created[0].authorId, "orchestrator");
+  assert.equal(created[0].authorId, "p-1");
   assert.deepEqual(created[0].tags, ["seed"]);
   // Idempotent: no second topic when one exists — regardless of the question.
-  const again = seedSubProblemsTopic(db, 7, "");
+  const again = seedSubProblemsTopic(db, 7, "", { authorId: "p-1" });
   assert.equal(again, null);
   assert.equal(created.length, 1);
 });
@@ -128,7 +130,7 @@ test("seedSubProblemsTopic seeds with a generic title for an empty question", ()
       return row;
     },
   };
-  const seed = seedSubProblemsTopic(db, 8, "");
+  const seed = seedSubProblemsTopic(db, 8, "", { authorId: "p-1" });
   assert.ok(seed?.id === 42);
   assert.equal(created[0].title, "Sub-problems & data needs");
 });

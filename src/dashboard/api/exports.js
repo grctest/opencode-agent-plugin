@@ -44,7 +44,7 @@ export function exportTimeline(meetingId) {
   // the evaluation bundle keeps every persisted seat field verbatim.
   let seatRows = [];
   try {
-    seatRows = this._db.prepare(`SELECT * FROM participants ORDER BY rowid ASC`).all();
+    seatRows = this._db.prepare(`SELECT * FROM participants WHERE status != 'summoned' ORDER BY rowid ASC`).all();
   } catch {
     seatRows = [];
   }

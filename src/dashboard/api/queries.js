@@ -123,10 +123,10 @@ export function getArtifact() {
 
 export function getParticipants() {
     const primary = `SELECT id, name, persona, agenda, category, provider_id, model_id, model_variant, session_id, status, reflection, state_json, known_biases, communication_style, preferred_contribution_types, anti_patterns, category_guidance, reflection_guidance, tags, expertise
-         FROM participants ORDER BY category ASC`;
+         FROM participants WHERE status != 'summoned' ORDER BY category ASC`;
     // Pre-v17 DBs lack participants.model_variant (but usually have state_json).
     const legacyVariant = `SELECT id, name, persona, agenda, category, provider_id, model_id, session_id, status, reflection, state_json, known_biases, communication_style, preferred_contribution_types, anti_patterns, category_guidance, reflection_guidance, tags, expertise
-         FROM participants ORDER BY category ASC`;
+         FROM participants WHERE status != 'summoned' ORDER BY category ASC`;
     let rows;
     try {
       rows = this._db.prepare(primary).all();
@@ -138,7 +138,7 @@ export function getParticipants() {
         rows = this._db
           .prepare(
             `SELECT id, name, persona, agenda, category, provider_id, model_id, session_id, status, reflection
-         FROM participants ORDER BY category ASC`,
+         FROM participants WHERE status != 'summoned' ORDER BY category ASC`,
           )
           .all();
       }
