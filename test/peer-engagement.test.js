@@ -68,9 +68,13 @@ test("the synthesis prompt names the uncited contributions", () => {
   assert.equal(ledger.peer_uncited, 1);
   assert.deepEqual(ledger.uncited_plain_ids, [2]);
   const prompt = buildSynthesisPrompt("Q?", "transcript", [], [], "",  "", { engagement: ledger });
-  assert.match(prompt, /## Engagement Ledger \(clerk check — P7\)/);
+  assert.match(prompt, /## Engagement Ledger \(internal check — not a source\)/);
   assert.match(prompt, /\[#2\]/);
   assert.match(prompt, /1 of 3 plain contributions engage no peer/);
+  // The ledger is a check, not evidence: it must not be citable (audit I) — a
+  // recorded artifact quoted its internals with a citation to a contribution
+  // that had nothing to do with them.
+  assert.match(prompt, /do not cite it/);
 });
 
 test("a clean room gets no ledger section", () => {

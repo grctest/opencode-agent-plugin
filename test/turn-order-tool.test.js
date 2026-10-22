@@ -112,7 +112,13 @@ test("summary prompt carries the override block with policy when rostered", () =
   const withRoster = buildRoundSummaryUser(round, { question: "Q", tags: [] }, [], {}, {
     roster: [{ id: "a", contributions_count: 1 }, { id: "b", contributions_count: 0 }],
   });
-  assert.match(withRoster, /## Next-round turn order \(orchestrator-only override\)/);
+  // The block now says the order is the ORCHESTRATOR's call (audit D): the
+  // previous wording ("default rotation stands… omit it to keep the default")
+  // biased it against acting, and the same participant opened all ten rounds
+  // of the recorded 10-round meeting.
+  assert.match(withRoster, /## Next-round turn order \(orchestrator's call\)/);
+  assert.match(withRoster, /You decide who speaks next/);
+  assert.match(withRoster, /stands until this round's evidence warrants a change/);
   assert.match(withRoster, /loom_set_turn_order/);
   assert.match(withRoster, /Order preference: /);
   const withoutRoster = buildRoundSummaryUser(round, { question: "Q", tags: [] }, [], {}, {});

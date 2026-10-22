@@ -215,9 +215,8 @@ function ExtensionBanner({ banner, onDismiss }) {
   if (!banner) return null;
   return (
     <Alert className="mb-4 bg-blue-50 border-blue-200 dark:bg-blue-950/30 dark:border-blue-900 flex items-center gap-3">
-      <span aria-hidden="true" className="text-lg">🧵</span>
       <div className="flex-1 min-w-0">
-        <AlertTitle className="text-blue-700 dark:text-blue-300">Loom Extended</AlertTitle>
+        <AlertTitle className="text-blue-700 dark:text-blue-300">Deliberation Extended</AlertTitle>
         <AlertDescription className="truncate text-xs">{banner.prompt}</AlertDescription>
       </div>
       <Button variant="ghost" size="icon-sm" onClick={onDismiss} aria-label="Dismiss">✕</Button>
@@ -241,7 +240,7 @@ function useMeetingsList() {
           return same ? prev : newMeetings;
         });
       }
-    } catch (err) { console.error("[Loom dashboard] Failed to fetch meetings:", err); }
+    } catch (err) { console.error("[Deliberation dashboard] Failed to fetch meetings:", err); }
   }, []);
   useEffect(() => {
     fetchMeetings();
@@ -492,7 +491,7 @@ export function App() {
 const rootEl = document.getElementById("root");
 if (rootEl) {
   createRoot(rootEl).render(
-    <ErrorBoundary fallbackMessage="The Loom dashboard encountered a fatal error" label="Root">
+    <ErrorBoundary fallbackMessage="The deliberation dashboard encountered a fatal error" label="Root">
       <App />
     </ErrorBoundary>
   );

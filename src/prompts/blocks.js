@@ -307,23 +307,32 @@ export function buildRoundLabel(currentRound, maxRounds) {
 }
 
 /**
- * Settled-registry block (F-A): renders consensus items (≥2 holders) as a
- * cite-and-delta guard. Late rounds get the hard block; earlier rounds get a
- * one-line pointer at most. Item text is model prose — delimited as DATA, with
- * the instruction line outside the delimiters (contract §3).
+ * Settled-registry block (F-A): renders the ORCHESTRATOR's consensus items as a
+ * cite-and-delta guard.
+ *
+ * The items are the round clerk's semantic judgement of what the room
+ * converged on, carried in the meeting-level registry — the same list the
+ * shared State of Play shows. They are rendered in EVERY round, not only in the
+ * late phase: the early-phase pointer ("N points have ≥2 holders — see
+ * Agreements & Proposals") pointed at a section that was empty in every
+ * recorded meeting, so the room was told to build on settled points it could
+ * not see (audit A). The late phase keeps the stricter, signed wording.
+ *
+ * Item text is model prose — delimited as DATA, with the instruction line
+ * outside the delimiters (contract §3).
  */
 export function buildSettledBlock(items, late = false) {
   const list = Array.isArray(items) ? items : [];
   if (list.length === 0) return "";
-  if (!late) {
-    return `## Settled Watch\n\n${list.length} point(s) already have ≥2 holders in State of Play (see Agreements & Proposals) — cite by [#id], don't restate.\n`;
-  }
   const lines = list.map((it) => {
     const text = sanitizeForDisplay(String(it?.text ?? ""), 500).replace(/\n/g, " ").trim() || "(empty)";
     const holders = Array.isArray(it?.holders) ? it.holders.filter(Boolean).slice(0, 3) : [];
     const extra = Array.isArray(it?.holders) && it.holders.length > 3 ? ` (+${it.holders.length - 3} more)` : "";
     return `- ${text}${holders.length > 0 ? ` — holders: ${holders.join(", ")}${extra}` : ""}`;
   });
+  if (!late) {
+    return `## Settled so far — the room has converged on these\n\nBuild on them: cite by [#id] in one clause and add a delta. Do not restate them.\n\n${delimitContext(lines.join("\n"), "SETTLED_ITEMS")}\n`;
+  }
   return `## Settled — signed, do not re-argue\n\nReference these by [#id] in one clause, then move on. Do NOT restate their content — restatement is a contract violation, not thoroughness. Challenge only with new evidence.\n\n${delimitContext(lines.join("\n"), "SETTLED_ITEMS")}\n`;
 }
 

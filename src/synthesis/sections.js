@@ -14,7 +14,14 @@ export function supplementMissingSections(text, missingSections) {
 export const SYNTHESIS_SECTION_CONTRACT = Object.freeze({
   core: ["Executive Summary", "Reasoning", "Confidence"],
   decisionFallback: "Decision",
-  always: ["Open Questions"],
+  // "Dissenting Views" is a SLOT, not a detector: the room's live disagreement
+  // is the round clerk's judgement (its Contested bullet), carried into the
+  // artifact. Nothing here decides whether dissent exists — a room that
+  // converged writes "None — the room converged" (audit E).
+  // "References" is the human-readable index for the artifact's citation ids:
+  // the prompt teaches it (rule 1b) and finalizeSynthesis deterministically
+  // backfills every cited id it misses — the section is guaranteed either way.
+  always: ["Open Questions", "Dissenting Views", "References"],
   actionGroup: ["Action Items", "Proposed Fix"],
   deferredGroup: ["Decision", "Decision Rule"],
 });
@@ -67,7 +74,7 @@ export function validateSynthesisSections(text, style = null) {
 const KNOWN_SECTION_NAMES = Object.freeze([
   "Executive Summary", "Decision Rule", "Decision", "Reasoning",
   "Proposed Fix", "Action Items", "Open Questions", "Confidence",
-  "Files Involved", "Dissenting Views",
+  "Files Involved", "Dissenting Views", "References",
 ]);
 
 /** Extracts list items from a named section — accepts ## or ###. */
@@ -134,7 +141,7 @@ export function buildNeutralSynthesizerSystem(contextWindow = null) {
   return `You are a synthesis auditor, not a participant. You are neutral to all agendas — including the synthesizer persona you may have borrowed. Human-readable first, then auditable detail. Concise but thorough.
 
 Rules:
-1. Lead with Executive Summary — plain narrative, no citations, human-first (${LENGTH_LIMITS.synthesisExecutive}w). Then group citations per block for Decision/Action/Proposed Fix — cite once per block as [#id] or State-of-Play or Source: https://…, never vec: / vec round. If you synthesize a novel fix/code not present verbatim, mark it “Proposed — synthesized from [#id]”. Do not invent file contents not read via tool; if no file read, qualify “Proposed (unverified — no tool read)”. For open-ended, mapping the spectrum is correct — don’t force a single Decision. Decision table cells concise: Evidence 30-35w + one grouped cite, Tradeoff 30-35w.
+1. Lead with Executive Summary — plain narrative, no citations, human-first (${LENGTH_LIMITS.synthesisExecutive}w). Then group citations per block for Decision/Action/Proposed Fix — cite once per block as [#id] or State-of-Play or Source: https://…, never vec: / vec round. Every [#N] must appear at least once paired with the participant's NAME (Ada [#2]); a bare id a reader cannot resolve is a hole. Close the artifact with ## References — one line per [#N] and [#T{id}] cited anywhere (who, round, what it established); the index is a map, not a source. If you synthesize a novel fix/code not present verbatim, mark it “Proposed — synthesized from [#id]”. Do not invent file contents not read via tool; if no file read, qualify “Proposed (unverified — no tool read)”. For open-ended, mapping the spectrum is correct — don’t force a single Decision. Decision table cells concise: Evidence 30-35w + one grouped cite, Tradeoff 30-35w.
 2. Do not invent numbers, dates, costs, tool results, or participant positions not in transcript/State-of-Play. If evidence conflicts, state both and set Confidence accordingly. For code, do not invent file contents not read via tool. Deduplicate: Decision maps positions, Reasoning explains why — don’t repeat same numbers thrice.
 3. Never emit <<< or >>> delimiters. Be concise but thorough — 1500-3500w welcome; use the ${windowNote} window. Preserve code and numbers verbatim. Never emit vec: / vec round traces.`;
 }

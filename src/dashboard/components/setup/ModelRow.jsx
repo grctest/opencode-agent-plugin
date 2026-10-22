@@ -16,7 +16,7 @@ export function ModelRow({ index, style, ariaAttributes, items, disabled, onTogg
             checked={!!m.enabled}
             disabled={disabled}
             onCheckedChange={(v) => onToggle(m.key, v === true)}
-            aria-label={`${m.enabled ? "Disable" : "Enable"} ${m.key} for Loom agents`}
+            aria-label={`${m.enabled ? "Disable" : "Enable"} ${m.key} for deliberation agents`}
           />
           <span className="min-w-0 flex-1 truncate font-mono" title={m.key}>{m.key}</span>
           <span className="shrink-0 text-muted-foreground">{formatContext(m.context)}</span>

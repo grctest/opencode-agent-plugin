@@ -177,9 +177,11 @@ test("the final artifact check keeps the Decision Rule requirement", () => {
   ].join("\n");
   const missing = validateSynthesisSections(spectrum, "decision_oriented");
   assert.ok(missing.includes("Decision Rule"), `expected the Decision Rule to be missing, got ${JSON.stringify(missing)}`);
-  // The finalizer (which is what ships) must surface it too.
+  // The finalizer (which is what ships) must surface it too — together with
+  // the dissent slot, which the artifact also lacks.
   const { output } = finalizeSynthesis(spectrum, { question: "Q", rounds: [] }, [], { synthesisStyle: "decision_oriented" });
-  assert.match(output, /did not generate the following sections: Decision Rule/);
+  assert.match(output, /did not generate the following sections: .*Decision Rule/);
+  assert.match(output, /Dissenting Views/);
 });
 
 // No-seniority — category appears nowhere in orchestrator decision inputs;
@@ -193,7 +195,23 @@ test("summary roster carries no seniority signal", () => {
     ],
   });
   assert.doesNotMatch(prompt, /\(junior|\(principal|\(senior|\(mid\)|\(civilian/);
-  assert.match(prompt, /orchestrator-only override/);
+  assert.match(prompt, /Next-round turn order \(orchestrator's call\)/);
+  // The roster shows the round's speaking order, so the orchestrator can see
+  // the pattern it is the only one able to fix (audit D).
+  const withOrder = buildRoundSummaryUser(
+    round,
+    { question: "Q", tags: [] },
+    [],
+    { turnOrderPolicy: "balanced" },
+    {
+      roster: [
+        { id: "junior_0", contributions_count: 1, spoke_this_round: true, spoke_first: true },
+        { id: "principal_0", contributions_count: 9, spoke_this_round: true, spoke_first: false },
+      ],
+    },
+  );
+  assert.match(withOrder, /spoke FIRST this round/);
+  assert.match(withOrder, /spoke this round/);
 });
 
 test("turn-order default keeps composition order (no planner call)", () => {
@@ -235,7 +253,12 @@ test("synthesis participants and dissent carry no tier", () => {
   );
   assert.doesNotMatch(prompt, /\(principal\)/);
   assert.doesNotMatch(prompt, /\{Holder\}.*\{tier\}/);
-  assert.doesNotMatch(prompt, /Dissenting Views/);
+  // The dissent SLOT exists (audit E) — the room's live disagreement is the
+  // orchestrator's judgement, carried into the artifact — and it is filled by
+  // the orchestrator's Contested bullet, never by a detector.
+  assert.match(prompt, /## Dissenting Views/);
+  assert.match(prompt, /Contested bullet/);
+  assert.match(prompt, /do not go hunting for new dissent/i);
 });
 
 // Step 5 — clerk context: round position, tier-free roster, SoP excerpt.

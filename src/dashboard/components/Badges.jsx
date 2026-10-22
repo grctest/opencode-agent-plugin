@@ -8,9 +8,16 @@ const validCategory = (c) => typeof c === "string" && c.length > 0;
 const validStatus = new Set(["weaving", "converged", "max_rounds_reached", "initializing", "aborted", "failed", "cancelled", "timeout"]);
 const validType = new Set(["propose", "challenge", "refine", "support", "dissent", "synthesize", "question", "reflection", "query_response", "evidence_response", "summoned_response", "vote_response"]);
 
+// Display-only relabel: internal status enums keep their engine names
+// ("weaving" is the active-run state in the schema), but the UI shows plain
+// terms. Anything unmapped passes through unchanged.
+const STATUS_LABELS = { weaving: "deliberating" };
+const statusLabel = (status) => STATUS_LABELS[status] ?? status;
+export { statusLabel };
+
 export const StatusBadge = memo(({ status }) => {
   const v = validStatus.has(status) ? (status === "failed" || status === "cancelled" ? "aborted" : status) : "secondary";
-  return <Badge variant={v}>{status}</Badge>;
+  return <Badge variant={v}>{statusLabel(status)}</Badge>;
 });
 
 export const CategoryBadge = memo(({ category }) => {

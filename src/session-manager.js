@@ -205,6 +205,7 @@ export class SessionManager {
    */
   async #promptOrchestratorOnce(sessionId, system, model, message, timeoutMs, opts = {}) {
     const tools = opts?.tools ?? {};
+    const signal = opts?.signal ?? null;
     if (opts?.meetingId) {
       try { this.registerSessionMeeting(sessionId, opts.meetingId); } catch {}
     }
@@ -216,6 +217,7 @@ export class SessionManager {
         tools,
         parts: [{ type: "text", text: message }],
         timeoutMs,
+        signal: signal ?? undefined,
       });
       if (!res.ok) throw res.error;
       if (!String(res.text ?? "").trim()) {
@@ -228,12 +230,14 @@ export class SessionManager {
       maxAttempts: getConfig().maxRetryAttempts,
       baseDelayMs: getConfig().retryBaseDelayMs,
       maxDelayMs: getConfig().retryMaxDelayMs,
-      retryable: (err) => isRetryableError(err) || isEmptyResponseError(err),
+      // An aborted orchestrator call (meeting stopped) is not retryable: the
+      // retry would re-issue the clerk prompt after the user pressed cancel.
+      retryable: (err) => !(err?.name === "AbortError") && (isRetryableError(err) || isEmptyResponseError(err)),
     });
      return { text: result.text, tokens: result.tokens };
   }
 
-  async promptOrchestrator(system, model, message, timeoutMs) {
+  async promptOrchestrator(system, model, message, timeoutMs, opts = {}) {
     let sessionId = this.#orchestratorSessionId;
     if (!sessionId) {
       try {
@@ -242,21 +246,21 @@ export class SessionManager {
       } catch {
         const ephemeralId = await this.#createSessionWithRetry("Loom · Orchestrator (ephemeral)");
         try {
-          return await this.#promptOrchestratorOnce(ephemeralId, system, model, message, timeoutMs);
+          return await this.#promptOrchestratorOnce(ephemeralId, system, model, message, timeoutMs, opts);
         } finally {
           await this.deleteEphemeralSession(ephemeralId).catch(() => {});
         }
       }
     }
     try {
-      return await this.#promptOrchestratorOnce(sessionId, system, model, message, timeoutMs);
+      return await this.#promptOrchestratorOnce(sessionId, system, model, message, timeoutMs, opts);
     } catch (err) {
       const msg = String(err?.message ?? err);
       if (/not found|404|session/i.test(msg)) {
         this.#orchestratorSessionId = null;
         const ephemeralId = await this.#createSessionWithRetry("Loom · Orchestrator (ephemeral)");
         try {
-          return await this.#promptOrchestratorOnce(ephemeralId, system, model, message, timeoutMs);
+          return await this.#promptOrchestratorOnce(ephemeralId, system, model, message, timeoutMs, opts);
         } finally {
           await this.deleteEphemeralSession(ephemeralId).catch(() => {});
         }

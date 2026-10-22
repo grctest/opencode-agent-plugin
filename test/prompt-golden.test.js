@@ -91,7 +91,12 @@ const EXPECTED_SYS = {
   // date") into domain-neutral wording. The MECHANISMS are unchanged — a
   // versioned base table with a diff line, and round-1 frozen terms — only
   // the examples the model imitates. Hash moves because the bytes moved.
-  "OUTPUT CONTRACT — read last, it governs; in conflict it wins": "f5ad04a12f9f",
+  // 2026-10-22 (room-layer resolvability): §2 gains the holder-NAME pairing
+  // rule — first mention renders `Ada [#12]`, bare repeats fine; the clause
+  // also states the pairing costs nothing against the citation budget (same
+  // id, not a new one), because pairing must not push the room to drop cites
+  // to stay under it. Hash moves because the bytes moved.
+  "OUTPUT CONTRACT — read last, it governs; in conflict it wins": "58e213d15c4d",
 };
 
 const EXPECTED_USER = {
@@ -101,7 +106,12 @@ const EXPECTED_USER = {
   "State of Play — PROVISIONAL (early round — challenge cheaply; little is settled yet)": "f2652d3285fd",
   "Question": "801b74dda742",
   "Agreements": "b9bd9a58922f",
-  "Last Round Summary": "718f0b0bc3f9",
+  // 2026-10-22 (audit C): the room's copy of the clerk's account is delivered
+  // as its BULLETS (Settled / Contested / Next) under a new heading — the
+  // 600-char prose prefix contained only the "Established" bullet, so the
+  // room never saw what was settled or disputed. The section name moved with
+  // it; the hash follows the bytes.
+  "Last Round — the clerk's account": "9d5ffd8d813e",
   "Your State — CARRIED FORWARD (your private notes for your next turn; the room never sees this block — they only read your contribution prose)": "17d527b1ab23",
   "Other Participants — valid loom_query targets (use target = id exactly, not display name)": "4745981b61b7",
   "Live — Recent Contributions": "fce0b7f16023",

@@ -12,7 +12,7 @@ import { getConfig } from "../../../config.js";
 import { extractErrorInfo } from "../../../logger.js";
 import { sanitizeForPrompt, sanitizeForDisplay } from "../../../utils/sanitize.js";
 import { writeReportFile as writeReportFileHelper } from "../../../handlers/knit/file-ops.js";
-import { isControlReady, logger, runtime, jobs, serverState, getDirectory, readJsonBody } from "./runtime.js";
+import { isControlReady, logger, runtime, jobs, serverState, getDirectory, readJsonBody, jobPhaseForStatus } from "./runtime.js";
 import { probeMeetingsDir } from "./filters.js";
 import { registerMeetingEngine } from "../../../utils/engine-registry.js";
 import { discoverFiltered, discoverRaw } from "./discovery.js";
@@ -240,10 +240,15 @@ async function handleStartMeetingInternal(req) {
       await engine.initialize();
       const artifact = await engine.runMeeting();
       const state = engine.getState();
-      const safeQuestion = sanitizeForDisplay(question, 5000);
-      const fullReport = `# Loom Deliberation Output\n\n**Question:** ${safeQuestion}\n\n**Participants:** ${participants.map((p) => `${p.name} (${p.category ?? p.tier})`).join(", ")}\n\n**Rounds:** ${state.current_round}\n\n**Meeting ID:** ${engine.getMeetingId()}\n\n---\n\n${artifact}`;
-      writeReportFileHelper(getDirectory(), engine.getMeetingId(), fullReport, logger);
-      jobs.set(meetingId, { phase: "done", startedAt: jobs.get(meetingId)?.startedAt ?? null, finishedAt: new Date().toISOString() });
+      // A cancelled run produces no artifact (no synthesis was run) — there is
+      // nothing to write a report from, and a report with a null body would be
+      // worse than no report.
+      if (artifact) {
+        const safeQuestion = sanitizeForDisplay(question, 5000);
+        const fullReport = `# Loom Deliberation Output\n\n**Question:** ${safeQuestion}\n\n**Participants:** ${participants.map((p) => `${p.name} (${p.category ?? p.tier})`).join(", ")}\n\n**Rounds:** ${state.current_round}\n\n**Meeting ID:** ${engine.getMeetingId()}\n\n---\n\n${artifact}`;
+        writeReportFileHelper(getDirectory(), engine.getMeetingId(), fullReport, logger);
+      }
+      jobs.set(meetingId, { phase: jobPhaseForStatus(state?.status), startedAt: jobs.get(meetingId)?.startedAt ?? null, finishedAt: new Date().toISOString() });
     } catch (err) {
       logger.error("dashboard_meeting_failed", "Dashboard deliberation failed", extractErrorInfo(err));
       jobs.set(meetingId, { phase: "error", error: extractErrorInfo(err).message, startedAt: jobs.get(meetingId)?.startedAt ?? null });

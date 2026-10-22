@@ -63,7 +63,27 @@ export async function _continueInterruptedRound() {
     try { await this._sessionManager.postProgress(`🧵 Resuming interrupted round ${roundNum} — restarting from scratch (no turns were saved).`); } catch {}
   }
 
-  const spoken = new Set((round.contributions ?? []).map((c) => c.participant_id));
+  // Who has actually SPOKEN in this round?
+  //
+  // Only primary turns count. A peer-interaction row (loom_query /
+  // loom_vote / loom_summon answers) carries the RESPONDER's id in
+  // `participant_id` and the CALLER in `prompt_context.source_participant_id`
+  // (see plugin/tools/query-evidence.js), so counting every row treated a
+  // peer who merely answered a question as having taken its turn — and that
+  // peer's real turn was then dropped from the resumed round.
+  //
+  // The peer-interaction types are the non-primary half of the contributions
+  // table's own vocabulary (database/schema.js): contribution and pass are the
+  // primary turn types.
+  const PEER_INTERACTION_TYPES = new Set([
+    "query_response", "perspective_response", "critique_response",
+    "evidence_response", "summoned_response", "vote_response",
+  ]);
+  const spoken = new Set(
+    (round.contributions ?? [])
+      .filter((c) => !PEER_INTERACTION_TYPES.has(String(c.type ?? "")))
+      .map((c) => c.participant_id),
+  );
   const { activeParticipants, skipped } = this._roundInitializer.filterActiveParticipants(this._stateManager, round);
   if (skipped.length > 0) {
     try { await this._sessionManager.postProgress(`⏭️ Skipped: ${skipped.join(", ")} (inactive, no new reflections)`); } catch {}
@@ -77,10 +97,34 @@ export async function _continueInterruptedRound() {
       this._stateManager.transitionTo("converged");
       return false;
     }
-    // Everyone spoke but the finalize transaction never ran (kill between
-    // last turn commit and finalize) — just finalize to write summary + SoP.
-    this._logger.info("resume_round_finalize_only", `Round ${roundNum} fully spoken before crash — finalizing without new turns`);
+    // Everyone spoke but the finalize transaction never ran (kill OR a
+    // cancel that landed while the round CLERK was summarizing — the halt
+    // skips the summary write and leaves the round open, which is exactly
+    // what Resume needs). The round still owes its summary: run the clerk
+    // over the completed round, then finalize to write summary + SoP.
+    //
+    // Calling _finalizeRound directly would persist an EMPTY summary and
+    // silently drop the clerk's consensus/settled-bullet work from the
+    // record — the round-service path (clerk → finalize) is what a fresh
+    // round would have done, so it is what the resume must do.
+    this._logger.info("resume_round_finalize_only", `Round ${roundNum} fully spoken before the interruption — running the clerk, then finalizing`);
     this._notifyUpdate();
+    if (this._roundService && !this.isHalted?.()) {
+      try {
+        const { round: clerked } = await this._roundService.runRound({
+          round,
+          activeParticipants: [],
+          promptOrchestrator: async (system, model, message, type) => this._promptOrchestrator(system, model, message, type, round.number),
+          getDefaultModel: () => this._getOrchestratorModel(),
+          getFallbackModel: () => this._getAllowedFallbackModel(),
+          orchestratorConfig: this._options.orchestratorConfig,
+          state: this._stateManager.getState(),
+        });
+        round = clerked ?? round;
+      } catch (err) {
+        this._logger.warn("resume_round_clerk_failed", `Round ${roundNum} summary failed on resume — finalizing with the empty summary`, extractErrorInfo(err));
+      }
+    }
     return this._finalizeRound(round);
   }
 
@@ -113,7 +157,9 @@ export async function runRound() {
     }
 
     if (activeParticipants.length === 0) {
-      this._stateManager.transitionTo("converged");
+      // A halted meeting keeps its cancelled status — terminal states are
+      // absorbing, so transitionTo("converged") would throw.
+      if (!this.isHalted?.()) this._stateManager.transitionTo("converged");
       return false;
     }
 
@@ -176,12 +222,48 @@ export function computeSteeringHint({
 }
 
 export async function _finalizeRound(updatedRound) {
+    // A HALTED meeting does not finalize its round. The round is deliberately
+    // left OPEN (no summary row), which is what makes "Resume" able to
+    // continue it: the resume path re-drives exactly the speakers who did not
+    // get to speak. The State of Play is still refreshed below, so the record
+    // is not stale for a meeting that is never resumed.
+    const halted = this.isHalted?.() === true;
     try {
       // SKILL.state SoP read-view (plan §5.8): aggregation over per-agent Σⁱ is the
       // only path that files an agent's own positions; the type-driven full-weave
       // digest is the cold-start fallback (all states empty, flag off, or old DB)
       // and it never infers a bucket from prose. Output markdown shape is
       // unchanged for downstream consumers.
+      // Settled registry (retrospective P0-2): merge the clerk's Settled bullet
+      // into the meeting-level list. The clerk detects paraphrased consensus
+      // semantically; exact-match state aggregation cannot (deliberation 2
+      // replay: five agents, five phrasings, zero exact matches).
+      //
+      // The registry is consensus-tracking, never load-bearing: any failure
+      // here degrades to "no settled update this round", never to a failed
+      // finalization (a "no such column" on a pre-migration DB once aborted
+      // a whole meeting — the write path self-heals, and this guard is the
+      // second layer).
+      //
+      // It is merged BEFORE the State of Play is built, because the registry
+      // IS the shared consensus section (audit A): the room's and the
+      // synthesizer's view of "what is settled" must be the orchestrator's
+      // judgement — the exact-match aggregate produced ZERO rows in every
+      // recorded meeting, while the registry held 2-8 real ones.
+      let settledMerge = { items: [], changed: false };
+      try {
+        settledMerge = mergeSettledBullet(
+          this._stateManager.getSettledItems(),
+          updatedRound.summary,
+          updatedRound.number,
+        );
+        if (settledMerge.changed) {
+          this._stateManager.setSettledItems(settledMerge.items);
+        }
+      } catch (err) {
+        settledMerge = { items: [], changed: false };
+        try { this._logger.warn("settled_merge_degraded", `Settled registry merge failed for round ${updatedRound.number} — continuing without settled update`, extractErrorInfo(err)); } catch {}
+      }
       // Per-turn cost drops from O(T) scan to O(P × buckets).
       let newStateOfPlay = "";
       let stateCoverageComplete = false;
@@ -202,6 +284,7 @@ export async function _finalizeRound(updatedRound) {
           states,
           this._stateManager.getQuestion(),
           this._stateManager.getTags(),
+          { settledItems: settledMerge.items },
         );
       } catch {}
       const weave = this._stateManager.getWeave();
@@ -239,35 +322,29 @@ export async function _finalizeRound(updatedRound) {
         if (forumSection) newStateOfPlay = newStateOfPlay ? `${newStateOfPlay}\n\n${forumSection}` : forumSection;
       } catch {}
       this._stateManager.setStateOfPlay(newStateOfPlay);
-      // Settled registry (retrospective P0-2): merge the clerk's Settled bullet
-      // into the meeting-level list. The clerk detects paraphrased consensus
-      // semantically; exact-match state aggregation cannot (deliberation 2
-      // replay: five agents, five phrasings, zero exact matches).
-      // The registry is consensus-tracking, never load-bearing: any failure
-      // here degrades to "no settled update this round", never to a failed
-      // finalization (a "no such column" on a pre-migration DB once aborted
-      // a whole meeting — the write path self-heals, and this guard is the
-      // second layer).
-      let settledMerge = { items: [], changed: false };
-      try {
-        settledMerge = mergeSettledBullet(
-          this._stateManager.getSettledItems(),
-          updatedRound.summary,
-          updatedRound.number,
-        );
-        if (settledMerge.changed) {
-          this._stateManager.setSettledItems(settledMerge.items);
-        }
-      } catch (err) {
-        settledMerge = { items: [], changed: false };
-        try { this._logger.warn("settled_merge_degraded", `Settled registry merge failed for round ${updatedRound.number} — continuing without settled update`, extractErrorInfo(err)); } catch {}
-      }
       // Atomic: 4 writes in one SAVEPOINT — all-or-nothing
       await this._database.transaction(() => {
-        this._database.setRoundSummary(updatedRound.number, updatedRound.summary, this._options?.orchestratorConfig ?? null);
+        // A halted round keeps NO summary: the round stays open so a resume
+        // can finish it. The State of Play and the settled registry are still
+        // written, so the record is never stale.
+        if (!halted) this._database.setRoundSummary(updatedRound.number, updatedRound.summary, this._options?.orchestratorConfig ?? null);
         this._database.setStateOfPlay(newStateOfPlay);
         if (settledMerge.changed) this._database.setSettledItemsRaw(JSON.stringify(settledMerge.items));
       });
+
+      if (halted) {
+        // No convergence decision, no turn order, no steering: the meeting was
+        // stopped, and the status is already terminal (written by cancel()).
+        // Any further transitionTo() here would throw — terminal states are
+        // absorbing (StateManager.TRANSITIONS).
+        const spoken = updatedRound.contributions.length;
+        await this._sessionManager.postProgress(
+          `🛑 Round ${updatedRound.number} stopped after ${spoken} contribution${spoken !== 1 ? "s" : ""} — the run was cancelled.`
+        );
+        this._notifyUpdate();
+        try { await this._persistState(); } catch {}
+        return false;
+      }
 
       const contribCount = updatedRound.contributions.length;
       const summaryText = updatedRound.summary ? ` | ${truncate(updatedRound.summary, SUMMARY_TRUNCATE_LEN)}` : "";
@@ -376,6 +453,15 @@ export async function _finalizeRound(updatedRound) {
       // State-machine or logic error: abort honestly, persist the aborted status
       // BEFORE rethrowing so the terminal status survives the unwinding (audit 05 note).
       this._logger.error("finalize_round_failed", `Failed to finalize round ${updatedRound.number}`, info);
+      if (halted) {
+        // The meeting was already stopped (status: cancelled). Re-throwing
+        // would unwind the run with an error the user did not cause, and
+        // transitionTo("aborted") would throw on its own — the status is
+        // terminal and terminal states are absorbing.
+        this._logger.info("finalize_round_halted", `Round ${updatedRound.number} finalization failed after the run was stopped — keeping the cancelled status`, info);
+        try { await this._persistState(); } catch {}
+        return false;
+      }
       try {
         this._stateManager.transitionTo("aborted");
         await this._persistState();

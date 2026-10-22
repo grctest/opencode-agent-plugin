@@ -167,7 +167,7 @@ export function getHtmlShell(nonce) {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Loom Dashboard</title>
+  <title>Deliberation Dashboard</title>
   <script nonce="${nonce}">
     (function() {
       var t = localStorage.getItem("loom-theme") || "system";

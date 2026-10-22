@@ -20,7 +20,9 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
     dispose: async () => {
       const engines = [...activeLooms.values()];
       await Promise.all(engines.map(async (engine) => {
-        try { engine.cancel(); } catch {}
+        // Teardown, not a user cancellation: the meeting keeps its status so
+        // the dashboard can still resume it after a restart.
+        try { engine.softCancel?.() ?? engine.cancel?.({ persistStatus: false }); } catch {}
         try { await engine.close?.(); } catch {}
       }));
       try { activeDashboardRef.current?.stop(); } catch {}
@@ -89,7 +91,7 @@ export function createPluginReturn({ activeLooms, activeDashboardRef, directory,
             return "No active Loom found with that ID.";
           }
           engine.cancel();
-          return "Loom cancellation requested. The current round will complete, then synthesis will run.";
+          return "Loom cancelled. The in-flight turn was aborted, no further agent is called, and no synthesis is run. The dashboard can resume the meeting from where it left off, or finish it with the output collected so far.";
         },
       }),
 

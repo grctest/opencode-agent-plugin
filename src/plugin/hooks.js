@@ -34,7 +34,7 @@ event: async ({ event }) => {
             if (activeLooms) {
               const matching = [...activeLooms.entries()].filter(([meetingId, engine]) => engine && entries.some((entry) => entry.meetingId === meetingId));
               await Promise.all(matching.map(async ([, engine]) => {
-                try { engine.cancel(); } catch {}
+                try { engine.softCancel?.() ?? engine.cancel?.({ persistStatus: false }); } catch {}
                 try { await engine.close?.(); } catch {}
               }));
             }

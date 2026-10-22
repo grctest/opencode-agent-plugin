@@ -1,6 +1,7 @@
 import { Logger, extractErrorInfo } from "./logger.js";
 import { isPassContribution } from "./utils/contribution-types.js";
 import { STATE_PATCH_CAPS } from "./state-patch.js";
+import { renderClerkDigest } from "./lib/clerk-summary.js";
 
 const TAG_STRIP_RE = /^\[(?:PROPOSE|CHALLENGE|REFINE|SUPPORT|DISSENT|SYNTHESIZE|QUESTION|REFUSE)\]\s*/i;
 const REQUEST_NEXT_RE = /^\[REQUEST_NEXT:[^\]]*\]\s*/gim;
@@ -368,8 +369,142 @@ function formatRoundLines(round, participants) {
   return lines;
 }
 
-/** Formats transcript for synthesis: digest of earlier rounds + full final round + reflections. */
-export function formatFinalRoundTranscript(data, participants) {
+/**
+ * One index line per contribution — the citable skeleton of a round.
+ *
+ * A contribution that is indexed but not quoted can still be CITED: the
+ * synthesizer knows it exists, who said it, and roughly what it was about, so
+ * "nothing silently dropped" holds even when the prose does not fit. The
+ * earlier shape of the transcript dropped whole rounds instead, and the
+ * measured result was 7% of a ten-round deliberation visible to the
+ * synthesizer and 10% of the room's work represented in the artifact
+ * (audit B).
+ */
+function formatRoundIndexLines(round, participants) {
+  const lines = [];
+  for (const c of round.contributions ?? []) {
+    if (c.type === "pass") continue;
+    const participant = participants.find((p) => p.config.id === c.participant_id);
+    const name = participant?.config.name ?? c.participant_id;
+    const category = participant?.config.category ?? participant?.config.tier ?? "";
+    const body = String(c.content ?? "").replace(/\s+/g, " ").trim();
+    // 90 chars of gist per contribution: the index is a skeleton, and the
+    // skeleton has to fit a round's share of the budget for a 10-round
+    // deliberation to keep every id citable.
+    const head = `- **[#${c.id ?? "?"}] ${name}** (${category}, ${c.type}):`;
+    lines.push(body.length > 90 ? `${head} ${body.slice(0, 90)} …` : `${head} ${body}`);
+  }
+  return lines;
+}
+
+/** Character budget for the agent-facing prior-round citable index. */
+export const PRIOR_INDEX_BUDGET_CHARS = 2400;
+
+/**
+ * The agent-facing prior-round citable index.
+ *
+ * SKILL.state O_t gives agents the CURRENT round raw only — every id from an
+ * earlier round resolves solely through whatever a State-of-Play bullet
+ * restates, and a merged-away bullet takes its id with it: the room is asked
+ * to cite ids it can no longer see. This block resolves them: one line per
+ * earlier contribution — id, holder NAME, round, short gist.
+ *
+ * Deliberately NOT formatRoundIndexLines (the synthesizer's transcript index):
+ *   - names only, no categories — the room reads attributions, not roster
+ *     labels, and the name is what the "pair the holder's NAME with [#id]"
+ *     doctrine needs;
+ *   - 120-char gist, not 90 — agents ENGAGE with these claims ("[#23] says X,
+ *     and I disagree"), they don't just point at them, so the gist must carry
+ *     more of the claim;
+ *   - ids already rendered elsewhere (the current round's Recent
+ *     Contributions) are excluded by id, never by round boundary — the live
+ *     window can cut mid-round, and a boundary rule would either duplicate an
+ *     id or drop it from both blocks.
+ *
+ * Oldest rounds first: the newer an id, the likelier a State-of-Play bullet
+ * still restates it — the digests merge forward. The oldest lines are the
+ * only place those ids exist. When the budget cuts, it cuts the tail (the
+ * newest older rounds), and the truncation is announced, never silent.
+ *
+ * Pure text assembly over caller data; sanitization and fencing happen in the
+ * prompt builder (agent-authored content rides inside a fence like every
+ * other untrusted block).
+ *
+ * @param {Array<{id?: number|string, participant_id?: string, round?: number, type?: string, content?: string}>} contributions
+ * @param {Set<string>|Array} excludeIds ids already rendered in the live block
+ * @param {Record<string,string>|Map<string,string>} nameMap participant id → display name
+ * @param {{gistChars?: number, budgetChars?: number}} [opts]
+ * @returns {string} markdown lines (possibly empty — caller renders nothing)
+ */
+export function buildPriorRoundContributionIndex(contributions, excludeIds = new Set(), nameMap = {}, opts = {}) {
+  const gistChars = Number.isFinite(opts.gistChars) ? opts.gistChars : 120;
+  const budgetChars = Number.isFinite(opts.budgetChars) ? opts.budgetChars : PRIOR_INDEX_BUDGET_CHARS;
+  const exclude = new Set(
+    [...(excludeIds ?? [])].map(String).filter((v) => v && v !== "undefined" && v !== "null"),
+  );
+  const rows = (contributions ?? [])
+    .filter((c) => {
+      if (c?.id == null) return false;
+      const type = String(c.type ?? "");
+      // Same species as the live block, minus pass rows: a pass carries no
+      // citable content, and "None" rows would mint valid-looking ids.
+      if (type === "pass") return false;
+      if (type === "vote_response" || type === "reflection") return false;
+      if (exclude.has(String(c.id))) return false;
+      return Boolean(String(c.content ?? "").trim());
+    })
+    .sort((a, b) => (Number(a.round) || 0) - (Number(b.round) || 0) || (Number(a.id) || 0) - (Number(b.id) || 0));
+  if (rows.length === 0) return "";
+
+  const nameFor = (pid) => {
+    const raw = String(nameMap?.[pid] ?? nameMap?.get?.(pid) ?? "");
+    return raw && raw !== pid ? raw : "";
+  };
+
+  const lines = [];
+  let used = 0;
+  let omitted = 0;
+  for (const c of rows) {
+    const pid = String(c.participant_id ?? "unknown");
+    const holder = nameFor(pid) || pid;
+    const body = String(c.content ?? "").replace(/\s+/g, " ").trim();
+    const gist = body.length > gistChars ? `${body.slice(0, gistChars).trimEnd()}…` : body;
+    const roundNo = Number(c.round);
+    const line = `- [#${c.id}] ${holder}${Number.isFinite(roundNo) && roundNo > 0 ? ` (round ${roundNo})` : ""}: ${gist}`;
+    if (used + line.length + 1 > budgetChars) {
+      omitted = rows.length - lines.length;
+      break;
+    }
+    lines.push(line);
+    used += line.length + 1;
+  }
+  if (lines.length === 0) return "";
+  const marker = omitted > 0
+    ? `\n…[index truncated to fit the budget — ${omitted} contribution line(s) omitted; those ids resolve only as restated in the State of Play bullets]`
+    : "";
+  return `${lines.join("\n")}${marker}\n`;
+}
+
+/**
+ * Formats transcript for synthesis: earlier rounds as citable indexes with the
+ * clerk's judgement, the newest rounds in full, plus agent states and
+ * reflections.
+ *
+ * The budget is the MODEL'S WINDOW, not a constant (audit B): the old fixed
+ * 24,000 characters was ~6k tokens in a prompt that announces a 200k-token
+ * window, and it cut the FINAL round first — the most decision-relevant round
+ * disappeared while earlier rounds kept their full text. Now:
+ *   - the final round is protected (the oldest full round is sacrificed first);
+ *   - every round is represented, at minimum as an index of citable ids;
+ *   - the older rounds carry the CLERK'S JUDGEMENT (settled / contested /
+ *     next), not a prefix of prose that cut before the Contested bullet.
+ *
+ * @param {object} data transcript data ({ rounds, question, ... })
+ * @param {Array} participants
+ * @param {{budgetChars?: number}} [opts] the model's character budget for the
+ *   transcript; defaults to 24000 for callers that do not know the window.
+ */
+export function formatFinalRoundTranscript(data, participants, opts = {}) {
   const truncForTranscript = (s, lim) => {
     if (s.length <= lim) return s;
     // Whole-unit cut: prefer a line boundary so a contribution line is never
@@ -425,53 +560,80 @@ export function formatFinalRoundTranscript(data, participants) {
     appendReflections(lines);
     return lines.join("\n");
   }
-  if (data.rounds.length === 1) {
-    const round = data.rounds[0];
+  const budgetChars = Math.max(4000, Number(opts.budgetChars) || 24000);
+  const rounds = data.rounds;
+  if (rounds.length === 1) {
+    const round = rounds[0];
     const lines = formatRoundLines(round, participants);
     lines[0] = `### Round ${round.number} (Final)`;
     appendAgentStates(lines);
     appendReflections(lines);
     const joined = lines.join("\n");
-    return truncForTranscript(joined, 24000);
+    return truncForTranscript(joined, budgetChars);
   }
-  // For 2-4 rounds, include fuller digests; for longer, keep last 2 full + earlier digests 400 chars
-  const fullRounds = data.rounds.length <= 4 ? data.rounds : data.rounds.slice(-2);
-  const digestRounds = data.rounds.length <= 4 ? [] : data.rounds.slice(0, -2);
-  // Budget order: the final round + agent states + reflections are the most
-  // decision-relevant content, so they are built first and digests fill whatever
-  // remains of the 24k budget. Cutting from the front (digests first) instead of
-  // slicing the joined string keeps the conclusion when the budget binds (audit D11).
-  const tailLines = [];
-  for (const r of fullRounds) {
+
+  // The agent-states and reflections blocks are small and never sacrificed.
+  const fixedLines = [];
+  appendAgentStates(fixedLines);
+  appendReflections(fixedLines);
+  const fixedLen = fixedLines.join("\n").length + 200;
+
+  // Per round: the full text, and the citable index that stands in for it.
+  const perRound = rounds.map((r, i) => {
+    const isFinal = i === rounds.length - 1;
     const ls = formatRoundLines(r, participants);
-    // mark last as final, others as full
-    ls[0] = `### Round ${r.number} ${r === fullRounds[fullRounds.length-1] ? "(Final)" : "(full)"}`;
-    tailLines.push(...ls);
-  }
-  appendAgentStates(tailLines);
-  appendReflections(tailLines);
-  const tailStr = tailLines.join("\n");
-  if (tailStr.length >= 24000) return truncForTranscript(tailStr, 24000);
-  let remaining = 24000 - tailStr.length - 1;
-  const headLines = [];
-  for (let i = 0; i < digestRounds.length; i++) {
-    const r = digestRounds[i];
-    const summary = (r.summary || (r.contributions[0]?.content ?? "")).slice(0, 400).replace(/\n/g, " ");
-    const contested = (r.contributions.find((c) => c.type === "critique_response" || c.type === "perspective_response")?.content ?? "").slice(0, 400).replace(/\n/g, " ");
-    // Include top file mention for code rounds
-    const fileMention = (r.contributions.find((c) => /file=|src\/.*\.\w+|```/.test(String(c.content)))?.content ?? "").slice(0, 300).replace(/\n/g, " ");
-    const block = [`### Round ${r.number} (digest)`];
-    if (summary) block.push(`Summary: ${summary}`);
-    if (contested) block.push(`Contested: ${contested}`);
-    if (fileMention) block.push(`Code: ${fileMention}`);
-    const blockStr = block.join("\n");
-    if (blockStr.length > remaining) {
-      headLines.push(`### Round ${r.number} (digest)`);
-      headLines.push(`…[earlier-round digests truncated — full weave in DB]`);
-      break;
+    ls[0] = `### Round ${r.number} ${isFinal ? "(Final)" : "(full)"}`;
+    const index = formatRoundIndexLines(r, participants);
+    const digest = renderClerkDigest(r.summary || (r.contributions?.[0]?.content ?? ""));
+    const indexBlock = [`### Round ${r.number} (index — ids and the clerk's account; full text in the meeting record)`];
+    if (index) indexBlock.push(index);
+    if (digest) indexBlock.push(`Clerk: ${digest}`);
+    return { number: r.number, isFinal, full: ls.join("\n"), index: indexBlock.join("\n") };
+  });
+
+  // Budget order, in two reserves:
+  //   1. every round gets its citable index — a contribution the synthesizer
+  //      cannot see cannot be cited, and "nothing silently dropped" is the
+  //      point of the artifact (audit B);
+  //   2. whatever is left goes to the NEWEST rounds' full text, so the final
+  //      round is the last thing that would be sacrificed.
+  const budget = Math.max(2000, budgetChars - fixedLen);
+  const indexCost = perRound.reduce((sum, r) => sum + r.index.length + 2, 0);
+  // The index reserve is honoured FIRST: a contribution the synthesizer cannot
+  // see cannot be cited, and the artifact's "nothing silently dropped" promise
+  // is worth more than the prose of a round that is already summarised. What
+  // is left goes to the NEWEST rounds' full text, so the final round is the
+  // last thing that would be sacrificed.
+  const indexBudget = Math.min(indexCost, Math.floor(budget * 0.6));
+  const fullBudget = budget - indexBudget;
+  const full = [];
+  let fullUsed = 0;
+  for (let i = perRound.length - 1; i >= 0; i--) {
+    const r = perRound[i];
+    if (fullUsed + r.full.length + 2 <= fullBudget) {
+      full.unshift(r.full);
+      fullUsed += r.full.length + 2;
     }
-    headLines.push(...block);
-    remaining -= blockStr.length + 1;
   }
-  return [...headLines, ...tailLines].join("\n");
+  // The rounds that did not get full text keep their citable index, newest
+  // first; the ones that do not fit are dropped, and the loss is marked.
+  const indexed = [];
+  let indexUsed = 0;
+  const indexRoom = budget - fullUsed;
+  for (let i = perRound.length - 1; i >= 0; i--) {
+    const r = perRound[i];
+    if (full.includes(r.full)) continue;
+    if (indexUsed + r.index.length + 2 > indexRoom) continue;
+    indexed.unshift(r.index);
+    indexUsed += r.index.length + 2;
+  }
+  const headLines = [];
+  const dropped = perRound.length - full.length - indexed.length;
+  if (dropped > 0) {
+    headLines.push(`…[${dropped} earlier round${dropped === 1 ? "" : "s"} omitted from this transcript — every contribution is in the meeting record]`);
+  }
+  headLines.push(...indexed);
+  const tailLines = [...full, ...fixedLines];
+  const joined = [...headLines, ...tailLines].join("\n");
+  return truncForTranscript(joined, budgetChars);
 }

@@ -627,7 +627,7 @@ const TimelineTabBase = ({
           </AlertDescription>
         </Alert>
       )}
-      <div className="sr-only" aria-live="polite" aria-atomic="true">{isWeaving ? `Live — round ${activeRound} weaving` : `Round ${activeRound} complete`}</div>
+      <div className="sr-only" aria-live="polite" aria-atomic="true">{isWeaving ? `Live — round ${activeRound} deliberating` : `Round ${activeRound} complete`}</div>
       {groupedContributions.length === 0 && contributions.length === 0 && !isWeaving && (
         <Empty className="border">
           <EmptyHeader>

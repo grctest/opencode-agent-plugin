@@ -2,7 +2,7 @@ import { Alert, AlertTitle, AlertDescription } from "../ui/alert.tsx";
 import { Button } from "../ui/button.tsx";
 
 export function StatusBanners({
-  readOnly, meetingActive, job, doCancel,
+  readOnly, meetingActive, job, doCancel, cancelling,
   startedId, resumedId, resumeMeta, resumeWarnings,
   finishedId, finishMeta, finishWarnings,
   selectedMeeting, resumeStatus, resumeParts, doResume, busy,
@@ -20,10 +20,16 @@ export function StatusBanners({
       )}
       {job?.running && (
         <Alert className="border-amber-500/40 bg-amber-500/10">
-          <AlertTitle>Deliberation running</AlertTitle>
+          <AlertTitle>{cancelling === job.running ? "Cancelling…" : "Deliberation running"}</AlertTitle>
           <AlertDescription className="flex items-center justify-between gap-2">
-            <span>Meeting {String(job.running).slice(0, 8)}… is weaving. Starting is locked until it finishes.</span>
-            <Button variant="outline" size="sm" onClick={() => doCancel(job.running)}>Cancel run</Button>
+            <span>
+              {cancelling === job.running
+                ? `Meeting ${String(job.running).slice(0, 8)}… is stopping. The in-flight turn is aborted and no further agent is called.`
+                : `Meeting ${String(job.running).slice(0, 8)}… is deliberating. Starting is locked until it finishes.`}
+            </span>
+            <Button variant="outline" size="sm" onClick={() => doCancel(job.running)} disabled={cancelling === job.running}>
+              {cancelling === job.running ? "Cancelling…" : "Cancel run"}
+            </Button>
           </AlertDescription>
         </Alert>
       )}
@@ -92,7 +98,33 @@ export function StatusBanners({
           </AlertDescription>
         </Alert>
       )}
-      {selectedMeeting && !job?.running && finishInfo && ["converged", "cancelled", "timeout", "max_rounds_reached", "aborted"].includes(finishInfo.status) && finishInfo.hasArtifact === false && (
+      {selectedMeeting && !job?.running && resumeStatus && ["cancelled", "timeout"].includes(resumeStatus) && (
+        <Alert className="mt-3 border-amber-500/40 bg-amber-500/10">
+          <AlertTitle>{resumeStatus === "cancelled" ? "Deliberation cancelled" : "Deliberation stopped"}</AlertTitle>
+          <AlertDescription className="flex items-center justify-between gap-2">
+            <span>
+              {finishInfo?.hasArtifact
+                ? "You stopped this run and its output was already synthesized — open the Output tab to read it."
+                : resumeStatus === "cancelled"
+                  ? "You stopped this run. Committed turns are preserved — Resume continues the interrupted round from where it left off; Finish re-runs only the final output step."
+                  : "This run stopped on its own. Committed turns are preserved — Resume continues the interrupted round from where it left off; Finish re-runs only the final output step."}
+            </span>
+            <span className="flex gap-2">
+              {!finishInfo?.hasArtifact && (
+                <Button variant="outline" size="sm" onClick={doResume} disabled={busy === "resume"}>
+                  {busy === "resume" ? "Resuming…" : "Resume"}
+                </Button>
+              )}
+              {!finishInfo?.hasArtifact && (
+                <Button variant="outline" size="sm" onClick={doFinish} disabled={busy === "finish"}>
+                  {busy === "finish" ? "Finishing…" : "Finish"}
+                </Button>
+              )}
+            </span>
+          </AlertDescription>
+        </Alert>
+      )}
+      {selectedMeeting && !job?.running && finishInfo && ["converged", "max_rounds_reached", "aborted"].includes(finishInfo.status) && finishInfo.hasArtifact === false && (
         <Alert className="mt-3 border-amber-500/40 bg-amber-500/10">
           <AlertTitle>Synthesis never completed</AlertTitle>
           <AlertDescription className="flex items-center justify-between gap-2">

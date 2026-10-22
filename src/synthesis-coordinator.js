@@ -62,19 +62,48 @@ export class SynthesisCoordinator {
   // Both the system prompt and the user prompt announce it, so the
   // synthesizer never writes to a budget it does not have (audit C3).
   #contextWindow = null;
+  // The character budget for the synthesis transcript, derived from the
+  // orchestrator model's context window.
+  #transcriptBudgetChars = null;
+  // The forum's bounded discussion, gathered by the orchestrator.
+  #forumContent = "";
+  // The meeting's halt signal. A synthesis that is already in flight when the
+  // user cancels must die with it — otherwise "Cancel run" would still leave
+  // two LLM calls running.
+  #haltSignal = null;
 
   constructor(sessionManager, orchestratorConfig = {}) {
     this.#sessionManager = sessionManager;
     this.#orchestratorConfig = orchestratorConfig;
   }
 
+  /**
+   * Bind the synthesis prompts to the meeting's halt signal.
+   * @param {AbortSignal|null} signal
+   */
+  setHaltSignal(signal) {
+    this.#haltSignal = signal ?? null;
+  }
+
+  /** True when the meeting has been stopped on purpose. */
+  #halted() {
+    return !!this.#haltSignal?.aborted;
+  }
+
   #orchestratorSynthesisSystem(config = this.#orchestratorConfig) {
     return buildOrchestratorSynthesisSystem(config, this.#contextWindow);
   }
 
-  async run({ transcriptData, participants, model, onStart, onComplete, stateOfPlay = "", userContext = "", onActivity = null, meetingId = null, contextWindow = null }) {
+  async run({ transcriptData, participants, model, onStart, onComplete, stateOfPlay = "", userContext = "", forumContent = "", forumTopics = null, onActivity = null, meetingId = null, contextWindow = null, transcriptBudgetChars = null }) {
     this.#runMeetingId = meetingId ?? null;
     this.#contextWindow = Number.isFinite(contextWindow) ? contextWindow : null;
+    // The transcript budget is the MODEL'S WINDOW (audit B), not a constant:
+    // the old fixed 24k characters cut the final round first and left the
+    // synthesizer seeing 7% of a ten-round deliberation.
+    this.#transcriptBudgetChars = Number.isFinite(transcriptBudgetChars) && transcriptBudgetChars > 0
+      ? transcriptBudgetChars
+      : null;
+    this.#forumContent = typeof forumContent === "string" ? forumContent : "";
     if (!model?.providerID || !model?.modelID) {
       throw new LoomError("No orchestrator model available for final synthesis", { phase: "synthesis", recoverable: false });
     }
@@ -98,7 +127,7 @@ export class SynthesisCoordinator {
     };
     try {
       synthSessionId = await this.#sessionManager.createOrchestratorSynthesisSession();
-      const transcript = formatFinalRoundTranscript(transcriptData, participants);
+      const transcript = formatFinalRoundTranscript(transcriptData, participants, { budgetChars: this.#transcriptBudgetChars ?? undefined });
       artifactText = await this.#promptWithRetry(synthSessionId, transcriptData, transcript, model, participants, stateOfPlay, userContext, effectiveConfig, heartbeat);
       artifactText = await this.#critique(synthSessionId, artifactText, transcript, transcriptData, model, participants, effectiveConfig, heartbeat);
     } catch (err) {
@@ -111,12 +140,56 @@ export class SynthesisCoordinator {
       }
     }
 
-    const result = finalizeSynthesis(artifactText, transcriptData, participants, { synthesisStyle: effectiveConfig?.synthesisStyle });
+    const result = finalizeSynthesis(artifactText, transcriptData, participants, {
+      synthesisStyle: effectiveConfig?.synthesisStyle,
+      // The forum topic map resolves [#T{id}] refs the deterministic reference
+      // index backfills — without it a thread id a reader hits stays unresolvable.
+      forumTopics: Array.isArray(forumTopics) ? forumTopics : null,
+    });
+    // The deliverable states its own provenance (audit H): the reader can see
+    // how much deliberation it rests on, whether a ballot was held, and what
+    // fraction of the room it represents. Every number is already known here —
+    // the coverage figure was computed by finalizeSynthesis and hidden in the
+    // artifact JSON, where no reader would ever see it.
+    const withProvenance = this.#appendProvenance(result, transcriptData, participants);
 
     await this.#sessionManager.postProgress("✅ Synthesis complete");
 
-    if (onComplete) onComplete(result.output);
-    return result;
+    if (onComplete) onComplete(withProvenance.output);
+    return withProvenance;
+  }
+
+  /**
+   * Appends a factual provenance footer to the artifact (audit H).
+   *
+   * Deliberate, deterministic, and short: the deliberation's scale (rounds,
+   * contributions, participants), whether a BALLOT was held — two of the three
+   * recorded meetings held none, and the reader could not tell that a
+   * Decision Rule was prose rather than a tally — and the share of the room's
+   * contributions the artifact actually cites. A deliverable that states its
+   * own coverage is worth more than one that quietly implies completeness.
+   */
+  #appendProvenance(result, transcriptData, participants) {
+    try {
+      const weave = (transcriptData?.rounds ?? []).flatMap((r) => r.contributions ?? []);
+      const substantive = weave.filter((c) => c.type !== "pass");
+      const ballots = weave.filter((c) => c.type === "vote_response").length;
+      const coverage = result?.artifact?.engagement?.coverage;
+      const bits = [
+        `${(transcriptData?.rounds ?? []).length} round${(transcriptData?.rounds ?? []).length === 1 ? "" : "s"}`,
+        `${substantive.length} contribution${substantive.length === 1 ? "" : "s"}`,
+        `${(participants ?? []).length} participant${(participants ?? []).length === 1 ? "" : "s"}`,
+        ballots > 0 ? `${ballots} ballot${ballots === 1 ? "" : "s"} held` : "no ballot held",
+      ];
+      if (Number.isFinite(coverage)) {
+        bits.push(`${Math.round(coverage * 100)}% of contributions cited in this artifact`);
+      }
+      const footer = `\n\n---\n*Deliberation: ${bits.join(" · ")}.*`;
+      const output = `${result.output}${footer}`;
+      return { ...result, output, artifact: { ...(result.artifact ?? {}), content: `${result.artifact?.content ?? result.output}${footer}` } };
+    } catch {
+      return result;
+    }
   }
 
   async #promptWithRetry(sessionId, transcriptData, transcript, model, allParticipants, stateOfPlay = "", userContext = "", effectiveConfig = this.#orchestratorConfig, onActivity = null) {
@@ -125,12 +198,18 @@ export class SynthesisCoordinator {
     const maxRetries = Number.isFinite(rawMaxRetries) ? rawMaxRetries : 1;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      // A cancelled meeting issues no synthesis prompts.
+      if (this.#halted()) {
+        const abortErr = new DOMException("Aborted", "AbortError");
+        abortErr.name = "AbortError";
+        throw abortErr;
+      }
       // N8 — the peer-engagement ledger travels with every synthesis attempt, so
       // the rule is in force at the point the deliverable is written rather
       // than only in the round clerk's summary.
       const engagement = computeEngagementLedger(transcriptData);
       const userPrompt =
-        buildSynthesisPrompt(transcriptData.question, transcript, allParticipants, transcriptData.tags ?? [], stateOfPlay, userContext, { buildMode: transcriptData.buildMode, taskMode: transcriptData.taskMode, decisionPosture: effectiveConfig?.decisionPosture, engagement, contextWindow: this.#contextWindow }) +
+        buildSynthesisPrompt(transcriptData.question, transcript, allParticipants, transcriptData.tags ?? [], stateOfPlay, userContext, { buildMode: transcriptData.buildMode, taskMode: transcriptData.taskMode, decisionPosture: effectiveConfig?.decisionPosture, engagement, contextWindow: this.#contextWindow, forumContent: this.#forumContent }) +
         additionalFeedback;
 
       const llmStart = Date.now();
@@ -141,6 +220,7 @@ export class SynthesisCoordinator {
           model,
           parts: [{ type: "text", text: userPrompt }],
           timeoutMs: getConfig().synthesisTimeoutMs,
+          signal: this.#haltSignal ?? undefined,
           ...(typeof onActivity === "function" ? { onHeartbeat: onActivity } : {}),
         });
          if (!r.ok) throw r.error;
@@ -253,6 +333,8 @@ Audit checklist (be strict but human-first):
 3. Support: any Decision/Action Item/Proposed Fix not supported by at least one contribution or Proposed marking — mark Proposed or cite.
 4. Confidence: does Confidence justification match rubric?
 5. Human-first: does Executive Summary exist and read cleanly without citation spam? Are Decision table cells concise (Evidence 30-35w + one cite, Tradeoff 30-35w), not paragraphs? Is Reasoning deduplicated vs Decision (not copy-paste)?
+5a. Dissent: does the draft carry the round clerk's Contested bullet in "## Dissenting Views" with the holders and their [#id]s? If the room did not settle something, a reader must be able to see it — and the clause must not be softened.
+5b. Owners: are the action items owned by SEATED participants (never an invented @handle or role), and distributed — or is everything landing on one agent?
 6. Citation hygiene: no vec: / vec round / [Round X vec] leaked; one grouped cite per block, not spam.
 
 Transcript excerpt for grounding check (thorough slice — top 4 contested + top 4 file mentions + last 2 rounds fuller).
@@ -264,6 +346,7 @@ If corrections are needed, output the FULL revised synthesis with ALL required s
 ## Decision
 ## Decision Rule (required when the draft maps a spectrum without a single Decision)
 ## Reasoning
+## Dissenting Views (the round clerk's Contested bullet — the live disagreement, carried not re-derived)
 ${text.toLowerCase().includes("proposed fix") || resolveTaskMode(transcriptData?.question, transcriptData?.tags ?? [], { taskMode: transcriptData?.taskMode }) === "code-analysis" ? "## Proposed Fix\n## Action Items\n" : "## Action Items\n"}## Open Questions
 ## Confidence
 
@@ -278,6 +361,12 @@ ${draftForPrompt}`;
     let bestMissing = validateSynthesisSections(text, effectiveConfig?.synthesisStyle).length;
     let prevMissing = bestMissing;
     for (let attempt = 0; attempt < getMaxCritiqueRetries(); attempt++) {
+      // A cancelled meeting issues no critique prompts.
+      if (this.#halted()) {
+        const abortErr = new DOMException("Aborted", "AbortError");
+        abortErr.name = "AbortError";
+        throw abortErr;
+      }
       try {
         const critiqueStart = Date.now();
         const result = await withRetry(async () => {
@@ -287,6 +376,7 @@ ${draftForPrompt}`;
             model,
             parts: [{ type: "text", text: critiquePrompt }],
             timeoutMs: getConfig().synthesisTimeoutMs,
+            signal: this.#haltSignal ?? undefined,
             ...(typeof onActivity === "function" ? { onHeartbeat: onActivity } : {}),
           });
            if (!r.ok) throw r.error;

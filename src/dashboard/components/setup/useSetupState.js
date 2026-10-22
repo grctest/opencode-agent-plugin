@@ -16,6 +16,7 @@ export function useSetupState({ selectedMeeting, onStarted, meetingState, meetin
   const setContext = (v) => { patchForm({ context: v }); setGuidance(null); };
   const setMaxRounds = (v) => patchForm({ maxRounds: v });
   const setTaskMode = (v) => setFeature("taskMode", v === "programming" ? "programming" : "discussion");
+  const setDeliberationMode = (v) => setFeature("buildMode", v === "build");
   const setStartedId = (v) => patchForm({ startedId: v });
   const setOrchestratorField = (key, value) => patchForm({ orchestrator: { ...orchestrator, [key]: value } });
   const setFeature = (key, value) => patchForm({ features: { ...features, [key]: value } });
@@ -44,6 +45,7 @@ export function useSetupState({ selectedMeeting, onStarted, meetingState, meetin
   const [rankAutoSelect, setRankAutoSelect] = useState(3);
   const [rankSuggestedModels, setRankSuggestedModels] = useState([]);
   const [job, setJob] = useState(null);
+  const [cancelling, setCancelling] = useState(null);
   const [extendInput, setExtendInput] = useState("");
   const [resumeStatus, setResumeStatus] = useState(null);
   const [resumeParts, setResumeParts] = useState(null);
@@ -205,6 +207,18 @@ export function useSetupState({ selectedMeeting, onStarted, meetingState, meetin
     const t = setInterval(poll, 3000);
     return () => { cancelled = true; clearInterval(t); };
   }, []);
+
+  // The "Cancelling…" state ends when the run has ACTUALLY stopped — the job
+  // phase moves off "cancelling", or the meeting stops being the running one.
+  // Until then the button says the run is being cancelled, so the user is
+  // never told "weaving" about a run they already stopped.
+  useEffect(() => {
+    if (!cancelling) return;
+    if (!job) return;
+    if (job.running !== cancelling) { setCancelling(null); return; }
+    const phase = job.jobs?.[cancelling]?.phase ?? null;
+    if (phase && phase !== "cancelling") setCancelling(null);
+  }, [job, cancelling]);
 
   useEffect(() => {
     if (!selectedMeeting || job?.running) {
@@ -471,10 +485,12 @@ export function useSetupState({ selectedMeeting, onStarted, meetingState, meetin
 
   const doCancel = async (id) => {
     setError(null);
+    setCancelling(id);
     try {
       await postJSON("/api/meetings/cancel", { meeting_id: id });
     } catch (err) {
       setError(err.message);
+      setCancelling(null);
     }
   };
 
@@ -540,10 +556,11 @@ export function useSetupState({ selectedMeeting, onStarted, meetingState, meetin
   return {
     question, context, maxRounds, seats, startedId, orchestrator, features,
     taskMode: features.taskMode === "programming" ? "programming" : "discussion", setTaskMode,
+    buildMode: features.buildMode === true, setDeliberationMode,
     setQuestion, setContext, setMaxRounds, setStartedId, setOrchestratorField, setFeature, setSeats, patchForm,
     clearForm, catalog, llm, suggestedModels, busy, error, guidance, swapIdx, setSwapIdx,
     addOpen, setAddOpen, rankOpen, setRankOpen, ranked, rankAutoSelect, rankSuggestedModels,
-    job, extendInput, setExtendInput, resumeStatus, resumeParts, resumedId, resumeWarnings, resumeMeta,
+    job, cancelling, extendInput, setExtendInput, resumeStatus, resumeParts, resumedId, resumeWarnings, resumeMeta,
     finishInfo, finishedId, finishWarnings, finishMeta, previewOpen, setPreviewOpen, previewBusy, previewError, previewData,
     extendRounds, setExtendRounds, sectionRefs,
     storedRunParticipants, readOnly, locked, meetingActive,

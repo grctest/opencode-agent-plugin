@@ -517,26 +517,52 @@ export function getSettledItems(allStates, { cap = STATE_PATCH_CAPS.buckets } = 
     .map((slot) => ({ text: slot.text, holders: [...slot.holders] }));
 }
 
-export function aggregateStateOfPlay(allStates, question, tags) {
+/**
+ * Aggregates the shared State of Play from the per-agent states.
+ *
+ * The consensus section is the ORCHESTRATOR's call, not a string match
+ * (audit A): the round clerk designates converged items semantically (its
+ * `**Settled:**` bullet) and the meeting-level registry carries them forward.
+ * Exact-match aggregation over the agents' own buckets cannot recognise
+ * consensus — five agents phrase the same convergence five ways, and in the
+ * recorded meetings it produced ZERO multi-holder items, so the shared
+ * consensus section was empty in every round while the room's real consensus
+ * sat in a list nobody read.
+ *
+ * So: the orchestrator's registry IS the consensus section; the agents'
+ * exact-match ≥2-holder items are the FALLBACK for meetings with no
+ * designation yet (round 1, a degraded clerk, flag-off). Either way a single
+ * agent's self-assertion never renders as consensus (audit A4) — and now the
+ * guarantee rests on the referee's judgement rather than on counting identical
+ * strings.
+ *
+ * @param {Array} allStates per-agent states
+ * @param {string} question
+ * @param {string[]} tags
+ * @param {{settledItems?: Array<{text?: string}>}} [opts] the orchestrator's
+ *   settled registry (the meeting-level list the clerk's Settled bullet builds)
+ */
+export function aggregateStateOfPlay(allStates, question, tags, opts = {}) {
   const nonEmpty = buildStateEntries(allStates);
-  if (nonEmpty.length === 0) return "";
+  const settledItems = Array.isArray(opts?.settledItems) ? opts.settledItems : [];
+  if (nonEmpty.length === 0 && settledItems.length === 0) return "";
 
   const slotText = (v) => v.holders.size > 1 ? `${v.text} (${v.holders.size} holders)` : v.text;
 
-  const collect = (get, opts) => takeStateSlots(rankStateSlots(nonEmpty, get, opts)).map(slotText);
+  const collect = (get, opts2) => takeStateSlots(rankStateSlots(nonEmpty, get, opts2)).map(slotText);
 
   const contested = collect((s) => s.contested);
   const open = collect((s) => s.open);
-  // ONE consensus section, and it requires ≥2 holders — a single agent's
-  // self-assertion must not render with the visual authority of consensus.
-  // Single-holder established items remain in the agent's private state but
-  // are excluded from the shared SoP (audit A4, P11 fix).
-  //
-  // This bucket is both "proposals" and "agreements": the patch channel files
-  // both in `established`, so splitting them produced two identical lists
-  // under two headings (audit Q3). The per-row "(N holders)" suffix still
-  // reports how many agents stand behind each item.
-  const agreed = collect((s) => s.established, { minHolders: 2 });
+  // The orchestrator's consensus judgement, verbatim (with its [#id] refs).
+  const orchestratorAgreed = settledItems
+    .map((it) => String(it?.text ?? "").replace(/\s+/g, " ").trim())
+    .filter((t) => t.length > 0)
+    .slice(0, STATE_PATCH_CAPS.buckets);
+  // Fallback (no designation yet): the agents' own ≥2-holder items. The
+  // per-row "(N holders)" suffix still reports how many agents stand behind
+  // each item.
+  const exactMatchAgreed = collect((s) => s.established, { minHolders: 2 });
+  const agreed = orchestratorAgreed.length > 0 ? orchestratorAgreed : exactMatchAgreed;
 
   // Key Facts: stances ranked alongside evidence with an evidence floor, never
   // 8/0 in either direction (audit A3). Stances lead (positions first), then

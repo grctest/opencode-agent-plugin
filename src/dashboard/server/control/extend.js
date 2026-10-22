@@ -9,7 +9,7 @@ import { getConfig } from "../../../config.js";
 import { extractErrorInfo } from "../../../logger.js";
 import { sanitizeForPrompt, sanitizeForDisplay } from "../../../utils/sanitize.js";
 import { writeReportFile as writeReportFileHelper } from "../../../handlers/knit/file-ops.js";
-import { isControlReady, logger, runtime, jobs, serverState, getDirectory, readJsonBody } from "./runtime.js";
+import { isControlReady, logger, runtime, jobs, serverState, getDirectory, readJsonBody, jobPhaseForStatus } from "./runtime.js";
 import { discoverFiltered } from "./discovery.js";
 import { storedVariantFor, normalizeFeatures, buildMeetingAgentTools, dashboardCallbacks } from "./forms.js";
 import { registerMeetingEngine } from "../../../utils/engine-registry.js";
@@ -152,9 +152,12 @@ async function handleExtendMeetingInternal(req) {
       await extEngine.initialize();
       const artifact = await extEngine.extendMeeting(question, additionalRounds);
       const extState = extEngine.getState();
-      const fullReport = `# Loom Deliberation (Extended)\n\n**New Input:** ${sanitizeForDisplay(question, 5000)}\n\n**Participants:** ${existingParts.map((p) => `${p.name} (${p.category ?? p.tier})`).join(", ")}\n\n**Total Rounds:** ${extState.current_round}\n\n**Meeting ID:** ${extEngine.getMeetingId()}\n\n---\n\n${artifact}`;
-      writeReportFileHelper(getDirectory(), extEngine.getMeetingId(), fullReport, logger);
-      jobs.set(meetingId, { phase: "done", startedAt: jobs.get(meetingId)?.startedAt ?? null, finishedAt: new Date().toISOString(), extended: true });
+      // A cancelled extension produces no artifact — nothing to report.
+      if (artifact) {
+        const fullReport = `# Loom Deliberation (Extended)\n\n**New Input:** ${sanitizeForDisplay(question, 5000)}\n\n**Participants:** ${existingParts.map((p) => `${p.name} (${p.category ?? p.tier})`).join(", ")}\n\n**Total Rounds:** ${extState.current_round}\n\n**Meeting ID:** ${extEngine.getMeetingId()}\n\n---\n\n${artifact}`;
+        writeReportFileHelper(getDirectory(), extEngine.getMeetingId(), fullReport, logger);
+      }
+      jobs.set(meetingId, { phase: jobPhaseForStatus(extState?.status), startedAt: jobs.get(meetingId)?.startedAt ?? null, finishedAt: new Date().toISOString(), extended: true });
     } catch (err) {
       logger.error("dashboard_extend_failed", "Dashboard extension failed", extractErrorInfo(err));
       jobs.set(meetingId, { phase: "error", error: extractErrorInfo(err).message, startedAt: jobs.get(meetingId)?.startedAt ?? null });

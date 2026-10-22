@@ -4,7 +4,7 @@ import { Input } from "../ui/input.tsx";
 import { Textarea } from "../ui/textarea.tsx";
 import { Label } from "../ui/label.tsx";
 
-export function QuestionCard({ question, setQuestion, context, setContext, maxRounds, setMaxRounds, taskMode, setTaskMode, disabled, sectionRef }) {
+export function QuestionCard({ question, setQuestion, context, setContext, maxRounds, setMaxRounds, taskMode, setTaskMode, buildMode, setDeliberationMode, disabled, sectionRef }) {
   return (
     <Card ref={sectionRef}>
       <CardHeader>
@@ -76,6 +76,38 @@ export function QuestionCard({ question, setQuestion, context, setContext, maxRo
                 Programming
               </Button>
             </div>
+          </div>
+        </div>
+        <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
+          <div className="min-w-0">
+            <Label htmlFor="loom-deliberationMode" className="cursor-default">Deliberation mode</Label>
+            <p className="mt-0.5 text-xs text-muted-foreground" aria-live="polite">{buildMode ? "Build — agents may write and edit project files after reading. Choose this when the deliberation should produce live changes." : "Plan — read-only. Agents propose diffs but never write. Switch to Build before starting if you expect live file changes."}</p>
+          </div>
+          <div className="flex shrink-0 items-center gap-1" role="group" aria-label="Deliberation mode" id="loom-deliberationMode">
+            <Button
+              type="button"
+              size="sm"
+              variant={buildMode ? "outline" : "default"}
+              disabled={disabled}
+              onClick={() => setDeliberationMode("plan")}
+              aria-pressed={!buildMode}
+              title="Read-only. Agents propose diffs but never write."
+              className="px-2 text-[11px]"
+            >
+              Plan
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={buildMode ? "default" : "outline"}
+              disabled={disabled}
+              onClick={() => setDeliberationMode("build")}
+              aria-pressed={buildMode}
+              title="Agents may write and edit project files. Choose this if the deliberation should produce live changes."
+              className="px-2 text-[11px]"
+            >
+              Build
+            </Button>
           </div>
         </div>
       </CardContent>

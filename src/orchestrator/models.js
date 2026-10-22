@@ -196,9 +196,9 @@ export function getTurnOrderGuidance(config = {}) {
  * never dropped at any band.
  */
 const BULLET_DETAIL = {
-  established: "- **Established:** What gained support this round, with holder [#id] and why it matters (1-2 sentences)",
-  settled: "- **Settled:** Items the room converged on this round that now have multi-holder agreement — each as a one-line claim with [#id] refs (e.g. \"- Both name the same two riskiest failure modes: token refresh and stale-cache invalidation — identical scope, different severity rating [#9][#12]\"). These feed the meeting-level settled registry. If nothing newly converged, write \"None this round\". Converged term definitions (what counts, how scored, scope) belong here from round 1 — write them plainly so later rounds cite them by [#id].",
-  contested: "- **Contested:** What remains disputed — name holders and their distinct positions [#id]; map the spectrum, don’t collapse to “disagreement”. Include a stance audit from the Agent States block below: when a participant's recorded stance contradicts a concession they made in-room this round, name them (\"retains X despite conceding Y in [#id]\").",
+  established: "- **Established:** What gained support this round, with holder NAME + [#id] (Ada [#14]) and why it matters (1-2 sentences)",
+  settled: "- **Settled:** Items the room converged on this round that now have multi-holder agreement — each as a one-line claim whose holders are NAMED with their ids (e.g. \"- [#9] Dr. Sarah, [#12] Marcus — both name the same two riskiest failure modes: token refresh and stale-cache invalidation — identical scope, different severity rating\"). Names pairing ids keep every bullet readable round-after-round: an id a reader cannot resolve is a hole. These feed the meeting-level settled registry. If nothing newly converged, write \"None this round\". Converged term definitions (what counts, how scored, scope) belong here from round 1 — write them plainly so later rounds cite them by [#id].",
+  contested: "- **Contested:** What remains disputed — name holders with their ids and their distinct positions (\"Ada [#9] — X; Marcus [#12] — Y\"); map the spectrum, don’t collapse to “disagreement”. Include a stance audit from the Agent States block below: when a participant's recorded stance contradicts a concession they made in-room this round, name them (\"retains X despite conceding Y in [#id]\").",
   evidence: "- **Evidence:** Tool or vec-grounded evidence introduced (Source or [#id] with Strength: strong/weak/inconclusive); or “None — no new evidence this round” — never emit vec: / vec round traces, use State-of-Play or [#id]",
   open: "- **Open:** Unresolved questions and what would resolve them (missing evidence / decision needed). If an open question from a prior round is still open and has no new source attached, flag it “still un-researched”.",
   next: "- **Next:** One line — the single decision or output the next round must produce: who must defend, concede, or produce what, against which gate. Direct, not descriptive.",
@@ -211,8 +211,8 @@ export const ORCHESTRATOR_SUMMARY_BANDS = Object.freeze({
     budget: 6000,
     shape: "3-4 bullets, one line each — required: Settled, Contested, Next. Add Established only when something genuinely gained support; fold the evidence into the bullet that carries it; keep Open to one line only when something is genuinely open.",
     bullets: Object.freeze([
-      "- **Settled:** one line per newly converged item, with [#id] refs — or \"None this round\"",
-      "- **Contested:** what remains disputed — name the holders and their positions [#id]",
+      "- **Settled:** one line per newly converged item, holders NAMED with their ids (Ada [#9]) — or \"None this round\"",
+      "- **Contested:** what remains disputed — name the holders with their ids and their positions (Ada [#9] — X)",
       "- **Next:** one line — the single decision or output the next round must produce",
       "- **Established** (only if something genuinely gained support) and **Open** (only if something is genuinely open): one line each, with the evidence folded into the bullet that carries it",
     ]),
@@ -386,9 +386,14 @@ export async function _promptOrchestrator(system, model, message, type = "orches
     // carries the orchestrator-only turn-order tool, so a warranted order
     // change needs no second planning call (no call means default order).
     const summaryTools = { loom_set_turn_order: true };
+    // The halt signal rides along with every orchestrator call (round clerk,
+    // turn order, moderation, loom-tool consults): a "Cancel run" that lands
+    // while the summarizer is in flight aborts the prompt instead of letting
+    // it run to its wall-clock timeout.
+    const haltSignal = this.getHaltSignal?.() ?? null;
     const { text: response } = type === "summary" && typeof this._sessionManager.promptOrchestratorEphemeral === "function"
-      ? await this._sessionManager.promptOrchestratorEphemeral(orchestratorSystem, useModel, message, timeoutMs, { tools: summaryTools, meetingId: this._meetingId })
-      : await this._sessionManager.promptOrchestrator(orchestratorSystem, useModel, message, timeoutMs);
+      ? await this._sessionManager.promptOrchestratorEphemeral(orchestratorSystem, useModel, message, timeoutMs, { tools: summaryTools, meetingId: this._meetingId, signal: haltSignal })
+      : await this._sessionManager.promptOrchestrator(orchestratorSystem, useModel, message, timeoutMs, { signal: haltSignal });
     const safeResponse = (response ?? "").toString();
     if (!safeResponse.trim()) {
       this._logger.warn("orchestrator_empty_response", `Orchestrator returned empty text for type=${type} round=${round}`, { type, round });

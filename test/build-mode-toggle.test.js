@@ -100,12 +100,20 @@ test("setup store: buildMode defaults to Plan and sanitizes strict", () => {
   assert.match(store, /buildMode: rawFeatures\.buildMode === true/);
 });
 
-test("setup tab: orchestrator card exposes the Plan/Build mode toggle", () => {
+test("setup tab: question card exposes the Plan/Build mode toggle as a button pair", () => {
   const tab = srcTree("src/dashboard/components/setup", "src/dashboard/components/SetupTab.jsx");
   assert.match(tab, /Deliberation mode/);
-  assert.match(tab, /loom-orchestrator-deliberationMode/);
-  assert.match(tab, /setFeature\("buildMode", value === "build"\)/);
-  assert.match(tab, /features\.buildMode === true \? "build" : "plan"/);
+  assert.match(tab, /loom-deliberationMode/);
+  assert.match(tab, /setFeature\("buildMode", v === "build"\)/);
+  assert.match(tab, /buildMode: features\.buildMode === true/);
+  assert.match(tab, /setDeliberationMode\("plan"\)/);
+  assert.match(tab, /setDeliberationMode\("build"\)/);
   assert.match(tab, /Plan — read-only/);
-  assert.match(tab, /Build — may write/);
+  assert.match(tab, /Build — agents may write/);
+  // The control lives in the Question card (§1, a meeting-wide declaration
+  // beside Task type), never in the Orchestrator card — the orchestrator is
+  // not a participant and the mode governs the whole room.
+  const orchestratorCard = src("src/dashboard/components/setup/OrchestratorCard.jsx");
+  assert.ok(!orchestratorCard.includes("buildMode"), "orchestrator card must not own the mode toggle");
+  assert.ok(!orchestratorCard.includes("loom-deliberationMode"), "orchestrator card must not carry the mode element id");
 });

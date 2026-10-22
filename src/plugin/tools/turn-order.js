@@ -6,14 +6,15 @@ import { recordMeetingCall, recordMeetingLatency } from "../../metrics.js";
  *
  * Offered exclusively on the orchestrator's end-of-round summary call — never
  * in any agent-facing tool map (see buildToolsMap). The summary is the
- * orchestrator's single LLM call per round; when this round's evidence
- * warrants a different speaking order next round, the orchestrator calls this
- * tool once. No call means the default order stands.
+ * orchestrator's single LLM call per round, and the speaking order for the
+ * next round is ITS call: it sets one whenever this round's evidence warrants
+ * it, and the order it set stands until it changes it again. No call means
+ * the room's default order stands (audit D).
  */
 export function createTurnOrderTool({ resolveMeeting, activeLooms }) {
   return {
     loom_set_turn_order: tool({
-      description: "ORCHESTRATOR ONLY — override next round's speaking order. Call at most once per summary, and only when this round's evidence warrants a different order; omit to keep the default rotation. Takes the FULL ordered list of participant ids (use the ## Participants ids from the summary prompt). Unknown ids are dropped; missing seats are appended in rotation order.",
+      description: "ORCHESTRATOR ONLY — set next round's speaking order. Call at most once per summary, whenever this round's evidence warrants a different order than the one already standing (a voice that has spoken least, a claim that needs a defender, a position to test before the room converges). Takes the FULL ordered list of participant ids (use the ## Participants ids from the summary prompt). Unknown ids are dropped; missing seats are appended. The order you set stands until you change it again.",
       args: {
         order: tool.schema.array(tool.schema.string().min(1).max(120)).min(1).max(50)
           .describe("Full ordered list of participant ids for next round"),

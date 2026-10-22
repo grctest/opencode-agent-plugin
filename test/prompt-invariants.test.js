@@ -270,7 +270,7 @@ test("synthesis prompt and section contract agree", () => {
     SYNTHESIS_SECTION_CONTRACT.actionGroup.some((s) => prompt.includes(`## ${s}`)),
     "prompt missing action group section",
   );
-  assert.deepEqual(validateSynthesisSections("nothing here").sort(), ["Action Items", "Confidence", "Decision", "Open Questions", "Reasoning"].sort());
+  assert.deepEqual(validateSynthesisSections("nothing here").sort(), ["Action Items", "Confidence", "Decision", "Dissenting Views", "Open Questions", "References", "Reasoning"].sort());
 });
 
 // 12. B1 — one length rule (contract consumes LENGTH_LIMITS), no stale rule.
@@ -422,6 +422,46 @@ test("output contract carries newness, test-craft, and source-novelty rules", ()
   assert.match(contract, /a threshold that can never trigger is not falsifiable/);
   assert.match(contract, /Source novelty: a Source: URL supports a claim once/);
   assert.match(contract, /Research it \(websearch\) before or while posing it/);
+});
+
+// 27 — Room-layer resolvability: the room is asked to cite ids across layers
+// (turns, clerk bullets, final artifact), so a bare id must never be the only
+// rendering a reader gets. First use pairs the holder's NAME with the id, and
+// the pairing explicitly costs nothing against the citation budget — a rule
+// that silently spent budget would push the room to drop cites instead.
+test("output contract pairs the holder's NAME with every first [#id] mention", () => {
+  const sys = buildAgentSystemPrompt(participant(), { activeCount: 3, agentTools });
+  const contract = sys.split("## OUTPUT CONTRACT")[1] ?? "";
+  assert.match(contract, /Name the holder at first use/);
+  assert.match(contract, /same id, not a new one/, "the rule states its zero cost against the citation budget");
+  assert.match(contract, /a bare id a reader cannot resolve is a hole/);
+});
+
+// 28 — Resolvable-at-a-glance: the live block renders the display NAME with
+// the id (copy-work, not a two-hop lookup), and stays at the raw id when no
+// name is known (legacy call sites); the prior-round index block is gated,
+// fenced (agent-authored data), and id-deduped against the live block.
+test("the live block renders names and the prior-round index is fenced and gated", () => {
+  const user = buildAgentUserPrompt(
+    participant(),
+    "## Question\nQ?\n\n## Agreements\n- x",
+    [{ id: 12, participant_id: "peer_b", round: 2, type: "contribution", content: "live claim" }],
+    2, "Q?", [], "", [], [], null, false, true, {},
+    { participantNames: { peer_b: "Peer B", peer_a: "Peer A" }, earlierContributions: [
+      { id: 2, participant_id: "peer_a", round: 1, type: "contribution", content: "an older claim from round one" },
+    ] },
+  );
+  assert.match(user, /\[#12\] Peer B \[peer_b\]: live claim/, "live line: name + id on screen");
+  assert.match(user, /## Contribution Index — earlier rounds/);
+  assert.match(user, /<<<LOOM_PRIOR_INDEX/, "agent-authored index content is fenced");
+  assert.match(user, /- \[#2\] Peer A \(round 1\): an older claim/, "index line: id + name + round + gist");
+  assert.match(user, /never reopen a settled point on an index line alone/, "the gist-dispute guard");
+  const flat = buildAgentUserPrompt(
+    participant(), "## Question\nQ?", [{ id: 12, participant_id: "peer_b", type: "contribution", content: "legacy" }],
+    2, "Q?", [], "", [], [], null, false, true, {},
+  );
+  assert.match(flat, /\[#12\] \[peer_b\]: legacy/, "no name map — raw id, resolvable");
+  assert.doesNotMatch(flat, /## Contribution Index/, "no option — no block (byte-identical legacy)");
 });
 
 // 23. Persona lens renders the persona's own guidance verbatim — no per-category doctrine.
@@ -623,8 +663,116 @@ test("settled registry returns only consensus established items", () => {
   assert.deepEqual(getSettledItems([states[0]]), []);
 });
 
-// 28. F-A — settled block: late renders the guard, early renders the watch pointer.
-test("settled block is phase-gated", () => {
+// 27b. Audit A — the shared consensus section is the ORCHESTRATOR's judgement.
+// Exact-match aggregation over the agents' own buckets never matched (five
+// agents, five phrasings), so the section was empty in every recorded meeting
+// while the room's real consensus sat in the clerk's registry, unread.
+test("the consensus section carries the orchestrator's settled items", () => {
+  const states = [
+    { id: "a", name: "Ada", category: "mid", state: { stance: "s", established: ["Ada's wording of the same consensus"], contested: [], open: [], facts: [], files: [], version: 1, updated_round: 1, updated_contribution_id: 1 } },
+    { id: "b", name: "Ben", category: "mid", state: { stance: "s", established: ["Ben's wording of it"], contested: [], open: [], facts: [], files: [], version: 1, updated_round: 1, updated_contribution_id: 1 } },
+  ];
+  const withRegistry = aggregateStateOfPlay(states, "Q", [], {
+    settledItems: [{ text: "The room converged that scopes are Sunday Grands Prix [#4]" }],
+  });
+  assert.match(withRegistry, /## Agreements & Proposals/);
+  assert.match(withRegistry, /The room converged that scopes are Sunday Grands Prix/);
+  // The agents' exact-match items are the FALLBACK when no designation exists.
+  const withoutRegistry = aggregateStateOfPlay(states, "Q", []);
+  assert.doesNotMatch(withoutRegistry, /Ada's wording of the same consensus/);
+});
+
+// 27c. Audit B — the transcript budget is the model's window, and the final
+// round is never the one that disappears.
+test("the transcript keeps the final round and citable ids under a tight budget", () => {
+  const rounds = Array.from({ length: 6 }, (_, r) => ({
+    number: r + 1,
+    contributions: Array.from({ length: 5 }, (_, i) => ({
+      id: r * 5 + i + 1,
+      participant_id: `p${i}`,
+      type: "contribution",
+      content: `round ${r + 1} contribution ${i} with numbers 12 percent. `.repeat(20),
+    })),
+    summary: `round ${r + 1} summary. `.repeat(20),
+  }));
+  const participants = Array.from({ length: 5 }, (_, i) => ({
+    config: { id: `p${i}`, name: `Persona ${i}`, category: "mid" },
+    status: "listening",
+    state_stance: `stance ${i}`,
+    state_bullets: ["b1"],
+    state_version: 3,
+  }));
+  const tight = formatFinalRoundTranscript({ question: "Q", rounds }, participants, { budgetChars: 12000 });
+  // The final round is present in some form — full when it fits, as a citable
+  // index when it does not. It is never the round that disappears.
+  assert.match(tight, /### Round 6 \(/);
+  // Every contribution id is still citable, even where the prose did not fit.
+  const ids = new Set([...tight.matchAll(/\[#(\d+)\]/g)].map((m) => m[1]));
+  assert.equal(ids.size, 30, `only ${ids.size} ids visible under a tight budget`);
+  // And a room-sized budget carries the whole thing, with the final round full.
+  const roomy = formatFinalRoundTranscript({ question: "Q", rounds }, participants, { budgetChars: 400000 });
+  const roomyIds = new Set([...roomy.matchAll(/\[#(\d+)\]/g)].map((m) => m[1]));
+  assert.equal(roomyIds.size, 30, "a room-sized budget must carry every contribution");
+  assert.match(roomy, /### Round 6 \(Final\)/);
+});
+
+// 27d. Audit C — the room receives the clerk's JUDGEMENT (settled / contested /
+// next), not the first 600 characters of its prose. The prefix cut before the
+// Contested bullet in 0/10 recorded rounds.
+test("the room's copy of the clerk's account carries its action-bearing bullets", () => {
+  const summary = [
+    "- **Established:** the migration landed behind a flag",
+    "- **Settled:** scope is 24 Sundays excluding Sprints [#4]",
+    "- **Contested:** token revocation is unresolved [#7]",
+    "- **Evidence:** none new this round",
+    "- **Open:** the calendar is fixed",
+    "- **Next:** the Chief Revenue Officer prices the parity question",
+  ].join("\n");
+  const prompt = buildAgentUserPrompt(
+    participant(), "", [], 2, "Q", [], "", [], [], null, false, true, {},
+    { maxRounds: 4, contextWindow: 200000, lastRoundSummary: summary },
+  );
+  assert.match(prompt, /## Last Round — the clerk's account/);
+  assert.match(prompt, /Settled:.*scope is 24 Sundays excluding Sprints/s);
+  assert.match(prompt, /Contested:.*token revocation is unresolved/s);
+  assert.match(prompt, /Next:.*prices the parity question/);
+});
+
+// 27e. Audit F — the artifact may not ship an invented handoff target.
+test("finalizeSynthesis repairs an invented handoff target", () => {
+  const artifact = [
+    "## Executive Summary", "x", "",
+    "## Reasoning", "y", "",
+    "## Action Items",
+    "- Fix the cutover — owner: proposed: The Revenue Operations Director → handoff to @technical-analysis — [#12]",
+    "- Cap the outputs — owner: Systems Engineer — [#13]",
+    "", "## Open Questions", "- none", "", "## Confidence", "Low.",
+  ].join("\n");
+  const { output } = finalizeSynthesis(artifact, { question: "Q", rounds: [] }, [{ config: { id: "a", name: "Systems Engineer" } }]);
+  assert.doesNotMatch(output, /@technical-analysis/);
+  assert.match(output, /handoff to a participant with domain Y/);
+  // A real participant's name is untouched.
+  assert.match(output, /owner: Systems Engineer/);
+});
+
+// 27f. Audit G — the forum's discussion travels with the synthesis context.
+test("the synthesis prompt carries the forum's discussion", () => {
+  const forum = "## Forum Threads (the room's side-channel discussion)\n### [7] Auth rotation\n- [a]: use short-lived tokens";
+  const prompt = buildSynthesisPrompt("Q", "t", [], [], "", "", { forumContent: forum });
+  assert.match(prompt, /LOOM_FORUM_THREADS/);
+  assert.match(prompt, /use short-lived tokens/);
+  // And nothing when the forum is unused.
+  const without = buildSynthesisPrompt("Q", "t", [], [], "", "", {});
+  assert.doesNotMatch(without, /LOOM_FORUM_THREADS/);
+});
+
+// 28. F-A / audit A — the settled block renders the ORCHESTRATOR's consensus
+// items in EVERY phase. It used to be a one-line pointer before the late phase,
+// and that pointer named a State-of-Play section that was empty in every
+// recorded meeting (exact-match aggregation never matched), so the room was told
+// to build on settled points it could not see. The late phase keeps the
+// stricter "signed, do not re-argue" wording.
+test("settled block renders the orchestrator's items in every phase", () => {
   const items = [{ text: "Retention beats ranking [#3]", holders: ["A", "B"] }];
   const late = buildSettledBlock(items, true);
   assert.match(late, /## Settled — signed, do not re-argue/);
@@ -632,14 +780,22 @@ test("settled block is phase-gated", () => {
   assert.match(late, /LOOM_SETTLED_ITEMS/);
   assert.match(late, /holders: A, B/);
   const early = buildSettledBlock(items, false);
-  assert.match(early, /## Settled Watch/);
+  assert.match(early, /## Settled so far/);
   assert.doesNotMatch(early, /do not re-argue/);
+  // The items themselves are present in the early phase — a pointer is not a
+  // consensus record.
+  assert.match(early, /Retention beats ranking \[#3\]/);
+  assert.match(early, /LOOM_SETTLED_ITEMS/);
+  // And it never points at a State-of-Play section that may be empty.
+  assert.doesNotMatch(early, /see Agreements & Proposals/);
   assert.equal(buildSettledBlock([], true), "");
   assert.equal(buildSettledBlock(null, false), "");
 });
 
-// 29. F-A — user prompt carries the settled block only late with consensus.
-test("user prompt renders settled registry late-only with consensus", () => {
+// 29. F-A / audit A — the user prompt carries the orchestrator's settled
+// items in every round (not only late), so the room can build on what has
+// already converged.
+test("user prompt renders the settled registry in every round", () => {
   const shared = "Retention beats ranking [#3]";
   const mkState = (extra = []) => ({
     stance: "s", established: [shared, ...extra], contested: [], open: [],
@@ -658,7 +814,9 @@ test("user prompt renders settled registry late-only with consensus", () => {
     participant(), "", [], 2, "Q", [], "", [], [], null, false, true, {},
     { maxRounds: 5, contextWindow: 200000, allStates },
   );
-  assert.match(midUser, /## Settled Watch/);
+  // Early rounds carry the items too — the room must SEE the consensus.
+  assert.match(midUser, /## Settled so far/);
+  assert.match(midUser, /Retention beats ranking/);
   assert.doesNotMatch(midUser, /do not re-argue/);
   const noStates = buildAgentUserPrompt(
     participant(), "", [], 4, "Q", [], "", [], [], null, false, true, {},
@@ -673,15 +831,15 @@ test("validator requires Decision Rule for decision_oriented spectra", () => {
   const head = "## Executive Summary\nExec.\n";
   const tail = "## Reasoning\nWhy.\n## Action Items\n- Do x — owner: A — [#1]\n## Dissenting Views\nA: v — [#2]\n## Open Questions\n- Q?\n## Confidence\nMedium — solid.";
   const spectrum = `${head}## Decision\nNo single decision — spectrum below:\n${tail}`;
-  assert.deepEqual(validateSynthesisSections(spectrum, "decision_oriented"), ["Decision Rule"]);
+  assert.deepEqual([...validateSynthesisSections(spectrum, "decision_oriented")].sort(), ["Decision Rule", "References"]);
   // No Decision section at all is a different defect class — the trigger is
   // the declared spectrum, not section absence.
   const bare = `${head}${tail}`;
-  assert.deepEqual(validateSynthesisSections(bare, "decision_oriented"), []);
+  assert.deepEqual(validateSynthesisSections(bare, "decision_oriented"), ["References"]);
   const decided = `${head}## Decision\nSpain wins [#1].\n${tail}`;
   assert.ok(!validateSynthesisSections(decided, "decision_oriented").includes("Decision Rule"));
   const ruled = `${head}## Decision\nNo single decision — spectrum below:\n## Decision Rule\nTrigger x — Date y — Owner z — Default w.\n${tail}`;
-  assert.deepEqual(validateSynthesisSections(ruled, "decision_oriented"), []);
+  assert.deepEqual(validateSynthesisSections(ruled, "decision_oriented"), ["References"]);
   // Other styles and legacy style-less callers keep prior behavior.
   assert.ok(!validateSynthesisSections(spectrum, "conversational").includes("Decision Rule"));
   assert.ok(!validateSynthesisSections(spectrum).includes("Decision Rule"));

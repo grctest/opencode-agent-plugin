@@ -54,7 +54,7 @@ A complete technical reference for how the Loom multi-agent deliberation system 
 When a user approves and starts a deliberation from the dashboard Setup tab, this is what happens:
 
 0. **Setup approval (always required)** — The user enters a question, previews the suggested room, and must approve every persona seat (agreeing with the suggestion or replacing seats from the persona catalog) plus the per-seat model assignments before anything runs. Nothing starts without explicit `approved: true`.
-0a. **Deliberation mode (Setup tab §5, defaults to Plan)** — Plan is read-only: agents propose diffs (``` file=src/... ```) but the `write`/`edit` tools are never offered. Build offers `write`/`edit` and renders BUILD prompt wording, so agents may apply live file edits after reading. The choice is stored in `features.buildMode` (strict `=== true`, persisted in `feature_toggles_json`) and flows into `agentTools.buildMode` for the meeting, its extensions, and resumes — pick Build before starting whenever the deliberation is expected to produce live changes.
+0a. **Deliberation mode (Setup tab §1, beside the Task type declaration; defaults to Plan)** — Plan is read-only: agents propose diffs (``` file=src/... ```) but the `write`/`edit` tools are never offered. Build offers `write`/`edit` and renders BUILD prompt wording, so agents may apply live file edits after reading. The choice is stored in `features.buildMode` (strict `=== true`, persisted in `feature_toggles_json`) and flows into `agentTools.buildMode` for the meeting, its extensions, and resumes — pick Build before starting whenever the deliberation is expected to produce live changes.
 1. **Room composition** — The question is analyzed for complexity, then a team of at least 2 agents is suggested without any LLM call (auto-composed rooms run 2–7 seats; manually-built rooms have no maximum): each seat is filled by the persona (from `personas/<category>/*.json`) whose embedded description is most semantically similar to the question (via `PersonaIndex`). Each agent gets a name, persona description, agenda, category, and topic tags.
 2. **Model assignment** — Each agent is assigned an LLM model at random from the enabled pool; categories never influence the draw. Explicit per-seat `model` selections from Setup win over random assignment. The discovery pool can be narrowed with the dashboard model filter (Setup tab, Section 26).
 3. **Rounds execute** — A round is a single sequential prompt phase:
@@ -409,7 +409,8 @@ Note the structure:
 - **Question (canonical)** + tags + round number lead the prompt.
 - **State of Play**: structured summary of decisions, agreements, disagreements, open questions, key facts (and files involved) — explicitly labeled CANONICAL (Section 11). The state is what *you* declared via `loom_state_patch`; aggregation over those per-agent states is the only path, and the type-driven weave digest that backs it up never infers meaning from prose.
 - **Your State**: the agent's own carried execution state Σⁱ (stance + established/contested/open/facts/files), rendered from runtime-validated `loom_state_patch` calls only — never model prose. Empty states render `(empty — patch it this turn)`. Shown only when `agentTools.loom.loom_state_patch` is on; flag-off prompts are byte-identical to legacy. Prompt invariant: `Aⁱ_r = (P, Σⁱ_r, Oⁱ_r)` — immutable spec, own state, latest observation. (SKILL.state complementary implementation; see `plans/skill-state-complementary-implementation.md`.)
-- **Live contributions**: current-round contributions only (round == r, `vote_response` excluded, ≤12), each budgeted ~800 chars prose / ~1200 chars code, with stable IDs like `[#4]`. Prior rounds arrive via Σⁱ + SoP digest, never raw replay — per-turn prompt footprint is flat in T.
+- **Live contributions**: current-round contributions only (round == r, `vote_response` excluded, ≤12), each budgeted ~800 chars prose / ~1200 chars code, with stable IDs like `[#4]` rendered together with the holder's display NAME (`- [#12] Dr. Sarah [dr_sarah_3]: …` — the id stays verbatim for `loom_query` targeting). Prior rounds arrive via Σⁱ + SoP digest, never raw replay — per-turn prompt footprint is flat in T.
+- **Prior-round citable index** (`buildPriorRoundContributionIndex`): prior rounds arriving only as digests means a merged-away SoP bullet takes its `[#id]` with it — the room would be citing ids it can no longer see raw. The `## Contribution Index — earlier rounds` block resolves them: one line per earlier contribution (`- [#23] Ada (round 2): first ~120 chars…`), budget-capped at 2400 chars (oldest first — a newer id is likelier to be restated in the digests; the oldest lines are the only place those ids exist), truncated honestly (`…[index truncated…- those ids resolve only as restated in the State of Play bullets]`), fenced (`LOOM_PRIOR_INDEX`) like every other agent-authored block, deduped **by id** against the live block (never by round boundary — the live window can cut mid-round). The block carries its own dispute guard: the gist is a short cut of the original, so an older claim is disputed only as restated in SoP/settled bullets — never reopened on an index line alone. Gate: providers without the option render nothing (byte-identical legacy). When the fit ladder trims the live block under budget pressure, those ids are covered by neither layer — SoP carries them, by design (the ladder degrades the exchange, not the record).
 - **No reflection section**: the participant's stored reflection is *not* injected into primary turns. Σⁱ.stance is the single source of truth for position; legacy reflection is the fallback only when stance is empty. Peer-facing prompts (query/vote/summon targets) see one line: `Your position (from your state vN): "…"` plus top bullets — never both stance and reflection side by side.
 - **Steering hint**: if the orchestrator queued a steering note (contribution-mix nudge), it is appended after the prompt body — consumed exactly once, by the round's first speaker only.
 - **Delimiters**: every untrusted block is wrapped in `<<<LOOM_LABEL>>>_BEGIN_` / `<<<LOOM_LABEL>>>_END_` to prevent prompt injection and boundary confusion. An empty section is omitted.
@@ -638,9 +639,16 @@ loom_pass({ reason: "covered by #3" })
 | `current_round >= max_rounds` | guaranteed termination |
 | Stall detection / user cancellation | extrinsic stops |
 
-There is no meeting-level wall-clock timeout: a deliberation runs until it converges, hits the round cap, or stalls. The stall watchdog and user cancellation are the extrinsic stops and proceed to synthesis.
+There is no meeting-level wall-clock timeout: a deliberation runs until it converges, hits the round cap, or stalls.
 
-Terminal statuses: `converged`, `cancelled`, `timeout`, `max_rounds_reached`, `aborted`.
+The two extrinsic stops are deliberately **not** the same contract:
+
+- **User cancellation (`cancel()`)** halts the meeting *on a dime*: the in-flight turn is aborted, the abort is made sticky (a turn that starts after the cancel is aborted on arrival), no further agent in the round is called, no round summary or clerk call runs, and **no synthesis runs** — the user asked for the run to stop, not for a slower stop. MeetingOrchestrator.cancel() writes the terminal status `cancelled` immediately (not at the next round boundary) so the dashboard can show it and offer **Resume**. The interrupted round is deliberately left *open* (no summary row) so the resume can finish it: Resume re-drives the seats that did not take a primary turn (including the aborted one), continues the remaining rounds, and synthesizes. The dashboard's **Finish** button runs synthesis-only on demand for a meeting the user never resumes.
+- **Stall watchdog (`_cancelled` flag, not the halt)** keeps the old behaviour: the current round completes, the meeting transitions to `timeout`, and the collected contributions are synthesized (§8.5).
+
+`softCancel()` is the process-exit variant: it aborts the in-flight turn exactly like `cancel()` but does NOT write a terminal status, so a killed process still looks resumable to crash recovery (§13.4) rather than like a deliberate stop.
+
+Terminal statuses: `converged`, `cancelled`, `timeout`, `max_rounds_reached`, `aborted`. `cancelled` and `timeout` are additionally resumable via the dashboard Resume endpoint (`RESUMABLE_STATUSES` in `src/constants.js`); a naturally-ended meeting is extended, not resumed. Cancelling a meeting whose status is already terminal (the run is winding down through synthesis and its post-synthesis passes) is a logged **no-op** on the status: the halt still aborts every in-flight call, and the natural status is kept — no "invalid transition" error is raised.
 
 ---
 
@@ -689,7 +697,7 @@ The meeting terminates when any of these hold after a round:
 | All participants have called `loom_pass` or failed (`activeCount === 0`) | natural end — highest priority |
 | `current_round >= max_rounds` | guaranteed termination |
 
-The `meetings.convergence` column persists only as a display label (set to `"agent_driven"`). Termination is deterministic (see table above). There is no meeting-level wall-clock timeout; the stall watchdog and user cancellation are the extrinsic stops and proceed to synthesis.
+The `meetings.convergence` column persists only as a display label (set to `"agent_driven"`). Termination is deterministic (see table above). There is no meeting-level wall-clock timeout. Of the two extrinsic stops, only the stall watchdog proceeds to synthesis: user cancellation halts on the spot without synthesizing (§8).
 
 Terminal statuses: `converged`, `cancelled`, `timeout`, `max_rounds_reached`, and `aborted`. The current round finalizer produces `max_rounds_reached` when the active round cap is exhausted and `aborted` for mixed pass/fail exhaustion or unrecoverable finalization errors.
 
@@ -830,14 +838,14 @@ no preamble, phrase-style bullets. Preserve numbers verbatim.
 Should we migrate our authentication service to JWT tokens?
 
 ## Round 3 Contributions
-- [#4] senior_architect [CONTRIBUTION]: We should adopt a phased migration...
+- [#4] Senior Architect (senior_architect) [CONTRIBUTION]: We should adopt a phased migration...
 
 ## Evidence / Tool Signals (do not invent — use only if cited)
-- [#7] data_scientist [evidence_response]: ... [tools: websearch]
+- [#7] Data Scientist (data_scientist) [evidence_response]: ... [tools: websearch]
 
 ## Output — exactly 4 bullets, each one line:
-- **Established:** {decisions/proposals that gained support, with holder [#id]}
-- **Contested:** {what remains disputed and who holds each side}
+- **Established:** {decisions/proposals that gained support, with holder NAME + [#id] (Ada [#4])}
+- **Contested:** {what remains disputed and who holds each side — name holders with their ids (Ada [#9] — X)}
 - **Evidence:** {tool/vec-grounded evidence introduced, with Source or [#id]; or "None"}
 - **Open:** {unresolved questions or next decision needed}
 
@@ -848,6 +856,8 @@ Preserve numbers verbatim — do not round, estimate, or invent.
 The **Evidence/Tool Signals** hint collects up to 4 evidence/query/tool-backed contributions sorted by strength ("Strength: strong" > tool-backed > plain, synthetic `write` excluded), so grounded claims are visible to the summarizer even when filtered out of the main list. When patches exist, a `## Agent States (carried)` line (`state: senior@v3, mid@v2`) is appended — no new LLM call.
 
 Runs via the fast-path-routable `#promptOrchestrator` type `"summary"` (Section 21). Contributions are budgeted at 12k chars total (selected by evidence strength, emitted chronologically, each line capped at 1200 chars) with a `…[N further contribution(s) omitted]` marker when exceeded; the Agent States block is capped at 4k chars like the synthesis path's.
+
+**Holder names ride the contribution lines, and the pairing rule travels with them.** The clerk is asked to pair every `[#id]` with the holder's NAME in its bullets — but a name it must look up two hops away (contribution → `participant_id` → roster → name) under transcript pressure comes out as a raw id or an invented name (the B2 lesson: structure binds where prose rules don't). So the name is rendered at the source: the roster threads `p.config.name` (`round-service.js`), and `formatContribution` (`round-summarizer.js`) renders `- [#4] Senior Architect (senior_architect) [CONTRIBUTION]: …`, with the raw id kept since the Agent States block keys on ids. A lost name falls back to the raw id, never to a blank. The same doctrine ships the final artifact's `## References` index — every `[#N]` in a deliverable resolves for a human, not only for the pipeline.
 
 **The summary style moves the output contract, not only the word band.** The operator's `summaryStyle` selects a band (`ORCHESTRATOR_SUMMARY_BANDS`) that carries three things: the word band, the context budget, and the **shape** of the output — how many bullets, how long each one, and which sections. The band and the bullet contract used to be two independent instructions, so `concise` (120-200 words) was asked to produce "5-7 bullets, each 1-3 sentences" plus six labelled sections: a contradiction the model resolved by dropping sections, and the two it dropped first — **Settled** and **Next** — are the two the rest of the system consumes (the settled registry is fed by the Settled bullet, the next round's steer by the Next bullet). So the shape moves with the band, and two slots are never omitted at any band:
 
@@ -889,7 +899,7 @@ Round summaries are stored in the `rounds` table (per round) for dashboard displ
 
 ## 14. Synthesis
 
-When the meeting ends (convergence, max rounds, timeout, cancellation, or abort), the system synthesizes all contributions into a final artifact.
+When the meeting ends (convergence, max rounds, timeout, or abort), the system synthesizes all contributions into a final artifact. A **user cancellation is the exception**: `runMeeting` returns without synthesizing (the run was stopped on purpose, and synthesis is 2+ more LLM calls). The dashboard's **Finish** button re-runs exactly this synthesis-only path later (`finishSynthesis` restores the original terminal status afterwards), so cancelling *during* the synthesis loses nothing permanent: the collected turns stay in the record and the output can be produced on demand. The dashboard's post-synthesis persona-review pass and the round clerk's summary call ride the same halt signal, so a cancel during any of them aborts the in-flight LLM call instead of letting it run to its wall-clock timeout.
 
 ### Synthesizer Selection
 
@@ -1045,6 +1055,13 @@ If the draft is accurate, grounded, and complete, respond with exactly: [NO_CHAN
 
 **The engagement ledger is an internal check, not evidence.** It travels with every synthesis attempt so uncited contributions are not silently dropped — and it is labelled as a check ("do not quote its numbers in the artifact, and do not cite it"), because a recorded artifact quoted the ledger's internals with a citation to an unrelated contribution.
 
+**The artifact's citation ids resolve for a human, not only for the pipeline.** The deliberation cites by weave id — agents cite peers as `[#N]`, the clerk names holders with ids — and the final artifact keeps that scheme (the citation checks, the reconciliation report, and the dashboard all parse it). But a reader sees `[#2][#4][#7]` with nothing to resolve them against; the recorded F1 meeting's synthesis read exactly like that ("[#2] splits ties, [#7] owns ties as a real outcome"). Two-part fix (rule 1b + deterministic backfill):
+
+- **Prompt (rule 1b):** every `[#N]` must appear at least once per section paired with the participant's **NAME** (`Ada [#2]`) before bare repeat ids inside that block, and the artifact must end with a **`## References`** index — one line per `[#N]` and `[#T{id}]` cited anywhere: who, which round, and one clause on what the contribution established. What the contribution DID is the synthesizer's one-line gist — the index is a map, not a source. The rule teaches both the required-section template and the Good Fragment (an `## References` sample), because imitation examples bind far harder than prose rules.
+- **Deterministic guarantee (`finalizeSynthesis`, `ensureReferenceIndex`):** every cited id the index does not already cover gets a mechanical line — participant name (resolved from the participants list), round number (from the rounds), and the first ~120 characters of the cited contribution. No LLM call: it cannot invent a gist, a name, or a round — which is also why it can be trusted to run on degraded artifacts. Forum thread ids resolve from a `{id → title}` map the orchestrator gathers (`_collectForumTopics`) and threads through `run({ forumTopics })`; a thread with no map degrades honestly ("thread title unavailable"), never silently absent. An artifact citing no ids gets `## References — None — the artifact cites no contribution ids.` instead of a repair note.
+
+`References` sits in `SYNTHESIS_SECTION_CONTRACT.always` (so draft retries and critique demand it), and finalization runs the index pass BEFORE section validation. Scoping rules: the index body is excluded from the citation-support scan (its own gist lines make no claims — only the narrative body is measured), and `engagement.coverage` counts body citations, not appendix lines — a mechanically backfilled marker is not the same as engaging the peer. `test/synthesis-references.test.js` pins all of this.
+
 **The forum's discussion travels with the synthesis.** The State of Play carries thread *titles* and a short preview, so the room's forum thinking never reached the synthesizer while the agent prompt told participants "writing here is writing to the room" (and no recorded meeting ever opened a thread). The orchestrator now reads the forum (up to 3 threads, the last 2 comments each, 300 chars per comment) and hands it to the synthesis context, fenced as data.
 
 **The deliverable states its own provenance.** Every artifact ends with a factual footer — rounds · contributions · participants · ballots held (or "no ballot held") · the share of contributions the artifact cites. The coverage figure was already computed (`artifact.engagement.coverage`) and hidden in JSON where no reader would see it; two of the three recorded meetings held no ballot at all, and the reader could not tell that a Decision Rule was prose rather than a tally. A deliverable that states its own coverage is worth more than one that quietly implies completeness.
@@ -1156,7 +1173,7 @@ Agent turns are now **retried** — the old "run once and fail" behavior is gone
 
 **A provider outage skips the same-model retry and the recovery prompt.** When the failure is a provider outage, the turn does not retry that model again and does not attempt the synthesis recovery (there is nothing to recover *from* — the endpoint just refused the request, and it will refuse the recovery prompt too); it goes straight to the fallback ladder, which is where another model can help. Both the primary ladder and the fallback ladder treat it this way.
 
-**A cancelled meeting makes no further calls.** An aborted turn (`AbortError`, or a message containing "aborted") returns immediately: no recovery prompt, no retry, no fallback, and no side-effect warning. The meeting was stopped on purpose, and every further prompt is a call the operator did not ask for — the observed cost was a 34,056-char prompt issued 240ms after "Loom cancelled by user".
+**A cancelled meeting makes no further calls.** An aborted turn (`AbortError`, or a message containing "aborted") returns immediately: no recovery prompt, no retry, no fallback, and no side-effect warning. The meeting was stopped on purpose, and every further prompt is a call the operator did not ask for — the observed cost was a 34,056-char prompt issued 240ms after "Loom cancelled by user". Beyond the per-turn bail-out, the halt is enforced at run level: the round executor listens to the meeting's sticky halt signal and (a) aborts any turn that *starts* after the cancellation on arrival, (b) breaks the speaker loop so the round never advances to the next agent, (c) leaves an aborted seat `listening` rather than `failed` (so a resume can still drive that turn), and (d) skips the round clerk's LLM call. `MeetingOrchestrator.cancel()` also aborts any synthesis prompt in flight via the same signal.
 
 Every failed/finished turn path is precomputed once: **bounded state context, system prompt, and user prompt are built model-independent and reused across retries/fallbacks** (no duplicate context-building calls). When the circuit breaker already marks the assigned model `open`, the turn starts directly on a fallback model without retrying the unhealthy one.
 
@@ -1244,6 +1261,10 @@ From the database: participants (with personas, categories, models, status, refl
 ### Resume after an Interruption (from the dashboard Setup tab)
 
 When the server is force-closed mid-run, the meeting row stays at `weaving` with no running job after relaunch. Selecting that meeting in the Setup tab offers **Resume** (`POST /api/meetings/resume`), which restores state and then completes the interrupted round in place — re-driving only its missing speakers and finalizing it — before continuing to the next round. Committed turns are never replayed; `next_contribution_id` is re-derived from `MAX(id)`. Resume preserves the meeting's stored session attribution, feature toggles, orchestrator config, and `max_rounds`; it never appends fabric or requires new input (that is Extend's role). Extend is idempotent for a killed extension: retrying the same prompt skips the fabric append and round bump.
+
+The same Resume action now also covers a meeting the user deliberately stopped: pressing **Cancel run** writes the terminal status `cancelled` and leaves the interrupted round open (no summary row), so `POST /api/meetings/resume` accepts `cancelled`/`timeout` via `canResumeStatus()` and re-opens the meeting with a fresh halt signal (`MeetingOrchestrator.resetHalt`) — the extension path's `allowExtend` contract generalized to `allowResume` in `restoreStateFromDb`. Resumed turns look exactly like fresh turns (the restored round is seeded with a `token_path`, another reason restored rounds must carry that array), and a resume that is cancelled again behaves like any other cancelled run: no synthesis, resumable again.
+
+A round that was fully spoken when the cancel landed (the abort hit the round CLERK) resumes through the clerk too: `_continueInterruptedRound` runs `RoundService.runRound` over the completed round — zero new speakers, the summary call alone — and then finalizes, so the resumed summary is the real clerk output rather than an empty row. Cancelling *during* the final synthesis itself is covered by the dashboard's Finish button (§14): the artifact row stays empty, and `handleFinishMeeting` re-runs synthesis-only on a fresh engine and restores the original terminal status.
 
 ### Finishing a Synthesis Orphan
 
@@ -1605,7 +1626,7 @@ Dashboard-first, callbacks are intentionally silent toward chat:
 ### Companion Tools & Endpoints
 
 - `loom_status` — check a running Loom (status, round, contributions, meeting ID)
-- `loom_cancel` — request cancellation (current round completes, then synthesis runs)
+- `loom_cancel` — stop the run NOW: the in-flight turn is aborted, no further agent is called, no synthesis runs, and the status becomes `cancelled` (the dashboard can resume or finish the meeting)
 - `loom_debug` — dump internal state of a running Loom (optional `include` filter)
 - `launch-deliberation-dashboard` / `shutdown-deliberation-dashboard` — start/stop the dashboard (the only user commands)
 - `GET /api/llm-models` — discover available models with cost/context/reasoning, enabled/unhealthy status, and a random suggested model. `POST /api/llm-models/filter` (`enable`/`disable`/`reset`) — manage the **dashboard-global model filter** (persisted as `models-filter.json`). The filter restricts which discovered models Loom agents may use. (See Section 26.)

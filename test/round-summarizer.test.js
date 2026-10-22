@@ -134,7 +134,40 @@ test("round summary prompt receives current attributed states and evidence rules
   assert.match(prompt, /Current effective stance/);
   assert.match(prompt, /Agent States are remembered positions and standing context, not independent evidence/);
   assert.match(prompt, /do not add a separate Agent States bullet/);
+  // The pairing rule: the clerk writes holder NAME + [#id] in its bullets.
+  assert.match(prompt, /Pair every \[#id\] with the holder's NAME/);
   assert.doesNotMatch(prompt, /## Agent States \(carried\)/);
+});
+
+test("clerk contribution lines show the holder NAME with the id (resolvable at a glance)", async () => {
+  let prompt = "";
+  const round = {
+    number: 2,
+    contributions: [
+      { id: 1, participant_id: "dr_sarah_3", type: "contribution", content: "A current position." },
+      { id: 2, participant_id: "unknown_seat", type: "contribution", content: "From a seat the roster lost." },
+    ],
+  };
+  await summarizeRound(
+    round,
+    { question: "Question", tags: [], participants: [] },
+    async (_system, _model, message) => {
+      prompt = message;
+      return "Summary";
+    },
+    () => ({ providerID: "test", modelID: "test-model" }),
+    null,
+    [],
+    {},
+    {
+      roster: [
+        { id: "dr_sarah_3", name: "Dr. Sarah", contributions_count: 1, status: "listening" },
+        { id: "other", name: "Other", contributions_count: 0, status: "listening" },
+      ],
+    },
+  );
+  assert.match(prompt, /\[#1\] Dr\. Sarah \(dr_sarah_3\) \[CONTRIBUTION\]/, "roster name rides the line");
+  assert.match(prompt, /\[#2\] unknown_seat \[CONTRIBUTION\]/, "unknown name falls back to the raw id");
 });
 
 test("clerk referee duties are always-on, even when operator customInstructions are set (O1)", () => {
@@ -227,6 +260,55 @@ test("the synthesis prompt states the orchestrator model's real window", () => {
   const without = buildSynthesisPrompt("Q", "t", [], [], "", "", {});
   assert.doesNotMatch(without, /200k window/, "an unknown window must not be invented");
   assert.match(without, /large window/);
+});
+
+// Audit H — the deliverable states its own provenance: the scale of the
+// deliberation, whether a BALLOT was held (two of the three recorded meetings
+// held none, and the reader could not tell that a Decision Rule was prose
+// rather than a tally), and the share of the room it cites.
+test("the artifact states its own provenance", async () => {
+  const prompts = [];
+  const sessionManager = {
+    async postProgress() {},
+    async createOrchestratorSynthesisSession() { return "orchestrator-synthesis"; },
+    getContract() {
+      return {
+        async prompt({ system, model }) {
+          prompts.push({ system, model });
+          return {
+            ok: true,
+            text: "## Executive Summary\nSummary\n\n## Reasoning\nReasoning\n\n## Dissenting Views\nNone — the room converged\n\n## Action Items\nNone\n\n## Open Questions\nNone\n\n## Confidence\nLow",
+            tokens: { input: 1, output: 1 },
+          };
+        },
+      };
+    },
+  };
+  const coordinator = new SynthesisCoordinator(sessionManager, {});
+  const result = await coordinator.run({
+    transcriptData: {
+      question: "Question",
+      tags: [],
+      rounds: [
+        {
+          number: 1,
+          contributions: [
+            { id: 1, participant_id: "a", type: "contribution", content: "A substantive position with numbers 12%." },
+            { id: 2, participant_id: "b", type: "vote_response", content: "[Vote: A] because of the cost." },
+          ],
+        },
+      ],
+    },
+    participants: [
+      { config: { id: "a", name: "Ada" }, status: "listening", contributions_count: 1 },
+      { config: { id: "b", name: "Ben" }, status: "listening", contributions_count: 1 },
+    ],
+    model: { providerID: "orchestrator", modelID: "summarizer" },
+    onStart: () => {},
+    onComplete: () => {},
+  });
+  assert.match(result.output, /\*Deliberation: 1 round · 2 contributions · 2 participants · 1 ballot held/);
+  assert.match(result.output, /% of contributions cited in this artifact/);
 });
 
 // Audit D3 — the closing-round steer is ratchet-aware: when a ballot was
@@ -322,7 +404,7 @@ test("final synthesis uses the orchestrator model and behavior profile", async (
           prompts.push({ system, model });
           return {
             ok: true,
-            text: "## Executive Summary\nSummary\n\n## Reasoning\nReasoning\n\n## Confidence\nLow\n\n## Dissenting Views\nNone\n\n## Open Questions\nNone\n\n## Action Items\nNone",
+            text: "## Executive Summary\nSummary\n\n## Reasoning\nReasoning\n\n## Confidence\nLow\n\n## Dissenting Views\nNone\n\n## Open Questions\nNone\n\n## Action Items\nNone\n\n## References\nNone",
             tokens: { input: 1, output: 1 },
           };
         },

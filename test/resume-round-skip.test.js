@@ -36,7 +36,10 @@ test("ensureCurrentRoundShell recreates the persisted round when it has no rows"
   const created = ensureCurrentRoundShell(roundMap, 5, {});
   assert.equal(created, true);
   const shell = roundMap.get(5);
-  assert.deepEqual(shell, { number: 5, contributions: [], summary: "" });
+  // A restored round carries a token path: the round executor pushes every
+  // speaker onto it, and the rebuilt shape used to omit it — which made the
+  // resume throw "Cannot read properties of undefined (reading 'push')".
+  assert.deepEqual(shell, { number: 5, contributions: [], summary: "", token_path: [] });
 });
 
 test("ensureCurrentRoundShell leaves existing rounds and invalid input alone", () => {
@@ -130,6 +133,30 @@ test("_continueInterruptedRound still continues a partial round with only missin
   assert.equal(t.added.length, 0, "no shell needed — round already restored");
   assert.equal(t.ranWith.roundNumber, 5);
   assert.equal(t.ranWith.speakerCount, 1, "only the unspoken speaker runs");
+});
+
+test("_continueInterruptedRound does not count a peer answer as a spoken turn", async () => {
+  // A peer-interaction row carries the RESPONDER's id in participant_id and
+  // the caller in prompt_context.source_participant_id. Counting it as a
+  // spoken turn dropped the responder's own turn from the resumed round.
+  const rounds = [
+    {
+      number: 5,
+      contributions: [{
+        id: 11,
+        participant_id: "b",   // the responder, not the speaker
+        round: 5,
+        type: "query_response",
+        content: "peer answer",
+        prompt_context: { source_participant_id: "a" },
+      }],
+      summary: "",
+    },
+  ];
+  const t = makeContinueCtx({ currentRound: 5, rounds });
+  const out = await _continueInterruptedRound.call(t.ctx);
+  assert.equal(out, true);
+  assert.equal(t.ranWith.speakerCount, 2, "both seats still owe a primary turn");
 });
 
 test("_continueInterruptedRound returns null for an already-finalized round", async () => {

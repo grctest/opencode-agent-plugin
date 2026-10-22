@@ -188,6 +188,103 @@ export function isInputRejectionError(err) {
   return classifyInputRejectionError(err) !== null;
 }
 
+/**
+ * Classify a PROVIDER OUTAGE — the shape where the endpoint itself cannot
+ * serve the request, as opposed to a request the provider refused.
+ *
+ * This class was previously unclassified, and the cost of that was measured: in
+ * a recorded meeting the model returned "Upstream request failed: Endpoint is
+ * unavailable." (HTTP 402) on every attempt. isRetryableError matched none of
+ * its branches — not a network code, not a timeout, not 5xx, not a rate limit,
+ * not an input rejection — so it returned false, and three things followed:
+ *
+ *   1. the failure was never recorded as a MODEL failure, so the circuit
+ *      breaker stayed closed for that model;
+ *   2. the synthesis-recovery path — whose whole point is to survive a lost
+ *      response — kept re-prompting the same dead endpoint (its own "switch to
+ *      a healthy model" guard is driven by the breaker);
+ *   3. the retry loop re-prompted the same model anyway.
+ *
+ * One outage therefore cost six dead calls at ~80s each before the fallback
+ * model was finally reached: five and a half minutes of a turn.
+ *
+ * The distinguishing mark is that the endpoint is unavailable, not that this
+ * request was wrong. Retrying the SAME endpoint cannot succeed; another model
+ * can. So this is a model failure (it counts against the breaker) and a
+ * non-retry-on-the-same-model condition (the turn goes to the fallback
+ * ladder).
+ *
+ * @param {Error} err
+ * @returns {{type: string, message: string, statusCode: number|null}|null}
+ */
+export function classifyProviderUnavailableError(err) {
+  if (!err) return null;
+  const statusCode = err.status ?? err.statusCode ?? err.providerData?.statusCode ?? null;
+  const message = err.message ?? "";
+  const responseBody = err.providerData?.responseBody ?? err.responseBody ?? "";
+  const bodyStr = typeof responseBody === "string" ? responseBody : JSON.stringify(responseBody ?? "");
+  const haystack = `${message} ${bodyStr} ${err.providerError ?? ""}`;
+
+  // A provider that cannot serve the request AT ALL. The signal has to be
+  // about availability: a bare "upstream error" is per-request flakiness (a
+  // 5xx), which the existing backoff already handles and which must NOT be
+  // routed around — a different model on the same gateway would fail too.
+  const endpointDown =
+    /endpoint\s+(?:is\s+)?(?:unavailable|not\s+available|disabled)|model[^.]{0,40}?\bnot\s+(?:available|found|supported)|no\s+such\s+model|service\s+unavailable|model\s+unavailable|all\s+models\s+(?:are\s+)?(?:unavailable|failed)/i.test(haystack);
+  const upstreamFailure = /upstream\s+(?:request\s+)?failed/i.test(haystack);
+  if (endpointDown || (upstreamFailure && /unavailable|not\s+available|endpoint/i.test(haystack))) {
+    return {
+      type: "provider_unavailable",
+      message: message || "The provider endpoint is unavailable.",
+      statusCode,
+    };
+  }
+
+  // A gateway that refuses to serve this account (402/403) with an upstream
+  // error shape. A bare 402 without an upstream/endpoint marker is a billing
+  // refusal, which classifyInputRejectionError already owns.
+  if (
+    (statusCode === 402 || statusCode === 403) &&
+    /upstream|endpoint|provider|unavailable|not\s+available|forbidden/i.test(haystack)
+  ) {
+    return {
+      type: "provider_unavailable",
+      message: message || "The provider refused to serve this request.",
+      statusCode,
+    };
+  }
+
+  return null;
+}
+
+/** True for the provider outages that another model can route around. */
+export function isProviderUnavailableError(err) {
+  return classifyProviderUnavailableError(err) !== null;
+}
+
+/**
+ * Was this turn stopped ON PURPOSE (the user cancelled the run)?
+ *
+ * A cancelled meeting must make NO further LLM calls. The catch path used to
+ * treat an abort like any other failure: because a loom result had already
+ * been persisted for the batch, it ran the synthesis-recovery prompt — a
+ * fresh, full-size prompt — a fraction of a second AFTER the cancellation
+ * (measured: a 34,056-char prompt issued 240ms after "Loom cancelled by user").
+ *
+ * Shared (not local to the session code) because the round executor needs the
+ * same answer: an aborted turn must NOT be recorded as a failed participant,
+ * and the round must stop instead of advancing to the next speaker.
+ *
+ * @param {unknown} err the failure
+ * @returns {boolean}
+ */
+export function isAbortError(err) {
+  if (!err) return false;
+  if (err.name === "AbortError") return true;
+  const message = String(err.message ?? err ?? "");
+  return /\baborted\b|\babort signal\b|\bcancell?ed\b/i.test(message);
+}
+
 export function isRetryableError(err) {
   if (!err) return false;
 

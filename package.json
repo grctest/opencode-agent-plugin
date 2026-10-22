@@ -1,11 +1,11 @@
 {
   "name": "loom",
   "version": "0.1.0",
-  "description": "Multi-agent deliberation protocol for opencode — a knitting machine for AI agents",
+  "description": "Multi-agent deliberation protocol for opencode — structured multi-agent debate with a web deliberation dashboard",
   "type": "module",
   "main": "dist/loom.js",
   "license": "MIT",
-  "author": "The Loom Contributors",
+  "author": "Deliberation Dashboard contributors",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/loom-dev/loom.git"

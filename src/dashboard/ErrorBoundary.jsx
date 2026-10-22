@@ -15,7 +15,7 @@ export class ErrorBoundary extends Component {
   }
 
   componentDidCatch(error, errorInfo) {
-    console.error(`[Loom ErrorBoundary${this.props.label ? ` ${this.props.label}` : ""}]`, error, errorInfo.componentStack);
+    console.error(`[Dashboard ErrorBoundary${this.props.label ? ` ${this.props.label}` : ""}]`, error, errorInfo.componentStack);
   }
 
   handleRetry = () => {

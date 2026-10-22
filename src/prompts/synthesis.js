@@ -60,6 +60,11 @@ export function buildSynthesisPrompt(question, transcript, participants = [], ta
   const stateOfPlaySection = stateOfPlay
     ? `\n## State of Play (Final — PRIMARY source)\n${delimitContext(escapeDelimiters(sanitizeForDisplay(stateOfPlay, 20000)), "STATE_OF_PLAY")}\n`
     : "";
+  // The forum's actual discussion (audit G). The State of Play carries only
+  // thread titles and a short preview; the thinking itself is here, bounded.
+  const forumSection = opts.forumContent
+    ? `\n${delimitContext(escapeDelimiters(sanitizeForDisplay(String(opts.forumContent), 12000)), "FORUM_THREADS")}\n`
+    : "";
 
   // Dissent tracking is the orchestrator's job, not a regex's. It reads the full
   // transcript below and decides for itself what is live dissent, what was
@@ -87,12 +92,16 @@ export function buildSynthesisPrompt(question, transcript, participants = [], ta
   // the auditor is handed the same ledger.
   const engagement = opts.engagement ?? null;
   const engagementSection = engagement && engagement.peer_uncited > 0
-    ? `\n## Engagement Ledger (clerk check — P7)\n${engagement.peer_uncited} of ${engagement.plain_contributions} plain contributions engage no peer via [#id]${engagement.self_cites ? `, and ${engagement.self_cites} citation(s) point at the author` : ""}.\n\n_Ids: ${(engagement.uncited_plain_ids ?? []).slice(0, 20).map((id) => `[#${id}]`).join(" ")}_\n\nEvery one of these must be cited, explicitly synthesized into a position above, or named as superseded. An uncited contribution that contributed nothing is a legitimate outcome; one that did and went unmentioned is a hole in the record. Self-citation is not engagement — cite the peer whose claim you are answering._\n`
+    ? `\n## Engagement Ledger (internal check — not a source)\n${engagement.peer_uncited} of ${engagement.plain_contributions} plain contributions engage no peer via [#id]${engagement.self_cites ? `, and ${engagement.self_cites} citation(s) point at the author` : ""}.\n\n_Ids: ${(engagement.uncited_plain_ids ?? []).slice(0, 20).map((id) => `[#${id}]`).join(" ")}_\n\nEvery one of these must be cited, explicitly synthesized into a position above, or named as superseded. An uncited contribution that contributed nothing is a legitimate outcome; one that did and went unmentioned is a hole in the record. Self-citation is not engagement — cite the peer whose claim you are answering._\n\n_This ledger is a check, not evidence: do not quote its numbers in the artifact, and do not cite it — it is not a contribution. Report engagement as a property of the deliberation if you mention it at all._\n`
     : "";
 
   const groundingRule = isCode
-    ? `1. **Grounding:** Group citations per evidence block — cite once as [#id] or State-of-Play or Source: https://… per block. If you synthesize a novel fix/code not present verbatim, mark it “Proposed — synthesized from [#id]” and keep it. Do not invent file contents not read via tool; if no file was read, qualify as “Proposed (unverified — no tool read)”. Never emit vec: round / vec round / [Round X vec — those are internal retrieval traces. Don’t spam [#id] per sentence; one grouped cite per block. The Agent States block (if present) is positions-only, never evidence — state bullets without a [#id] trail are unattributed positions, not findings.\n`
-    : `1. **Grounding:** Group citations per paragraph/block — cite once as [#id] or State-of-Play or Source: https://… per block. If you synthesize a novel conclusion, mark it “Proposed — synthesized from [#id]” and keep it. Do not invent numbers/dates unsupported by transcript/State-of-Play. Do not reference files, diffs, or code you have not seen in the transcript. Never emit vec: / vec round — use [#id] or State-of-Play instead. Don’t spam citations. The Agent States block (if present) is positions-only, never evidence — state bullets without a [#id] trail are unattributed positions, not findings.\n`;
+    ? `1. **Grounding:** Group citations per evidence block — cite once as [#id] or State-of-Play or Source: https://… per block. If you synthesize a novel fix/code not present verbatim, mark it “Proposed — synthesized from [#id]” and keep it. Do not invent file contents not read via tool; if no file was read, qualify as “Proposed (unverified — no tool read)”. Never emit vec: round / vec round / [Round X vec — those are internal retrieval traces. Don’t spam [#id] per sentence; one grouped cite per block. The Agent States block (if present) is positions-only, never evidence — state bullets without a [#id] trail are unattributed positions, not findings.
+1b. **References resolve for a human:** every [#N] must appear at least once within its section paired with the participant’s NAME — “Ada [#2]” — before any bare [#id] repeats inside that block; a bare id a reader cannot resolve is a hole in the record. And close the artifact with ## References: one line per id you cited anywhere ([#N] and [#T{id}]) — who, which round, and one clause on what that contribution established. The index is a map, not a source — never cite it as evidence.
+`
+    : `1. **Grounding:** Group citations per paragraph/block — cite once as [#id] or State-of-Play or Source: https://… per block. If you synthesize a novel conclusion, mark it “Proposed — synthesized from [#id]” and keep it. Do not invent numbers/dates unsupported by transcript/State-of-Play. Do not reference files, diffs, or code you have not seen in the transcript. Never emit vec: / vec round — use [#id] or State-of-Play instead. Don’t spam citations. The Agent States block (if present) is positions-only, never evidence — state bullets without a [#id] trail are unattributed positions, not findings.
+1b. **References resolve for a human:** every [#N] must appear at least once within its section paired with the participant’s NAME — “Ada [#2]” — before any bare [#id] repeats inside that block; a bare id a reader cannot resolve is a hole in the record. And close the artifact with ## References: one line per id you cited anywhere ([#N] and [#T{id}]) — who, which round, and one clause on what that contribution established. The index is a map, not a source — never cite it as evidence.
+`;
 
   // Section budgets derive from LENGTH_LIMITS (audit X4/3.6) — the prompt text
   // and the constants cannot drift apart again.
@@ -103,7 +112,7 @@ export function buildSynthesisPrompt(question, transcript, participants = [], ta
 - Decision / Synthesis: ${L.synthesisDecision} words — direct answer OR spectrum table if no consensus; group citations per block; table cells concise (Evidence 30-35w max + one cite, Tradeoff 30-35w max)
 - Reasoning: ${L.synthesisReasoning} words — 4-8 bullets, who argued what + evidence + tradeoff, group cites; deduplicate vs Decision table (map vs narrative)
 - Proposed Fix: ${L.synthesisProposedFix} words — Files: \`path\` + diffs \`\`\`tsx file=src/...\`\`\` + why, mark Proposed if synthesized, note live edits vs proposals, include tests
-- Action Items: ${L.synthesisActionItems} words — verbs with owners or “proposed: X → handoff to @role” + block cites; distribute owners, max 2 per holder (may be “None — see Proposed Fix”)
+- Action Items: ${L.synthesisActionItems} words — verbs with a SEATED participant's name as owner + block cites; distribute owners, max 2 per holder unless you say why (may be “None — see Proposed Fix”)
 - Open Questions: ${L.synthesisOpenQuestions} words — why remains + suggested probe: name the single concrete query, dataset, or experiment that would close it
 - Confidence: ${L.synthesisConfidence} words — one word + rubric justification (High may have dissent if bounded and grounded)
 Total 1600-3500 words welcome; concise but thorough — preserve numbers/code verbatim, no invented figures.\n`
@@ -111,10 +120,23 @@ Total 1600-3500 words welcome; concise but thorough — preserve numbers/code ve
 - Executive Summary: ${L.synthesisExecutive} words — human-first, no citations, plain narrative (concise, scannable)
 - Decision / Synthesis: ${L.synthesisDecision} words — one paragraph OR spectrum table if no consensus; group citations per block; table cells concise (Evidence 30-35w + one grouped cite, Tradeoff 30-35w)
 - Reasoning: ${L.synthesisReasoning} words — 4-8 bullets, each who argued what + evidence + tradeoff, group cites; DEDUPLICATE vs Decision — Decision maps positions, Reasoning explains why they emerged/diverged, do not copy-paste numbers verbatim thrice
-- Action Items: ${L.synthesisActionItems} words — verbs with owners or “proposed: X → handoff to @role” + block cites; distribute owners (max 2 per holder unless justified)
+- Action Items: ${L.synthesisActionItems} words — verbs with a SEATED participant's name as owner + block cites; distribute owners, max 2 per holder unless you say why
 - Open Questions: ${L.synthesisOpenQuestions} words — why remains + suggested probe: name the single concrete query, dataset, or experiment that would close it
 - Confidence: ${L.synthesisConfidence} words — one word + rubric justification
 Total 1500-3500 words welcome; concise but thorough — preserve numbers verbatim, no invented figures.\n`;
+
+  // The human-readable index for the artifact's citation ids (rule 1b): a
+  // reader must be able to resolve every [#N] — the synthesizer writes the
+  // one-line gists, finalizeSynthesis deterministically backfills any id it
+  // misses. Shared by both task modes so the contract stays single-sourced.
+  const referencesSection = `
+## References
+The human-readable index for the ids cited above — the reader cannot resolve a bare [#N] on its own. One line per id, covering every [#N] and [#T{id}] you cite anywhere above:
+
+- [#4] — Ada — Round 2 — reversibility favors the incremental path
+- [#T7] — forum thread — auth token rotation timing
+
+An id missing from this index is unresolvable to a reader — list ALL of them. The index is a map, not a source: do not cite it as evidence, and do not treat its lines as claims of their own.`;
 
   const requiredSections = isCode
     ? `## Required Sections — output these exact headings in this order, even if empty (write “None” where appropriate)
@@ -140,15 +162,22 @@ Required when there is no single Decision above. State the rule that WILL resolv
 ## Reasoning
 4-8 bullets or short paragraphs. Each bullet references who argued what and on what evidence. Show tradeoffs and synthesis between views. Group cites per block. DEDUPLICATE: do not repeat Decision table numbers verbatim; reference rows (“see Position B Evidence”) and explain divergence/synthesis. Preserve numbers verbatim only when new.
 
+## Dissenting Views
+The live disagreement the room did NOT settle — who holds which position, and what would settle it. The round clerk named it in its Contested bullet (that judgement travels with the transcript): reproduce it here with the holders and their [#id]s. Do not go hunting for new dissent in the prose, and do not soften it. If the room genuinely converged, write "None — the room converged". A reader must be able to see what was not agreed.
+
 ## Proposed Fix
 Files involved + diffs with \`\`\`tsx file=src/...\`\`\` blocks. Mark any novel synthesized snippet “Proposed — synthesized from [#id]”. Note live edits (BUILD) vs proposals (PLAN). Preserve code verbatim; do not invent file contents not read.
 
+## Files Involved
+Every file this artifact touches or proposes to change — one path per line with a one-line reason. The State of Play's Files Involved section lists what the room worked on; carry the relevant ones forward rather than inventing new ones.
+
 ## Action Items
-- {verb} {what} — owner: {name or “proposed: X → handoff to @role”} — block cite [#id]
-(Empty → “None — see Proposed Fix.”) Distribute owners; max 2 per holder.
+- {verb} {what} — owner: {name} — block cite [#id]
+Owners are SEATED participants, named — never an @handle, never a role. If no seated participant fits the work: - {verb} {what} — proposed: needs a participant with domain Y — block cite [#id]. Distribute owners — max 2 items per holder unless you say why in a clause.
+(Empty → “None — see Proposed Fix.”)
 
 ## Open Questions
-- {question that remains} — why it remains (missing evidence / unresolved tradeoff) — suggested next probe: name the single concrete query, dataset, or experiment that would close it`
+- {question that remains} — why it remains (missing evidence / unresolved tradeoff) — suggested next probe: name the single concrete query, dataset, or experiment that would close it${referencesSection}`
     : `## Required Sections — output these exact headings in this order, even if empty (write “None” where appropriate)
 
 ## Executive Summary
@@ -172,18 +201,22 @@ Required when there is no single Decision above. State the rule that WILL resolv
 ## Reasoning
 4-8 bullets or short paragraphs. Each bullet references who argued what and on what evidence. Show tradeoffs and how views synthesize or diverge. Group cites per block. DEDUPLICATE vs Decision: Decision maps positions, Reasoning explains why they emerged/diverged — do not copy-paste Evidence numbers thrice; reference Decision rows when possible.
 
+## Dissenting Views
+The live disagreement the room did NOT settle — who holds which position, and what would settle it. The round clerk named it in its Contested bullet (that judgement travels with the transcript): reproduce it here with the holders and their [#id]s. Do not go hunting for new dissent in the prose, and do not soften it. If the room genuinely converged, write "None — the room converged". A reader must be able to see what was not agreed.
+
 ## Action Items
-- {verb} {what} — owner: {name or “proposed: X → handoff to @role”} — block cite [#id]
-(Empty → “None — deliberation surfaced no actionable consensus; see Open Questions for next step.”) Distribute owners; max 2 per holder unless justified.
+- {verb} {what} — owner: {name} — block cite [#id]
+Owners are SEATED participants, named — never an @handle, never a role. If no seated participant fits the work: - {verb} {what} — proposed: needs a participant with domain Y — block cite [#id]. Distribute owners — max 2 items per holder unless you say why in a clause.
+(Empty → “None — deliberation surfaced no actionable consensus; see Open Questions for next step.”)
 
 ## Open Questions
-- {question that remains} — why it remains (missing evidence / unresolved tradeoff) — suggested next probe: name the single concrete query, dataset, or experiment that would close it`;
+- {question that remains} — why it remains (missing evidence / unresolved tradeoff) — suggested next probe: name the single concrete query, dataset, or experiment that would close it${referencesSection}`;
   return `You are the synthesis auditor. The deliberation is complete. Produce the final artifact — human-readable FIRST, then citation-grounded detail. Thoroughness welcome; dissent is valuable, not a failure.
 ${modeNote}
 ## Original Question
 ${safeQuestion}
 ${tagContext ? `\n## Tags (topic)\n${tagContext}\n` : ""}
-${userContextSection}${stateOfPlaySection}${engagementSection}
+${userContextSection}${stateOfPlaySection}${forumSection}${engagementSection}
 ## Deliberation Transcript (supporting detail — cite [#id] when using it)
 ${safeTranscript}
 ${participantsSection}
@@ -200,6 +233,7 @@ ${groundingRule}2. **No invention:** Do not invent numbers, dates, costs, tool r
 6. **Ratchet votes:** A ballot is never final against new evidence. If later contributions supersede a voted question — new data, a corrected figure, a changed premise — record the vote as re-opened and state which evidence re-opened it. When new evidence has emerged since the last ballot, the final round closes with a confirmation ballot on the superseded question; record its outcome, not just the original tally.
 7. **No naked numbers:** Before finishing, scan your draft for every percentage and rate. Each must carry (n, window, source) — sample size, the time/scope window it covers, and where it came from ([#id], State-of-Play, or Source:). A rate with n<10 may illustrate but never licenses a conclusion — label it "n=X, illustrative only" or strike it. A number you cannot attribute to the transcript/State-of-Play is removed or explicitly flagged as unverified; never let a bare "%" or "X per <unit>" stand on its own.
 8. **Calibration sheet for gate ladders:** When you record a Decision Rule with trigger thresholds, each trigger must ship with its calibration — the base rate, historical precedent, or data that justifies the number, or the cheap test that would measure it. If the room never calibrated a trigger, record it as "uncalibrated — needs base rate" rather than presenting it as a working gate; a threshold justified two rounds after authorship is not calibrated.
+8a. **Dissent is the orchestrator's judgement, and it is carried — not re-derived.** The round clerk saw the round and named the live disagreement in its Contested bullet; that judgement travels with the transcript. Reproduce it in "## Dissenting Views" with the holders and their [#id]s. Do not scan the prose for disagreement, do not soften what the clerk recorded, and do not invent a conflict the room did not have.
 9. **Positions are named, not numbered (N10):** a ballot letter identifies an option inside one question and nothing else; it changes meaning in the next round. Label every position by what it claims, and reference it by that label. If a decision, a reasoning bullet, or a Decision-Rule trigger is keyed by a letter alone, rewrite the key.
 10. **Nothing silently dropped (P7):** every contribution that carried a position must be cited, explicitly synthesized, or named as superseded. A contribution that was answered, folded into a Synthesis, or overruled is represented; one that is merely absent is a hole. Self-citation does not count as engagement.
 
@@ -232,6 +266,10 @@ No single decision — spectrum below:
 | Full cutover | Ben [#5] | 3-week head start on the schedule | harder to reverse |
 ## Reasoning
 - **Ada [#4]** proposed the cutover citing reversibility — built on [#2] cost numbers. **Cleo [#5]** challenged the blast radius, then reflected [#14] accepting the pilot with a rollback line. Tradeoff: speed vs reversibility.
-${isCode ? "\n## Good Fragment (code-analysis)\n## Proposed Fix\n- Files: `src/cache/read.ts:42` — stale read after invalidation (read in [#4])\n- Diff: ```tsx file=src/cache/read.ts\n  // Proposed — synthesized from [#4][#7]\n  export function read(key: string) {\n    const hit = cache.get(key);\n    return hit ?? load(key);\n  }\n  ```\n  Why: [#4] read src/cache/read.ts via read tool; [#7] challenge on the missing invalidation. [#9] evidence via grep. Tests: `npm test` cache case.\n" : ""}
+## References
+- [#2] — Ada — the incremental/cutover cost numbers the comparison rests on
+- [#4] — Ada — reversibility favors the incremental path
+- [#5] — Ben — the three-week head start favors the cutover
+${isCode ? "\n## Good Fragment (code-analysis)\n## Proposed Fix\n- Files: `src/cache/read.ts:42` — stale read after invalidation (read in [#4])\n- Diff: ```tsx file=src/cache/read.ts\n  // Proposed — synthesized from [#4][#7]\n  export function read(key: string) {\n    const hit = cache.get(key);\n    return hit ?? load(key);\n  }\n  ```\n  Why: [#4] read src/cache/read.ts via read tool; [#7] challenge on the missing invalidation. [#9] evidence via grep. Tests: `npm test` cache case.\n## References\n- [#4] — Ada — Round 2 — read src/cache/read.ts and confirmed the stale read\n- [#7] — Ben — Round 3 — challenged the missing cache invalidation\n- [#9] — Tessa — Round 3 — grep evidence the helper has no TTL\n" : ""}
 `;
 }

@@ -9,6 +9,7 @@ import { sanitizeForDisplay, sanitizeAgentOutput } from "./utils/sanitize.js";
 import { CircuitBreaker } from "./utils/retry.js";
 import { selectFallbackModel } from "./services/model-service.js";
 import { loadGlobalHealth, markGlobalUnhealthy } from "./services/global-model-health.js";
+import { isAbortError } from "./utils/retry.js";
 import { incrementKeyedCounter, recordLatency } from "./metrics.js";
 import { degrade } from "./utils/degrade.js";
 import { randomUUID } from "node:crypto";
@@ -212,6 +213,21 @@ export class RoundExecutor {
     }
     try {
       while (remainingSpeakers.length > 0) {
+       // A stopped meeting speaks to NOBODY else. The old loop walked the
+       // whole speaker list even after the user cancelled, so the round
+       // "jumped" to the next agent and that agent's turn ran to completion.
+       if (this.isHalted?.()) {
+         this._logger.info("round_halted", `Round stopped after the cancellation — ${remainingSpeakers.length} speaker(s) not called`, {
+           round: round.number, skipped: remainingSpeakers.length,
+         });
+         // The seats that never got to speak are NOT failed: they were never
+         // asked. Leaving them "failed" would drop them from a later resume.
+         for (const skipped of remainingSpeakers) {
+           try { skipped.status = "listening"; this._db.setParticipantStatus(skipped.config.id, "listening"); } catch {}
+         }
+         remainingSpeakers.length = 0;
+         break;
+       }
        const batchId = randomUUID();
       const p = remainingSpeakers.shift();
       p.currentBatchId = batchId;
@@ -230,6 +246,17 @@ export class RoundExecutor {
         promptRes = { result: null, error: new Error("promptChildSession returned null/undefined") };
       }
       const { result, error } = promptRes;
+      // A turn that was ABORTED is not a failed participant — the meeting was
+      // stopped on purpose. Recording it as "failed" would (a) show a red
+      // error the user never caused and (b) exclude the seat from a later
+      // resume, silently dropping that agent's turn.
+      if (this.isHalted?.() || isAbortError(error)) {
+        this._logger.info("turn_aborted", `${p.config.name} — turn aborted, seat left open (not failed)`, {
+          participant: p.config.id, round: round.number,
+        });
+        try { p.status = "listening"; this._db.setParticipantStatus(p.config.id, "listening"); } catch {}
+        break;
+      }
       await this._handlePromptResult(p, result, round, error);
       }
       // Join deferred tails BEFORE round-session cleanup and the round
@@ -244,6 +271,24 @@ export class RoundExecutor {
     }
   }
 
+  /**
+   * Record a speaker in the round's token path.
+   *
+   * A RESTORED round (crash recovery, or a resume after a cancel) is rebuilt
+   * by the meeting-restorer from the database, and that shape had no
+   * `token_path` array — so `round.token_path.push(...)` threw
+   * "Cannot read properties of undefined (reading 'push')" and killed the
+   * resume. The array is created on demand here, so every round — fresh or
+   * restored — carries a token path.
+   */
+  _pushTokenPath(round, participantId) {
+    try {
+      if (!round) return;
+      if (!Array.isArray(round.token_path)) round.token_path = [];
+      round.token_path.push(participantId);
+    } catch { /* telemetry must never break a turn */ }
+  }
+
   async _handlePromptResult(p, result, round, error) {
     const pendingStatePatch = this._stateManager.takeLastTurnPatch?.(p.config.id) ?? null;
     if (!result || error) {
@@ -254,7 +299,7 @@ export class RoundExecutor {
         this._stateManager.getMeetingId(), p.config.id, this._stateManager.getCurrentRound(),
         "no_response", `Failed to get response after retries${error ? `: ${error.message}` : ''}`, 2,
       );
-      round.token_path.push(p.config.id);
+      this._pushTokenPath(round, p.config.id);
       this._options.onProgress?.(`${p.config.name} (${(p.config.category ?? p.config.tier)}) — failed to respond${error ? `: ${error.message}` : ''}, skipping`);
       this._options.onContribution?.(p.config.name, this._stateManager.getCurrentRound(), "failed_no_response");
       return;
@@ -267,7 +312,7 @@ export class RoundExecutor {
     if (isPass) {
       p.status = "passed";
       this._db.setParticipantStatus(p.config.id, "passed");
-      round.token_path.push(p.config.id);
+      this._pushTokenPath(round, p.config.id);
       
       // Extract reason from loom_pass tool call or default
       let passReason = "[PASS]";
@@ -518,7 +563,7 @@ export class RoundExecutor {
 
     this._stateManager.addContribution(contribution);
     round.contributions.push(contribution);
-    round.token_path.push(participant.config.id);
+    this._pushTokenPath(round, participant.config.id);
     // Derived count: recompute from weave to avoid drift across event types
     this._stateManager.incrementParticipantContributions(participant.config.id);
     participant.status = "listening";
@@ -628,8 +673,41 @@ export class RoundExecutor {
   }
 
   _abortControllers = new Set();
+  /**
+   * The meeting-level halt signal (see MeetingOrchestrator._haltController).
+   * Aborted once by a user cancel and never un-aborted, so a turn that starts
+   * after the cancellation is dead on arrival.
+   */
+  _haltSignal = null;
+  /** Sticky mirror of the halt: set by _abortInflight(), cleared by setHaltSignal(null). */
+  _halted = false;
 
+  /**
+   * Point the executor at the meeting's halt signal.
+   * @param {AbortSignal|null} signal
+   */
+  setHaltSignal(signal) {
+    this._haltSignal = signal ?? null;
+    this._halted = !!signal?.aborted;
+  }
+
+  /** True once the meeting has been stopped on purpose. */
+  isHalted() {
+    if (this._halted) return true;
+    if (this._haltSignal?.aborted) { this._halted = true; return true; }
+    return false;
+  }
+
+  /**
+   * Abort every in-flight prompt AND make the abort sticky.
+   *
+   * The stickiness is the fix for "Cancel run jumped to the next agent": the
+   * old version only aborted the controllers registered at that instant, so
+   * the turn that started right after the cancel carried a brand-new,
+   * un-aborted controller and ran to completion.
+   */
   _abortInflight() {
+    this._halted = true;
     for (const c of this._abortControllers) {
       try { c.abort(); } catch {}
     }

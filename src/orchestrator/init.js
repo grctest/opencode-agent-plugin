@@ -47,6 +47,9 @@ import { extractErrorInfo } from "../logger.js";
          this._scheduleStatsFlush?.();
        });
        this._synthesisCoordinator = new SynthesisCoordinator(this._sessionManager, this._options.orchestratorConfig);
+       // The synthesis prompts are bound to the meeting's halt signal too, so
+       // a cancel that lands during the synthesis kills it.
+       this._synthesisCoordinator.setHaltSignal?.(this.getHaltSignal?.() ?? null);
 
       // Ensure the meeting row exists before any state is recorded against it.
       // Use upsertMeeting (UPDATE when already present from the dashboard
@@ -166,6 +169,9 @@ import { extractErrorInfo } from "../logger.js";
         directory: this._directory,
       });
       this._roundExecutor._onPromptTrimmed = (charsTrimmed, model) => this._recordPromptTrim(charsTrimmed, model);
+      // The round executor's turns are bound to the meeting's halt signal, so
+      // a turn that starts after a cancellation is aborted on arrival.
+      this._roundExecutor.setHaltSignal?.(this.getHaltSignal?.() ?? null);
 
       this._roundService = new RoundService({ roundExecutor: this._roundExecutor, stateManager: this._stateManager, db });
 

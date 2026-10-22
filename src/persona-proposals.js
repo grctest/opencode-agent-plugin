@@ -152,9 +152,27 @@ export function formatProposalFile({ meetingId, question, proposals, rawText, pa
 /**
  * Runs the proposal pass: one bounded LLM call, file written beside the
  * meeting report. Returns the file path or null. Never throws.
+ *
+ * The pass carries the meeting's halt signal (`signal`) and a `shouldStop`
+ * probe: it runs AFTER the artifact is saved, when the meeting's status is
+ * already terminal but the run is still winding down — a "Cancel run" pressed
+ * during this pass used to leave a full LLM call (up to
+ * PROPOSAL_TIMEOUT_MS = 120s) running that no cancel could stop.
+ *
+ * @param {{ signal?: AbortSignal, shouldStop?: () => boolean }} [opts] halt
+ *   plumbing from the orchestrator; both are optional so non-orchestrator
+ *   callers (tests, worker flows) keep working unchanged.
  */
-export async function generatePersonaProposals({ sessionManager, participants, artifact, model, meetingId, directory, question, writeFile }) {
+export async function generatePersonaProposals({ sessionManager, participants, artifact, model, meetingId, directory, question, writeFile, signal = null, shouldStop = null }) {
   try {
+    if (typeof shouldStop === "function" && shouldStop()) {
+      proposalsLogger.info("persona_proposals_skipped_stop", "Persona proposal pass skipped — the run was stopped");
+      return null;
+    }
+    if (signal?.aborted) {
+      proposalsLogger.info("persona_proposals_skipped_stop", "Persona proposal pass skipped — the run was stopped");
+      return null;
+    }
     const seats = (participants ?? []).filter((p) => p?.status !== "failed");
     if (seats.length === 0 || !model?.providerID || !model?.modelID) return null;
     const prompt = buildPersonaProposalPrompt(seats, artifact);
@@ -166,10 +184,15 @@ export async function generatePersonaProposals({ sessionManager, participants, a
         parts: [{ type: "text", text: prompt }],
         tools: {},
         timeoutMs: PROPOSAL_TIMEOUT_MS,
+        signal,
       },
       meetingId ?? null,
     );
     if (!res?.ok) {
+      if (res?.error?.name === "AbortError" || String(res?.error?.message ?? "").includes("abort")) {
+        proposalsLogger.info("persona_proposals_aborted", "Proposal call aborted — the run was stopped; no proposal file is written");
+        return null;
+      }
       proposalsLogger.warn("persona_proposals_failed", "Proposal call failed — skipping", extractErrorInfo(res?.error));
       return null;
     }

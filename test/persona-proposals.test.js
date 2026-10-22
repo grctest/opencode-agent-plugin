@@ -104,3 +104,44 @@ test("generate returns null without participants, model, or on call failure", as
   const failing = { runEphemeralPrompt: async () => ({ ok: false, error: new Error("down") }) };
   assert.equal(await generatePersonaProposals({ sessionManager: failing, participants: SEATS, artifact: {}, model: { providerID: "p", modelID: "m" }, meetingId: "m", directory: "/t", question: "q", writeFile }), null);
 });
+
+test("a stopped run never issues the proposal prompt, and the prompt carries the halt signal", async () => {
+  // The proposal pass runs AFTER the artifact is saved, when the status is
+  // already terminal but the run is still winding down: without the halt
+  // plumbing a "Cancel run" pressed during it left a 120s LLM call running
+  // that no cancel could stop (observed: prompt billed 1.75s after the
+  // cancel, engine alive ~45s longer than the run it belonged to).
+  const neverPrompt = { runEphemeralPrompt: async () => { throw new Error("must not prompt a stopped run"); } };
+  assert.equal(await generatePersonaProposals({
+    sessionManager: neverPrompt, participants: SEATS, artifact: { content: "Decision: ship." },
+    model: { providerID: "p", modelID: "m" }, meetingId: "m", directory: "/t", question: "q",
+    writeFile: async () => { throw new Error("must not write"); },
+    shouldStop: () => true,
+  }), null);
+
+  const aborted = new AbortController();
+  aborted.abort();
+  assert.equal(await generatePersonaProposals({
+    sessionManager: neverPrompt, participants: SEATS, artifact: { content: "Decision: ship." },
+    model: { providerID: "p", modelID: "m" }, meetingId: "m", directory: "/t", question: "q",
+    writeFile: async () => { throw new Error("must not write"); },
+    signal: aborted.signal,
+  }), null);
+
+  const seen = [];
+  const prompting = {
+    runEphemeralPrompt: async (_participant, opts) => {
+      seen.push(opts);
+      return { ok: false, error: new DOMException("Aborted", "AbortError") };
+    },
+  };
+  const live = new AbortController();
+  assert.equal(await generatePersonaProposals({
+    sessionManager: prompting, participants: SEATS, artifact: { content: "Decision: ship." },
+    model: { providerID: "p", modelID: "m" }, meetingId: "m", directory: "/t", question: "q",
+    writeFile: async () => { throw new Error("an aborted call must not write"); },
+    signal: live.signal,
+  }), null);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].signal, live.signal, "the proposal prompt carries the meeting's halt signal");
+});

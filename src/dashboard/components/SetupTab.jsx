@@ -34,6 +34,7 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
 
       <StatusBanners
         readOnly={s.readOnly} meetingActive={s.meetingActive} job={s.job} doCancel={s.doCancel}
+        cancelling={s.cancelling}
         startedId={s.startedId} resumedId={s.resumedId} resumeMeta={s.resumeMeta} resumeWarnings={s.resumeWarnings}
         finishedId={s.finishedId} finishMeta={s.finishMeta} finishWarnings={s.finishWarnings}
         selectedMeeting={selectedMeeting} resumeStatus={s.resumeStatus} resumeParts={s.resumeParts}
@@ -46,6 +47,7 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
         context={s.context} setContext={s.setContext}
         maxRounds={s.maxRounds} setMaxRounds={s.setMaxRounds}
         taskMode={s.taskMode} setTaskMode={s.setTaskMode}
+        buildMode={s.buildMode} setDeliberationMode={s.setDeliberationMode}
         disabled={questionDisabled} sectionRef={registerSection("question")}
       />
 
@@ -73,8 +75,8 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
       />
 
       <OrchestratorCard
-        orchestrator={s.orchestrator} features={s.features}
-        setFeature={s.setFeature} setOrchestratorField={s.setOrchestratorField} patchForm={s.patchForm}
+        orchestrator={s.orchestrator}
+        setOrchestratorField={s.setOrchestratorField} patchForm={s.patchForm}
         enabledModels={s.enabledModels} variantsForKey={s.variantsForKey}
         openOrchestratorPreview={s.openOrchestratorPreview} previewBusy={s.previewBusy}
         isFrozen={s.isFrozen} readOnly={s.readOnly}

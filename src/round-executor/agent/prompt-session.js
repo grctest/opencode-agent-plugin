@@ -3,7 +3,7 @@ import { getConfig, resolveBuiltInTools, resolveLoomTools } from "../../config.j
 import { extractAgentResponse, mapToolResults, extractFileBlockTools } from "../../shared.js";
 import { parseAgentResponse } from "../../validation.js";
 import { sanitizeAgentOutput } from "../../utils/sanitize.js";
-import { withRetry, isRetryableError } from "../../utils/retry.js";
+import { withRetry, isRetryableError, isProviderUnavailableError, isAbortError } from "../../utils/retry.js";
 import { selectFallbackModel } from "../../services/model-service.js";
 import { incrementKeyedCounter, recordLatency } from "../../metrics.js";
 import { extractErrorInfo } from "../../logger.js";
@@ -11,6 +11,13 @@ import { buildToolsMap, buildToolsMapWithoutLoom } from "../tools.js";
 import { buildEvidenceCache } from "../../evidence-cache.js";
 import { resolveContextLimit, budgetCharsFor, fitPromptToBudget } from "../../utils/context-budget.js";
 
+
+/**
+ * The abort classifier now lives in utils/retry.js (`isAbortError`) so the
+ * round executor answers the same question with the same definition: a turn
+ * that was aborted on purpose is not a failed participant, and the round stops
+ * instead of advancing to the next speaker.
+ */
 
 export async function promptChildSession(participant) {
   const prevStatus = participant.status;
@@ -61,6 +68,32 @@ export async function promptChildSession(participant) {
   const recentForPrompt = this._stateManager.getWeave().filter(
     (c) => c.round != null && c.round === currentRound && c.type !== "vote_response" && c.type !== "reflection",
   ).slice(-12);
+
+  // The prior-round citable index (agent.js renders `## Contribution Index —
+  // earlier rounds`): the live window is the CURRENT round only, so every id
+  // before this round resolves solely through whatever a SoP bullet restates —
+  // a merged-away bullet takes its id with it. The index gives each one an
+  // id + holder NAME + gist line. Dedup is BY ID against the live block, never
+  // by round boundary (the live window can cut mid-round), so switching a
+  // round makes last round's ids flow into the index automatically.
+  let earlierForIndex = [];
+  let participantNames = {};
+  try {
+    const weaveForIndex = this._stateManager.getWeave?.() ?? [];
+    const recentIds = new Set(
+      recentForPrompt.map((c) => String(c.id)).filter((v) => v !== "undefined" && v !== "null"),
+    );
+    earlierForIndex = weaveForIndex.filter((c) => {
+      if (c?.id == null) return false;
+      if (recentIds.has(String(c.id))) return false;
+      const type = String(c.type ?? "");
+      if (type === "pass" || type === "vote_response" || type === "reflection") return false;
+      return Boolean(String(c.content ?? "").trim());
+    });
+    for (const p of (this._stateManager.getParticipants?.() ?? [])) {
+      if (p?.config?.id) participantNames[String(p.config.id)] = p?.config?.name ?? String(p.config.id);
+    }
+  } catch { earlierForIndex = []; participantNames = {}; }
 
   // SKILL.state Σⁱ_t: own carried state for this agent (plan §5.1/§5.6).
   // Fetched only when the tool is enabled — flag-off prompts stay byte-identical
@@ -223,6 +256,11 @@ export async function promptChildSession(participant) {
         // (retrospective P0-2) which is the primary source.
         allStates: fitAllStates,
         settledItems: fitSettledItems,
+       // Prior-round citable index + id → display NAME (both consumed by the
+       // transcript and the `## Contribution Index` block — the pairing
+       // doctrine needs the name on screen, not two hops away).
+       earlierContributions: earlierForIndex,
+       participantNames,
        // Steering hint renders inside the builder, before the final patch line,
        // so recency keeps the mandatory call (audit P1-D). Empty = no block.
        steeringHint,
@@ -417,6 +455,11 @@ export async function promptChildSession(participant) {
     try {
       try { this._callStats.agent_prompts++; } catch {}
       try { this._notifyCallStats?.(); } catch {}
+      // The recovery prompt is a full-size prompt of its own, so it carries
+      // the meeting's halt signal: a cancellation that lands while the
+      // recovery is in flight must kill it too.
+      const haltSignal = this._haltSignal ?? null;
+      if (haltSignal?.aborted) throw new DOMException("Aborted", "AbortError");
       result2 = await this._sessionManager.getContract().prompt({
         sessionId: ephemeralSessionId,
         system: promptContext.system_prompt,
@@ -428,6 +471,7 @@ export async function promptChildSession(participant) {
         tools: synthesisToolsMap,
         toolChoice: Object.keys(synthesisToolsMap).length > 0 ? "auto" : undefined,
         timeoutMs: synthRemaining,
+        signal: haltSignal ?? undefined,
         // Recovery synthesis offers no loom tools, so no weave-growth probe;
         // heartbeat still keeps the stall watchdog alive on long recoveries.
         onHeartbeat: () => { try { this._options.onPromptActivity?.(); } catch {} },
@@ -491,6 +535,14 @@ export async function promptChildSession(participant) {
    };
    this._stateManager.beginTurn?.(participant.config.id);
    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    // A stopped meeting issues NO prompts at all — not even the first one.
+    if (this.isHalted?.()) {
+      const abortErr = new DOMException("Aborted", "AbortError");
+      this._logger.info("attempt_aborted", `${participant.config.name} — meeting stopped, no prompt issued`, {
+        participant: participant.config.id, round: currentRound, attempt,
+      });
+      return { result: null, error: abortErr };
+    }
     try {
       const response = await this._executeAgentTurn(participant, activeModel, timeoutMs, promptContext, { deferTail: true });
       succeeded = true;
@@ -501,10 +553,33 @@ export async function promptChildSession(participant) {
       this._stateManager.discardActiveTurnPatch?.();
       lastError.value = err;
       const info = extractErrorInfo(err);
-      if (isRetryableError(err)) this._recordModelFailure(activeModel);
+
+      // A cancelled meeting stops here: no recovery, no retry, no fallback, and
+      // no side-effect warning — the meeting was stopped on purpose, and every
+      // further prompt is a call the user did not ask for (audit: abort-after-
+      // cancel billed a 34k-char prompt 240ms after the cancellation).
+      if (isAbortError(err)) {
+        this._logger.info("attempt_aborted", `${participant.config.name} — turn aborted (meeting stopped); no further calls`, {
+          participant: participant.config.id, round: currentRound, attempt,
+        });
+        return { result: null, error: err };
+      }
+
+      // A PROVIDER OUTAGE is a model failure, not a bad request: the endpoint
+      // cannot serve it, and another model can. It counts against the breaker
+      // (so the recovery path's "switch to a healthy model" guard fires) and it
+      // ends this model's attempts — retrying the same dead endpoint is what
+      // turned one outage into six dead calls and five and a half minutes.
+      const providerDown = isProviderUnavailableError(err);
+      if (isRetryableError(err) || providerDown) this._recordModelFailure(activeModel);
       // Always warn if side effects may exist (not just attempt>0) — check weave
       const hasExisting = collectExistingLoomResults().length > 0;
       if (attempt > 0 || err?.message === "Empty agent response" || hasExisting) warnPossibleSideEffects(err);
+
+      if (providerDown) {
+        this._logger.warn("provider_unavailable", `${participant.config.name} — ${this._modelKey(activeModel)} cannot serve requests (${info.message}); going to the fallback ladder`, info);
+        break;   // no same-model retry, no recovery — the endpoint is down
+      }
 
       // Session lifecycle errors: the round-scoped session is gone, retrying same sid is futile.
       // Delete stale round-scoped id so next attempt creates a fresh ephemeral (P4).
@@ -565,6 +640,14 @@ export async function promptChildSession(participant) {
 
   const fallbackAttempts = fallbackConfig.maxFallbackAttempts;
   for (let attempt = 0; attempt < fallbackAttempts; attempt++) {
+    // A stopped meeting never reaches the fallback ladder.
+    if (this.isHalted?.()) {
+      const abortErr = new DOMException("Aborted", "AbortError");
+      this._logger.info("attempt_aborted", `${participant.config.name} — meeting stopped, no fallback prompt issued`, {
+        participant: participant.config.id, round: currentRound, attempt,
+      });
+      return { result: null, error: abortErr };
+    }
     try {
       // Re-fit for the fallback model: a smaller window needs a smaller
       // prompt, and the system prompt must announce the fallback's window
@@ -586,6 +669,16 @@ export async function promptChildSession(participant) {
       this._stateManager.discardActiveTurnPatch?.();
       lastError.value = err;
       const info = extractErrorInfo(err);
+
+      // A cancelled meeting stops here too: the fallback ladder must not
+      // prompt after the user stopped the meeting.
+      if (isAbortError(err)) {
+        this._logger.info("attempt_aborted", `${participant.config.name} — fallback turn aborted (meeting stopped); no further calls`, {
+          participant: participant.config.id, round: currentRound, attempt,
+        });
+        return { result: null, error: err };
+      }
+
       const isSessionNotFoundFb = err?.message && /session not found/i.test(err.message);
       // Don't trip breaker for session lifecycle errors — remove stale sid so next fallback attempt is fresh
       if (isSessionNotFoundFb) {
@@ -608,8 +701,12 @@ export async function promptChildSession(participant) {
       }
       warnPossibleSideEffects(err);
 
-      // Fallback recovery: reuse already-persisted loom batch if available
-      const hasExistingFallback = collectExistingLoomResults().length > 0;
+      // Fallback recovery: reuse already-persisted loom batch if available.
+      // A provider outage is not a lost response — there is nothing to recover
+      // FROM, and the endpoint that just refused the request will refuse the
+      // recovery prompt too.
+      const fallbackProviderDown = isProviderUnavailableError(err);
+      const hasExistingFallback = !fallbackProviderDown && collectExistingLoomResults().length > 0;
       if (hasExistingFallback && attempt + 1 < fallbackAttempts) {
         const remainingForRecoveryFb = timeoutMs === 0 ? Infinity : timeoutMs;
         const recoveredFb = await trySynthesisFromExisting(fallbackModel, remainingForRecoveryFb);
@@ -626,6 +723,10 @@ export async function promptChildSession(participant) {
         }
       }
 
+      if (fallbackProviderDown) {
+        this._logger.warn("provider_unavailable", `${participant.config.name} — ${this._modelKey(fallbackModel)} cannot serve requests either; no further attempts`, info);
+        break;
+      }
       if (attempt + 1 < fallbackAttempts) {
         const delay = Math.min(1000 * Math.pow(2, attempt) + Math.random() * 500, 8000);
         this._logger.warn("fallback_retry", `${participant.config.name} — fallback attempt ${attempt + 1}/${fallbackAttempts} failed on ${this._modelKey(fallbackModel)}, retrying in ${Math.round(delay)}ms`, info);

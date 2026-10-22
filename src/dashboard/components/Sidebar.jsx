@@ -1,7 +1,7 @@
 import { memo, useMemo, useState, useCallback } from "react";
 import { cn } from "../utils.js";
 import { ParticipantCard, ContentDialog, OrchestratorDetailDialog, renderMarkdown } from "./Cards.jsx";
-import { CategoryBadge } from "./Badges.jsx";
+import { CategoryBadge, statusLabel } from "./Badges.jsx";
 import { List } from "react-window";
 import { Card, CardContent } from "./ui/card.tsx";
 import { Badge } from "./ui/badge.tsx";
@@ -47,7 +47,7 @@ function RoundIndicator({ current, max, status }) {
       <CardContent className="flex flex-col gap-1 py-0">
         <div className="flex flex-col gap-1">
           <span className="text-xs text-muted-foreground flex items-center gap-1">
-            Status: <Badge variant={status === "weaving" ? "weaving" : status === "converged" ? "converged" : "secondary"} className="ml-1">{status}</Badge>
+            Status: <Badge variant={status === "weaving" ? "weaving" : status === "converged" ? "converged" : "secondary"} className="ml-1">{statusLabel(status)}</Badge>
           </span>
           <span className="text-xs text-muted-foreground">
             Round {current} / {max}
@@ -168,7 +168,7 @@ const Sidebar = memo(function Sidebar({
         <div className="p-4 flex flex-col gap-5">
           <div className="flex flex-col gap-3">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold">Loom</h2>
+              <h2 className="text-base font-bold whitespace-nowrap">Deliberation Dashboard</h2>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <span className={cn("text-xs flex items-center gap-1", connected ? "text-emerald-600" : "text-muted-foreground")}>

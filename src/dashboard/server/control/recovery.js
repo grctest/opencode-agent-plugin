@@ -14,10 +14,10 @@ import { extractErrorInfo } from "../../../logger.js";
 import { sanitizeForDisplay } from "../../../utils/sanitize.js";
 import { writeReportFile as writeReportFileHelper } from "../../../handlers/knit/file-ops.js";
 import { repairDatabase } from "../../../database/connection.js";
-import { TERMINAL_STATUSES } from "../../../constants.js";
+import { TERMINAL_STATUSES, canResumeStatus } from "../../../constants.js";
 import { resetPollCursorsForMeeting } from "../poll-cursors.js";
 import { registerMeetingEngine } from "../../../utils/engine-registry.js";
-import { isControlReady, logger, runtime, jobs, serverState, getDirectory, readJsonBody } from "./runtime.js";
+import { isControlReady, logger, runtime, jobs, serverState, getDirectory, readJsonBody, jobPhaseForStatus } from "./runtime.js";
 import { discoverFiltered } from "./discovery.js";
 import { storedVariantFor, normalizeFeatures, buildMeetingAgentTools, dashboardCallbacks } from "./forms.js";
 
@@ -49,8 +49,14 @@ export async function handleCancelMeeting(req) {
     return Response.json({ error: "no active deliberation with that ID" }, { status: 404 });
   }
   try {
+    // The job phase flips to "cancelling" immediately so the dashboard stops
+    // claiming the run is weaving while it unwinds. The engine's cancel() is
+    // what actually stops it: it aborts the in-flight turn, makes the abort
+    // sticky for every later turn, and writes the terminal status.
+    const prev = jobs.get(meetingId);
+    jobs.set(meetingId, { ...(prev ?? {}), phase: "cancelling", startedAt: prev?.startedAt ?? null, cancelledAt: new Date().toISOString() });
     engine.cancel();
-    return Response.json({ ok: true, meeting_id: meetingId });
+    return Response.json({ ok: true, meeting_id: meetingId, cancelling: true });
   } catch (err) {
     return Response.json({ error: extractErrorInfo(err).message }, { status: 500 });
   }
@@ -172,6 +178,9 @@ function reportPathFor(directory, meetingId) {
 }
 
 function writeRecoveryReport(meetingId, question, parts, currentRound, artifact, tag) {
+  // A cancelled synthesis returns no output — a report embedding a literal
+  // "null" output section is worse than no report at all.
+  if (artifact === undefined || artifact === null) return null;
   const fullReport = `# Loom Deliberation Output (${tag})\n\n**Question:** ${sanitizeForDisplay(question, 5000)}\n\n**Participants:** ${parts.map((p) => `${p.name} (${p.category ?? p.tier})`).join(", ")}\n\n**Rounds:** ${currentRound}\n\n**Meeting ID:** ${meetingId}\n\n---\n\n${artifact}`;
   return writeReportFileHelper(getDirectory(), meetingId, fullReport, logger);
 }
@@ -211,10 +220,15 @@ async function handleResumeWithContext(req, _mode) {
   if (existingParts.length === 0) {
     return Response.json({ error: "meeting was interrupted before participants were saved — it cannot be resumed. Start a fresh deliberation from the dashboard Setup tab.", code: "no_participants", meeting_id: meetingId, resumable: false }, { status: 400 });
   }
-  if (TERMINAL_STATUSES.has(existingMeeting.status)) {
-    return Response.json({ error: `meeting is already ${existingMeeting.status} — start a fresh deliberation or extend it from the dashboard`, code: "meeting_terminal", meeting_id: meetingId, resumable: false, status: existingMeeting.status }, { status: 400 });
-  }
-  if (existingMeeting.status !== "weaving" && existingMeeting.status !== "initializing") {
+  // A meeting the USER stopped is resumable: "Cancel run" writes the terminal
+  // status "cancelled", and Resume is the explicit action that continues it
+  // from where it left off (the interrupted round is finished first). A
+  // meeting that reached a natural end (converged / max_rounds_reached) is
+  // not — it is extended, not resumed.
+  if (!canResumeStatus(existingMeeting.status)) {
+    if (TERMINAL_STATUSES.has(existingMeeting.status)) {
+      return Response.json({ error: `meeting is already ${existingMeeting.status} — start a fresh deliberation or extend it from the dashboard`, code: "meeting_terminal", meeting_id: meetingId, resumable: false, status: existingMeeting.status }, { status: 400 });
+    }
     return Response.json({ error: `meeting status '${existingMeeting.status}' cannot be resumed`, code: "unresumable_status", meeting_id: meetingId, resumable: false, status: existingMeeting.status }, { status: 400 });
   }
   if (ctx.participants.length > 0 && ctx.participants.every((p) => !p.model) && ctx.available.length === 0) {
@@ -239,6 +253,9 @@ async function handleResumeWithContext(req, _mode) {
     directory: getDirectory(),
     meetingId,
     resume: true,
+    // A stopped meeting is re-opened by an explicit Resume: the terminal
+    // status is cleared and the interrupted round is finished first.
+    allowResume: true,
     question: resumeQuestion,
     context: resumeContext,
     parentSessionId: resumeParentSessionId,
@@ -268,8 +285,11 @@ async function handleResumeWithContext(req, _mode) {
       await resumeEngine.initialize();
       const artifact = await resumeEngine.resumeMeeting();
       const resumeState = resumeEngine.getState();
-      writeRecoveryReport(meetingId, resumeQuestion, existingParts, resumeState.current_round, artifact, "Resumed");
-      jobs.set(meetingId, { phase: "done", startedAt: jobs.get(meetingId)?.startedAt ?? null, finishedAt: new Date().toISOString(), resumed: true });
+      // A resumed run that was cancelled again produces no artifact.
+      if (artifact) {
+        writeRecoveryReport(meetingId, resumeQuestion, existingParts, resumeState.current_round, artifact, "Resumed");
+      }
+      jobs.set(meetingId, { phase: jobPhaseForStatus(resumeState?.status), startedAt: jobs.get(meetingId)?.startedAt ?? null, finishedAt: new Date().toISOString(), resumed: true });
     } catch (err) {
       logger.error("dashboard_resume_failed", "Dashboard resume failed", extractErrorInfo(err));
       jobs.set(meetingId, { phase: "error", error: extractErrorInfo(err).message, startedAt: jobs.get(meetingId)?.startedAt ?? null, resumed: true });
@@ -386,8 +406,14 @@ async function handleFinishMeetingInternal(req) {
       await finishEngine.initialize();
       const output = await finishEngine.finishSynthesis(originalStatus);
       const finishState = finishEngine.getState();
-      writeRecoveryReport(meetingId, finishQuestion, existingParts, finishState.current_round, output, "Finished");
-      jobs.set(meetingId, { phase: "done", startedAt: jobs.get(meetingId)?.startedAt ?? null, finishedAt: new Date().toISOString(), finishing: true });
+      // A finish whose synthesis was cancelled mid-flight (the user pressed
+      // Cancel run while the output was being written) returns no output —
+      // there is nothing to write a report from, and the meeting stays
+      // finishable (the Finish button re-runs synthesis-only on demand).
+      if (output) {
+        writeRecoveryReport(meetingId, finishQuestion, existingParts, finishState.current_round, output, "Finished");
+      }
+      jobs.set(meetingId, { phase: jobPhaseForStatus(finishState?.status), startedAt: jobs.get(meetingId)?.startedAt ?? null, finishedAt: new Date().toISOString(), finishing: true });
     } catch (err) {
       logger.error("dashboard_finish_failed", "Dashboard finish failed", extractErrorInfo(err));
       jobs.set(meetingId, { phase: "error", error: extractErrorInfo(err).message, startedAt: jobs.get(meetingId)?.startedAt ?? null, finishing: true });

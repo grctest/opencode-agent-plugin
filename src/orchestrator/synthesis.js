@@ -4,7 +4,7 @@ import { LoomError, extractErrorInfo } from "../logger.js";
 import { getMetricsSnapshot, getMeetingDegradedReasons, recordMeetingDegradedReason, getMeetingBreakdown } from "../metrics.js";
 import { computeMechanismMix } from "../utils/contribution-types.js";
 import { reconcileNumericalConflicts } from "../synthesizer.js";
-import { resolveContextLimit } from "../utils/context-budget.js";
+import { resolveContextLimit, budgetCharsFor } from "../utils/context-budget.js";
 
 /**
  * N9 — round-budget floor, first half: make the closing round measurable.
@@ -44,7 +44,7 @@ export async function runFinalRoundPatchGrace() {
     try { return Number(getConfig()?.tuning?.FINAL_ROUND_PATCH_GRACE_MS ?? TUNING.FINAL_ROUND_PATCH_GRACE_MS); } catch { return TUNING.FINAL_ROUND_PATCH_GRACE_MS; }
   })();
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return { attempted: 0, patched: 0, failed: 0 };
-  if (this._cancelled) return { attempted: 0, patched: 0, failed: 0 };
+  if (this._cancelled || this.isHalted?.()) return { attempted: 0, patched: 0, failed: 0 };
 
   const finalRound = this._stateManager.getCurrentRound();
   const participants = this._stateManager.getParticipants().filter((p) => p?.status !== "failed" && p?.status !== "passed");
@@ -62,7 +62,7 @@ export async function runFinalRoundPatchGrace() {
   let failed = 0;
   for (const p of participants) {
     if (patchedInFinal.has(p.config.id)) continue;
-    if (this._cancelled) break;
+    if (this._cancelled || this.isHalted?.()) break;
     const model = (() => { try { return this._getParticipantModel?.(p) ?? null; } catch { return null; } })();
     if (!model) { failed++; continue; }
     attempted++;
@@ -73,6 +73,9 @@ export async function runFinalRoundPatchGrace() {
         parts: [{ type: "text", text: "Closing the deliberation. Save anything worth remembering, or skip if there is nothing." }],
         tools: { loom_state_patch: true },
         timeoutMs,
+        // The grace turns are bound to the halt signal: a cancel must not
+        // leave a patch turn running.
+        signal: this.getHaltSignal?.() ?? undefined,
         onHeartbeat: () => { try { this._stallWatchdog.touch(); } catch {} },
       }, this._meetingId);
       if (res?.ok) patched++;
@@ -86,6 +89,70 @@ export async function runFinalRoundPatchGrace() {
     this._logger.info("final_round_patch_grace", `Patch grace: ${patched}/${attempted} participants patched before synthesis (${failed} failed)`, { round: finalRound, attempted, patched, failed });
   }
   return { attempted, patched, failed };
+}
+
+/**
+ * The forum's actual discussion, bounded, for the synthesis context (audit G).
+ *
+ * The State of Play carries thread TITLES and a 160-character preview, so the
+ * room's forum thinking never reached the synthesizer — while the agent prompt
+ * tells participants "writing here is writing to the room", and the measured
+ * reality was that no recorded meeting ever opened a thread.
+ *
+ * Bounded on purpose: up to 3 threads, the last 2 comments each, 300 chars per
+ * comment. Best-effort — a failure here degrades to "no forum content", never
+ * to a failed synthesis.
+ *
+ * @returns {string} markdown, or "" when the forum is unused
+ */
+export function _collectForumContent() {
+  try {
+    const db = this._database;
+    if (!db?.listForumTopicsForPrompt) return "";
+    const topics = db.listForumTopicsForPrompt(3) ?? [];
+    if (!Array.isArray(topics) || topics.length === 0) return "";
+    const lines = [];
+    for (const t of topics) {
+      if (t?.id === undefined || t?.id === null) continue;
+      const title = String(t.title ?? "(untitled)").replace(/\s+/g, " ").trim();
+      const body = String(t.body ?? "").replace(/\s+/g, " ").trim().slice(0, 400);
+      const comments = [];
+      try {
+        const topic = db.getForumTopic?.(t.id);
+        const list = Array.isArray(topic?.comments) ? topic.comments : [];
+        for (const c of list.slice(-2)) {
+          const text = String(c?.body ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
+          if (text) comments.push(`- [${c?.author_id ?? "?"}]: ${text}`);
+        }
+      } catch {}
+      lines.push(`### [${t.id}] ${title}${body ? `\n${body}` : ""}${comments.length ? `\n${comments.join("\n")}` : ""}`);
+    }
+    if (lines.length === 0) return "";
+    return `## Forum Threads (the room's side-channel discussion — this IS the room's thinking, not a title list)\n${lines.join("\n")}`;
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * The id→title map the final artifact's reference index resolves [#T{id}]
+ * refs against. Every thread the room created travels, not only the three the
+ * content digest carries: a cited thread id must resolve for a human reader.
+ *
+ * @returns {Array<{id: number|string, title: string}>|null}
+ */
+export function _collectForumTopics() {
+  try {
+    const db = this._database;
+    if (!db?.listForumTopicsForPrompt) return null;
+    const topics = db.listForumTopicsForPrompt(50) ?? [];
+    if (!Array.isArray(topics)) return null;
+    return topics
+      .filter((t) => t?.id !== undefined && t?.id !== null)
+      .map((t) => ({ id: t.id, title: String(t.title ?? "(untitled)").replace(/\s+/g, " ").trim() }));
+  } catch {
+    return null;
+  }
 }
 
 export async function _synthesize() {
@@ -122,6 +189,13 @@ export async function _synthesize() {
       return txt !== "";
     });
     const stateOfPlay = this._stateManager.getStateOfPlay();
+    // The forum's actual discussion, bounded (audit G). The State of Play
+    // carries only thread TITLES and a 160-character preview, so the room's
+    // forum thinking never reached the synthesizer — while the agent prompt
+    // tells participants "writing here is writing to the room". Up to 3
+    // threads, the last 2 comments each, 300 chars per comment.
+    const forumContent = this._collectForumContent();
+    const forumTopics = this._collectForumTopics();
     if (substantiveForSynthesis.length === 0 && !String(stateOfPlay ?? "").trim()) {
       const reason = failed > 0
         ? `All ${participants.length} participants encountered errors during the deliberation.`
@@ -175,12 +249,17 @@ export async function _synthesize() {
       // model actually has (audit C3): a hardcoded "200k" told a 32k model to
       // write to a budget it did not have.
       const contextWindow = resolveContextLimit(orchestratorModel, this._availableModels) ?? undefined;
+      // The transcript may use what the window allows (audit B). The old fixed
+      // 24k budget was ~6k tokens of a 200k-token window, and it cut the final
+      // round first — the artifact then represented 10% of the room's work.
+      const transcriptBudgetChars = budgetCharsFor(orchestratorModel, this._availableModels) ?? undefined;
       result = await this._synthesisCoordinator.run({
         transcriptData,
         participants: this._stateManager.getParticipants(),
         model: orchestratorModel,
         meetingId: this._meetingId,
         contextWindow,
+        transcriptBudgetChars,
         onStart: () => {
           if (this._options.onSynthesisStart) this._options.onSynthesisStart();
         },
@@ -189,10 +268,21 @@ export async function _synthesize() {
           this._notifyUpdate();
         },
         stateOfPlay,
+        forumContent,
+        forumTopics,
         userContext: this._stateManager.getContext?.() ?? "",
         onActivity: () => { try { this._stallWatchdog.touch(); } catch {} },
       });
-    } catch (err) {      const message = err instanceof Error ? err.message : String(err);
+    } catch (err) {
+      // A cancelled run is not a failed synthesis: the user stopped it on
+      // purpose. No degraded artifact is written and no error is posted —
+      // the dashboard's "Finish" button can synthesize the collected
+      // contributions on demand.
+      if (this.isHalted?.() || err?.name === "AbortError") {
+        this._logger.info("synthesis_aborted", "Synthesis aborted — the run was cancelled");
+        return null;
+      }
+      const message = err instanceof Error ? err.message : String(err);
       this._logger.error("synthesis_failed", `Synthesis failed — persisting degraded artifact: ${message}`);
       await this._sessionManager.postProgress(`⚠️ Synthesis failed (${message}) — degraded artifact persisted.`, "error");
       const degraded = `# Deliberation Output\n\n## Decision\nSynthesis could not be completed (${message}).\n\n## Reasoning\nThe meeting reached its end state but the synthesis step failed. The full transcript is preserved for review.\n\n## Action Items\n- Retry synthesis with the meeting data\n- Review the transcript tab for the full deliberation\n\n## Confidence\nLow (synthesis interrupted)`;
@@ -222,7 +312,11 @@ export async function _synthesize() {
     // Post-synthesis persona proposals (T6): one bounded call per meeting,
     // review file only, never auto-applied. Best-effort — failures stay local.
     try {
-      if (getConfig()?.personaProposals !== false && result.artifact?.content && !result.artifact?.degraded) {
+      // The proposal call runs AFTER the artifact is saved, when the status is
+      // already terminal but the run is still winding down: without the halt
+      // plumbing a "Cancel run" pressed during it left a 120s LLM call
+      // running that no cancel could stop.
+      if (getConfig()?.personaProposals !== false && !this.isHalted?.() && result.artifact?.content && !result.artifact?.degraded) {
         const { generatePersonaProposals } = await import("../persona-proposals.js");
         const { writeProposalFile } = await import("../handlers/knit/file-ops.js");
         await generatePersonaProposals({
@@ -234,6 +328,8 @@ export async function _synthesize() {
           directory: this._directory,
           question: this._stateManager.getQuestion?.() ?? "",
           writeFile: (id, text) => writeProposalFile(this._directory, id, text, this._logger),
+          signal: this.getHaltSignal?.() ?? undefined,
+          shouldStop: () => !!this.isHalted?.(),
         });
       }
     } catch (err) {

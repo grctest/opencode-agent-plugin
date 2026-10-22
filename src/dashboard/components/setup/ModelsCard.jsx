@@ -39,7 +39,7 @@ export function ModelsCard({ llm, totalCount, enabledCount, busy, isFrozen, read
           <div
             className="h-64 rounded-lg border p-1.5"
             role="group"
-            aria-label="Enable or disable models for Loom agents"
+            aria-label="Enable or disable models for deliberation agents"
           >
             <List
               rowComponent={ModelRow}

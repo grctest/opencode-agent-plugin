@@ -137,6 +137,18 @@ check(
   SYNTHESIS_SECTION_CONTRACT.always.includes("Dissenting Views"),
   "the artifact must always have a dissent slot",
 );
+// The citation-id index is part of the contract: a [​#N] a reader cannot
+// resolve is a hole in the record (rule 1b + the deterministic backfill).
+check(
+  "the reference index is part of the section contract",
+  SYNTHESIS_SECTION_CONTRACT.always.includes("References"),
+  "the artifact must always carry a ## References index",
+);
+check(
+  "the doc states the reference-index backfill",
+  /citation ids resolve for a human/.test(doc) && /ensureReferenceIndex/.test(doc),
+  "the human-resolvability pass must be documented in the synthesis section",
+);
 check(
   "doc states the dissent slot is the orchestrator's judgement",
   /Dissenting Views\*\* is a SLOT, not a detector/.test(doc) || /is a SLOT, not a detector/.test(doc),

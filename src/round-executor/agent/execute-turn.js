@@ -185,6 +185,16 @@ export async function executeAgentTurn(participant, model, timeoutMs, promptCont
   }
   let ephemeralSessionIdToDelete = isRoundScoped ? null : ephemeralSessionId;
   const abortController = new AbortController();
+  // A turn that STARTS after the meeting was stopped must be aborted on
+  // arrival, not run to completion. The old code created a fresh, un-aborted
+  // controller per turn — which is exactly why "Cancel run" jumped to the
+  // next agent: the next agent's turn carried a live signal and ran for
+  // minutes. The check and the registration are adjacent (no await between
+  // them), so a cancel can never slip through the gap: it either lands
+  // before the check or after the controller is in the abort set.
+  if (this.isHalted?.()) {
+    try { abortController.abort(); } catch {}
+  }
   if (this._abortControllers) this._abortControllers.add(abortController);
   // Declared here (not at the tail site) so the finally block below can see
   // whether a deferred tail owns the abort controller and session lifetime.

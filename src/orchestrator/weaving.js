@@ -2,6 +2,7 @@
 import { TUNING } from "../config/defaults.js";
 import { getConfig } from "../config.js";
 import { isHardRateLimitError } from "../utils/retry.js";
+import { TERMINAL_STATUSES } from "../constants.js";
 
 export async function runMeeting() {
     await this.initialize();
@@ -22,6 +23,15 @@ export async function runMeeting() {
      );
      try {
        await this._runWeavingLoop();
+       // A cancelled run does NOT synthesize. The synthesis is 2+ more LLM
+       // calls, and the user asked for the run to STOP — not for a slower
+       // stop. The dashboard's "Finish" button synthesizes the collected
+       // contributions on demand instead.
+       if (this.isHalted?.()) {
+         this._logger.info("cancelled_no_synthesis", "Run cancelled — skipping the final synthesis (the dashboard can synthesize on demand)");
+         try { await this._sessionManager.postProgress("🛑 Loom cancelled by user — no synthesis was run."); } catch {}
+         return null;
+       }
        return await this._synthesize();
      } finally {
        this._stallWatchdog.stop();
@@ -30,7 +40,10 @@ export async function runMeeting() {
 
   export async function extendMeeting(newPrompt, additionalRounds) {
     this._startTime = Date.now();
-    this._cancelled = false;
+    // An extension re-opens a stopped meeting: the halt signal is replaced
+    // with a fresh one, so the first turn after the extension is not born
+    // aborted.
+    this.resetHalt?.();
     this._stallWatchdog.reset();
     try { this._sessionManager?.clearOrchestratorSession?.(); } catch {}
     // Start watchdog BEFORE extend so stall is detected even if extend hangs; extend itself is short DB work
@@ -88,6 +101,12 @@ export async function runMeeting() {
       const continued = await this._continueInterruptedRound();
       if (continued === false) return await this._synthesize();
       await this._runWeavingLoop();
+      // Same contract as a fresh run: a cancelled run does not synthesize.
+      if (this.isHalted?.()) {
+        this._logger.info("cancelled_no_synthesis", "Resumed run cancelled — skipping the final synthesis");
+        try { await this._sessionManager.postProgress("🛑 Loom cancelled by user — no synthesis was run."); } catch {}
+        return null;
+      }
       return await this._synthesize();
     } finally {
       this._stallWatchdog.stop();
@@ -108,7 +127,16 @@ export async function _runWeavingLoop() {
       }
       if (this._cancelled) {
         const terminal = this._stallWatchdog.stallCancelled ? "timeout" : "cancelled";
-        this._stateManager.transitionTo(terminal);
+        // Only transition when the status is still live: a user cancel during
+        // the unwind may already have written "cancelled", and the status
+        // could be terminal from the round that just ended (cap/convergence).
+        // Terminal states are absorbing — transitionTo would only log an
+        // "invalid transition" ERROR the user cannot act on.
+        let liveStatus = null;
+        try { liveStatus = this._stateManager.getStatus?.(); } catch {}
+        if (!liveStatus || !TERMINAL_STATUSES.has(liveStatus)) {
+          try { this._stateManager.transitionTo(terminal); } catch {}
+        }
         try { await this._sessionManager.postProgress(
           this._stallWatchdog.stallCancelled
             ? "⏱️ Loom stopped due to no activity — generating output from collected contributions."

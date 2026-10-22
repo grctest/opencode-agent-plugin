@@ -45,11 +45,21 @@ function buildReflectionMap(contributions) {
 
 /**
  * Formats a contribution for the summary prompt.
- * Includes participant ID, contribution type, full content, and any reflection outcomes.
+ * Includes participant ID + display NAME, contribution type, full content, and any reflection outcomes.
+ *
+ * The name is rendered with the id because the clerk contract asks the clerk to
+ * pair every [#id] with the holder's NAME in its bullets: asking for a name the
+ * model must look up two hops away (id → roster → name) under transcript
+ * pressure produces raw ids or invented names (the B2 lesson — structure binds
+ * where prose rules don't). The name comes in with the roster (round-service
+ * threads `p.config.name`); absent, fall back to the raw id as before.
  */
-function formatContribution(c, reflectionMap) {
+export function formatContribution(c, reflectionMap = new Map(), nameMap = null) {
   const typeTag = c.type.toUpperCase();
-  const lines = [`- [#${c.id}] ${c.participant_id} [${typeTag}]: ${c.content}`];
+  const rawId = String(c.participant_id ?? "?");
+  const name = sanitizeForDisplay(String(nameMap?.get?.(rawId) ?? ""), 60);
+  const holder = name && name !== rawId ? `${name} (${rawId})` : rawId;
+  const lines = [`- [#${c.id}] ${holder} [${typeTag}]: ${c.content}`];
   const reflections = reflectionMap.get(c.id);
   if (reflections && reflections.length > 0) {
     // Take the first (most relevant) reflection outcome
@@ -186,13 +196,25 @@ export function buildRoundSummaryUser(round, state, participantStates = [], orch
   // Build reflection outcome map and format contributions, budgeted explicitly:
   // select by evidence strength, emit chronologically, cap each line (audit C1/4.1).
   const reflectionMap = buildReflectionMap(round.contributions);
+  // id → display NAME for the contribution lines (the roster threads it;
+  // Agent-State snapshots fill gaps for seats the roster lost). The clerk is
+  // asked to pair every [#id] with the holder's NAME, so the name must be
+  // resolvable on-screen — a two-hop lookup under transcript pressure renders
+  // raw ids or invented names instead.
+  const nameMap = new Map();
+  for (const p of Array.isArray(opts.roster) ? opts.roster : []) {
+    if (p?.id && p?.name) nameMap.set(String(p.id), String(p.name));
+  }
+  for (const s of Array.isArray(participantStates) ? participantStates : []) {
+    if (s?.id && s?.name && !nameMap.has(String(s.id))) nameMap.set(String(s.id), String(s.name));
+  }
   const CONTRIB_BUDGET = policy.budget;
   const scored = summaryContributions.map((c) => {
     const s = String(c.content ?? "").toLowerCase();
     const strength = s.includes("strength: strong") ? 3
       : ((c.tool_calls && c.tool_calls.length > 0) || s.includes("strength: weak")) ? 2
       : s.includes("inconclusive") ? 1 : 0;
-    return { c, line: truncate(formatContribution(c, reflectionMap), 1200), strength };
+    return { c, line: truncate(formatContribution(c, reflectionMap, nameMap), 1200), strength };
   });
   const picked = new Set();
   let used = 0;
@@ -240,17 +262,32 @@ export function buildRoundSummaryUser(round, state, participantStates = [], orch
   // part in orchestrator decisions.
   const roster = Array.isArray(opts.roster) ? opts.roster.filter((p) => p && p.id) : [];
   // Orchestrator-only turn-order override: the summary call is the
-  // orchestrator's single LLM call per round, so a warranted order change for
-  // next round travels with it instead of costing a second planning call. The
-  // default rotation stands — call loom_set_turn_order at most once, and only
-  // when this round's evidence warrants a different order (ids from ##
-  // Participants above; unknown ids are dropped, missing seats appended).
-  // The operator's turnOrderPolicy steers the preference, not a second call.
+  // orchestrator's single LLM call per round, so the order for next round
+  // travels with it instead of costing a second planning call. The order the
+  // orchestrator set LAST round stands until it changes it — this is the
+  // orchestrator's decision, and the default is only what happens when it
+  // makes none.
+  //
+  // The wording matters: the previous version said "default rotation stands…
+  // omit it to keep the default" in three places (here, the tool description
+  // and the architecture doc), and the orchestrator therefore almost never
+  // acted — in the recorded 10-round meeting the same participant opened every
+  // round, taking the steering hint and the opening duties each time. The
+  // order is the orchestrator's to set; the block now says so, tells it WHEN to
+  // set one, and shows it the speaking order so the pattern is visible
+  // (audit D).
   const turnOrderBlock = roster.length > 0
-    ? `\n## Next-round turn order (orchestrator-only override)\nDefault rotation stands. If this round's evidence warrants a different speaking order next round, call loom_set_turn_order once with the full ordered participant ids. Omit it to keep the default. Order preference: ${getTurnOrderGuidance(orchestratorConfig)}\n`
+    ? `\n## Next-round turn order (orchestrator's call)\nYou decide who speaks next. The order you set last round stands until this round's evidence warrants a change — call loom_set_turn_order ONCE with the full ordered participant ids (from ## Participants below; unknown ids are dropped, missing seats appended). Set one whenever the roster shows a voice that has spoken least, a claim that needs a defender next, or a position that must be tested before the room converges. Order preference: ${getTurnOrderGuidance(orchestratorConfig)}\n`
     : "";
   const rosterBlock = roster.length > 0
-    ? `\n## Participants (activity)\n${roster.map((p) => `- ${sanitizeForDisplay(String(p.id), 60)} — ${Number(p.contributions_count ?? 0)} contributions${p.status === "passed" ? " [passed]" : ""}`).join("\n")}\n`
+    ? `\n## Participants (activity)\n${roster.map((p) => {
+      // The speaking flags make the round's order visible to the only agent
+      // that can act on it (audit D): "spoke first" is the framing slot, and
+      // it also takes the steering hint every round.
+      const spoke = p?.spoke_this_round === true ? " · spoke this round" : "";
+      const first = p?.spoke_first === true ? " · spoke FIRST this round" : "";
+      return `- ${sanitizeForDisplay(String(p.id), 60)} — ${Number(p.contributions_count ?? 0)} contributions${spoke}${first}${p.status === "passed" ? " [passed]" : ""}`;
+    }).join("\n")}\n`
     : "";
   // State-of-Play excerpt so "newly established vs already carried" is
   // decidable from prior-round outcomes, not just positions (audit O9/Step 5).
@@ -291,7 +328,11 @@ export function buildRoundSummaryUser(round, state, participantStates = [], orch
   // [#id] citation so the clerk can flag isolated contributions.
   const uncitedPlains = findUncitedPlainContributions(round.contributions);
   const uncitedBlock = uncitedPlains.length > 0
-    ? `\n## Peer-Uncited Plain Contributions (P7 — no [#id] engagement)\n${uncitedPlains.map((c) => `- [#${c.id}] ${sanitizeForDisplay(String(c.participant_id ?? "?"), 60)}: ${sanitizeForDisplay(truncate(String(c.content ?? ""), 200), 200)}`).join("\n")}\n\n_These contributions engage no peer via [#id]. Note them in the summary so the room can address the isolation._\n`
+    ? `\n## Peer-Uncited Plain Contributions (P7 — no [#id] engagement)\n${uncitedPlains.map((c) => {
+      const name = String(nameMap.get(String(c.participant_id ?? "")) ?? "");
+      const holder = name && name !== String(c.participant_id ?? "") ? `${name} (${c.participant_id ?? "?"})` : String(c.participant_id ?? "?");
+      return `- [#${c.id}] ${sanitizeForDisplay(holder, 60)}: ${sanitizeForDisplay(truncate(String(c.content ?? ""), 200), 200)}`;
+    }).join("\n")}\n\n_These contributions engage no peer via [#id]. Note them in the summary so the room can address the isolation._\n`
     : "";
 
   // Detect mode for summary shape
@@ -314,7 +355,7 @@ ${isCodeRound && !band.bullets.some((b) => b.includes("Code/Files")) ? ORCHESTRA
 
 ${ORCHESTRATOR_SUMMARY_ALWAYS}
 
-Rules: Agent States are remembered positions and standing context, not independent evidence. Attribute them to the named holder. Use uncited state only as context; place it under Evidence only when an explicit Source: or [#id] resolves to a listed contribution or tool signal. Distinguish newly established support from claims already carried in state, and do not add a separate Agent States bullet. Cite [#id] once per bullet when attributing (grouped, not per clause). Keep Contested holders explicit. Evidence must distinguish “None” from “weak/inconclusive”. Never emit vec: / vec round traces — use [#id] or State-of-Play. Preserve numbers verbatim — do not round, estimate, or invent figures not in contributions. When this round carries two or more mutually overlapping thresholds, projections, or repeated numeric tables, consolidate under Established/Contested: name the single live version (or the tiered ladder they compose) and mark older ones superseded by [#id] — do not list four gates as if parallel. Concise but thorough.`
+Rules: Agent States are remembered positions and standing context, not independent evidence. Attribute them to the named holder. Use uncited state only as context; place it under Evidence only when an explicit Source: or [#id] resolves to a listed contribution or tool signal. Distinguish newly established support from claims already carried in state, and do not add a separate Agent States bullet. Pair every [#id] with the holder's NAME at its first mention in the bullet (Ada [#9] — the contribution lines above carry both); grouped bare repeats are fine. Keep Contested holders explicit. Evidence must distinguish “None” from “weak/inconclusive”. Never emit vec: / vec round traces — use [#id] or State-of-Play. Preserve numbers verbatim — do not round, estimate, or invent figures not in contributions. When this round carries two or more mutually overlapping thresholds, projections, or repeated numeric tables, consolidate under Established/Contested: name the single live version (or the tiered ladder they compose) and mark older ones superseded by [#id] — do not list four gates as if parallel. Concise but thorough.`
     : `Summarize this deliberation round. The round contained ${contribCount} contribution(s) but no substantive positions were staked.
 
 ## Question

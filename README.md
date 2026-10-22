@@ -1,8 +1,8 @@
-# The Loom
+# Deliberation Dashboard
 
 > Got a hard call to make? Convene a room of AI experts, let them argue it out in structured rounds, and get back a verdict — decisions, action items, and where they disagreed.
 
-The Loom is an opencode plugin. You ask a question, approve a lineup of persona agents, and follow the debate live in a web dashboard. A neutral synthesizer writes the final report when the room converges.
+Deliberation Dashboard is an opencode plugin. You ask a question, approve a lineup of persona agents, and follow the debate live in a web dashboard. A neutral synthesizer writes the final report when the room converges.
 
 ## When to use it
 
@@ -12,7 +12,7 @@ The Loom is an opencode plugin. You ask a question, approve a lineup of persona 
 
 ## How it works
 
-1. **You pick the room.** Describe your question in the dashboard. The Loom suggests the 3 most relevant personas from its 349-persona catalog, or you pick your own seats and models.
+1. **You pick the room.** Describe your question in the dashboard. Deliberation Dashboard suggests the 3 most relevant personas from its 349-persona catalog, or you pick your own seats and models.
 2. **The room debates in rounds.** Agents take turns making their case, challenging each other, calling votes, and pulling in guest experts — all live in front of you.
 3. **Agents bow out when done.** Anyone with nothing new to add passes; the debate ends when the room is done or the round cap is reached.
 4. **You get a report.** Decisions, reasoning, action items, open questions, and dissenting views land in the dashboard, saved as Markdown next to the meeting.

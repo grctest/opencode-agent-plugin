@@ -13,6 +13,7 @@ import { SessionManager } from "./session-manager.js";
 import { Logger, LoomError, extractErrorInfo } from "./logger.js";
 import { getMetricsSnapshot, recordMeetingDegradedReason } from "./metrics.js";
 import { truncate } from "./shared.js";
+import { TERMINAL_STATUSES } from "./constants.js";
 import { restoreStateFromDb } from "./meeting-restorer.js";
 
 import { StateManager } from "./services/state-manager.js";
@@ -59,6 +60,18 @@ export class MeetingOrchestrator {
   _roundExecutor = null;
   _cancelled = false;
   _closed = false;
+  /**
+   * The meeting-level HALT signal.
+   *
+   * `_cancelled` means "stop at the next round boundary" (the stall watchdog
+   * uses it: the round finishes, then the meeting times out and synthesizes).
+   * The halt signal means "stop NOW" — the user pressed Cancel run. It is
+   * sticky by construction: once aborted it stays aborted, so a turn that
+   * starts AFTER the cancellation is dead on arrival instead of quietly
+   * issuing a fresh prompt.
+   */
+  _haltController = new AbortController();
+  _halted = false;
   _startTime = 0;
   _sessionManager = null;
   _logger = null;
@@ -252,10 +265,90 @@ export class MeetingOrchestrator {
     return this._roundExecutor;
   }
 
-  cancel() {
+  /**
+   * The meeting-level halt signal. Aborted once, stays aborted — this is what
+   * makes "Cancel run" sticky: every prompt that starts after the cancellation
+   * is aborted on arrival instead of quietly issuing a fresh call.
+   */
+  getHaltSignal() {
+    return this._haltController?.signal ?? null;
+  }
+
+  /** True once the user has stopped the run (as opposed to a stall). */
+  isHalted() {
+    return this._halted === true;
+  }
+
+  /**
+   * Stop the run NOW — the user pressed "Cancel run".
+   *
+   * The old cancel() only flipped an in-memory flag and aborted the
+   * controllers that happened to be registered at that instant. The turn's
+   * retry loop then started a FRESH turn with a fresh, un-aborted controller
+   * and the meeting carried on weaving. This version:
+   *
+   *  - aborts the sticky halt signal, so any later prompt dies on arrival;
+   *  - aborts the in-flight turn immediately;
+   *  - writes the terminal status right away, so the database and the
+   *    dashboard say "cancelled" now rather than at the next round boundary.
+   *
+   * @param {{ persistStatus?: boolean }} [opts] persistStatus:false keeps the
+   *   meeting's status untouched — used by the process-exit path, where a
+   *   killed meeting must stay resumable.
+   */
+  cancel(opts = {}) {
+    const persistStatus = opts.persistStatus !== false;
     this._cancelled = true;
+    this._halted = true;
+    try { this._haltController?.abort(); } catch {}
     try { this._roundExecutor?._abortInflight?.(); } catch {}
+    // The meeting may already be terminal while the run is still winding
+    // down (cancel during the synthesis / the post-synthesis passes): the
+    // status is as terminal as "cancelled" would make it, and terminal states
+    // are absorbing — transitionTo would only log an "invalid transition"
+    // ERROR the user cannot act on (observed: "max_rounds_reached ->
+    // cancelled" on every click after the final round summary). Read the
+    // status FIRST and only transition when it is still live.
+    if (persistStatus) {
+      let currentStatus = null;
+      try { currentStatus = this._stateManager?.getStatus?.() ?? null; } catch {}
+      if (currentStatus === null || currentStatus === "initializing" || currentStatus === "weaving" || !TERMINAL_STATUSES.has(currentStatus)) {
+        try {
+          this._stateManager.transitionTo("cancelled");
+        } catch (err) {
+          this._logger.debug("cancellation_status_unchanged", "Meeting already had a terminal status — cancel kept it", extractErrorInfo(err));
+        }
+        try { if (this._database) this._persistState?.(); } catch {}
+      } else {
+        this._logger.info("cancelled_terminal_meeting", `Meeting was already ${currentStatus} — the stop aborted the in-flight call and changed no status`);
+      }
+    }
     this._logger.info("cancellation", "Loom cancelled by user — aborting in-flight turn");
+  }
+
+  /**
+   * Clear the halt. Extension re-opens a stopped meeting, so the sticky abort
+   * signal is replaced with a fresh one and the round executor is told about
+   * it — otherwise the first turn after the extension would be born aborted.
+   */
+  resetHalt() {
+    this._halted = false;
+    this._cancelled = false;
+    try { this._haltController = new AbortController(); } catch {}
+    try { this._roundExecutor?.setHaltSignal?.(this._haltController?.signal ?? null); } catch {}
+    try { this._synthesisCoordinator?.setHaltSignal?.(this._haltController?.signal ?? null); } catch {}
+  }
+
+  /**
+   * Stop the run without writing a terminal status.
+   *
+   * Used when the PROCESS is going away (exit, SIGINT, plugin dispose). The
+   * meeting must stay in "weaving" so the dashboard's crash recovery can
+   * resume it — writing "cancelled" here would turn every killed process into
+   * a deliberately-stopped meeting.
+   */
+  softCancel() {
+    this.cancel({ persistStatus: false });
   }
 
     async close() {
@@ -392,6 +485,7 @@ export class MeetingOrchestrator {
    _logError(context, error) { return roundHelpers._logError.call(this, context, error); }
    _notifyUpdate() { return roundHelpers._notifyUpdate.call(this); }
   async _synthesize() { return synthesisHelpers._synthesize.call(this); }
+  _collectForumContent() { return synthesisHelpers._collectForumContent.call(this); }
   // N9 — the closing round's patch grace and its span measurement.
   async runFinalRoundPatchGrace() { return synthesisHelpers.runFinalRoundPatchGrace.call(this); }
   async finishSynthesis(originalStatus) { return synthesisHelpers.finishSynthesis.call(this, originalStatus); }

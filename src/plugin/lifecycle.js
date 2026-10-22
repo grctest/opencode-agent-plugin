@@ -23,7 +23,12 @@ export function createLifecycleHandlers(activeLooms) {
       try {
         const state = engine.getState();
         if (!TERMINAL_STATUSES.has(state.status)) {
-          engine.cancel();
+          // SOFT cancel: the process is going away, so the meeting must stay
+          // "weaving" in the database — that is what makes the dashboard's
+          // crash recovery able to resume it. A hard cancel would write
+          // "cancelled" and turn every killed process into a deliberately
+          // stopped meeting.
+          engine.softCancel?.() ?? engine.cancel?.({ persistStatus: false });
           logger.warn("process_exit", `Marking meeting ${id} as aborted due to process exit`);
         }
       } catch { /* best effort */ }
@@ -39,7 +44,7 @@ export function createLifecycleHandlers(activeLooms) {
       try {
         const state = engine.getState();
         if (!TERMINAL_STATUSES.has(state.status)) {
-          engine.cancel();
+          engine.softCancel?.() ?? engine.cancel?.({ persistStatus: false });
           logger.warn("process_exit", `Marking meeting ${id} as aborted due to process exit`);
         }
       } catch { /* best effort */ }

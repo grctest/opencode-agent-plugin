@@ -19,6 +19,11 @@ export function ensureCurrentRoundShell(roundMap, currentRound, summaries = {}) 
     number: n,
     contributions: [],
     summary: summaries?.[n] ?? "",
+    // A restored round must carry a token path: the round executor pushes
+    // every speaker onto it, and the rebuilt shape used to omit it — which
+    // made the resume throw "Cannot read properties of undefined (reading
+    // 'push')" on the very first turn.
+    token_path: [],
   });
   return true;
 }
@@ -55,7 +60,12 @@ export function restoreStateFromDb({ db, stateManager, meetingId, options }) {
   // the caller explicitly asked for a fresh start or is extending the deliberation.
   // Extension is an explicit user action to continue — it clears the terminal status
   // while preserving all previous rounds/context, then MeetingExtender bumps max_rounds.
-  if (TERMINAL_STATUSES.has(meeting.status) && !options?.fresh && !options?.allowExtend) {
+  //
+  // `allowResume` is the same contract for a meeting the USER stopped: pressing
+  // "Cancel run" writes the terminal status "cancelled", and the dashboard's
+  // Resume button is the explicit action that continues it from where it left
+  // off. Without it, a cancelled meeting could never be continued.
+  if (TERMINAL_STATUSES.has(meeting.status) && !options?.fresh && !options?.allowExtend && !options?.allowResume) {
     throw new LoomError(
       `Cannot resume: meeting is already ${meeting.status}. Start a fresh deliberation from the dashboard Setup tab, or extend it from there.`,
       { phase: "resume", recoverable: false, status: meeting.status }
@@ -139,7 +149,7 @@ export function restoreStateFromDb({ db, stateManager, meetingId, options }) {
   const roundMap = new Map();
   for (const c of contributions) {
     if (!roundMap.has(c.round)) {
-      roundMap.set(c.round, { number: c.round, contributions: [], summary: summaries[c.round] ?? "" });
+      roundMap.set(c.round, { number: c.round, contributions: [], summary: summaries[c.round] ?? "", token_path: [] });
     }
     roundMap.get(c.round).contributions.push({
       id: c.id,

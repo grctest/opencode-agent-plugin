@@ -21,6 +21,122 @@ import {
 import { reconcileNumericalConflicts } from "./reconciliation.js";
 import { checkCitationSupport, CITATION_MIN_TARGET_CHARS } from "./citations.js";
 
+/**
+ * The reference index — finalize's human-resolvability pass.
+ *
+ * The artifact cites contributions as [#N] because that is how the deliberation
+ * cites: agents cite peers, the clerk names holders, the citation checks parse
+ * the ids. But a bare id resolves only for the pipeline — a human reading the
+ * artifact sees [#2][#4][#7] and nothing to resolve them against. The synthesis
+ * prompt (rule 1b) teaches a ## References index with the participant's name
+ * and a one-line gist per id; this pass makes the guarantee deterministic:
+ *
+ *   - every id cited in the final output that the index does not already
+ *     cover is backfilled with a mechanical line — name, round, first ~120
+ *     characters of the cited contribution — in the codebase's own deterministic
+ *     repair style (audit F's repairInventedHandoffs, the appended Refusals);
+ *   - no LLM call, so it cannot invent a gist, a name, or a round;
+ *   - forum-thread refs ([#T{id}]) resolve from the caller's topic map.
+ *
+ * Returns the text with the index guaranteed present.
+ */
+const REFERENCE_EXCERPT_CHARS = 120;
+
+function locateReferenceSection(text) {
+  const lines = String(text).split("\n");
+  const start = lines.findIndex((l) => /^#{2,}\s*References\b/i.test(l.trim()));
+  if (start < 0) return null;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^#{2,}\s/.test(lines[i].trim())) { end = i; break; }
+  }
+  return { start, end, lines };
+}
+
+/**
+ * The reference index is a map, not evidence — its body carries no claims of
+ * its own, so its ids must not enter the citation-support scan as candidates
+ * (a paraphrased gist over zero shared keywords would mis-count the same id
+ * as "unsupported" the body already supported).
+ */
+function stripReferenceIndex(text) {
+  const section = locateReferenceSection(text);
+  if (!section) return text;
+  return [...section.lines.slice(0, section.start + 1), ...section.lines.slice(section.end)].join("\n");
+}
+
+function collectCitedRefs(text) {
+  const contribution = new Set();
+  const threads = new Set();
+  for (const m of String(text).matchAll(/\[#(\d+)\]/g)) contribution.add(m[1]);
+  for (const m of String(text).matchAll(/\[#T(\d+)\]/g)) threads.add(m[1]);
+  return { contribution: [...contribution].sort((a, b) => Number(a) - Number(b)), threads: [...threads].sort((a, b) => Number(a) - Number(b)) };
+}
+
+function ensureReferenceIndex(finalOutput, weave, participants, opts = {}) {
+  const { contribution: citedIds, threads: citedThreads } = collectCitedRefs(finalOutput);
+  const section = locateReferenceSection(finalOutput);
+  if (citedIds.length === 0 && citedThreads.length === 0) {
+    // Nothing cited: the contract still guarantees the section, so it exists
+    // stating that rather than triggering a "did not generate" repair note.
+    if (section) return finalOutput;
+    return `${finalOutput}\n\n## References\nNone — the artifact cites no contribution ids.\n`;
+  }
+  // The index must be one contiguous section: "## References" at the top and
+  // the next heading close it. The synthesizer's own entries are preserved —
+  // only ids it missed get mechanical lines appended inside it. Coverage is
+  // measured against the INDEX BODY ONLY: when no section exists, nothing is
+  // covered — scanning the artifact text would let a citation "cover" itself.
+  const indexedText = section
+    ? section.lines.slice(section.start + 1, section.end).join("\n")
+    : "";
+  const coveredIds = new Set([...indexedText.matchAll(/\[#(\d+)\]/g)].map((m) => m[1]));
+  const coveredThreads = new Set(
+    [...indexedText.matchAll(/\[#T(\d+)\]/g)].map((m) => m[1]),
+  );
+
+  const participantsById = new Map(
+    (participants ?? []).map((p) => [String(p?.config?.id ?? ""), p?.config?.name ?? p?.config?.id]),
+  );
+  const contributionByRound = opts?.roundOf ?? null;
+
+  const roundLabelFor = (id) => {
+    const round = contributionByRound?.get?.(String(id));
+    return Number.isFinite(Number(round)) && round !== null ? `Round ${round}` : "round unknown";
+  };
+  const excerptFor = (id) => {
+    const c = weave.find((w) => String(w.id) === String(id));
+    if (!c) return "cited contribution";
+    const raw = String(c.content ?? "").replace(/\s+/g, " ").trim();
+    if (!raw) return "(empty contribution)";
+    return raw.length <= REFERENCE_EXCERPT_CHARS ? raw : `${raw.slice(0, REFERENCE_EXCERPT_CHARS).trimEnd()}…`;
+  };
+
+  const backfilled = [];
+  for (const id of citedIds) {
+    if (coveredIds.has(id)) continue;
+    const c = weave.find((w) => String(w.id) === String(id));
+    const name = (c && participantsById.get(String(c.participant_id))) ?? c?.participant_id ?? "unknown participant";
+    backfilled.push(`- [#${id}] — ${name}, ${roundLabelFor(id)} — "${excerptFor(id)}"`);
+  }
+  for (const tid of citedThreads) {
+    if (coveredThreads.has(tid)) continue;
+    const title = (opts?.forumTopics ?? []).find((t) => String(t?.id) === String(tid))?.title
+      ?? "(thread title unavailable)";
+    backfilled.push(`- [#T${tid}] — forum thread — ${title}`);
+  }
+
+  const body = [...backfilled].join("\n");
+  if (!body) return finalOutput;
+  if (section) {
+    const insertAt = section.end;
+    section.lines.splice(insertAt, 0, body);
+    return section.lines.join("\n");
+  }
+  const heading = "\n\n## References\n_Mechanically backfilled — the synthesizer did not list these ids (rule 1b)._\n";
+  return `${finalOutput}${heading}${body}\n`;
+}
+
 export function resolveDetectorPolicy(overrides) {
   let configured = {};
   try { configured = getConfig()?.detectors ?? {}; } catch {}
@@ -36,6 +152,39 @@ export function resolveDetectorPolicy(overrides) {
   };
 }
 
+/**
+ * Repairs invented handoff targets.
+ *
+ * The synthesis prompt forbids "@handle" placeholders — and its OWN TEMPLATE
+ * used to offer one ("proposed: X → handoff to @role"), so two of the three
+ * recorded artifacts shipped targets that do not exist (@technical-analysis,
+ * @trackside-ops, @systems_engineer_6). The repair is deterministic and
+ * narrow: only action-item lines (a "- " bullet that names an owner or a
+ * handoff) are touched, and only the handle is replaced — with the rule's own
+ * form. No LLM call, no false positives (audit F).
+ */
+function repairInventedHandoffs(text, participants) {
+  const known = new Set(
+    (participants ?? [])
+      .map((p) => String(p?.config?.name ?? "").trim().toLowerCase())
+      .filter(Boolean),
+  );
+  if (!text || !text.includes("@")) return text;
+  return text
+    .split("\n")
+    .map((line) => {
+      if (!/^\s*-\s/.test(line)) return line;
+      if (!/owner:|handoff to/i.test(line)) return line;
+      if (!/@[A-Za-z]/.test(line)) return line;
+      return line.replace(/@([A-Za-z][\w-]*)/g, (m, handle) => {
+        const cleaned = handle.toLowerCase();
+        if (known.has(cleaned) || known.has(cleaned.replace(/[_-]/g, " "))) return m;
+        return "a participant with domain Y";
+      });
+    })
+    .join("\n");
+}
+
 export function finalizeSynthesis(artifactText, transcriptData, participants, opts = {}) {
   const policy = resolveDetectorPolicy(opts.detectors);
   const shipNeedsVerification = policy.needsVerification && !policy.dryRun;
@@ -46,6 +195,9 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, op
     citationWarnings: { candidates: 0, shipped: false },
   };
   artifactText = normalizeVecTraces(artifactText);
+  // Invented handoff targets are repaired before anything else reads the text
+  // (the citation and section checks see the repaired version).
+  artifactText = repairInventedHandoffs(artifactText, participants);
   const weave = transcriptData.rounds.flatMap((r) => r.contributions);
   const refusals = weave.filter((c) => c.type === "refuse");
   const refusalsText = refusals.map((r) => {
@@ -58,6 +210,20 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, op
   if (refusalsText) {
     finalOutput = `${finalOutput}\n\n## Refusals\n${refusalsText}`;
   }
+
+  // The reference index runs before section validation, so the contract sees
+  // the guaranteed section rather than a note about one it then repairs.
+  // The id→round map is built once from the rounds; the synthesizer's own
+  // entries are preserved verbatim — only ids it missed get mechanical lines.
+  const roundOf = new Map(
+    (transcriptData.rounds ?? []).flatMap((r, i) =>
+      (r.contributions ?? []).map((c) => [String(c.id), Number.isFinite(Number(r.number)) ? Number(r.number) : i + 1]),
+    ),
+  );
+  finalOutput = ensureReferenceIndex(finalOutput, weave, participants, {
+    roundOf,
+    forumTopics: opts.forumTopics ?? null,
+  });
 
   // Style-aware: the "Decision Rule" requirement is only checked for the
   // decision_oriented style, and dropping the style here let an artifact
@@ -105,7 +271,7 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, op
       needsVerificationBodies.push(`## Needs Verification\nThe Action Items below cite no valid [#id] from the transcript — they assign work, so verify ownership and basis before acting.\n${ungroundedActions.slice(0, 5).map((l) => `- ${l.slice(0, 200)}`).join("\n")}`);
     }
   }
-  const unsupportedCitations = checkCitationSupport(finalOutput, weave, { minTargetChars: policy.minCitationTargetChars });
+  const unsupportedCitations = checkCitationSupport(stripReferenceIndex(finalOutput), weave, { minTargetChars: policy.minCitationTargetChars });
   detectorReport.citationWarnings.candidates = unsupportedCitations.length;
   if (unsupportedCitations.length > 0 && shipCitationWarnings) {
     detectorReport.citationWarnings.shipped = true;
@@ -175,6 +341,7 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, op
       content: r.content,
     })),
     open_questions: extractSection(finalOutput, "Open Questions"),
+    dissenting_views: extractSection(finalOutput, "Dissenting Views"),
     confidence: rolledUp ?? confidence,
     confidence_name: splitName ?? null,
     confidence_number: splitNumber ?? null,
@@ -198,7 +365,9 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, op
       })),
     },
     detector_report: detectorReport,
-    engagement: computeEngagementMetrics(weave, finalOutput),
+    // Coverage measures the artifact's BODY engagement, not its appendix: a
+    // mechanically backfilled index line is not the same as citing the peer.
+    engagement: computeEngagementMetrics(weave, stripReferenceIndex(finalOutput)),
   };
 
   return { artifact, output: finalOutput };

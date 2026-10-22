@@ -49,7 +49,22 @@ export class RoundService {
     const startedAt = Date.now();
     round.started_at = new Date(startedAt).toISOString();
 
+    // A stopped meeting does not start a round at all, and never runs the
+    // clerk: the summary is an LLM call, and a cancelled run must not issue
+    // calls the user did not ask for.
+    if (this.#roundExecutor.isHalted?.()) {
+      this.#logger.info("round_skipped_halted", `Round ${round.number} skipped — the meeting was stopped`, { round: round.number });
+      return { round };
+    }
+
     await this.#roundExecutor.runPromptPhase(round, activeParticipants);
+
+    // The clerk is another LLM call — skipped when the run was stopped while
+    // the round was in flight.
+    if (this.#roundExecutor.isHalted?.()) {
+      this.#logger.info("round_summary_skipped_halted", `Round ${round.number} summary skipped — the meeting was stopped`, { round: round.number });
+      return { round };
+    }
 
     let participantStates = [];
     try {
@@ -65,9 +80,23 @@ export class RoundService {
       const sm = this.#stateManager;
       summaryOpts = {
         maxRounds: typeof sm?.getMaxRounds === "function" ? sm.getMaxRounds() : null,
+        // The roster carries the speaking order of THIS round as well as the
+        // cumulative counts: the orchestrator is the one who decides who
+        // speaks next, and it cannot act on a pattern it cannot see (in the
+        // recorded 10-round meeting the same participant opened every round,
+        // because the roster never showed it) (audit D).
         roster: typeof sm?.getParticipants === "function"
           ? sm.getParticipants().filter((p) => p?.status !== "failed").map((p) => ({
               id: p?.config?.id, contributions_count: p?.contributions_count ?? 0, status: p?.status,
+              // The display name travels with the roster: the clerk is told to
+              // pair every [#id] with the holder's NAME, and it can only do
+              // that reliably if the name is on screen next to the id — a
+              // two-hop lookup under transcript pressure renders raw ids or
+              // hallucinated names instead (formatContribution renders id +
+              // name together for the same reason).
+              name: p?.config?.name,
+              spoke_this_round: (round?.contributions ?? []).some((c) => c?.participant_id === p?.config?.id),
+              spoke_first: (round?.contributions ?? [])[0]?.participant_id === p?.config?.id,
             }))
           : [],
         stateOfPlay: typeof sm?.getStateOfPlay === "function" ? sm.getStateOfPlay() : "",
