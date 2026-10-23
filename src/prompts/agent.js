@@ -130,7 +130,6 @@ export function buildAgentSystemPrompt(participant, { activeCount, agentTools, c
    const mandatoryCapabilities = agentToolsConfig?.mandatory ?? {};
    // NOTE: loom_state_patch is hidden from the primary turn by design (tail
    // pass owns it). No patch wording belongs in the primary system prompt.
-   const forumMandatory = !!(agentToolsConfig?.enabled && agentToolsConfig?.loom?.loom_forum && mandatoryCapabilities.forums);
     const queryMandatory = !!(agentToolsConfig?.enabled && agentToolsConfig?.loom?.loom_query && mandatoryCapabilities.agentQueries);
     const localSearchMandatory = !!mandatoryCapabilities.localSearch;
     const onlineResearchMandatory = !!mandatoryCapabilities.onlineResearch;
@@ -185,17 +184,13 @@ export function buildAgentSystemPrompt(participant, { activeCount, agentTools, c
         // with the full turn picture, so the primary must never mention or
         // offer it. It stays out of the Available list and out of the contract.
         // (omitStatePatch:true in buildToolsMap enforces the runtime side.)
-        if (loom.loom_forum) {
-          tools.push('loom_forum_create_topic', 'loom_forum_list_topics', 'loom_forum_read_topic', 'loom_forum_add_comment');
-        }
          const toolList = tools.length ? tools.join(', ') : 'none enabled';
          const mandatoryToolNote = [
-            forumMandatory ? "You must make at least one forum tool call this turn." : "",
             queryMandatory && !isSolo ? `You must make at least one peer interaction tool call this turn: ${["loom_query", "loom_vote", summonAvailable ? "loom_summon" : null].filter(Boolean).join(", ")}.` : "",
             localSearchMandatory && tools.some((tool) => ["read", "glob", "grep"].includes(tool)) ? "You must make at least one local search tool call this turn: read, glob, or grep." : "",
             onlineResearchMandatory && tools.some((tool) => ["websearch", "webfetch"].includes(tool)) ? "You must make at least one online research tool call this turn: websearch or webfetch." : "",
          ].filter(Boolean).join(" ");
-          const soloNote = isSolo ? `**Solo mode (1 active participant):** peer query/vote unavailable — use ${summonAvailable ? "loom_summon for expertise, forum, or" : "the forum, or"} built-in tools (bash/read/websearch).` : "";
+          const soloNote = isSolo ? `**Solo mode (1 active participant):** peer query/vote unavailable — use ${summonAvailable ? "loom_summon for expertise, or" : ""} built-in tools (bash/read/websearch).` : "";
         return `
 ## Research Tools — Tool Ladder
 
@@ -203,10 +198,10 @@ export function buildAgentSystemPrompt(participant, { activeCount, agentTools, c
 ${mandatoryToolNote ? `**Mandatory this turn:** ${mandatoryToolNote}` : ""}
 ${soloNote}
 
- Ladder: ${showCodeGuide ? TOOL_LADDER_LINE : "loom_query/loom_forum (recall what was said via peers/forum) → websearch (verify current fact) → read/glob/grep (inspect files referenced in discussion) → webfetch (deep dive ONLY after a search hit)"}
+ Ladder: ${showCodeGuide ? TOOL_LADDER_LINE : "loom_query (recall what was said via peers) → websearch (verify current fact) → read/glob/grep (inspect files referenced in discussion) → webfetch (deep dive ONLY after a search hit)"}
 ${showCodeGuide ? "For code collaboration: prioritize read/glob/grep first to inspect project files, then recall prior [#id] from recent context — file=src/... citations require a read. In BUILD mode you may then write/edit." : "For discussion: prioritize peer recall then websearch; read/glob/grep only if the discussion references local files."}
 - **Cite-or-supersede, don't re-search:** if a *Prior Searches* block is present, scan it before any websearch/webfetch call. A prior result that answers your question is cited ([#id] if it reached a contribution, else the query text) — re-running it wastes the shared budget. Search only for something new, or to supersede a stale result, and say in one clause why the old result no longer holds.
-- **prior [#id]**: cite recent deliberation from State of Play / recent contributions / forum threads (cite a thread you engaged as [#T{id}])
+- **prior [#id]**: cite recent deliberation from State of Play / recent contributions
 - **websearch**: current data, benchmarks, alternatives, precedents
 - **read / grep / glob**: ${showCodeGuide ? "inspect project files referenced in discussion (first for code collaboration)" : "inspect project or context files referenced in discussion"}
 - **webfetch**: open a URL returned by websearch (don’t guess URLs)
@@ -217,12 +212,7 @@ Loom Interaction Tools — real tool use (required, auditable):${isSolo ? "" : `
   - **loom_query**: query one or more peers — pass \`queries: [{target, question, mode}]\` where \`target\` is the exact participant **id** from *Other Participants* (e.g. "dr_sarah_3", not display name "Dr. Sarah" or role "Strategist"). Modes: 'clarify' (factual), 'perspective' (stance on your statement — Position-tagged), 'evidence' (they MUST use a research tool — Finding+Source+Strength), 'critique' (steelman attack), 'risks'/'assumptions'/'alternatives' (deep dives). Query to move a decision, not to decorate: before calling, name what you would do differently on a yes vs no answer. When answers return inline, your contribution must take a position on each one you use — cite its [#id] and state accept / reject / partial with a one-clause reason; an answer you neither accept nor reject was not engaged. Returned inline for same-turn synthesis.
   - **loom_vote**: call a vote with lettered options (A) ... B) ...). All active peers vote in parallel; tally returned inline. A ballot is never final against new evidence: when new evidence supersedes the question you voted on, call loom_vote again on the superseded question rather than treating the earlier tally as final. In the closing round, when the live disagreement is a scalar threshold or binary the room has already priced and no new evidence is coming, calling a ballot is usually cheaper than another restatement round — poll it and let the tally carry into the artifact, or record in prose why a vote would change nothing. In the final round, if new evidence has emerged since the last ballot, close with a confirmation ballot on the superseded question and record its outcome.`}
 ${summonBullets.length ? summonBullets.join("\n") + "\n" : ""}  - **loom_pass**: pass when you have nothing new. Include reason. Ends when all active participants pass (the round limit or a timeout can also end it) — not a failure to dissent. Passing means "nothing new", so your carried state is correctly left as-is.
-${loom.loom_forum ? `Forum — async sub-discussions between participants:
-  - **loom_forum_create_topic**: propose a sub-problem or question — pass \`title, body, tags?\`. Returns topic_id.
-  - **loom_forum_list_topics**: browse existing topics — optional tag filter. Returns titles + comment counts.
-  - **loom_forum_read_topic**: read full topic + all comments — pass \`topic_id\`.
-  - **loom_forum_add_comment**: contribute to a topic — pass \`topic_id, body\`.
-` : ""}All loom_* calls are real tool calls logged and create timeline entries. Peer answers return inline this turn — synthesize them citing [#id] (contract §4 governs).
+All loom_* calls are real tool calls logged and create timeline entries. Peer answers return inline this turn — synthesize them citing [#id] (contract §4 governs).
 
 Quality — be thorough; depth over brevity. Length caps in the OUTPUT CONTRACT are floors for depth, not targets for compression. Citations: contract §2 governs (one grouped cite per evidence block):
 - One focused query beats three vague ones. Synthesize, don’t dump.
@@ -379,7 +369,7 @@ Call loom_state_patch exactly once. It updates only your own notes; the room nev
 /**
  * Builds the user prompt for an agent's turn using the Weighted Golden Sandwich pattern
  */
-export function buildAgentUserPrompt(participant, stateOfPlay, recentContributions, round, question, tags = [], userContext = "", forumTopics = [], otherParticipants = [], myState = null, forumEnabled = false, queryEnabled = true, mandatoryCapabilities = {}, options = {}) {
+export function buildAgentUserPrompt(participant, stateOfPlay, recentContributions, round, question, tags = [], userContext = "", otherParticipants = [], myState = null, queryEnabled = true, mandatoryCapabilities = {}, options = {}) {
   const windowNote = `${windowLabel(options.contextWindow) ?? "large"} window`;
   // Task-type knob (P9): same tri-state as the system prompt — declared
   // Discussion trims code-only guidance, null keeps legacy bytes.
@@ -423,10 +413,9 @@ export function buildAgentUserPrompt(participant, stateOfPlay, recentContributio
   // ~26k/~11k structural maxima so they clean without truncating. delimitContext
   // already escapes fence markers; sanitizeForDisplay preserves [#id]/[PASS].
   //
-  // The forum digest is stripped here: it lives in the SoP so the clerk and the
-  // synthesizer read it, but the agent also gets a dedicated forum block with
-  // ids, previews and read instructions — rendering both duplicated every
-  // thread in every turn (audit C1).
+  // Legacy hygiene: the State of Play no longer carries a forum digest, but a
+  // STORED meeting's SoP text may still have one — strip it so a resumed
+  // meeting's prompt never renders a dead section as live instructions.
   const sopForPrompt = stripSopSection(stateOfPlay, "Forum Threads");
   const stateOfPlayDelimited = sopForPrompt ? delimitContext(sanitizeForDisplay(sopForPrompt, 26000), "STATE_OF_PLAY") : "";
   const transcriptDelimited = delimitContext(transcript, "CONTRIBUTIONS");
@@ -513,35 +502,6 @@ ${delimitContext(sanitizeForDisplay(userContext), "USER_CONTEXT")}
       })()
     : "";
 
-  const forumHeader = forumEnabled ? (() => {
-    const topics = Array.isArray(forumTopics) ? forumTopics.slice(0, 10) : [];
-     if (topics.length === 0) {
-       return `## Forum — Open Threads
-
- _No open threads yet.${mandatoryCapabilities.forums ? " This turn requires one forum tool call: use loom_forum_list_topics to verify there is no relevant topic, then create one if needed." : ""} If you have a sub-problem that needs async discussion, create one with loom_forum_create_topic (check titles first to avoid duplicates) — threads you open are citable as [#T{id}] and digest into the State of Play (## Forum Threads) each round, so thinking recorded here is not lost._`;
-    }
-    const lines = topics.map((t) => {
-      const safeTitle = sanitizeForDisplay(String(t.title ?? ""), 100).replace(/\n/g, " ").trim() || "(untitled)";
-      const id = t.id;
-      const count = Number(t.comment_count ?? 0);
-      const countStr = count === 0 ? "0 💬" : `${count} 💬`;
-      const latest = t.latest_commenter_name ? `@${sanitizeForDisplay(String(t.latest_commenter_name), 40)}` : "—";
-      // Body previews let the agent judge relevance without a blind read call
-      // per topic (audit A13). Bounded: 200 chars each, selected in the same query.
-      const preview = t.preview ? sanitizeForDisplay(String(t.preview), 200).replace(/\n/g, " ").trim() : "";
-      const latestPreview = t.latest_preview ? sanitizeForDisplay(String(t.latest_preview), 200).replace(/\n/g, " ").trim() : "";
-      let line = `- “${safeTitle}” — id: ${id} (${countStr}) latest: ${latest}`;
-      if (preview) line += `\n  Q: ${preview}`;
-      if (latestPreview) line += `\n  ↳ ${latestPreview}`;
-      return line;
-    });
-    return `## Forum — Open Threads (most recent activity first — use id to read/comment)
-
-${delimitContext(lines.join("\n"), "FORUM_TOPICS")}
-
-_Read with loom_forum_read_topic {topic_id: id} and comment with loom_forum_add_comment. Before creating a new topic, scan titles above or call loom_forum_list_topics to avoid duplicates. Cite threads you engage in prose as [#T{id}] — the digest in State of Play (## Forum Threads) and the final synthesis read them.${mandatoryCapabilities.forums ? " This turn requires at least one forum tool call; use a relevant topic when possible." : ""}_`;
-  })() : "";
-
   const participantsHeader = queryEnabled ? (() => {
     const list = Array.isArray(otherParticipants) ? otherParticipants : [];
     if (list.length === 0) return "";
@@ -593,7 +553,7 @@ _Use these ids verbatim for loom_query. Example: {target: "${exampleId}", questi
   return `${questionBlock}${tagContext ? `\n## Tags: ${tagContext}\n` : ""}
 ## Round ${round}
 
-${contextHeader}${sopHeader}${settledHeader}${lastSummaryHeader}${evidenceCacheHeader}${myStateHeader}${forumHeader}${participantsHeader ? `\n${participantsHeader}\n\n` : ""}${priorIndexBlock ? `${priorIndexBlock}\n` : "\n\n"}## Live — Recent Contributions
+${contextHeader}${sopHeader}${settledHeader}${lastSummaryHeader}${evidenceCacheHeader}${myStateHeader}${participantsHeader ? `\n${participantsHeader}\n\n` : ""}${priorIndexBlock ? `${priorIndexBlock}\n` : "\n\n"}## Live — Recent Contributions
 
 ${transcriptDelimited}
 

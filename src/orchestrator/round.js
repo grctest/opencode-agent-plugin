@@ -1,7 +1,6 @@
 import { getConfig } from "../config.js";
 import { LoomError, extractErrorInfo } from "../logger.js";
 import { updateStateOfPlay, mergeStateOfPlay } from "../state-of-play.js";
-import { formatForumSideThreadsSection } from "../utils/forum-digest.js";
 import { mergeSettledBullet } from "../lib/settled-registry.js";
 import { truncate } from "../shared.js";
 import { SUMMARY_TRUNCATE_LEN } from "./constants.js";
@@ -305,22 +304,6 @@ export async function _finalizeRound(updatedRound) {
         );
         newStateOfPlay = mergeStateOfPlay(newStateOfPlay, weaveStateOfPlay);
       }
-      // Forum read-through (post-mortem 7811b8db §8): forum content previously
-      // reached nothing downstream — a write-only sink agents rationally
-      // ignored when the tool was optional (0 uses in 400). Appending a bounded
-      // [#T{id}]-labelled digest makes the forum a reader-backed channel: this
-      // SoP ships into every agent turn, the round clerk, and the final
-      // synthesis. Digest failure degrades to no section — never to a failed
-      // finalization.
-      try {
-        const toolsCfg = this._roundExecutor?.getEffectiveAgentTools?.() ?? getConfig().agentTools;
-        const forumEnabled = !!(toolsCfg?.enabled && toolsCfg?.loom?.loom_forum);
-        const topics = forumEnabled
-          ? this._database?.listForumTopicsForPrompt?.(5) ?? []
-          : [];
-        const forumSection = formatForumSideThreadsSection(topics);
-        if (forumSection) newStateOfPlay = newStateOfPlay ? `${newStateOfPlay}\n\n${forumSection}` : forumSection;
-      } catch {}
       this._stateManager.setStateOfPlay(newStateOfPlay);
       // Atomic: 4 writes in one SAVEPOINT — all-or-nothing
       await this._database.transaction(() => {

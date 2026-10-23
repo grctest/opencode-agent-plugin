@@ -34,7 +34,7 @@ function roundsFixture() {
 
 const ARTIFACT_NO_INDEX = [
   "## Executive Summary", "Scoring settled.", "",
-  "## Decision", "Most Grand Prix wins across 24 rounds [#2][#4][#7]; the countback question stayed live in [#T9]; constructor answered separately.", "",
+  "## Decision", "Most Grand Prix wins across 24 rounds [#2][#4][#7]; the countback question stayed live in [#7]; constructor answered separately.", "",
   "## Reasoning", "- Scoring definition agreed [#4]", "",
   "## Open Questions", "- none", "",
   "## Action Items", "- none", "",
@@ -75,20 +75,6 @@ test("an artifact citing nothing gets a None line instead of a repair note", () 
   const index = output.split("## References")[1] ?? "";
   assert.match(index, /None — the artifact cites no contribution ids\./);
   assert.equal((output.match(/## References/g) ?? []).length, 1);
-});
-
-test("forum thread refs resolve from the caller's topic map", () => {
-  const { output } = finalizeSynthesis(ARTIFACT_NO_INDEX, { question: "Q", rounds: roundsFixture() }, PARTICIPANTS, {
-    forumTopics: [{ id: 9, title: "Countback discussion" }],
-  });
-  const index = output.split("## References")[1] ?? "";
-  assert.match(index, /- \[#T9\] — forum thread — Countback discussion/);
-});
-
-test("a thread ref with no map degrades honestly, not silently", () => {
-  const { output } = finalizeSynthesis(ARTIFACT_NO_INDEX, { question: "Q", rounds: roundsFixture() }, PARTICIPANTS, {});
-  const index = output.split("## References")[1] ?? "";
-  assert.match(index, /thread title unavailable/);
 });
 
 test("the index is not scanned as citation evidence", () => {

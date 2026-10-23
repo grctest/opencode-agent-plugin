@@ -181,7 +181,6 @@ function blockState() {
     evidence: 20_000,
     recent: 30_000,
     lastSummary: 15_000,
-    forum: 10_000,
     sop: 20_000,
   };
 }
@@ -191,18 +190,17 @@ function fitStepsFor(state) {
     () => { state.evidence = 0; },
     () => { state.recent = Math.floor(state.recent / 2); },
     () => { state.lastSummary = 0; },
-    () => { state.forum = Math.floor(state.forum / 2); },
     () => { state.sop = Math.floor(state.sop / 2); },
   ];
 }
 
 function assemble(state) {
   return `E${"e".repeat(state.evidence)}R${"r".repeat(state.recent)}S${"s".repeat(state.lastSummary)}`
-    + `F${"f".repeat(state.forum)}P${"p".repeat(state.sop)}`;
+    + `P${"p".repeat(state.sop)}`;
 }
 
 test("a prompt already inside the window is left untouched", () => {
-  const state = { evidence: 10, recent: 10, lastSummary: 10, forum: 10, sop: 10 };
+  const state = { evidence: 10, recent: 10, lastSummary: 10, sop: 10 };
   const fit = fitPromptToBudget({ assemble: () => assemble(state), budgetChars: 1000, steps: fitStepsFor(state) });
   assert.equal(fit.stepsApplied, 0);
   assert.equal(fit.value.length, assemble(state).length);
@@ -211,7 +209,7 @@ test("a prompt already inside the window is left untouched", () => {
 
 test("evidence is sacrificed first — it is the re-runnable block", () => {
   const state = blockState();
-  const fit = fitPromptToBudget({ assemble: () => assemble(state), budgetChars: 90_000, steps: fitStepsFor(state) });
+  const fit = fitPromptToBudget({ assemble: () => assemble(state), budgetChars: 70_000, steps: fitStepsFor(state) });
   assert.ok(fit.stepsApplied >= 1);
   assert.equal(state.evidence, 0, "the evidence cache must be the first thing dropped");
   assert.ok(state.recent > 0, "contributions must survive the first sacrifice");
@@ -222,23 +220,23 @@ test("evidence is sacrificed first — it is the re-runnable block", () => {
 
 test("sacrifice proceeds in priority order rather than clearing everything at once", () => {
   const state = blockState();
-  const fit = fitPromptToBudget({ assemble: () => assemble(state), budgetChars: 60_000, steps: fitStepsFor(state) });
+  const fit = fitPromptToBudget({ assemble: () => assemble(state), budgetChars: 45_000, steps: fitStepsFor(state) });
   assert.equal(state.evidence, 0);
-  assert.equal(state.lastSummary, 0, "the summary goes before the forum and SoP");
+  assert.equal(state.lastSummary, 0, "the summary goes before the SoP");
   assert.equal(fit.overBudget, false);
 });
 
 test("the system prompt's share of the window is charged to the budget", () => {
-  // At a 70k budget the assembled prompt alone is satisfied after two sacrifices,
+  // At a 60k budget the assembled prompt alone is satisfied after two sacrifices,
   // but with a 15k system prompt charging the same window it needs a third. If the
   // overhead were ignored, this turn would be sent 5k chars over the limit.
   const withoutOverhead = (() => {
     const state = blockState();
-    return fitPromptToBudget({ assemble: () => assemble(state), budgetChars: 70_000, steps: fitStepsFor(state) });
+    return fitPromptToBudget({ assemble: () => assemble(state), budgetChars: 60_000, steps: fitStepsFor(state) });
   })();
   const withOverhead = (() => {
     const state = blockState();
-    return fitPromptToBudget({ assemble: () => assemble(state), budgetChars: 70_000, overheadChars: 15_000, steps: fitStepsFor(state) });
+    return fitPromptToBudget({ assemble: () => assemble(state), budgetChars: 60_000, overheadChars: 15_000, steps: fitStepsFor(state) });
   })();
   assert.equal(withoutOverhead.stepsApplied, 2);
   assert.equal(withOverhead.stepsApplied, 3, "the system prompt must count against the window");
@@ -252,7 +250,7 @@ test("a system prompt too large to leave room is reported, not silently accepted
   const system = "S".repeat(40_000);
   const fit = fitPromptToBudget({ assemble: () => assemble(state), budgetChars: 60_000, overheadChars: system.length, steps: fitStepsFor(state) });
   assert.equal(fit.overBudget, true);
-  assert.equal(fit.stepsApplied, 5, "it still spends every step before handing over");
+  assert.equal(fit.stepsApplied, 4, "it still spends every step before handing over");
 });
 
 test("with no known window nothing is sacrificed", () => {
@@ -266,7 +264,7 @@ test("with no known window nothing is sacrificed", () => {
 test("steps are exhausted before giving up, and giving up is reported", () => {
   const state = blockState();
   const fit = fitPromptToBudget({ assemble: () => assemble(state), budgetChars: 10, steps: fitStepsFor(state) });
-  assert.equal(fit.stepsApplied, 5, "every available step must be spent");
+  assert.equal(fit.stepsApplied, 4, "every available step must be spent");
   assert.equal(fit.overBudget, true, "still over budget with nothing left to drop — the backstop takes over");
 });
 

@@ -74,7 +74,6 @@ function makeExecutor({ participantIds = ["a", "b"] } = {}) {
     setParticipantStatus(id, s) { state.statuses[id] = s; },
     addContributionWithStatePatch() {},
     recordAgentError(...args) { state.agentErrors.push(args); },
-    listForumTopicsForPrompt: () => [],
   };
 
   const executor = Object.create(RoundExecutor.prototype);

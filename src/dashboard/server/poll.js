@@ -15,8 +15,6 @@ export function createPollSystem(directory) {
   const participantStatusCache = new Map();
   const lastRoundSummariesHash = new Map();
   const lastArtifactCreatedAt = new Map();
-  const lastForumTopicId = new Map();
-  const lastForumCommentId = new Map();
 
   const SLOW_CONSUMER_TIMEOUT_MS = 30000;
   const PENDING_QUEUE_MAX = 100;
@@ -205,18 +203,6 @@ export function createPollSystem(directory) {
         lastErrorId.set(meetingId, 0);
         broadcast(meetingId, { type: "agent_errors_cleared", meeting_id: meetingId, timestamp: new Date().toISOString() });
       }
-      // Forum updates
-      try {
-        const maxTopicId = api.getMaxForumTopicId();
-        const prevTopicId = lastForumTopicId.get(meetingId) ?? 0;
-        const maxCommentId = api.getMaxForumCommentId();
-        const prevCommentId = lastForumCommentId.get(meetingId) ?? 0;
-        if (maxTopicId > prevTopicId || maxCommentId > prevCommentId) {
-          lastForumTopicId.set(meetingId, maxTopicId);
-          lastForumCommentId.set(meetingId, maxCommentId);
-          broadcast(meetingId, { type: "forum_update", meeting_id: meetingId, timestamp: new Date().toISOString() });
-        }
-      } catch {}
       // Drain pending backpressure queue
       flushPending(meetingId);
     } catch {}

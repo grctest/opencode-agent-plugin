@@ -191,12 +191,6 @@ check(
   /FROM participants WHERE meeting_id = \? AND status != 'summoned'/.test(contribSrc),
   "the runtime roster must carry seats only",
 );
-const forumSrc = readFile(join(root, "src/database/forum-operations.js"), "utf8");
-check(
-  "the forum seed never creates a participant row",
-  !/ensureParticipantRow/.test(forumSrc),
-  "the seed must author with a real seat, not invent a participant",
-);
 check(
   "doc states that the orchestrator is not a participant",
   /the orchestrator is never a participant/i.test(doc),

@@ -360,14 +360,6 @@ Should we migrate our authentication service to JWT tokens?
 - Refresh tokens on the client are recoverable by design
 <<<LOOM_STATE_OF_PLAY>>>_END_
 
-> **The forum digest is in the State of Play, not in the agent's copy of it.** The
-> `## Forum Threads` digest rides inside the State of Play so the round clerk and
-> the final synthesizer read forum content (they have no forum block of their
-> own). The agent gets a dedicated, richer `## Forum — Open Threads` block with
-> ids, previews and read instructions, so the digest section is stripped from
-> the State of Play as it is rendered into the agent prompt — otherwise every
-> thread appeared twice in every turn, in two different formats.
-
 ## Your State — CARRIED FORWARD (you wrote this via loom_state_patch; update it this turn)
 
 <<<LOOM_MY_STATE>>>_BEGIN_
@@ -758,9 +750,9 @@ Fallback is `updateStateOfPlay(weave, question, tags)`, a **type-driven** scan u
 | `propose`, `refine`, `support`, `question` (legacy, no longer emitted) | (not filed) |
 | unknown/missing | (not filed) |
 
-**The forum's starter topic is authored by a real seat — the orchestrator is never a participant.** `forum_topics.author_id` references `participants(id)`, so the seed needs an author row that exists. It takes the first real seat of the meeting's roster (the roster rows are written before init runs the seed — `upsertMeeting` inserts them for a new meeting, and the dashboard's start handler calls `insertParticipants`); if no seat row exists, the seed simply declines (degraded, never fatal) rather than inventing one.
+**The orchestrator is never a participant.** The orchestrator has its own area and is called last — it must never be injected into the `participants` table.
 
-> **Why the author is a seat and not the orchestrator:** an earlier version satisfied the foreign key by *creating* a participant row for a synthetic author `"orchestrator"` (`ensureParticipantRow`, a `status='summoned'` row). That put a phantom seat into the `participants` table, and because the dashboard's participant list did not filter the `'summoned'` status, the orchestrator appeared in the **active participant list** the moment a meeting started. The orchestrator has its own area and is called last — it is not a participant, and it must never be injected into the participants table.
+> **Why:** an earlier version of the forum satisfied its foreign key by *creating* a participant row for a synthetic author `"orchestrator"` (`ensureParticipantRow`, a `status='summoned'` row). That put a phantom seat into the `participants` table, and because the dashboard's participant list did not filter the `'summoned'` status, the orchestrator appeared in the **active participant list** the moment a meeting started. The forum is since deleted, but the rule outlives it.
 
 **`'summoned'` means "not a seat".** Rows with that status (summoned guest experts, any system-authored row) are excluded from every participant list: the read-only meeting snapshot, the runtime restore, the dashboard's `/api/participants` (which feeds the Setup tab's seat list, the poll broadcast and the meeting state payload), the export bundle's seat rows, and the runtime participant reader. A participant list that forgets the filter shows a phantom seat.
 
@@ -1057,12 +1049,10 @@ If the draft is accurate, grounded, and complete, respond with exactly: [NO_CHAN
 
 **The artifact's citation ids resolve for a human, not only for the pipeline.** The deliberation cites by weave id — agents cite peers as `[#N]`, the clerk names holders with ids — and the final artifact keeps that scheme (the citation checks, the reconciliation report, and the dashboard all parse it). But a reader sees `[#2][#4][#7]` with nothing to resolve them against; the recorded F1 meeting's synthesis read exactly like that ("[#2] splits ties, [#7] owns ties as a real outcome"). Two-part fix (rule 1b + deterministic backfill):
 
-- **Prompt (rule 1b):** every `[#N]` must appear at least once per section paired with the participant's **NAME** (`Ada [#2]`) before bare repeat ids inside that block, and the artifact must end with a **`## References`** index — one line per `[#N]` and `[#T{id}]` cited anywhere: who, which round, and one clause on what the contribution established. What the contribution DID is the synthesizer's one-line gist — the index is a map, not a source. The rule teaches both the required-section template and the Good Fragment (an `## References` sample), because imitation examples bind far harder than prose rules.
-- **Deterministic guarantee (`finalizeSynthesis`, `ensureReferenceIndex`):** every cited id the index does not already cover gets a mechanical line — participant name (resolved from the participants list), round number (from the rounds), and the first ~120 characters of the cited contribution. No LLM call: it cannot invent a gist, a name, or a round — which is also why it can be trusted to run on degraded artifacts. Forum thread ids resolve from a `{id → title}` map the orchestrator gathers (`_collectForumTopics`) and threads through `run({ forumTopics })`; a thread with no map degrades honestly ("thread title unavailable"), never silently absent. An artifact citing no ids gets `## References — None — the artifact cites no contribution ids.` instead of a repair note.
+- **Prompt (rule 1b):** every `[#N]` must appear at least once per section paired with the participant's **NAME** (`Ada [#2]`) before bare repeat ids inside that block, and the artifact must end with a **`## References`** index — one line per `[#N]` cited anywhere: who, which round, and one clause on what the contribution established. What the contribution DID is the synthesizer's one-line gist — the index is a map, not a source. The rule teaches both the required-section template and the Good Fragment (an `## References` sample), because imitation examples bind far harder than prose rules.
+- **Deterministic guarantee (`finalizeSynthesis`, `ensureReferenceIndex`):** every cited id the index does not already cover gets a mechanical line — participant name (resolved from the participants list), round number (from the rounds), and the first ~120 characters of the cited contribution. No LLM call: it cannot invent a gist, a name, or a round — which is also why it can be trusted to run on degraded artifacts. An artifact citing no ids gets `## References — None — the artifact cites no contribution ids.` instead of a repair note.
 
 `References` sits in `SYNTHESIS_SECTION_CONTRACT.always` (so draft retries and critique demand it), and finalization runs the index pass BEFORE section validation. Scoping rules: the index body is excluded from the citation-support scan (its own gist lines make no claims — only the narrative body is measured), and `engagement.coverage` counts body citations, not appendix lines — a mechanically backfilled marker is not the same as engaging the peer. `test/synthesis-references.test.js` pins all of this.
-
-**The forum's discussion travels with the synthesis.** The State of Play carries thread *titles* and a short preview, so the room's forum thinking never reached the synthesizer while the agent prompt told participants "writing here is writing to the room" (and no recorded meeting ever opened a thread). The orchestrator now reads the forum (up to 3 threads, the last 2 comments each, 300 chars per comment) and hands it to the synthesis context, fenced as data.
 
 **The deliverable states its own provenance.** Every artifact ends with a factual footer — rounds · contributions · participants · ballots held (or "no ballot held") · the share of contributions the artifact cites. The coverage figure was already computed (`artifact.engagement.coverage`) and hidden in JSON where no reader would see it; two of the three recorded meetings held no ballot at all, and the reader could not tell that a Decision Rule was prose rather than a tally. A deliverable that states its own coverage is worth more than one that quietly implies completeness.
 

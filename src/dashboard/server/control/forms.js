@@ -58,7 +58,6 @@ export function normalizeFeatures(raw = {}) {
   const localFallback = normalizeFeatureMode(legacyAgentTools);
   const onlineFallback = normalizeFeatureMode(legacyAgentTools);
   return {
-    forums: normalizeFeatureMode(raw.forums),
     skillState: normalizeSkillStateMode(raw.skillState, "on"),
     agentQueries: normalizeFeatureMode(raw.agentQueries),
     localSearch: normalizeFeatureMode(raw.localSearch, localFallback),
@@ -102,7 +101,6 @@ export function buildMeetingAgentTools(features, base = getConfig().agentTools) 
   };
   tools.loom = {
     ...(tools.loom ?? {}),
-    loom_forum: features.forums !== "disabled",
     loom_state_patch: skillStateOn,
     loom_query: agentQueriesEnabled,
     loom_vote: agentQueriesEnabled,
@@ -110,7 +108,6 @@ export function buildMeetingAgentTools(features, base = getConfig().agentTools) 
     loom_pass: true,
   };
   tools.mandatory = {
-    forums: features.forums === "mandatory",
     skillState: skillStateOn,
     agentQueries: features.agentQueries === "mandatory",
     localSearch: features.localSearch === "mandatory",

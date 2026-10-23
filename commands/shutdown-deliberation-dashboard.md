@@ -1,5 +1,5 @@
 ---
-description: Stop the Loom deliberation dashboard
+description: Stop the deliberation dashboard
 ---
 
-Stop the running Loom deliberation dashboard server and free the port. Active deliberations are not cancelled; use the dashboard's Cancel run control for that.
+Stop the running deliberation dashboard server and free the port. Active deliberations are not cancelled; use the dashboard's Cancel run control for that.

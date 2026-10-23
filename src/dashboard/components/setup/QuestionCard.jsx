@@ -48,34 +48,37 @@ export function QuestionCard({ question, setQuestion, context, setContext, maxRo
               disabled={disabled}
             />
           </div>
-          <div className="flex items-center gap-2">
-            <Label htmlFor="loom-task-mode">Task type</Label>
-            <div className="flex shrink-0 items-center gap-1" role="group" aria-label="Task type" id="loom-task-mode">
-              <Button
-                type="button"
-                size="sm"
-                variant={taskMode === "discussion" ? "default" : "outline"}
-                disabled={disabled}
-                onClick={() => setTaskMode("discussion")}
-                aria-pressed={taskMode === "discussion"}
-                title="Agents deliberate in prose — research, cite, and argue. No code scaffolding in the prompts."
-                className="px-2 text-[11px]"
-              >
-                Discussion
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant={taskMode === "programming" ? "default" : "outline"}
-                disabled={disabled}
-                onClick={() => setTaskMode("programming")}
-                aria-pressed={taskMode === "programming"}
-                title="Code collaboration: agents read files, propose or apply diffs, and hand off work."
-                className="px-2 text-[11px]"
-              >
-                Programming
-              </Button>
-            </div>
+        </div>
+        <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
+          <div className="min-w-0">
+            <Label htmlFor="loom-task-mode" className="cursor-default">Task type</Label>
+            <p className="mt-0.5 text-xs text-muted-foreground" aria-live="polite">{taskMode === "programming" ? "Programming — code collaboration: agents read files, propose or apply diffs, and hand off work." : "Discussion — agents deliberate in prose: research, cite, and argue. No code scaffolding in the prompts."}</p>
+          </div>
+          <div className="flex shrink-0 items-center gap-1" role="group" aria-label="Task type" id="loom-task-mode">
+            <Button
+              type="button"
+              size="sm"
+              variant={taskMode === "discussion" ? "default" : "outline"}
+              disabled={disabled}
+              onClick={() => setTaskMode("discussion")}
+              aria-pressed={taskMode === "discussion"}
+              title="Agents deliberate in prose — research, cite, and argue. No code scaffolding in the prompts."
+              className="px-2 text-[11px]"
+            >
+              Discussion
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={taskMode === "programming" ? "default" : "outline"}
+              disabled={disabled}
+              onClick={() => setTaskMode("programming")}
+              aria-pressed={taskMode === "programming"}
+              title="Code collaboration: agents read files, propose or apply diffs, and hand off work."
+              className="px-2 text-[11px]"
+            >
+              Programming
+            </Button>
           </div>
         </div>
         <div className="flex items-center justify-between gap-4 rounded-lg border p-3">

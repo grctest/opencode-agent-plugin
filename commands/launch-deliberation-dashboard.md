@@ -1,8 +1,8 @@
 ---
-description: Start the Loom deliberation dashboard
+description: Start the deliberation dashboard
 ---
 
-Start the Loom deliberation dashboard server.
+Start the deliberation dashboard server.
 
 The dashboard is the sole control plane: open the URL, use the Setup tab to
 preview the suggested room, approve personas (or pick manually), assign a model

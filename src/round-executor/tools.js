@@ -37,12 +37,6 @@ export function buildToolsMap(config, { activeCount, omitStatePatch = false } = 
     // map below). The patch-only tail pass owns it with a { loom_state_patch }
     // map, so the model gets the full turn picture before projecting state.
     if (loom.loom_state_patch && !omitStatePatch) toolsMap.loom_state_patch = true;
-    if (loom.loom_forum) {
-      toolsMap.loom_forum_create_topic = true;
-      toolsMap.loom_forum_list_topics = true;
-      toolsMap.loom_forum_read_topic = true;
-      toolsMap.loom_forum_add_comment = true;
-    }
   }
   return toolsMap;
 }
@@ -61,15 +55,9 @@ export function buildToolsMapWithoutLoom(config, { activeCount } = {}) {
     if (t.lsp) toolsMap.lsp = true;
     const loom = resolveLoomTools(agentToolsConfig);
     const isSolo = Number.isFinite(activeCount) && activeCount <= 1;
-    if (loom.loom_forum) {
-      toolsMap.loom_forum_create_topic = true;
-      toolsMap.loom_forum_list_topics = true;
-      toolsMap.loom_forum_read_topic = true;
-      toolsMap.loom_forum_add_comment = true;
-    }
     // loom_query/vote/summon stay out of this map: synthesis and recovery
     // passes must not open a new peer interaction with no further pass to
-    // fold the answers in (audit B8). The forum tools stay available.
+    // fold the answers in (audit B8).
     // loom_state_patch stays out too: only the dedicated patch tail may
     // write the agent's notes.
   }

@@ -61,7 +61,6 @@ test("pipelined tails overlap next primaries and join before round end", async (
     setParticipantStatus() {},
     addContributionWithStatePatch(_m, c) { capture.contributions.push(c); events.push({ kind: "persist", at: Date.now() }); },
     recordAgentError() {},
-    listForumTopicsForPrompt: () => [],
   };
   const executor = Object.create(RoundExecutor.prototype);
   executor._stateManager = manager;

@@ -112,11 +112,11 @@ const USER_OPTS = (overrides = {}) => ({
   maxRounds: 10, contextWindow: 200000, ...overrides,
 });
 
-// buildAgentUserPrompt(participant, sop, recent, round, q, tags, ctx, forumTopics, peers, myState, forumOn, queryOn, caps, options)
+// buildAgentUserPrompt(participant, sop, recent, round, q, tags, ctx, peers, myState, queryOn, caps, options)
 
-function buildUser(recent, options, forumOn = false) {
+function buildUser(recent, options) {
   return buildAgentUserPrompt(
-    PARTICIPANT, SO_P, recent, 3, "Q?", [], "", [], [], null, forumOn, true, {}, options,
+    PARTICIPANT, SO_P, recent, 3, "Q?", [], "", [], null, true, {}, options,
   );
 }
 

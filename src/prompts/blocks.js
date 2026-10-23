@@ -124,7 +124,7 @@ If a tool returns error or 0 hits, write "evidence unavailable — searched X" a
 
 ${base}
 
-- You do NOT have loom_query, loom_vote, loom_summon, loom_forum, loom_pass, or any state tool. Do not attempt them and do not mention them.
+- You do NOT have loom_query, loom_vote, loom_summon, loom_pass, or any state tool. Do not attempt them and do not mention them.
 - Your prose IS the contribution. Never write about patching or state in place of the answer.
 - ${CITATION_LINE}`;
 }
@@ -193,7 +193,7 @@ Tools disabled — reflect from deliberation only. Cite [#id] when referencing p
       return `
 ## Research Tools — Reflection (solo — no peers)
 
-No other active participants — peer query/vote unavailable. Ground reflection in prior [#id] (recent context) or loom_summon (expert), or websearch/read for facts. Use loom_forum_* for async sub-discussions.
+No other active participants — peer query/vote unavailable. Ground reflection in prior [#id] (recent context) or loom_summon (expert), or websearch/read for facts.
 
 Tool ladder: ${TOOL_LADDER_LINE}. One call max.
 
@@ -204,14 +204,14 @@ ${TOOL_FAILURE_LINE}`;
       return `
 ## Research Tools — Query (solo — no peers)
 
-No other active participants — loom_query/loom_vote unavailable. Use loom_summon for expertise, or websearch/read for external facts. Use loom_forum_* to start or join async sub-discussions. Cite Source: [#id] or URL if you use one.
+No other active participants — loom_query/loom_vote unavailable. Use loom_summon for expertise, or websearch/read for external facts. Cite Source: [#id] or URL if you use one.
 If tool returns error or 0 hits, write "evidence unavailable — searched X" and answer with "insufficient evidence" qualified.`;
     }
     if (kind === "evidence") {
       return `
 ## Research Tools — Evidence (REQUIRED — solo, no peers)
 
-No other active participants — peer query unavailable. You MUST still call at least one tool: use loom_summon to bring an expert, or websearch/read for external facts. Use loom_forum_* for async sub-discussions. No speculation.
+No other active participants — peer query unavailable. You MUST still call at least one tool: use loom_summon to bring an expert, or websearch/read for external facts. No speculation.
 
 Tool ladder: ${TOOL_LADDER_LINE}. One focused query, then synthesize.
 

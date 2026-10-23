@@ -178,27 +178,6 @@ export function initSchema(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_meeting_metrics_created ON meeting_metrics(created_at);
 
-    CREATE TABLE IF NOT EXISTS forum_topics (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
-      title TEXT NOT NULL,
-      body TEXT NOT NULL,
-      tags TEXT,
-      author_id TEXT NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_forum_topics_meeting ON forum_topics(meeting_id);
-
-    CREATE TABLE IF NOT EXISTS forum_comments (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      topic_id INTEGER NOT NULL REFERENCES forum_topics(id) ON DELETE CASCADE,
-      author_id TEXT NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
-      body TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_forum_comments_topic ON forum_comments(topic_id);
-
     CREATE TABLE IF NOT EXISTS tool_audit (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,

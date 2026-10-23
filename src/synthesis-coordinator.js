@@ -65,8 +65,6 @@ export class SynthesisCoordinator {
   // The character budget for the synthesis transcript, derived from the
   // orchestrator model's context window.
   #transcriptBudgetChars = null;
-  // The forum's bounded discussion, gathered by the orchestrator.
-  #forumContent = "";
   // The meeting's halt signal. A synthesis that is already in flight when the
   // user cancels must die with it — otherwise "Cancel run" would still leave
   // two LLM calls running.
@@ -94,7 +92,7 @@ export class SynthesisCoordinator {
     return buildOrchestratorSynthesisSystem(config, this.#contextWindow);
   }
 
-  async run({ transcriptData, participants, model, onStart, onComplete, stateOfPlay = "", userContext = "", forumContent = "", forumTopics = null, onActivity = null, meetingId = null, contextWindow = null, transcriptBudgetChars = null }) {
+  async run({ transcriptData, participants, model, onStart, onComplete, stateOfPlay = "", userContext = "", onActivity = null, meetingId = null, contextWindow = null, transcriptBudgetChars = null }) {
     this.#runMeetingId = meetingId ?? null;
     this.#contextWindow = Number.isFinite(contextWindow) ? contextWindow : null;
     // The transcript budget is the MODEL'S WINDOW (audit B), not a constant:
@@ -103,7 +101,6 @@ export class SynthesisCoordinator {
     this.#transcriptBudgetChars = Number.isFinite(transcriptBudgetChars) && transcriptBudgetChars > 0
       ? transcriptBudgetChars
       : null;
-    this.#forumContent = typeof forumContent === "string" ? forumContent : "";
     if (!model?.providerID || !model?.modelID) {
       throw new LoomError("No orchestrator model available for final synthesis", { phase: "synthesis", recoverable: false });
     }
@@ -142,9 +139,6 @@ export class SynthesisCoordinator {
 
     const result = finalizeSynthesis(artifactText, transcriptData, participants, {
       synthesisStyle: effectiveConfig?.synthesisStyle,
-      // The forum topic map resolves [#T{id}] refs the deterministic reference
-      // index backfills — without it a thread id a reader hits stays unresolvable.
-      forumTopics: Array.isArray(forumTopics) ? forumTopics : null,
     });
     // The deliverable states its own provenance (audit H): the reader can see
     // how much deliberation it rests on, whether a ballot was held, and what
@@ -209,7 +203,7 @@ export class SynthesisCoordinator {
       // than only in the round clerk's summary.
       const engagement = computeEngagementLedger(transcriptData);
       const userPrompt =
-        buildSynthesisPrompt(transcriptData.question, transcript, allParticipants, transcriptData.tags ?? [], stateOfPlay, userContext, { buildMode: transcriptData.buildMode, taskMode: transcriptData.taskMode, decisionPosture: effectiveConfig?.decisionPosture, engagement, contextWindow: this.#contextWindow, forumContent: this.#forumContent }) +
+        buildSynthesisPrompt(transcriptData.question, transcript, allParticipants, transcriptData.tags ?? [], stateOfPlay, userContext, { buildMode: transcriptData.buildMode, taskMode: transcriptData.taskMode, decisionPosture: effectiveConfig?.decisionPosture, engagement, contextWindow: this.#contextWindow }) +
         additionalFeedback;
 
       const llmStart = Date.now();

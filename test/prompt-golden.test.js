@@ -41,10 +41,10 @@ function fixture() {
     participant,
     "## Question\nShould we ship?\n\n## Agreements\n- Ship Friday",
     [{ id: 7, participant_id: "peer_a", content: "Ship Friday is risky without a rollback plan." }],
-    2, "Should we ship?", ["engineering"], "golden context", [],
+    2, "Should we ship?", ["engineering"], "golden context",
     [{ id: "peer_a", name: "Peer A", category: "senior", status: "listening", persona: "Risk person." }],
     { stance: "Ship with rollback.", established: ["rollback plan exists"], contested: [], open: ["downtime budget?"], facts: ["Rollback tested twice [#7]"], files: ["src/ship.ts"], version: 2, updated_round: 2, updated_contribution_id: 7 },
-    false, true, { skillState: true },
+    true, { skillState: true },
     { maxRounds: 4, contextWindow: 200000, steeringHint: "consolidate before new threads", lastRoundSummary: "Round 1 opened the rollback thread." },
   );
   return { sys, user };
@@ -71,11 +71,11 @@ const EXPECTED_SYS = {
   // note. The hash moves to reflect the tool being absent, not reworded.
   // Tail-pass design: loom_state_patch is hidden from the primary Available
   // list and contract (the patch-only tail owns it), and WHEN TO PASS is
-  // tool-agnostic. Hashes below reflect the hidden-patch wording. Hash moved
-  // again for the forum read-through fix (post-mortem 7811b8db §8): the
-  // "prior [#id]" ladder line now names the [#T{id}] thread-cite form so the
-  // forum satisfies the citation contract instead of grading as uncited.
-  "Research Tools — Tool Ladder": "d6a2f7cd1588",
+  // tool-agnostic.
+  // 2026-10-23 (forum removal): the ladder line no longer names the deleted
+  // loom_forum tools or the [#T{id}] thread-cite form; "prior [#id]" stops
+  // pointing agents at the forum.
+  "Research Tools — Tool Ladder": "eeddec5eec8a",
   // 2026-10-21 (audit Q3): the pass criterion now names the section that
   // actually exists — the shared State of Play has ONE consensus section,
   // "Agreements & Proposals", not a "Decisions & Proposals" / "Agreements" pair.

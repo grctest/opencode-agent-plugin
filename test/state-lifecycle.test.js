@@ -132,7 +132,7 @@ test("committed unique state is used in the next primary prompt and collective S
   const agentTools = structuredClone(DEFAULT_CONFIG.agentTools);
   const systemPrompt = buildAgentSystemPrompt(agent, { activeCount: 2, agentTools });
   const toolsMap = buildToolsMap({ agentTools }, { activeCount: 2, omitStatePatch: true });
-  const userPrompt = buildAgentUserPrompt(agent, "", [], 2, "Question", [], "", [], [], state);
+  const userPrompt = buildAgentUserPrompt(agent, "", [], 2, "Question", [], "", [], state);
 
   // Tail-pass design: the primary hides the patch tool (the patch-only tail
   // owns it) but still renders the carried Your State block.

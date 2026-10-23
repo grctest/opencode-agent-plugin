@@ -291,7 +291,7 @@ export class DashboardApi {
     })();
 
     let toolCalls = normalizeToolCalls(contribution.tool_calls, null) ?? [];
-    // Merge durable forum audits for this contribution's participant+round+batch (Q3: parent shows trigger)
+    // Merge durable tool audits for this contribution's participant+round+batch (Q3: parent shows trigger)
     try {
       const audits = this._db.prepare(
         `SELECT id, tool, input, output, status, title FROM tool_audit WHERE meeting_id = ? AND participant_id = ? AND round = ? AND (batch_id IS NULL OR batch_id = ? OR ? IS NULL) ORDER BY id ASC`
@@ -312,7 +312,7 @@ export class DashboardApi {
         const existingIds = new Set(toolCalls.map(t => t.callID));
         for (const ac of auditCalls) {
           if (existingIds.has(ac.callID)) continue;
-          // Avoid duplicate when LLM ToolPart already captured same forum invocation
+          // Avoid duplicate when LLM ToolPart already captured the same invocation
           if (toolCalls.some(t => t.tool === ac.tool && String(t.input ?? "") === String(ac.input ?? ""))) continue;
           toolCalls.push(ac);
         }
@@ -357,20 +357,8 @@ export class DashboardApi {
       return { meeting, participant };
     });
   }
-  getForumTopics(...args) {
-    return this._withRecovery(() => queriesHelpers.getForumTopics.apply(this, args));
-  }
   getStatePatchSummary(...args) {
     return this._withRecovery(() => queriesHelpers.getStatePatchSummary.apply(this, args));
-  }
-  getForumTopic(...args) {
-    return this._withRecovery(() => queriesHelpers.getForumTopic.apply(this, args));
-  }
-  getMaxForumTopicId() {
-    return this._withRecovery(() => queriesHelpers.getMaxForumTopicId.apply(this));
-  }
-  getMaxForumCommentId() {
-    return this._withRecovery(() => queriesHelpers.getMaxForumCommentId.apply(this));
   }
   exportMarkdown(...args) {
     return this._withRecovery(() => exportsHelpers.exportMarkdown.apply(this, args));

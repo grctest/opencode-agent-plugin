@@ -58,7 +58,7 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
           if (!Array.isArray(allParticipants)) return { output: JSON.stringify({ error: "loom_vote: participant list unavailable" }), metadata: { error: true }, title: "loom_vote error" };
            caller = resolveCaller(allParticipants, stateManager.getWeave?.() ?? [], context.sessionID);
           const activeCountV = (() => { try { return stateManager.getActiveParticipants().length; } catch { return allParticipants.filter(p=>p.status!=="failed"&&p.status!=="passed").length; }})();
-          if (activeCountV <= 1) return { output: JSON.stringify({ error: "loom_vote unavailable with 1 active participant — use loom_summon or loom_forum instead", activeCount: activeCountV }), metadata: { error: true }, title: "loom_vote error" };
+          if (activeCountV <= 1) return { output: JSON.stringify({ error: "loom_vote unavailable with 1 active participant — use loom_summon instead", activeCount: activeCountV }), metadata: { error: true }, title: "loom_vote error" };
           const currentRound = stateManager.getCurrentRound();
           const meetingIdForBatchV = stateManager.getState?.()?.id ?? meetingInfo.meetingId;
           const fallbackBatch = buildBatchId(meetingIdForBatchV, currentRound, caller?.config?.id);

@@ -36,7 +36,6 @@ import { checkCitationSupport, CITATION_MIN_TARGET_CHARS } from "./citations.js"
  *     characters of the cited contribution — in the codebase's own deterministic
  *     repair style (audit F's repairInventedHandoffs, the appended Refusals);
  *   - no LLM call, so it cannot invent a gist, a name, or a round;
- *   - forum-thread refs ([#T{id}]) resolve from the caller's topic map.
  *
  * Returns the text with the index guaranteed present.
  */
@@ -67,16 +66,14 @@ function stripReferenceIndex(text) {
 
 function collectCitedRefs(text) {
   const contribution = new Set();
-  const threads = new Set();
   for (const m of String(text).matchAll(/\[#(\d+)\]/g)) contribution.add(m[1]);
-  for (const m of String(text).matchAll(/\[#T(\d+)\]/g)) threads.add(m[1]);
-  return { contribution: [...contribution].sort((a, b) => Number(a) - Number(b)), threads: [...threads].sort((a, b) => Number(a) - Number(b)) };
+  return [...contribution].sort((a, b) => Number(a) - Number(b));
 }
 
 function ensureReferenceIndex(finalOutput, weave, participants, opts = {}) {
-  const { contribution: citedIds, threads: citedThreads } = collectCitedRefs(finalOutput);
+  const citedIds = collectCitedRefs(finalOutput);
   const section = locateReferenceSection(finalOutput);
-  if (citedIds.length === 0 && citedThreads.length === 0) {
+  if (citedIds.length === 0) {
     // Nothing cited: the contract still guarantees the section, so it exists
     // stating that rather than triggering a "did not generate" repair note.
     if (section) return finalOutput;
@@ -91,9 +88,6 @@ function ensureReferenceIndex(finalOutput, weave, participants, opts = {}) {
     ? section.lines.slice(section.start + 1, section.end).join("\n")
     : "";
   const coveredIds = new Set([...indexedText.matchAll(/\[#(\d+)\]/g)].map((m) => m[1]));
-  const coveredThreads = new Set(
-    [...indexedText.matchAll(/\[#T(\d+)\]/g)].map((m) => m[1]),
-  );
 
   const participantsById = new Map(
     (participants ?? []).map((p) => [String(p?.config?.id ?? ""), p?.config?.name ?? p?.config?.id]),
@@ -118,12 +112,6 @@ function ensureReferenceIndex(finalOutput, weave, participants, opts = {}) {
     const c = weave.find((w) => String(w.id) === String(id));
     const name = (c && participantsById.get(String(c.participant_id))) ?? c?.participant_id ?? "unknown participant";
     backfilled.push(`- [#${id}] — ${name}, ${roundLabelFor(id)} — "${excerptFor(id)}"`);
-  }
-  for (const tid of citedThreads) {
-    if (coveredThreads.has(tid)) continue;
-    const title = (opts?.forumTopics ?? []).find((t) => String(t?.id) === String(tid))?.title
-      ?? "(thread title unavailable)";
-    backfilled.push(`- [#T${tid}] — forum thread — ${title}`);
   }
 
   const body = [...backfilled].join("\n");
@@ -220,10 +208,7 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, op
       (r.contributions ?? []).map((c) => [String(c.id), Number.isFinite(Number(r.number)) ? Number(r.number) : i + 1]),
     ),
   );
-  finalOutput = ensureReferenceIndex(finalOutput, weave, participants, {
-    roundOf,
-    forumTopics: opts.forumTopics ?? null,
-  });
+  finalOutput = ensureReferenceIndex(finalOutput, weave, participants, { roundOf });
 
   // Style-aware: the "Decision Rule" requirement is only checked for the
   // decision_oriented style, and dropping the style here let an artifact

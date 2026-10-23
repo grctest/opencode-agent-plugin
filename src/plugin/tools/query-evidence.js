@@ -92,7 +92,7 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
 
            caller = resolveCaller(allParticipants, stateManager.getWeave?.() ?? [], context.sessionID);
           const activeCountQ = (() => { try { return stateManager.getActiveParticipants().length; } catch { return allParticipants.filter(p=>p.status!=="failed"&&p.status!=="passed").length; }})();
-          if (activeCountQ <= 1) return { output: JSON.stringify({ error: "loom_query unavailable with 1 active participant — use loom_summon or loom_forum instead", activeCount: activeCountQ }), metadata: { error: true }, title: "loom_query error" };
+          if (activeCountQ <= 1) return { output: JSON.stringify({ error: "loom_query unavailable with 1 active participant — use loom_summon instead", activeCount: activeCountQ }), metadata: { error: true }, title: "loom_query error" };
           // Resolve each query to an eligible target participant (exclude self)
           const resolved = queries
             .map((q) => ({ ...q, participant: allParticipants.find((p) => p?.config?.id === q.targetId) }))
@@ -222,7 +222,7 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
                   parts: [{ type: "text", text: prompt }],
                   // Sub-agent scope: research tools only (patching is
                   // primary-tail-only). No nested loom_query/loom_vote/
-                  // loom_summon/loom_forum — enforced by omission.
+                  // loom_summon — enforced by omission.
                   tools: subAgentTools(),
                   timeoutMs: meta.timeoutMs,
                   signal: context.abort,
@@ -339,7 +339,7 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
            }
           const inlinePayload = { inline: true, queries, responses: results, note: "Inline query — peer answers returned for synthesis and stored as indented rows." };
           const outputStr = JSON.stringify(inlinePayload);
-          // Durable audit for Tool use tab — captures loom_query even if ToolPart extraction fails or mixed with forum in same turn
+          // Durable audit for Tool use tab — captures loom_query even if ToolPart extraction fails
           auditLoomTool({ db, stateManager, caller, meetingId: meetingInfo.meetingId, tool: "loom_query", input: args, output: outputStr, status: "completed", title: `loom_query:${results.length - skipped.length} responses` });
           return { output: outputStr, metadata: { inline: true, responseCount: results.length - skipped.length }, title: `loom_query:${results.length - skipped.length} responses` };
         } catch (e) {

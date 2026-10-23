@@ -50,7 +50,7 @@ function mergeToolCalls(prev, next) {
   return prev;
 }
 
-export function useSSEHandlers({ setContributions, setState, setParticipants, setAgentErrors, setArtifact, setOrchestratorMessages, setRoundSummaries, setForumUpdateTrigger }) {
+export function useSSEHandlers({ setContributions, setState, setParticipants, setAgentErrors, setArtifact, setOrchestratorMessages, setRoundSummaries }) {
   useEffect(() => {
     const handleContributions = (e) => {
       const newContribs = e.detail;
@@ -147,10 +147,6 @@ export function useSSEHandlers({ setContributions, setState, setParticipants, se
       }
     };
 
-    const handleForumUpdate = () => {
-      setForumUpdateTrigger((t) => t + 1);
-    };
-
     window.addEventListener("loom-new-contributions", handleContributions);
     window.addEventListener("loom-state-update", handleState);
     window.addEventListener("loom-participants-update", handleParticipants);
@@ -159,7 +155,6 @@ export function useSSEHandlers({ setContributions, setState, setParticipants, se
     window.addEventListener("loom-artifact", handleArtifact);
     window.addEventListener("loom-orchestrator-messages", handleOrchestratorMessages);
     window.addEventListener("loom-round-summaries", handleRoundSummaries);
-    window.addEventListener("loom-forum-update", handleForumUpdate);
 
     return () => {
       window.removeEventListener("loom-new-contributions", handleContributions);
@@ -170,7 +165,6 @@ export function useSSEHandlers({ setContributions, setState, setParticipants, se
       window.removeEventListener("loom-artifact", handleArtifact);
       window.removeEventListener("loom-orchestrator-messages", handleOrchestratorMessages);
       window.removeEventListener("loom-round-summaries", handleRoundSummaries);
-      window.removeEventListener("loom-forum-update", handleForumUpdate);
     };
   }, []);
 }
@@ -225,8 +219,6 @@ export function useMeetingApi(meetingId, resetKey, meetings = [], onSelectMeetin
   const [artifact, setArtifact] = useState(null);
   const [embeddingModel, setEmbeddingModel] = useState(null);
   const [embeddingDim, setEmbeddingDim] = useState(null);
-  const [forumTopics, setForumTopics] = useState([]);
-  const [forumUpdateTrigger, setForumUpdateTrigger] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const lastPollIdRef = useRef(0);
@@ -410,18 +402,6 @@ export function useMeetingApi(meetingId, resetKey, meetings = [], onSelectMeetin
       }
       lastPollIdRef.current = Math.max(...all.map((c) => c.id ?? 0), 0);
       window.dispatchEvent(new CustomEvent("loom-initial-contributions", { detail: all }));
-       // Fetch forum topics
-       if (data.state?.features?.forums !== "disabled") {
-         try {
-           const forumRes = await fetch(`/api/forum/topics?meeting=${id}`, { signal });
-           if (forumRes.ok) {
-             const forumData = await forumRes.json();
-             setForumTopics(forumData.topics ?? []);
-           }
-         } catch {}
-       } else {
-         setForumTopics([]);
-       }
     } catch (e) {
       if (e.name !== "AbortError") setError(e.message);
     } finally {
@@ -444,18 +424,7 @@ export function useMeetingApi(meetingId, resetKey, meetings = [], onSelectMeetin
     }
   }, [contributions]);
 
-  // Refresh forum topics when update trigger fires
-  useEffect(() => {
-    if (!meetingId || forumUpdateTrigger === 0 || state?.features?.forums === "disabled") return;
-    const controller = new AbortController();
-    fetch(`/api/forum/topics?meeting=${meetingId}`, { signal: controller.signal })
-      .then((res) => res.ok ? res.json() : null)
-      .then((data) => { if (data?.topics) setForumTopics(data.topics); })
-      .catch(() => {});
-    return () => controller.abort();
-  }, [meetingId, forumUpdateTrigger, state?.features?.forums]);
-
-  useSSEHandlers({ setContributions, setState, setParticipants, setAgentErrors, setArtifact, setOrchestratorMessages, setRoundSummaries, setForumUpdateTrigger });
+  useSSEHandlers({ setContributions, setState, setParticipants, setAgentErrors, setArtifact, setOrchestratorMessages, setRoundSummaries });
 
   return {
     state,
@@ -468,7 +437,6 @@ export function useMeetingApi(meetingId, resetKey, meetings = [], onSelectMeetin
     artifact,
     embeddingModel,
     embeddingDim,
-    forumTopics,
     loading,
     error,
     refetch: () => fetchMeetingData(meetingId),

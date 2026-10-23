@@ -485,7 +485,6 @@ export class MeetingOrchestrator {
    _logError(context, error) { return roundHelpers._logError.call(this, context, error); }
    _notifyUpdate() { return roundHelpers._notifyUpdate.call(this); }
   async _synthesize() { return synthesisHelpers._synthesize.call(this); }
-  _collectForumContent() { return synthesisHelpers._collectForumContent.call(this); }
   // N9 — the closing round's patch grace and its span measurement.
   async runFinalRoundPatchGrace() { return synthesisHelpers.runFinalRoundPatchGrace.call(this); }
   async finishSynthesis(originalStatus) { return synthesisHelpers.finishSynthesis.call(this, originalStatus); }

@@ -15,7 +15,7 @@ import { parseReflections, safeParseJson } from "../../utils/db-parsing.js";
  *   full prompt context window (system_prompt, user_prompt, state_of_play,
  *   recent contributions used, reflection, patch outcome).
  * - Supporting evaluation tables: agent_errors,
- *   orchestrator_messages, artifact, forum, tool_audit, state_patches,
+ *   orchestrator_messages, artifact, tool_audit, state_patches,
  *   state_patch_summary.
  * - agent_states: per-agent skill.state final projection (replayed from
  *   patches) for evaluating whether SKILL.state tracked consensus.
@@ -117,14 +117,6 @@ export function exportTimeline(meetingId) {
       created_at: r.created_at,
     }));
   } catch { roundRows = []; }
-
-  let forum = [];
-  try {
-    const topics = this.getForumTopics();
-    forum = topics.map((t) => {
-      try { return this.getForumTopic(t.id); } catch { return t; }
-    });
-  } catch { forum = []; }
 
   // Per-agent skill.state final projection (retrospective evaluation): replay
   // each agent's state patches in version order to reconstruct the final Σⁱ —
@@ -273,7 +265,6 @@ export function exportTimeline(meetingId) {
     state_patch_summary: statePatchSummary,
     state_patches: statePatches,
     tool_audit: toolAudit,
-    forum,
     participants: participants,
     agent_states: agentStates,
     settled_items: settledItems,

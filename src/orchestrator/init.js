@@ -1,7 +1,6 @@
 import { getConfig } from "../config.js";
 import { resolveContextLimit } from "../utils/context-budget.js";
 import { MeetingDatabase } from "../database.js";
-import { seedSubProblemsTopic } from "../database/forum-operations.js";
 import { SessionManager } from "../session-manager.js";
 import { SynthesisCoordinator } from "../synthesis-coordinator.js";
 import { PersonaIndex } from "../services/persona-index.js";
@@ -78,34 +77,6 @@ import { extractErrorInfo } from "../logger.js";
         };
         db.upsertMeeting(meetingInput);
         this._logger.info("meeting_upserted", "Meeting row ensured in database");
-
-        // Forum cold-start seed (post-mortem 7811b8db §8): an optional forum
-        // with zero topics stays at zero uses — nobody volunteers to be the
-        // first writer over a live transcript that already carries shared
-        // memory. Seeding one room-owned side-channel topic gives the forum a
-        // designated job and a first reader via the State-of-Play forum
-        // digest. Never fatal: a seed failure only degrades the forum to
-        // its old cold-start behavior.
-        //
-        // The topic is authored by a REAL seat: forum_topics.author_id
-        // references participants(id), and the orchestrator is NOT a
-        // participant — it has its own area and is called last. Creating a
-        // participant row for a synthetic "orchestrator" author injected a
-        // phantom seat into the participants table, and the dashboard's
-        // participant list did not filter the 'summoned' status, so the
-        // orchestrator appeared in the active participant list the moment a
-        // meeting started. If no seat row exists, the seed simply declines.
-        try {
-          const toolsCfg = this._options.agentTools ?? getConfig().agentTools;
-          const forumEnabled = !!(toolsCfg?.enabled && toolsCfg?.loom?.loom_forum);
-          if (forumEnabled) {
-            const authorId = this._stateManager.getParticipants().find((p) => p?.config?.id)?.config?.id ?? null;
-            const seed = seedSubProblemsTopic(db, this._meetingId, this._options.question, { authorId });
-            if (seed?.id) this._logger.info("forum_seeded", `Seeded forum side-channel topic #${seed.id}`);
-          }
-        } catch (err) {
-          this._logger.warn("forum_seed_failed", "Forum seed skipped — forum still usable, just without a starter topic", extractErrorInfo(err));
-        }
       }
 
       // Ensure a real embedder is loaded; guard with 5s timeout so init never hangs indefinitely (init runs outside stall watchdog)
@@ -173,7 +144,7 @@ import { extractErrorInfo } from "../logger.js";
       // a turn that starts after a cancellation is aborted on arrival.
       this._roundExecutor.setHaltSignal?.(this.getHaltSignal?.() ?? null);
 
-      this._roundService = new RoundService({ roundExecutor: this._roundExecutor, stateManager: this._stateManager, db });
+      this._roundService = new RoundService({ roundExecutor: this._roundExecutor, stateManager: this._stateManager });
 
       this._logger.info("initialized", `Meeting ${this._resume ? "resumed" : "initialized"}`, { participants: this._stateManager.getParticipants().length, resumed: this._resume });
     } catch (err) {

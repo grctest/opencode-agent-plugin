@@ -272,9 +272,9 @@ export const SOP_CAPS = { items: 8, itemChars: 500, fileChars: 160 };
  * string, matching the heading by name even when it carries a suffix
  * ("## Forum Threads (cite in prose as [#T{id}])").
  *
- * Used by the agent prompt: the forum digest lives in the SoP so the clerk and
- * the synthesizer read it, but the agent also gets a dedicated, richer forum
- * block — rendering both duplicated every thread in every turn (audit C1).
+ * Legacy hygiene: the State of Play no longer carries a forum digest, but a
+ * STORED meeting's SoP text may still have one — strip it so a resumed
+ * meeting's prompt never renders a dead section as live instructions.
  *
  * @param {string} markdown
  * @param {string} name heading name to remove

@@ -15,7 +15,6 @@ export function CapabilitiesCard({ features, setFeature, isFrozen, readOnly, sec
         <div className="flex flex-col gap-2 rounded-lg border p-3">
           <div className="mb-1 text-sm font-medium">Agent capabilities</div>
           {[
-            ["forums", "Forums", "Allow participants to create, read, and discuss forum topics. Mandatory requires one forum tool call per active turn."],
             ["agentQueries", "Agent-to-agent queries", "Allow peer interaction tools: query, vote, summon, and request-next. Mandatory requires one eligible peer interaction when peers are available."],
             ["localSearch", "Local search", "Allow read, glob, and grep for project files. Mandatory requires one local search call per active turn."],
             ["onlineResearch", "Online research", "Allow websearch and webfetch. Mandatory requires one online research call per active turn."],

@@ -36,7 +36,6 @@ const DEFAULT_ORCHESTRATOR = {
   synthesisStyle: "decision_oriented",
 };
 const DEFAULT_FEATURES = {
-  forums: "optional",
   skillState: "on",
   agentQueries: "optional",
   localSearch: "optional",
@@ -191,7 +190,6 @@ function sanitizeForm(raw) {
   };
   const legacyAgentTools = rawFeatures.agentTools;
   const features = {
-    forums: normalizeMode(rawFeatures.forums, DEFAULT_FEATURES.forums),
     skillState: normalizeSkillState(rawFeatures.skillState, DEFAULT_FEATURES.skillState),
     agentQueries: normalizeMode(rawFeatures.agentQueries, DEFAULT_FEATURES.agentQueries),
     localSearch: normalizeMode(rawFeatures.localSearch, normalizeMode(legacyAgentTools, DEFAULT_FEATURES.localSearch)),

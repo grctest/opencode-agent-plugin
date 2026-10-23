@@ -93,10 +93,10 @@ test("user prompt renders Prior Searches block when evidenceCache provided", () 
     participantId: "analyst", round: 1, tool: "websearch",
     digest: "23 rounds", searches: 1,
   }];
-  const withCache = buildAgentUserPrompt(participant, "", [], 2, "Q", [], "", [], [], null, false, true, {}, { evidenceCache: cache });
+  const withCache = buildAgentUserPrompt(participant, "", [], 2, "Q", [], "", [], null, true, {}, { evidenceCache: cache });
   assert.match(withCache, /## Prior Searches — shared evidence cache/);
   assert.match(withCache, /"f1 2027 calendar" — analyst r1: 23 rounds/);
-  const without = buildAgentUserPrompt(participant, "", [], 2, "Q", [], "", [], [], null, false, true, {}, {});
+  const without = buildAgentUserPrompt(participant, "", [], 2, "Q", [], "", [], null, true, {}, {});
   assert.doesNotMatch(without, /## Prior Searches/);
 });
 

@@ -67,18 +67,16 @@ function availableSet(sys) {
   const m = sys.match(/Available: ([^\n]+)/);
   assert.ok(m, "Available line missing");
   const names = m[1].split(",").map((s) => s.trim()).filter(Boolean);
-  // Four forum tool names collapse to the loom_forum flag, like buildToolsMap.
-  return new Set(names.map((n) => (n.startsWith("loom_forum_") ? "loom_forum" : n)));
+  return new Set(names);
 }
 function offeredSet(agentTools, activeCount) {
   return new Set(
     Object.keys(buildToolsMap({ agentTools }, { activeCount, omitStatePatch: true }))
-      .map((n) => (n.startsWith("loom_forum_") ? "loom_forum" : n)),
+      .map((n) => n),
   );
 }
 for (const [label, mutate, activeCount] of [
   ["default", null, 5],
-  ["forum-off", (t) => { t.loom.loom_forum = false; }, 5],
   ["solo", null, 1],
 ]) {
   test(`described tools match offered tools (${label})`, () => {
@@ -101,15 +99,6 @@ test("state patch is hidden from the primary turn", () => {
   assert.doesNotMatch(sys, /loom_state_patch/);
   assert.doesNotMatch(sys.match(/Available: ([^\n]+)/)?.[1] ?? "", /loom_state_patch/);
   assert.doesNotMatch(sys, /ABSOLUTELY LAST tool use/);
-});
-
-// 3b. Forum descriptions vanish with the flag (not just the tool list).
-test("forum description block is gated on loom_forum", () => {
-  const off = cloneTools();
-  off.loom.loom_forum = false;
-  const sys = buildAgentSystemPrompt(participant(), { activeCount: 5, agentTools: off });
-  assert.doesNotMatch(sys, /loom_forum_create_topic/);
-  assert.doesNotMatch(sys, /Forum — async sub-discussions/);
 });
 
 // 4. Bias line grammar: no "you tend to Assumes".
@@ -238,7 +227,7 @@ test("system prompt cache busts on persona text edits", () => {
 
 // 9. First speaker gets an opener, not a citation demand.
 test("first speaker is not ordered to cite [#id]", () => {
-  const user = buildAgentUserPrompt(participant(), "", [], 1, "Q", [], "", [], [], null, false, true, {});
+  const user = buildAgentUserPrompt(participant(), "", [], 1, "Q", [], "", [], null, true, {});
   assert.match(user, /You are first/);
   assert.doesNotMatch(user, /engage at least one \[#id\]/);
 });
@@ -246,9 +235,9 @@ test("first speaker is not ordered to cite [#id]", () => {
 // 10. Roster example id comes from the roster, never invented.
 test("roster example id is drawn from the live roster", () => {
   const user = buildAgentUserPrompt(
-    participant(), "", [{ id: 1, participant_id: "x", content: "hi" }], 2, "Q", [], "", [],
+    participant(), "", [{ id: 1, participant_id: "x", content: "hi" }], 2, "Q", [], "",
     [{ id: "abc_1", name: "Abc", category: "mid", status: "listening", persona: "p" }],
-    { stance: "s", version: 1, updated_round: 1 }, true, true, {},
+    { stance: "s", version: 1, updated_round: 1 }, true, {},
   );
   assert.ok(user.includes('{target: "abc_1"'), "example id must be the first roster id");
   assert.doesNotMatch(user, /dr_sarah_3/);
@@ -256,9 +245,9 @@ test("roster example id is drawn from the live roster", () => {
 
 // 11. Round-phase doctrine reaches primary turns when maxRounds is known.
 test("primary user prompt carries round-phase guidance", () => {
-  const withPhase = buildAgentUserPrompt(participant(), "", [], 1, "Q", [], "", [], [], null, false, true, {}, { maxRounds: 4 });
+  const withPhase = buildAgentUserPrompt(participant(), "", [], 1, "Q", [], "", [], null, true, {}, { maxRounds: 4 });
   assert.match(withPhase, /Round phase/);
-  const withoutPhase = buildAgentUserPrompt(participant(), "", [], 1, "Q", [], "", [], [], null, false, true, {});
+  const withoutPhase = buildAgentUserPrompt(participant(), "", [], 1, "Q", [], "", [], null, true, {});
   assert.doesNotMatch(withoutPhase, /Round phase/);
 });
 
@@ -267,8 +256,8 @@ test("primary user prompt carries round-phase guidance", () => {
 // on deliberation and never names the patch tool.
 test("steering hint precedes the contribution closer", () => {
   const user = buildAgentUserPrompt(
-    participant(), "", [], 2, "Q", [], "", [], [], { stance: "s", version: 1, updated_round: 1 },
-    false, false, { skillState: true }, { steeringHint: "consolidate first", maxRounds: 4 },
+    participant(), "", [], 2, "Q", [], "", [], { stance: "s", version: 1, updated_round: 1 },
+    false, { skillState: true }, { steeringHint: "consolidate first", maxRounds: 4 },
   );
   const hint = user.indexOf("STEERING_HINT");
   assert.ok(hint > 0, "hint must render");
@@ -321,7 +310,7 @@ test("pass leaves carried state as-is", () => {
 // 15. Mandatory default parity: config default matches the Setup tab.
 test("mandatory defaults exist in config and schema", () => {
   assert.equal(DEFAULT_CONFIG.agentTools.mandatory?.skillState, true);
-  for (const k of ["forums", "skillState", "agentQueries", "localSearch", "onlineResearch"]) {
+  for (const k of ["skillState", "agentQueries", "localSearch", "onlineResearch"]) {
     assert.ok(NESTED_SCHEMA[`agentTools.mandatory.${k}`], `schema missing agentTools.mandatory.${k}`);
   }
 });

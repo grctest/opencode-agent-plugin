@@ -41,26 +41,7 @@ export async function promptChildSession(participant) {
   let timeoutMs = timeoutMsBase;
 
     const currentRound = this._stateManager.getCurrentRound();
-   const forumEnabled = !!(effectiveAgentTools?.enabled && effectiveAgentTools?.loom?.loom_forum);
    const mandatoryCapabilities = effectiveAgentTools?.mandatory ?? {};
-
-  // Forum topics for prompt — most recent activity first
-  let forumTopicsForPrompt = [];
-  if (forumEnabled) {
-    try {
-      const dbForForum = this._db ?? this._stateManager?.getDatabase?.() ?? null;
-      // Prefer the single-query activity-ordered prompt path over the N+1
-      // listForumTopics (one COUNT query per topic per turn) — audit A13.
-      if (dbForForum && typeof dbForForum.listForumTopicsForPrompt === "function") {
-        forumTopicsForPrompt = dbForForum.listForumTopicsForPrompt(10) ?? [];
-      } else if (dbForForum && typeof dbForForum.listForumTopics === "function") {
-        forumTopicsForPrompt = dbForForum.listForumTopics({}) ?? [];
-      } else if (this._stateManager?.getWeave) {
-        // Fallback: derive from contributions if DB not available (should not happen)
-        forumTopicsForPrompt = [];
-      }
-    } catch {}
-  }
 
   // SKILL.state O_t: latest-only observation — current-round live contributions only
   // (plan §5.1/§5.6; tightened from round >= cur-1, ≤20). Prior rounds arrive via
@@ -199,7 +180,6 @@ export async function promptChildSession(participant) {
   // the tool rules survive every level of degradation.
   let fitEvidence = evidenceCache;
   let fitRecent = recentForPrompt;
-  let fitForum = forumTopicsForPrompt;
   let fitSop = this._stateManager.getStateOfPlay();
   // Previous round's clerk summary (rounds >=2 only) — already paid for, already
   // high quality; routed to agents instead of only the dashboard.
@@ -234,10 +214,8 @@ export async function promptChildSession(participant) {
     fitQuestion,
     fitTags,
     fitContext,
-    fitForum,
     otherParticipantsForPrompt,
      myState,
-     forumEnabled,
      // Solo suppression: with ≤1 active participant loom_query/loom_vote are
      // removed from the tool map, so the roster must not be rendered either
      // (audit N7 — system prompt and tool map both said no, roster said yes).
@@ -280,8 +258,6 @@ export async function promptChildSession(participant) {
     () => { fitRecent = fitRecent.slice(-Math.max(4, Math.ceil(fitRecent.length / 2))); },
     // 3. Previous round's summary — the shared SoP already carries the same ground.
     () => { fitLastSummary = ""; },
-    // 4. Older forum topics — topic list is navigation aid, not evidence.
-    () => { fitForum = fitForum.slice(-Math.max(1, Math.ceil(fitForum.length / 2))); },
     // 5. Oldest SoP entries — the digest is append-ordered, so the head is the
     //    superseded part; drop it at an entry boundary to keep entries whole.
     //    A mid-entry cut leaves a fragment that reads as complete (paper Table 5:
@@ -307,14 +283,12 @@ export async function promptChildSession(participant) {
   const fitBase = {
     evidence: fitEvidence,
     recent: fitRecent,
-    forum: fitForum,
     sop: fitSop,
     lastSummary: fitLastSummary,
   };
   const restoreFitBase = () => {
     fitEvidence = fitBase.evidence;
     fitRecent = fitBase.recent;
-    fitForum = fitBase.forum;
     fitSop = fitBase.sop;
     fitLastSummary = fitBase.lastSummary;
   };

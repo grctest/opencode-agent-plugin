@@ -60,11 +60,6 @@ export function buildSynthesisPrompt(question, transcript, participants = [], ta
   const stateOfPlaySection = stateOfPlay
     ? `\n## State of Play (Final — PRIMARY source)\n${delimitContext(escapeDelimiters(sanitizeForDisplay(stateOfPlay, 20000)), "STATE_OF_PLAY")}\n`
     : "";
-  // The forum's actual discussion (audit G). The State of Play carries only
-  // thread titles and a short preview; the thinking itself is here, bounded.
-  const forumSection = opts.forumContent
-    ? `\n${delimitContext(escapeDelimiters(sanitizeForDisplay(String(opts.forumContent), 12000)), "FORUM_THREADS")}\n`
-    : "";
 
   // Dissent tracking is the orchestrator's job, not a regex's. It reads the full
   // transcript below and decides for itself what is live dissent, what was
@@ -97,10 +92,10 @@ export function buildSynthesisPrompt(question, transcript, participants = [], ta
 
   const groundingRule = isCode
     ? `1. **Grounding:** Group citations per evidence block — cite once as [#id] or State-of-Play or Source: https://… per block. If you synthesize a novel fix/code not present verbatim, mark it “Proposed — synthesized from [#id]” and keep it. Do not invent file contents not read via tool; if no file was read, qualify as “Proposed (unverified — no tool read)”. Never emit vec: round / vec round / [Round X vec — those are internal retrieval traces. Don’t spam [#id] per sentence; one grouped cite per block. The Agent States block (if present) is positions-only, never evidence — state bullets without a [#id] trail are unattributed positions, not findings.
-1b. **References resolve for a human:** every [#N] must appear at least once within its section paired with the participant’s NAME — “Ada [#2]” — before any bare [#id] repeats inside that block; a bare id a reader cannot resolve is a hole in the record. And close the artifact with ## References: one line per id you cited anywhere ([#N] and [#T{id}]) — who, which round, and one clause on what that contribution established. The index is a map, not a source — never cite it as evidence.
+1b. **References resolve for a human:** every [#N] must appear at least once within its section paired with the participant’s NAME — “Ada [#2]” — before any bare [#id] repeats inside that block; a bare id a reader cannot resolve is a hole in the record. And close the artifact with ## References: one line per id you cited anywhere ([#N]) — who, which round, and one clause on what that contribution established. The index is a map, not a source — never cite it as evidence.
 `
     : `1. **Grounding:** Group citations per paragraph/block — cite once as [#id] or State-of-Play or Source: https://… per block. If you synthesize a novel conclusion, mark it “Proposed — synthesized from [#id]” and keep it. Do not invent numbers/dates unsupported by transcript/State-of-Play. Do not reference files, diffs, or code you have not seen in the transcript. Never emit vec: / vec round — use [#id] or State-of-Play instead. Don’t spam citations. The Agent States block (if present) is positions-only, never evidence — state bullets without a [#id] trail are unattributed positions, not findings.
-1b. **References resolve for a human:** every [#N] must appear at least once within its section paired with the participant’s NAME — “Ada [#2]” — before any bare [#id] repeats inside that block; a bare id a reader cannot resolve is a hole in the record. And close the artifact with ## References: one line per id you cited anywhere ([#N] and [#T{id}]) — who, which round, and one clause on what that contribution established. The index is a map, not a source — never cite it as evidence.
+1b. **References resolve for a human:** every [#N] must appear at least once within its section paired with the participant’s NAME — “Ada [#2]” — before any bare [#id] repeats inside that block; a bare id a reader cannot resolve is a hole in the record. And close the artifact with ## References: one line per id you cited anywhere ([#N]) — who, which round, and one clause on what that contribution established. The index is a map, not a source — never cite it as evidence.
 `;
 
   // Section budgets derive from LENGTH_LIMITS (audit X4/3.6) — the prompt text
@@ -131,10 +126,9 @@ Total 1500-3500 words welcome; concise but thorough — preserve numbers verbati
   // misses. Shared by both task modes so the contract stays single-sourced.
   const referencesSection = `
 ## References
-The human-readable index for the ids cited above — the reader cannot resolve a bare [#N] on its own. One line per id, covering every [#N] and [#T{id}] you cite anywhere above:
+The human-readable index for the ids cited above — the reader cannot resolve a bare [#N] on its own. One line per id, covering every [#N] you cite anywhere above:
 
 - [#4] — Ada — Round 2 — reversibility favors the incremental path
-- [#T7] — forum thread — auth token rotation timing
 
 An id missing from this index is unresolvable to a reader — list ALL of them. The index is a map, not a source: do not cite it as evidence, and do not treat its lines as claims of their own.`;
 
@@ -216,7 +210,7 @@ ${modeNote}
 ## Original Question
 ${safeQuestion}
 ${tagContext ? `\n## Tags (topic)\n${tagContext}\n` : ""}
-${userContextSection}${stateOfPlaySection}${forumSection}${engagementSection}
+${userContextSection}${stateOfPlaySection}${engagementSection}
 ## Deliberation Transcript (supporting detail — cite [#id] when using it)
 ${safeTranscript}
 ${participantsSection}

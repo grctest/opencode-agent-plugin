@@ -4,7 +4,6 @@ import { Sidebar } from "./components/Sidebar.jsx";
 import { SetupTab } from "./components/SetupTab.jsx";
 import { OverviewTab } from "./components/OverviewTab.jsx";
 import { TimelineTab } from "./components/TimelineTab.jsx";
-import { ForumTab } from "./components/ForumTab.jsx";
 import { OutputTab } from "./components/OutputTab.jsx";
 import { RateLimitBanner } from "./components/RateLimitBanner.jsx";
 import { ErrorBoundary } from "./ErrorBoundary.jsx";
@@ -273,14 +272,13 @@ export function App() {
   const meetings = useMeetingsList();
   const { resetKey } = useSSEReset(selectedMeeting);
   const embeddingStatus = useEmbeddingStatus();
-  const { state, participants, contributions, orchestratorMessages, roundSummaries, agentErrors, artifact, forumTopics, error } = useMeetingApi(selectedMeeting, resetKey, meetings, setSelectedMeeting);
+  const { state, participants, contributions, orchestratorMessages, roundSummaries, agentErrors, artifact, error } = useMeetingApi(selectedMeeting, resetKey, meetings, setSelectedMeeting);
    const { rateLimit, dismiss: dismissRateLimit } = useRateLimit();
    useEffect(() => {
      if (state?.rate_limit_state) {
        window.dispatchEvent(new CustomEvent("loom-rate-limit", { detail: state.rate_limit_state }));
      }
    }, [state?.rate_limit_state]);
-   const forumsEnabled = state?.features?.forums !== "disabled";
    const handleSSEEvent = useCallback((data) => {
     if (data.type === "contributions") {
       const newContribs = data.data;
@@ -292,7 +290,6 @@ export function App() {
       else if (data.type === "artifact") window.dispatchEvent(new CustomEvent("loom-artifact", { detail: data.data }));
       else if (data.type === "orchestrator_messages") window.dispatchEvent(new CustomEvent("loom-orchestrator-messages", { detail: data.data }));
      else if (data.type === "round_summaries") window.dispatchEvent(new CustomEvent("loom-round-summaries", { detail: data.data }));
-     else if (data.type === "forum_update") window.dispatchEvent(new CustomEvent("loom-forum-update", { detail: data.data }));
      else if (data.type === "rate_limit") window.dispatchEvent(new CustomEvent("loom-rate-limit", { detail: data.data }));
      else if (data.type === "rate_limit_cleared") window.dispatchEvent(new CustomEvent("loom-rate-limit-cleared", { detail: data.data }));
   }, []);
@@ -358,9 +355,6 @@ export function App() {
   const contributionsByParticipant = useMemo(() => { const map = {}; for (const c of contributions) { const pid = c.participant_id; if (!map[pid]) map[pid] = {}; map[pid][c.round] = (map[pid][c.round] ?? 0) + 1; } return map; }, [contributions]);
   const contributionCountsByParticipant = useMemo(() => { const map = {}; for (const c of contributions) { const pid = c.participant_id; if (!map[pid]) map[pid] = { contributions: 0, reflections: 0 }; if (c.type === "reflection") map[pid].reflections++; else map[pid].contributions++; } return map; }, [contributions]);
   const toggleRoundCollapse = useCallback((round) => { setCollapsedRounds((prev) => prev.includes(round) ? prev.filter((r) => r !== round) : [...prev, round]); }, [setCollapsedRounds]);
-   useEffect(() => {
-     if (state && !forumsEnabled && activeTab === "forum") setActiveTab("timeline");
-   }, [activeTab, forumsEnabled, state]);
    const isWeaving = state?.status === "weaving";
   const activeRound = state?.round ?? 0;
   const totalRounds = state?.max_rounds ?? 0;
@@ -405,7 +399,6 @@ export function App() {
                 <TabsTrigger value="setup">Setup</TabsTrigger>
                 <TabsTrigger value="overview">Overview</TabsTrigger>
                 <TabsTrigger value="timeline">Timeline</TabsTrigger>
-                 {forumsEnabled && <TabsTrigger value="forum">Forum</TabsTrigger>}
                 <TabsTrigger value="output">Output</TabsTrigger>
               </TabsList>
               <ErrorBoundary fallbackMessage="Failed to render extension banner">
@@ -464,17 +457,6 @@ export function App() {
                   />
                 </ErrorBoundary>
               </TabsContent>
-               {forumsEnabled && (
-                 <TabsContent value="forum" className="pt-4">
-                   <ErrorBoundary fallbackMessage="Failed to render the forum tab">
-                     <ForumTab
-                       forumTopics={forumTopics}
-                       participantName={participantName}
-                       selectedMeeting={selectedMeeting}
-                     />
-                   </ErrorBoundary>
-                 </TabsContent>
-               )}
               <TabsContent value="output" className="pt-4">
                 <ErrorBoundary fallbackMessage="Failed to render the output tab">
                      <OutputTab artifact={artifact} status={state?.status} participants={participants} />

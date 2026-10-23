@@ -8,19 +8,9 @@ export function getState() {
       )
       .get();
     if (!row) return null;
-    if (row.feature_toggles_json) {
-      try {
-        const rawFeatures = JSON.parse(row.feature_toggles_json);
-        row.features = {
-          ...rawFeatures,
-          forums: rawFeatures?.forums === false ? "disabled" : rawFeatures?.forums === true ? "optional" : (rawFeatures?.forums ?? "optional"),
-        };
-      } catch {
-        row.features = { forums: "optional" };
-      }
-    } else {
-      row.features = { forums: "optional" };
-    }
+    row.features = row.feature_toggles_json
+      ? (() => { try { return JSON.parse(row.feature_toggles_json); } catch { return {}; } })()
+      : {};
     if (row.orchestrator_config_json) {
       try {
         row.orchestrator = JSON.parse(row.orchestrator_config_json);
@@ -367,87 +357,4 @@ export function getContributionsSince(sinceId, limit = 500) {
     return mergeAuditsIntoContributions.call(this, rows);
 }
 
-export function getForumTopics(tag) {
-    let rows;
-    if (tag) {
-      rows = this._db
-        .prepare(
-          `SELECT id, title, tags, author_id, created_at
-           FROM forum_topics
-           WHERE tags IS NOT NULL AND tags LIKE ?
-           ORDER BY created_at DESC`,
-        )
-        .all(`%${tag}%`);
-    } else {
-      rows = this._db
-        .prepare(
-          `SELECT id, title, tags, author_id, created_at
-           FROM forum_topics
-           ORDER BY created_at DESC`,
-        )
-        .all();
-    }
-    return rows.map((r) => {
-      const countRow = this._db
-        .prepare(`SELECT COUNT(*) as cnt FROM forum_comments WHERE topic_id = ?`)
-        .get(r.id);
-      let tags = [];
-      try { tags = JSON.parse(r.tags); } catch {}
-      return {
-        id: r.id,
-        title: r.title,
-        tags,
-        author_id: r.author_id,
-        comment_count: countRow?.cnt ?? 0,
-        created_at: r.created_at,
-      };
-    });
-  }
-
-export function getForumTopic(topicId) {
-    const topic = this._db
-      .prepare(
-        `SELECT id, title, body, tags, author_id, created_at, updated_at
-         FROM forum_topics WHERE id = ?`,
-      )
-      .get(topicId);
-    if (!topic) return null;
-
-    const comments = this._db
-      .prepare(
-        `SELECT id, author_id, body, created_at
-         FROM forum_comments WHERE topic_id = ?
-         ORDER BY created_at ASC`,
-      )
-      .all(topicId);
-
-    let tags = [];
-    try { tags = JSON.parse(topic.tags); } catch {}
-
-    return {
-      id: topic.id,
-      title: topic.title,
-      body: topic.body,
-      tags,
-      author_id: topic.author_id,
-      created_at: topic.created_at,
-      updated_at: topic.updated_at,
-      comments: comments.map((c) => ({
-        id: c.id,
-        author_id: c.author_id,
-        body: c.body,
-        created_at: c.created_at,
-      })),
-    };
-  }
-
-export function getMaxForumTopicId() {
-    const row = this._db.prepare(`SELECT MAX(id) as max_id FROM forum_topics`).get();
-    return row?.max_id ?? 0;
-  }
-
-export function getMaxForumCommentId() {
-    const row = this._db.prepare(`SELECT MAX(id) as max_id FROM forum_comments`).get();
-    return row?.max_id ?? 0;
-  }
 

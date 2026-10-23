@@ -181,44 +181,6 @@ test("clerk referee duties are always-on, even when operator customInstructions 
   assert.match(custom, /decision rule \(trigger \+ date \+ owner\) exists/);
 });
 
-test("clerk prompt carries a forum snapshot taken from the passed rows, absent without them", () => {
-  // Post-mortem 7811b8db §8: the summary was the third reader the forum
-  // content never reached. The block appears only when the caller supplied
-  // topic rows (round-service with a db), so covered meetings shift nothing.
-  const withForum = buildRoundSummaryUser(
-    { number: 2, contributions: [{ id: 1, participant_id: "agent", type: "contribution", content: "Position." }] },
-    { question: "Q", tags: [] },
-    [],
-    {},
-    { roster: [{ id: "a", contributions_count: 1, status: "listening" }], forumTopics: [
-      { id: 12, title: "Denominator collapses", comment_count: 3 },
-      { id: 15, title: "Data need", comment_count: 0 },
-    ] },
-  );
-  assert.match(withForum, /## Forum Threads \(async side-channel\)/);
-  assert.match(withForum, /\[#T12\] “Denominator collapses” — 3 replies/);
-  assert.match(withForum, /\[#T15\] “Data need” — 0 replies/);
-  assert.match(withForum, /was it opened\/answered/);
-
-  const withoutForum = buildRoundSummaryUser(
-    { number: 2, contributions: [{ id: 1, participant_id: "agent", type: "contribution", content: "Position." }] },
-    { question: "Q", tags: [] },
-    [],
-    {},
-    { roster: [{ id: "a", contributions_count: 1, status: "listening" }] },
-  );
-  assert.doesNotMatch(withoutForum, /Forum Threads/);
-
-  const emptyForum = buildRoundSummaryUser(
-    { number: 2, contributions: [{ id: 1, participant_id: "agent", type: "contribution", content: "Position." }] },
-    { question: "Q", tags: [] },
-    [],
-    {},
-    { roster: [{ id: "a", contributions_count: 1, status: "listening" }], forumTopics: [] },
-  );
-  assert.doesNotMatch(emptyForum, /Forum Threads/);
-});
-
 // Audit C2 — the clerk's State-of-Play excerpt must carry WHOLE items. It
 // used to be a 600-char slice of the document, which — because the SoP opens
 // with `## Question` and `## Tags` — usually carried the question and cut the

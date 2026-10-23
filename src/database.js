@@ -7,7 +7,6 @@ import { ensureDb, getDatabaseClass, isoNow, safeParseJsonArray, isDrvFsPath, wi
 import { maintenanceDue, markMaintained, checkIntegrity, cleanupOldErrors, checkpointWal, vacuumIfNeeded } from "./database/maintenance.js";
 import * as meetingOps from "./database/meeting-operations.js";
 import * as contribOps from "./database/contribution-operations.js";
-import * as forumOps from "./database/forum-operations.js";
 import * as toolAuditOps from "./database/tool-audit-operations.js";
 import * as statePatchOps from "./database/state-patch-operations.js";
 import { loadSessionIndex, indexMeeting as _indexMeeting, unindexMeeting as _unindexMeeting, getDatabasesBySessionId as _getDatabasesBySessionId } from "./database/session-index.js";
@@ -250,20 +249,6 @@ export class MeetingDatabase {
   getParticipantModel(participantId) { return contribOps.getParticipantModel(this.#db, this.#meetingId, participantId); }
   saveMeetingMetrics(metrics) { const r = contribOps.saveMeetingMetrics(this.#db, this.#meetingId, metrics); this.#notify("meeting_metrics"); return r; }
   getRecentMeetingMetrics(limit = 20) { return contribOps.getRecentMeetingMetrics(this.#db, limit); }
-
-  createForumTopic({ title, body, tags, authorId }) {
-    const r = forumOps.createTopic(this.#db, this.#meetingId, { title, body, tags, authorId });
-    this.#notify("forum_topics");
-    return r;
-  }
-  listForumTopics({ tag } = {}) { return forumOps.listTopics(this.#db, this.#meetingId, { tag }); }
-  listForumTopicsForPrompt(limit = 10) { return forumOps.listTopicsForPrompt(this.#db, this.#meetingId, limit); }
-  getForumTopic(topicId) { return forumOps.getTopic(this.#db, this.#meetingId, topicId); }
-  addForumComment(topicId, { body, authorId }) {
-    const r = forumOps.addComment(this.#db, this.#meetingId, topicId, { body, authorId });
-    if (r) this.#notify("forum_comments");
-    return r;
-  }
 
   addToolAudit({ participantId, round, batchId, tool, input, output, status, title }) {
     const r = toolAuditOps.addToolAudit(this.#db, this.#meetingId, { participantId, round, batchId, tool, input, output, status, title });

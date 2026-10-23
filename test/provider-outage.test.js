@@ -2,7 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { initSchema } from "../src/database/schema.js";
-import { seedSubProblemsTopic } from "../src/database/forum-operations.js";
 import { ensureParticipantRow } from "../src/database/contribution-operations.js";
 import { isProviderUnavailableError, classifyProviderUnavailableError, isRetryableError, isInputRejectionError } from "../src/utils/retry.js";
 
@@ -60,59 +59,12 @@ test("an aborted turn is recognised as an abort, not a failure", () => {
 });
 
 // ---------------------------------------------------------------------------
-// P3 — the forum's starter topic, and the orchestrator's isolation.
+// P3 — seat integrity.
 //
-// forum_topics.author_id REFERENCES participants(id), so the seed needs an
-// author row. An earlier version satisfied the FK by creating a participant row
-// for a synthetic author "orchestrator" — which put a phantom seat into the
-// participants table, and the dashboard's participant list did not filter the
-// 'summoned' status, so the orchestrator appeared in the active participant
-// list the moment a meeting started.
-//
-// The orchestrator is not a participant: it has its own area and is called
-// last. The seed is authored by a real seat, and it never invents one.
-test("the forum seed creates its topic without inventing a participant", () => {
-  const db = new DatabaseSync(":memory:");
-  initSchema(db);
-  db.exec("PRAGMA foreign_keys = ON;");
-  // The meeting and a real participant, as init() would have created them.
-  db.prepare("INSERT INTO meetings (id, question, status, max_rounds, convergence, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
-    "m-1", "Should we ship?", "weaving", 4, "none", new Date().toISOString(), new Date().toISOString(),
-  );
-  db.prepare("INSERT INTO participants (id, meeting_id, name, persona, agenda, category, status) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
-    "p-1", "m-1", "Ada", "persona", "agenda", "mid", "listening",
-  );
-
-  const before = db.prepare("SELECT id FROM participants ORDER BY id").all().map((r) => r.id);
-  const seed = seedSubProblemsTopic(db, "m-1", "Should we ship?", { authorId: "p-1" });
-  assert.ok(seed?.id, "the seed must create a topic");
-  const row = db.prepare("SELECT id, title, author_id FROM forum_topics WHERE id = ?").get(seed.id);
-  assert.ok(row, "the topic must be in the table");
-  // The author is a REAL seat.
-  assert.equal(row.author_id, "p-1");
-  // And the participants table is untouched — no phantom orchestrator seat.
-  const after = db.prepare("SELECT id FROM participants ORDER BY id").all().map((r) => r.id);
-  assert.deepEqual(after, before, "the seed must not add a participant row");
-  assert.ok(!after.includes("orchestrator"), "the orchestrator is not a participant");
-  // A second call is a no-op (idempotent).
-  assert.equal(seedSubProblemsTopic(db, "m-1", "Should we ship?", { authorId: "p-1" }), null);
-});
-
-test("the forum seed declines rather than inventing an author row", () => {
-  const db = new DatabaseSync(":memory:");
-  initSchema(db);
-  db.exec("PRAGMA foreign_keys = ON;");
-  db.prepare("INSERT INTO meetings (id, question, status, max_rounds, convergence, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
-    "m-3", "Should we ship?", "weaving", 4, "none", new Date().toISOString(), new Date().toISOString(),
-  );
-  // No author at all, and an author that has no seat row: both must decline
-  // (degraded, not fatal) and leave the participants table alone.
-  assert.equal(seedSubProblemsTopic(db, "m-3", "Should we ship?"), null);
-  assert.equal(seedSubProblemsTopic(db, "m-3", "Should we ship?", { authorId: "nobody" }), null);
-  assert.equal(db.prepare("SELECT COUNT(*) c FROM participants").get().c, 0, "no participant row may be created");
-  assert.equal(db.prepare("SELECT COUNT(*) c FROM forum_topics").get().c, 0, "no topic without an author");
-});
-
+// Participants is a seat table: the orchestrator is not a participant (it has
+// its own area and is called last), and a summoned guest expert is not a seat.
+// The dashboard's participant list must exclude summoned rows, and the
+// participant-row helper must be idempotent.
 test("a non-seat participant row never appears in the participant list", () => {
   const db = new DatabaseSync(":memory:");
   initSchema(db);

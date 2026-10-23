@@ -124,7 +124,6 @@ export const DEFAULT_CONFIG = {
       loom_vote: true,
       loom_summon: true,
       loom_pass: true,
-      loom_forum: true,
       loom_state_patch: true,
     },
     sameTurnSynthesis: true,
@@ -137,7 +136,6 @@ export const DEFAULT_CONFIG = {
     // The salience surfaces in prompts/agent.js (neutral carry-forward note;
     // the primary never names the tool).
     mandatory: {
-      forums: false,
       skillState: true,
       agentQueries: false,
       localSearch: false,
@@ -194,11 +192,9 @@ export const NESTED_SCHEMA = {
   'agentTools.loom.loom_vote': { type: 'boolean' },
   'agentTools.loom.loom_summon': { type: 'boolean' },
   'agentTools.loom.loom_pass': { type: 'boolean' },
-  'agentTools.loom.loom_forum': { type: 'boolean' },
   'agentTools.loom.loom_state_patch': { type: 'boolean' },
   'agentTools.sameTurnSynthesis': { type: 'boolean' },
   'agentTools.buildMode': { type: 'boolean' },
-  'agentTools.mandatory.forums': { type: 'boolean' },
   'agentTools.mandatory.skillState': { type: 'boolean' },
   'agentTools.mandatory.agentQueries': { type: 'boolean' },
   'agentTools.mandatory.localSearch': { type: 'boolean' },
@@ -219,7 +215,9 @@ export const DEPRECATED_KEYS = {
   'turnRequestThresholds.autoGrant': 'dormant by design — turn order is orchestrator-decided, not autoGrant; key removed',
   'agentTools.loom.loom_evidence': 'merged into loom_query with mode evidence — use loom_query with mode evidence instead',
   'agentTools.loom.loom_type': 'removed — primary agent turns are no longer typed, following agents interpret content directly',
-  'agentTools.loom.loom_vector_search': 'removed — use loom_forum or loom_query for prior context; fabric RAG deleted',
+  'agentTools.loom.loom_vector_search': 'removed — use loom_query for prior context; fabric RAG deleted',
+  'agentTools.loom.loom_forum': 'removed — the side-thread forum was deleted; engage the room via loom_query or let a claim rest',
+  'agentTools.mandatory.forums': 'removed with the forum — capability no longer exists',
   'agentTools.patchRetry': 'removed — no enforcement follow-up call exists; mandatory flags drive prompt emphasis only, a miss is logged and the turn stands',
   'agentTools.maxToolCallsPerTurn': 'removed — agents may make unlimited tool calls per turn; key ignored',
   'agentTools.maxQueryTargetsPerTurn': 'removed — loom_query accepts unlimited targets per call; key ignored',

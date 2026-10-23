@@ -12,7 +12,7 @@ import { StateManager } from "../src/services/state-manager.js";
 // Before these, deliberation 1355a723 reported `agent_errors: 0`, an empty
 // error_log, and 118/118 tool_audit rows `completed` — while four
 // contributions described rejected state patches and one described a failed
-// forum read that left no audit row at all. The health tables were measuring
+// tool call that left no audit row at all. The health tables were measuring
 // nothing, and the mechanism-mix question (16 ballots, 3 objections) had no
 // place to be asked.
 

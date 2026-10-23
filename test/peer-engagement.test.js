@@ -31,11 +31,11 @@ test("findUncitedPlainContributions ignores responses and ballots", () => {
   assert.equal(findUncitedPlainContributions([WEAVE[2]]).length, 0);
 });
 
-test("a plain contribution citing a forum thread counts as engaged", () => {
-  // Post-mortem 7811b8db §8 cause 2: a `[#T{id}]` thread cite carried no credit
-  // in the [#id] economy, so the graded contract pushed agents to peer queries
-  // over the forum. A thread is a peer channel (its authors are participants),
-  // so a thread cite now satisfies the engagement check.
+test("a plain contribution citing a legacy thread id counts as engaged", () => {
+  // Post-mortem 7811b8db cause 2, kept for STORED meeting prose: a `[#T{id}]`
+  // thread cite carried no credit in the [#id] economy, pushing agents to peer
+  // queries over the side-channel. The channel is gone, but the regex stays
+  // tolerant so a stored contribution still satisfies the engagement check.
   const threadEngaged = WEAVE[1] ? [...WEAVE, { id: 7, type: "contribution", round: 2, participant_id: "c", content: "Parked the data-need on the side channel [#T12] until the floor lands." }] : WEAVE;
   const uncited = findUncitedPlainContributions(threadEngaged);
   assert.deepEqual(uncited.map((c) => c.id), [2]);

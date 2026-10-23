@@ -47,7 +47,7 @@ export function auditLoomTool({ db, stateManager, caller, meetingId, tool, input
 /**
  * N6 — a refusal is a fact, not a non-event. tool_audit recorded what was
  * invoked, never what succeeded, so four rejected state patches and a failed
- * forum read left a database reporting a flawless run. Every refusal now
+ * query left a database reporting a flawless run. Every refusal now
  * writes an audit row with a non-completed status AND a named degraded reason,
  * so a monitor built on these tables is measuring something.
  *

@@ -91,70 +91,6 @@ export async function runFinalRoundPatchGrace() {
   return { attempted, patched, failed };
 }
 
-/**
- * The forum's actual discussion, bounded, for the synthesis context (audit G).
- *
- * The State of Play carries thread TITLES and a 160-character preview, so the
- * room's forum thinking never reached the synthesizer — while the agent prompt
- * tells participants "writing here is writing to the room", and the measured
- * reality was that no recorded meeting ever opened a thread.
- *
- * Bounded on purpose: up to 3 threads, the last 2 comments each, 300 chars per
- * comment. Best-effort — a failure here degrades to "no forum content", never
- * to a failed synthesis.
- *
- * @returns {string} markdown, or "" when the forum is unused
- */
-export function _collectForumContent() {
-  try {
-    const db = this._database;
-    if (!db?.listForumTopicsForPrompt) return "";
-    const topics = db.listForumTopicsForPrompt(3) ?? [];
-    if (!Array.isArray(topics) || topics.length === 0) return "";
-    const lines = [];
-    for (const t of topics) {
-      if (t?.id === undefined || t?.id === null) continue;
-      const title = String(t.title ?? "(untitled)").replace(/\s+/g, " ").trim();
-      const body = String(t.body ?? "").replace(/\s+/g, " ").trim().slice(0, 400);
-      const comments = [];
-      try {
-        const topic = db.getForumTopic?.(t.id);
-        const list = Array.isArray(topic?.comments) ? topic.comments : [];
-        for (const c of list.slice(-2)) {
-          const text = String(c?.body ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
-          if (text) comments.push(`- [${c?.author_id ?? "?"}]: ${text}`);
-        }
-      } catch {}
-      lines.push(`### [${t.id}] ${title}${body ? `\n${body}` : ""}${comments.length ? `\n${comments.join("\n")}` : ""}`);
-    }
-    if (lines.length === 0) return "";
-    return `## Forum Threads (the room's side-channel discussion — this IS the room's thinking, not a title list)\n${lines.join("\n")}`;
-  } catch {
-    return "";
-  }
-}
-
-/**
- * The id→title map the final artifact's reference index resolves [#T{id}]
- * refs against. Every thread the room created travels, not only the three the
- * content digest carries: a cited thread id must resolve for a human reader.
- *
- * @returns {Array<{id: number|string, title: string}>|null}
- */
-export function _collectForumTopics() {
-  try {
-    const db = this._database;
-    if (!db?.listForumTopicsForPrompt) return null;
-    const topics = db.listForumTopicsForPrompt(50) ?? [];
-    if (!Array.isArray(topics)) return null;
-    return topics
-      .filter((t) => t?.id !== undefined && t?.id !== null)
-      .map((t) => ({ id: t.id, title: String(t.title ?? "(untitled)").replace(/\s+/g, " ").trim() }));
-  } catch {
-    return null;
-  }
-}
-
 export async function _synthesize() {
     const participants = this._stateManager.getParticipants();
     const currentRound = this._stateManager.getCurrentRound();
@@ -189,13 +125,6 @@ export async function _synthesize() {
       return txt !== "";
     });
     const stateOfPlay = this._stateManager.getStateOfPlay();
-    // The forum's actual discussion, bounded (audit G). The State of Play
-    // carries only thread TITLES and a 160-character preview, so the room's
-    // forum thinking never reached the synthesizer — while the agent prompt
-    // tells participants "writing here is writing to the room". Up to 3
-    // threads, the last 2 comments each, 300 chars per comment.
-    const forumContent = this._collectForumContent();
-    const forumTopics = this._collectForumTopics();
     if (substantiveForSynthesis.length === 0 && !String(stateOfPlay ?? "").trim()) {
       const reason = failed > 0
         ? `All ${participants.length} participants encountered errors during the deliberation.`
@@ -268,8 +197,6 @@ export async function _synthesize() {
           this._notifyUpdate();
         },
         stateOfPlay,
-        forumContent,
-        forumTopics,
         userContext: this._stateManager.getContext?.() ?? "",
         onActivity: () => { try { this._stallWatchdog.touch(); } catch {} },
       });

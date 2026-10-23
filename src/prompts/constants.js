@@ -30,7 +30,7 @@ export const LENGTH_LIMITS = Object.freeze({
 // Shared tool-ladder wording — single source of truth so the system-prompt
 // ladder and the query/evidence/reflection guidance cannot drift apart.
 export const TOOL_LADDER_LINE =
-  "loom_query/loom_forum (recall what was said via peers/forum) → websearch (verify current fact) → read/grep/glob (verify local file + LIVE edits) → webfetch (deep dive ONLY after a search hit) → write/edit (apply fix when in build mode)";
+  "loom_query (recall what was said via peers) → websearch (verify current fact) → read/grep/glob (verify local file + LIVE edits) → webfetch (deep dive ONLY after a search hit) → write/edit (apply fix when in build mode)";
 export const TOOL_FAILURE_LINE =
   'If tool returns error or 0 hits, write "evidence unavailable — searched X, 0 hits" and proceed with an experience-qualified claim. Do not retry the identical query; reformulate or acknowledge the gap. Claim "evidence unavailable" ONLY when a tool actually errored or returned empty — check each tool result\'s status before writing it: a completed call that returned an answer is never "unavailable", and treating it as such is non-engagement, not failure handling.';
 export const CITATION_LINE =

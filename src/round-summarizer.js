@@ -123,11 +123,9 @@ export function filterRoundSummaryContributions(contributions = []) {
   });
 }
 
-// Peer engagement regex: plain `[#id]` citations plus `[#T{id}]` thread cites
-// (the forum side-channel is a peer channel — a thread authored by another
-// participant counts as engagement, and a thread an agent opened and cited
-// back still implies sub-discussion; self-cite tracking stays id-keyed to the
-// weave below, where topics never appear).
+// Peer engagement regex: plain `[#id]` citations, tolerant of legacy `[#T{id}]`
+// thread cites in STORED meeting prose (the deleted forum side-channel; kept so
+// old contributions still count as engagement without resurrecting anything).
 const PEER_CITATION_RE = /\[#T?\d+\]/;
 
 /**
@@ -308,22 +306,6 @@ export function buildRoundSummaryUser(round, state, participantStates = [], orch
         return `\n## State of Play (prior rounds — what was already established)\n${delimitContext(items.join("\n"), "PRIOR_STATE_OF_PLAY")}\n`;
       })()
     : "";
-  // Forum snapshot (read passes 5 latest-activity topics; absent when the
-  // caller has no forum surface — covered meetings keep the block out). One
-  // bounded line per thread so a lively forum can't crowd the clerk budget.
-  const forumRows = Array.isArray(opts.forumTopics) ? opts.forumTopics : [];
-  const forumActivity = forumRows
-    .map((t) => {
-      const id = t.id;
-      if (id === undefined || id === null || id === "") return null;
-      const title = sanitizeForDisplay(String(t.title ?? ""), 80).replace(/\s+/g, " ").trim() || "(untitled)";
-      const count = Number(t.comment_count ?? 0);
-      return `- [#T${id}] “${title}” — ${count} ${count === 1 ? "reply" : "replies"}`;
-    })
-    .filter(Boolean);
-  const forumBlock = forumActivity.length > 0
-    ? `\n## Forum Threads (async side-channel)\n${forumActivity.join("\n")}\n\n_If a thread moved positions this round, say so in an Established/Contested bullet: was it opened/answered, and by whom._\n`
-    : "";
   // P7 — Citation engagement: report plain contributions that have no peer
   // [#id] citation so the clerk can flag isolated contributions.
   const uncitedPlains = findUncitedPlainContributions(round.contributions);
@@ -343,7 +325,7 @@ export function buildRoundSummaryUser(round, state, participantStates = [], orch
 
 ## Question
 ${state.question || "(no question provided)"}
-${roundContextLine}${rosterBlock}${turnOrderBlock}${sopExcerpt}${forumBlock}
+${roundContextLine}${rosterBlock}${turnOrderBlock}${sopExcerpt}
 ## Round ${round.number || "?"} Contributions
 ${formattedContributions}
 ${uncitedBlock}${evidenceHint}${stateHint}
