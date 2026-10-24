@@ -9,7 +9,8 @@ import { sanitizeForDisplay, sanitizeAgentOutput } from "./utils/sanitize.js";
 import { CircuitBreaker } from "./utils/retry.js";
 import { selectFallbackModel } from "./services/model-service.js";
 import { loadGlobalHealth, markGlobalUnhealthy } from "./services/global-model-health.js";
-import { isAbortError } from "./utils/retry.js";
+import { isAbortError, isHardRateLimitError } from "./utils/retry.js";
+import { isBlocked as isUsageLimitBlocked, getAbortReason as getUsageLimitAbortReason } from "./services/usage-limit-monitor.js";
 import { incrementKeyedCounter, recordLatency } from "./metrics.js";
 import { degrade } from "./utils/degrade.js";
 import { randomUUID } from "node:crypto";
@@ -51,6 +52,10 @@ export class RoundExecutor {
     this._failureCounts = new Map();
     this._modelFailureTimes = new Map();
     this._logger = new Logger();
+    // Counter glossary (plan P0.4):
+    //   agent_prompts      = primary turns + patch tails (one per primary turn).
+    //   reflection_calls   = orchestrator-level reflection passes (NOT perspective-driven reflection updates, which are written by the perspective side-effect and counted nowhere here).
+    //   sub_agent_calls    = per-target ephemeral prompts (one per target; a multi-query loom_query call with N targets counts N).
     this._callStats = { agent_prompts: 0, reflection_calls: 0, sub_agent_calls: 0 };
     const cbConfig = getConfig().circuitBreaker;
     this._circuitBreaker = new CircuitBreaker({
@@ -246,6 +251,18 @@ export class RoundExecutor {
         promptRes = { result: null, error: new Error("promptChildSession returned null/undefined") };
       }
       const { result, error } = promptRes;
+      // Hard usage limit: rethrow so runRound's catch arms the rate-limit halt
+      // (status rate_limited + sticky abort). Must run BEFORE the halted/abort
+      // branch — haltForUsageLimit sets isHalted, which would otherwise swallow
+      // the error as a "stopped on purpose" abort.
+      if (error && (isHardRateLimitError(error) || isUsageLimitBlocked())) {
+        const limitErr = (isHardRateLimitError(error) ? error : null) ?? getUsageLimitAbortReason() ?? error;
+        this._logger.warn("usage_limit_rethrow", `${p.config.name} — hard usage limit, rethrowing to halt the meeting`, {
+          participant: p.config.id, round: round.number,
+          type: limitErr?.rateLimitClassification?.type ?? null,
+        });
+        throw limitErr;
+      }
       // A turn that was ABORTED is not a failed participant — the meeting was
       // stopped on purpose. Recording it as "failed" would (a) show a red
       // error the user never caused and (b) exclude the seat from a later
@@ -425,6 +442,38 @@ export class RoundExecutor {
       if (!atomicStatePatch) {
         atomicStatePatch = this._takeTailAtomic(pid, contribution);
       }
+      // Reconcile the per-turn patch outcome now that the resolved version is
+      // known: the tail's own statePatchVersion may be null when the patch
+      // landed via the atomic (contribution+state) path, which previously left
+      // prompt_context stuck at "unverified" for applied patches.
+      try {
+        const resolvedVersion = tail?.statePatchVersion ?? atomicStatePatch?.version ?? null;
+        const { outcome, detail } = computePatchOutcome({
+          patchEnabled: true,
+          statePatchVersion: resolvedVersion,
+          loomPassCall: null,
+          tailRejected: tail?.tailRejected,
+          tailAttempted: tail?.tailAttempted ?? true,
+          tailDetail: tail?.tailDetail,
+          finalToolResults: tail?.finalToolResults,
+        });
+        const ctx = contribution.prompt_context;
+        if (ctx && typeof ctx === "object") {
+          ctx.state_patch_outcome = outcome;
+          if (detail) ctx.state_patch_detail = detail;
+          else delete ctx.state_patch_detail;
+        }
+        const rctx = result.prompt_context;
+        if (rctx && typeof rctx === "object") {
+          rctx.state_patch_outcome = outcome;
+          if (detail) rctx.state_patch_detail = detail;
+          else delete rctx.state_patch_detail;
+        }
+        if (resolvedVersion != null) {
+          result.state_patch = { version: resolvedVersion };
+          contribution.state_patch = { version: resolvedVersion };
+        }
+      } catch {}
       this._persistStagedContribution(p, contribution, round, result, atomicStatePatch);
     } catch (err) {
       try {

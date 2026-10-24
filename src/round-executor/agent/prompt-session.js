@@ -3,7 +3,8 @@ import { getConfig, resolveBuiltInTools, resolveLoomTools } from "../../config.j
 import { extractAgentResponse, mapToolResults, extractFileBlockTools } from "../../shared.js";
 import { parseAgentResponse } from "../../validation.js";
 import { sanitizeAgentOutput } from "../../utils/sanitize.js";
-import { withRetry, isRetryableError, isProviderUnavailableError, isAbortError } from "../../utils/retry.js";
+import { withRetry, isRetryableError, isProviderUnavailableError, isAbortError, isHardRateLimitError } from "../../utils/retry.js";
+import { isBlocked as isUsageLimitBlocked, getAbortReason as getUsageLimitAbortReason } from "../../services/usage-limit-monitor.js";
 import { selectFallbackModel } from "../../services/model-service.js";
 import { incrementKeyedCounter, recordLatency } from "../../metrics.js";
 import { extractErrorInfo } from "../../logger.js";
@@ -539,6 +540,19 @@ export async function promptChildSession(participant) {
         return { result: null, error: err };
       }
 
+      // Hard usage limit (free_tier / Go account): another model hits the same
+      // wall, synthesis recovery would hang the same way, and the retry ladder
+      // used to burn the full timeout budget per attempt. Stop here; the round
+      // executor rethrows so the orchestrator sets rate_limited + sticky halt.
+      if (isHardRateLimitError(err) || isUsageLimitBlocked()) {
+        const finalErr = (isHardRateLimitError(err) ? err : null) ?? getUsageLimitAbortReason() ?? err;
+        this._logger.warn("usage_limit_stop", `${participant.config.name} — hard usage limit, stopping retry/fallback ladder (${info.message})`, {
+          participant: participant.config.id, round: currentRound, attempt,
+          type: finalErr?.rateLimitClassification?.type ?? null,
+        });
+        return { result: null, error: finalErr };
+      }
+
       // A PROVIDER OUTAGE is a model failure, not a bad request: the endpoint
       // cannot serve it, and another model can. It counts against the breaker
       // (so the recovery path's "switch to a healthy model" guard fires) and it
@@ -651,6 +665,16 @@ export async function promptChildSession(participant) {
           participant: participant.config.id, round: currentRound, attempt,
         });
         return { result: null, error: err };
+      }
+
+      // Hard usage limit is account-wide: a fallback model hits the same wall.
+      if (isHardRateLimitError(err) || isUsageLimitBlocked()) {
+        const finalErr = (isHardRateLimitError(err) ? err : null) ?? getUsageLimitAbortReason() ?? err;
+        this._logger.warn("usage_limit_stop", `${participant.config.name} — hard usage limit on fallback, stopping ladder (${info.message})`, {
+          participant: participant.config.id, round: currentRound, attempt,
+          type: finalErr?.rateLimitClassification?.type ?? null,
+        });
+        return { result: null, error: finalErr };
       }
 
       const isSessionNotFoundFb = err?.message && /session not found/i.test(err.message);

@@ -1,6 +1,29 @@
 import { getDatabasesBySessionId, deleteMeetingFiles, deleteMeetingsBySessionId } from "../database.js";
 import { auditLoomTool } from "./tools/audit.js";
 import { resolveCaller } from "./tools/shared.js";
+import { reportFromSessionStatus, getState as getUsageLimitState } from "../services/usage-limit-monitor.js";
+
+/**
+ * Halt every active meeting when a hard usage limit is detected. Free-tier
+ * and Go limits are account-wide: another model will hit the same wall, so
+ * each engine gets the same sticky stop the Cancel button applies (in-flight
+ * prompts aborted, no further speakers), while status stays `rate_limited`
+ * so the dashboard can show the subscribe CTA and resume after reset.
+ */
+function haltMeetingsForUsageLimit(activeLooms, classification) {
+  if (!activeLooms || typeof activeLooms.entries !== "function") return;
+  for (const [, engine] of activeLooms.entries()) {
+    if (!engine) continue;
+    try {
+      if (typeof engine.haltForUsageLimit === "function") {
+        engine.haltForUsageLimit(classification);
+      } else {
+        // Older engine shape: fall back to cancel so prompts still stop.
+        engine.cancel?.();
+      }
+    } catch { /* one meeting must not block the others */ }
+  }
+}
 
 export const PROGRESS_PATTERN =
   /^\[(?:info|warn|error)\] (?:🎬|⚠️|ℹ️|📋|🔄|⏭️|✅|🛑|⏱️|💰|🧵|.*is thinking\.\.\.|Round \d+|Synthesizing|Completed|Error:)/;
@@ -23,18 +46,37 @@ export function createEventHandlers({ directory, activeLooms = null, resolveMeet
       }
     },
 event: async ({ event }) => {
+      if (event.type === "session.status") {
+        const status = event.properties?.status;
+        if (status?.type === "retry") {
+          const sessionId = event.properties?.sessionID ?? null;
+          const changed = reportFromSessionStatus(sessionId, status);
+          if (changed) {
+            const limit = getUsageLimitState();
+            haltMeetingsForUsageLimit(activeLooms, limit
+              ? {
+                  type: limit.type,
+                  message: limit.message,
+                  retryAfterMs: limit.retryAfterMs,
+                  action: limit.action,
+                }
+              : null);
+          }
+        }
+        return;
+      }
       if (event.type === "session.deleted") {
         const deletedId = event.properties?.info?.id;
         if (deletedId) {
            const entries = getDatabasesBySessionId(deletedId);
-            if (activeLooms) {
-              const matching = [...activeLooms.entries()].filter(([meetingId, engine]) => engine && entries.some((entry) => entry.meetingId === meetingId));
-              await Promise.all(matching.map(async ([, engine]) => {
-                try { engine.softCancel?.() ?? engine.cancel?.({ persistStatus: false }); } catch {}
-                try { await engine.close?.(); } catch {}
-              }));
-            }
-           for (const { dbPath } of entries) {
+           if (activeLooms) {
+             const matching = [...activeLooms.entries()].filter(([meetingId, engine]) => engine && entries.some((entry) => entry.meetingId === meetingId));
+             await Promise.all(matching.map(async ([, engine]) => {
+               try { engine.softCancel?.() ?? engine.cancel?.({ persistStatus: false }); } catch {}
+               try { await engine.close?.(); } catch {}
+             }));
+           }
+            for (const { dbPath } of entries) {
             deleteMeetingFiles(dbPath);
           }
           await deleteMeetingsBySessionId(directory, deletedId);

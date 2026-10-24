@@ -8,7 +8,8 @@ import { buildToolsMap, buildToolsMapWithoutLoom } from "../src/round-executor/t
 import { buildRoundSummaryUser } from "../src/round-summarizer.js";
 import { fallbackTurnOrder } from "../src/orchestrator/round.js";
 import { DEFAULT_CONFIG } from "../src/config/defaults.js";
-import { getMeetingBreakdown, clearMeetingBreakdown } from "../src/metrics.js";
+import { getMeetingBreakdown, clearMeetingBreakdown, getMetricsSnapshot } from "../src/metrics.js";
+import { StateManager } from "../src/services/state-manager.js";
 
 // Orchestrator-only turn-order override (T3): the summary call is the
 // orchestrator's single LLM call per round. No second planning call exists.
@@ -25,8 +26,11 @@ function harness(statuses = { a: "listening", b: "listening", c: "listening" }) 
   const stateManager = {
     getMeetingId: () => "m-tool",
     getParticipants: () => participants,
+    getCurrentRound: () => 2,
     setPlannedTurnOrder: (order) => { applied.order = order; },
     setNextSpeakerId: (id) => { applied.next = id; },
+    // W1 (P3.3) — optional in the tool; recorded like the real StateManager.
+    setTurnOrderMeta: (meta) => { applied.turnOrderMeta = meta; },
   };
   const engine = { getStateManager: () => stateManager };
   const tools = createTurnOrderTool({
@@ -134,6 +138,50 @@ test("fallbackTurnOrder keeps composition order and skips failed seats", () => {
   assert.deepEqual(fallbackTurnOrder(parts), ["junior_0", "principal_0"]);
   assert.deepEqual(fallbackTurnOrder([]), []);
   assert.deepEqual(fallbackTurnOrder(null), []);
+});
+
+// W1 (P3.3): an override is countable and attributable in the record. The
+// tool increments the turn_order_overrides counter (durably snapshotted into
+// meeting_metrics.counters), and the round row via getTurnOrderMeta carries
+// who set the order, when, and why — the override stops being reconstructable
+// from prose only.
+test("tool counts an override and records provenance meta", async () => {
+  const { tools, applied } = harness();
+  const before = JSON.stringify(getMetricsSnapshot().counters.turn_order_overrides ?? {});
+  const res = await tools.loom_set_turn_order.execute(
+    { order: ["c", "a", "b"], reason: "B's finding needs immediate scrutiny" },
+    { sessionID: "s1" },
+  );
+  assert.equal(JSON.parse(res.output).ok, true);
+  // Counter actually increments — it is REGISTERED (not a silent no-op).
+  const after = getMetricsSnapshot().counters.turn_order_overrides ?? {};
+  const beforeObj = JSON.parse(before);
+  assert.equal(
+    (after.override ?? 0) - (beforeObj.override ?? 0), 1,
+    "turn_order_overrides must increment by 1 per successful override",
+  );
+  // Provenance meta recorded for the round row to consume.
+  assert.deepEqual(applied.turnOrderMeta, {
+    order: ["c", "a", "b"],
+    dropped: [],
+    appended: [],
+    reason: "B's finding needs immediate scrutiny",
+    set_by: "orchestrator_summary",
+    round: 2,
+  });
+  clearMeetingBreakdown("m-tool");
+});
+
+test("StateManager carries + clears turn-order meta (consume-once semantics)", () => {
+  const manager = new StateManager({ id: "m", participants: [], weave: [], rounds: [], current_round: 1, max_rounds: 2, status: "weaving" });
+  assert.equal(manager.getTurnOrderMeta(), null);
+  manager.setTurnOrderMeta({ order: ["b", "a"], set_by: "orchestrator_summary", round: 1 });
+  assert.equal(manager.getTurnOrderMeta().set_by, "orchestrator_summary");
+  manager.clearTurnOrderMeta();
+  assert.equal(manager.getTurnOrderMeta(), null);
+  // Null/falsy meta stores null, not an empty object.
+  manager.setTurnOrderMeta(null);
+  assert.equal(manager.getTurnOrderMeta(), null);
 });
 
 test("no second planning call exists in the round path", () => {

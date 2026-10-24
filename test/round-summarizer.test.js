@@ -269,7 +269,7 @@ test("the artifact states its own provenance", async () => {
     onStart: () => {},
     onComplete: () => {},
   });
-  assert.match(result.output, /\*Deliberation: 1 round · 2 contributions · 2 participants · 1 ballot held/);
+  assert.match(result.output, /\*Deliberation: 1 round · 2 contributions · 2 participants · 1 vote held \(1 ballot\)/);
   assert.match(result.output, /% of contributions cited in this artifact/);
 });
 

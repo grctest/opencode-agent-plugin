@@ -124,6 +124,19 @@ export function StatusBanners({
           </AlertDescription>
         </Alert>
       )}
+      {selectedMeeting && !job?.running && resumeStatus === "rate_limited" && (
+        <Alert className="mt-3 border-red-500/40 bg-red-500/10">
+          <AlertTitle>Usage limit reached</AlertTitle>
+          <AlertDescription className="flex items-center justify-between gap-2">
+            <span>
+              OpenCode reported a free/account usage limit — the run paused with no synthesis. Committed turns are preserved — Resume retries the interrupted round after the reset or after Subscribe (the banner above shows the CTA).
+            </span>
+            <Button variant="outline" size="sm" onClick={doResume} disabled={busy === "resume"}>
+              {busy === "resume" ? "Resuming…" : "Resume"}
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
       {selectedMeeting && !job?.running && finishInfo && ["converged", "max_rounds_reached", "aborted"].includes(finishInfo.status) && finishInfo.hasArtifact === false && (
         <Alert className="mt-3 border-amber-500/40 bg-amber-500/10">
           <AlertTitle>Synthesis never completed</AlertTitle>

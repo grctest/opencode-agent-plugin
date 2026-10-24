@@ -149,6 +149,8 @@ export function initSchema(db) {
       confidence_number TEXT,
       refusals TEXT,
       orchestrator_config TEXT,
+      engagement_json TEXT,
+      detector_report_json TEXT,
       created_at TEXT NOT NULL
     );
 
@@ -210,6 +212,16 @@ export function initSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_state_patches_meeting ON state_patches(meeting_id);
     CREATE INDEX IF NOT EXISTS idx_state_patches_participant ON state_patches(meeting_id, participant_id);
   `);
+
+  // Best-effort column additions for pre-existing DBs (no migration framework
+  // yet): ensure the artifacts table carries the engagement/detector columns
+  // even on databases created before they existed. Idempotent — ignored if
+  // already present.
+  try {
+    const cols = db.prepare("PRAGMA table_info(artifacts)").all().map((r) => r.name);
+    if (!cols.includes("engagement_json")) db.exec("ALTER TABLE artifacts ADD COLUMN engagement_json TEXT");
+    if (!cols.includes("detector_report_json")) db.exec("ALTER TABLE artifacts ADD COLUMN detector_report_json TEXT");
+  } catch {}
 
   if (isNewDb) {
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);

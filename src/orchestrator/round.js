@@ -204,12 +204,20 @@ export async function runRound() {
 export function computeSteeringHint({
   roundNumber, maxRounds, votesHeld, votesThisRound, voteEnabled,
   contributionsThisRound = 0, critiqueCount = 0, hasSynthesis = false,
+  hasPostBallotEvidence = false,
 } = {}) {
   const closingRound = Number.isFinite(maxRounds) && Number.isFinite(roundNumber) && roundNumber >= maxRounds - 1;
   if (closingRound && voteEnabled && votesThisRound === 0) {
     return votesHeld === 0
       ? "Steering note for the next speaker (closing round): no ballot has been held. If the live disagreement is a scalar threshold or binary the room has priced, open by calling loom_vote on the discriminating question — a held tally outranks another restatement round; if a vote would change nothing, open your contribution by saying why."
       : "Steering note for the next speaker (closing round): a ballot was held earlier, but this round's evidence may have superseded it. If the question changed, re-poll the superseded question and let the fresh tally stand — the synthesis records the latest ballot, not the original; if a re-poll would change nothing, say why in your contribution instead.";
+  }
+  // Ratchet case: a ballot was held AND superseding evidence landed in the
+  // same closing round. No re-poll channel exists for a terminal meeting, so
+  // the hint asks the next (if any) speaker to confirm; the synthesis path
+  // also receives a directive (see synthesis-coordinator) for terminal rounds.
+  if (closingRound && voteEnabled && votesHeld > 0 && votesThisRound > 0 && hasPostBallotEvidence) {
+    return "Steering note for the next speaker (closing round): a ballot was held this round and later evidence may have superseded its premise. If the discriminating question changed, re-poll it and let the fresh tally stand — the synthesis records the latest ballot; otherwise say in your contribution why the original ballot still stands.";
   }
   if (roundNumber >= 2 && votesHeld === 0 && contributionsThisRound > 0) {
     return "Steering note for the next speaker: two rounds in, nothing has been priced as a decision. Open with the decision-shaped move — your top option, its price (numbers + reference class), and its kill line — even if contested. A prose straw poll on the discriminating question is a valid opener.";
@@ -310,7 +318,18 @@ export async function _finalizeRound(updatedRound) {
         // A halted round keeps NO summary: the round stays open so a resume
         // can finish it. The State of Play and the settled registry are still
         // written, so the record is never stale.
-        if (!halted) this._database.setRoundSummary(updatedRound.number, updatedRound.summary, this._options?.orchestratorConfig ?? null);
+        if (!halted) {
+          // W1 (P3.3): the turn-order tool may have run during this summary
+          // call; persist its provenance into this round's row. Consumed once
+          // so the meta lands only on the round that set it.
+          const turnOrderMeta = this._stateManager.getTurnOrderMeta?.() ?? null;
+          let summaryConfig = this._options?.orchestratorConfig ?? null;
+          if (turnOrderMeta) {
+            summaryConfig = { ...(summaryConfig ?? {}), turn_order_set_by: turnOrderMeta };
+            this._stateManager.clearTurnOrderMeta?.();
+          }
+          this._database.setRoundSummary(updatedRound.number, updatedRound.summary, summaryConfig);
+        }
         this._database.setStateOfPlay(newStateOfPlay);
         if (settledMerge.changed) this._database.setSettledItemsRaw(JSON.stringify(settledMerge.items));
       });
@@ -396,6 +415,17 @@ export async function _finalizeRound(updatedRound) {
       // gates or steers") stays intact.
       const votesHeld = this._stateManager.getWeave().filter((c) => c.type === "vote_response").length;
       const votesThisRound = updatedRound.contributions.filter((c) => c.type === "vote_response").length;
+      // Ratchet detection: any contribution created after the last ballot
+      // this round (query/evidence/critique/contribution) counts as
+      // post-ballot evidence that may have superseded the ballot's premise.
+      const lastBallotTs = updatedRound.contributions
+        .filter((c) => c.type === "vote_response")
+        .map((c) => c.created_at)
+        .sort()
+        .pop();
+      const hasPostBallotEvidence = !!lastBallotTs && updatedRound.contributions.some(
+        (c) => c.type !== "vote_response" && c.created_at && c.created_at > lastBallotTs,
+      );
       const currentRoundNum = this._stateManager.getCurrentRound();
       const maxRoundsTotal = this._stateManager.getMaxRounds?.() ?? null;
       const toolsCfg = this._roundExecutor?.getEffectiveAgentTools?.() ?? getConfig().agentTools;
@@ -410,6 +440,7 @@ export async function _finalizeRound(updatedRound) {
         contributionsThisRound: updatedRound.contributions.length,
         critiqueCount,
         hasSynthesis: updatedRound.contributions.some((c) => c.type === "synthesize"),
+        hasPostBallotEvidence,
       });
       if (steeringHint) {
         this._stateManager.setNextRoundSteering(steeringHint);

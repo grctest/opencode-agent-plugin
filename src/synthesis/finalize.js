@@ -233,6 +233,7 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, op
   const ungroundedLines = (lines) => lines.filter((line) => {
     const trimmed = line.trim();
     if (/^```/.test(trimmed)) return false;
+    if (/synthesized from/i.test(trimmed)) return false;
     const cites = [...trimmed.matchAll(/\[#(\d+)\]/g)].map((m) => m[1]);
     return cites.length === 0 || cites.every((id) => !weaveIds.has(id));
   });
@@ -255,6 +256,10 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, op
     if (ungroundedActions.length === actionItems.length) {
       needsVerificationBodies.push(`## Needs Verification\nThe Action Items below cite no valid [#id] from the transcript — they assign work, so verify ownership and basis before acting.\n${ungroundedActions.slice(0, 5).map((l) => `- ${l.slice(0, 200)}`).join("\n")}`);
     }
+  }
+  const reasoningUngrounded = ungroundedLines(reasoning);
+  if (reasoning.length > 0 && reasoningUngrounded.length === reasoning.length && !reasoningHasValidCite) {
+    needsVerificationBodies.push(`## Needs Verification\nThe Reasoning section carries no valid [#id] citation to the transcript (and no “synthesized from” marker) — verify each claim against the transcript before acting.\n${reasoningUngrounded.slice(0, 5).map((l) => `- ${l.slice(0, 200)}`).join("\n")}`);
   }
   const unsupportedCitations = checkCitationSupport(stripReferenceIndex(finalOutput), weave, { minTargetChars: policy.minCitationTargetChars });
   detectorReport.citationWarnings.candidates = unsupportedCitations.length;

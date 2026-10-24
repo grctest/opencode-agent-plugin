@@ -1,4 +1,5 @@
 import { sanitizeForDisplay } from "../utils/sanitize.js";
+import { truncateAtSentence } from "../utils/text.js";
 import { LENGTH_LIMITS } from "./constants.js";
 import { QUERY_MODES } from "./query-modes.js";
 import { getRecentContributionsBlock, buildSubAgentStateLine, buildSubAgentToolGuidance, buildRoundLabel, buildPeerSettledDigest } from "./blocks.js";
@@ -33,15 +34,15 @@ function renderSourceNote(note) {
  * numbers are what it votes by), a guest expert gets the same items as plain
  * bullets — the vote wording must not leak into a prompt with no poll in it.
  */
-function buildPeerSoPBlock(stateOfPlay, { agreedLimit = 4, concernsLimit = 2, itemChars = 160, mode = "context" } = {}) {
+function buildPeerSoPBlock(stateOfPlay, { agreedLimit = 4, concernsLimit = 2, itemChars = 200, mode = "context" } = {}) {
   const sop = String(stateOfPlay ?? "");
   if (!sop.trim()) return "";
   const agreed = readSoPSectionItems(sop, SOP_SECTIONS.agreed)
-    .map((item) => sanitizeForDisplay(item.replace(/\n/g, " ").trim(), itemChars))
+    .map((item) => truncateAtSentence(sanitizeForDisplay(item.replace(/\n/g, " ").trim(), itemChars * 2), itemChars))
     .filter((item) => item.length > 0)
     .slice(0, agreedLimit);
   const concerns = readSoPSectionItems(sop, SOP_SECTIONS.disagreements)
-    .map((item) => sanitizeForDisplay(item.replace(/\n/g, " ").trim(), itemChars))
+    .map((item) => truncateAtSentence(sanitizeForDisplay(item.replace(/\n/g, " ").trim(), itemChars * 2), itemChars))
     .filter((item) => item.length > 0)
     .slice(0, concernsLimit);
   if (agreed.length === 0 && concerns.length === 0) return "";

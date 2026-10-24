@@ -47,7 +47,16 @@ export function buildSynthesisPrompt(question, transcript, participants = [], ta
   // Large window: 24k transcript budget, no cost cutting — truncations are anti-timeout only
   let safeTranscript = sanitizeForDisplay(transcript, 24000);
   const wasTruncated = transcript && transcript.length > 24000;
-  safeTranscript = delimitContext(escapeDelimiters(safeTranscript + (wasTruncated ? "\n…[transcript truncated — earliest rounds summarized, latest rounds fuller; full weave available in State of Play + DB]" : "")), "TRANSCRIPT");
+  if (wasTruncated) {
+    const allIds = new Set([...String(transcript).matchAll(/\[#(\d+)\]/g)].map((m) => m[1]));
+    const keptIds = new Set([...safeTranscript.matchAll(/\[#(\d+)\]/g)].map((m) => m[1]));
+    const shed = [...allIds].filter((id) => !keptIds.has(id));
+    const footer = shed.length > 0
+      ? `\n…[transcript truncated — earliest rounds summarized, latest rounds fuller; full weave available in State of Play + DB]\n## Not indexed (${shed.length} id${shed.length === 1 ? "" : "s"}): ${shed.map((id) => `[#${id}]`).join(" ")}`
+      : "\n…[transcript truncated — earliest rounds summarized, latest rounds fuller; full weave available in State of Play + DB]";
+    safeTranscript = safeTranscript + footer;
+  }
+  safeTranscript = delimitContext(escapeDelimiters(safeTranscript), "TRANSCRIPT");
   // No category anywhere in this prompt by design: categories are setup-phase labels
   // differentiating persona purpose, and seniority plays no part in synthesis
   // decisions. Activity and standing are what matter.
@@ -76,6 +85,10 @@ export function buildSynthesisPrompt(question, transcript, participants = [], ta
   const modeNote = isCode
     ? `\n## Mode: Code-Analysis${buildNote}\nYou are synthesizing a code collaboration. Include concrete Proposed Fix diffs with file= paths. Novel synthesized fixes are allowed when marked “Proposed — synthesized from [#id]”. If live edits occurred, note file= and verification (tests). Thoroughness welcome — ${windowNote}.\n`
     : `\n## Mode: Conversational (open-ended)\nDissent is fine — do not force a single Decision if deliberation left a spectrum. Prefer mapping positions with evidence — map the spectrum AND commit to the rule that resolves it (Decision Rule below). Thoroughness welcome — ${windowNote}.\n`;
+
+  const ratchetDirective = opts.ratchetBallot
+    ? `\n## Ratchet (internal directive — act on it)\nA ballot was held this round and later evidence may have superseded its premise, with no confirmation re-poll. In ## Decision or ## Open Questions, state explicitly whether the ballot still stands or is superseded, and why.\n`
+    : "";
 
   const userContextSection = userContext
     ? `\n## Original User Context (from the person who asked)\n${delimitContext(escapeDelimiters(sanitizeForDisplay(userContext, 20000)), "USER_CONTEXT")}\n`
@@ -206,7 +219,7 @@ Owners are SEATED participants, named — never an @handle, never a role. If no 
 ## Open Questions
 - {question that remains} — why it remains (missing evidence / unresolved tradeoff) — suggested next probe: name the single concrete query, dataset, or experiment that would close it${referencesSection}`;
   return `You are the synthesis auditor. The deliberation is complete. Produce the final artifact — human-readable FIRST, then citation-grounded detail. Thoroughness welcome; dissent is valuable, not a failure.
-${modeNote}
+${modeNote}${ratchetDirective}
 ## Original Question
 ${safeQuestion}
 ${tagContext ? `\n## Tags (topic)\n${tagContext}\n` : ""}

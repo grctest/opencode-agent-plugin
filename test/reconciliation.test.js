@@ -180,7 +180,7 @@ test("shouldReserveReconciliationRound fires when R-final yields a new conflicti
   assert.equal(shouldReserveReconciliationRound(early, earlyReport), false);
 });
 
-test("finalizeSynthesis counts versioned conflicts but does not ship them by default (N3)", () => {
+test("finalizeSynthesis ships Needs Verification by default (N3, default flipped in plan P2.9)", () => {
   const transcriptData = {
     question: "Who wins the most races?",
     rounds: [
@@ -208,11 +208,11 @@ test("finalizeSynthesis counts versioned conflicts but does not ship them by def
     "## Confidence",
     "Medium.",
   ].join("\n");
-  // Detectors ship OFF and dry (N3): the conflict is found and counted, but a
-  // section that cannot state its precision does not reach the deliverable.
+  // Detectors: Needs Verification ships by default (deterministic citation-support
+  // check, near-zero false-positive cost); Citation Warnings stays opt-in + dry-run.
   const { artifact, output } = finalizeSynthesis(text, transcriptData, participants);
-  assert.doesNotMatch(output, /## Needs Verification/);
-  assert.equal(artifact.detector_report.needsVerification.shipped, false);
+  assert.match(output, /## Needs Verification/);
+  assert.equal(artifact.detector_report.needsVerification.shipped, true);
   assert.ok(artifact.detector_report.needsVerification.candidates >= 1, "candidates are still counted for the precision audit");
   // Structured report is unaffected — the truth is available either way.
   assert.match(artifact.reconciliation.conflicts.find((c) => c.status === "versioned").quantity, /antonelli win/);

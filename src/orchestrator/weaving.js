@@ -3,6 +3,7 @@ import { TUNING } from "../config/defaults.js";
 import { getConfig } from "../config.js";
 import { isHardRateLimitError } from "../utils/retry.js";
 import { TERMINAL_STATUSES } from "../constants.js";
+import { clear as clearUsageLimit } from "../services/usage-limit-monitor.js";
 
 export async function runMeeting() {
     await this.initialize();
@@ -23,13 +24,20 @@ export async function runMeeting() {
      );
      try {
        await this._runWeavingLoop();
-       // A cancelled run does NOT synthesize. The synthesis is 2+ more LLM
-       // calls, and the user asked for the run to STOP — not for a slower
-       // stop. The dashboard's "Finish" button synthesizes the collected
-       // contributions on demand instead.
+       // A cancelled or usage-limited run does NOT synthesize. The synthesis
+       // is 2+ more LLM calls, and the user asked for the run to STOP — not
+       // for a slower stop. The dashboard's "Finish" button synthesizes the
+       // collected contributions on demand instead.
        if (this.isHalted?.()) {
-         this._logger.info("cancelled_no_synthesis", "Run cancelled — skipping the final synthesis (the dashboard can synthesize on demand)");
-         try { await this._sessionManager.postProgress("🛑 Loom cancelled by user — no synthesis was run."); } catch {}
+         const rateLimitClassification = this._rateLimitError?.rateLimitClassification ?? null;
+         if (rateLimitClassification) {
+           this._logger.info("usage_limit_no_synthesis", "Run halted for usage limit — skipping the final synthesis (the dashboard can synthesize on demand)");
+           const actionLink = rateLimitClassification.action?.link;
+           try { await this._sessionManager.postProgress(`⏸️ ${rateLimitClassification.message}${actionLink ? ` — ${actionLink}` : ""} — no synthesis was run.`); } catch {}
+         } else {
+           this._logger.info("cancelled_no_synthesis", "Run cancelled — skipping the final synthesis (the dashboard can synthesize on demand)");
+           try { await this._sessionManager.postProgress("🛑 Loom cancelled by user — no synthesis was run."); } catch {}
+         }
          return null;
        }
        return await this._synthesize();
@@ -89,6 +97,12 @@ export async function runMeeting() {
    * synthesized output like runMeeting().
    */
   export async function resumeMeeting() {
+    // Explicit user resume: drop any account-wide usage-limit block so a
+    // Subscribe + resume (or a post-reset resume) can retry immediately.
+    // If the gateway is still limited, the next session.status re-arms.
+    try { clearUsageLimit("resume_meeting"); } catch {}
+    // Also clear the meeting's persisted rate_limit_state (banner + SSE).
+    try { this._clearRateLimitState?.(); } catch {}
     try { await this._sessionManager.postProgress(`🧵 Resuming interrupted deliberation — continuing from round ${this._stateManager.getCurrentRound()}.`); } catch {}
     this._stallWatchdog.start(
       () => {
@@ -101,10 +115,17 @@ export async function runMeeting() {
       const continued = await this._continueInterruptedRound();
       if (continued === false) return await this._synthesize();
       await this._runWeavingLoop();
-      // Same contract as a fresh run: a cancelled run does not synthesize.
+      // Same contract as a fresh run: a cancelled or usage-limited run does
+      // not synthesize.
       if (this.isHalted?.()) {
-        this._logger.info("cancelled_no_synthesis", "Resumed run cancelled — skipping the final synthesis");
-        try { await this._sessionManager.postProgress("🛑 Loom cancelled by user — no synthesis was run."); } catch {}
+        const rateLimitClassification = this._rateLimitError?.rateLimitClassification ?? null;
+        if (rateLimitClassification) {
+          this._logger.info("usage_limit_no_synthesis", "Resumed run halted for usage limit — skipping the final synthesis");
+          try { await this._sessionManager.postProgress("⏸️ Meeting paused for usage limit — no synthesis was run."); } catch {}
+        } else {
+          this._logger.info("cancelled_no_synthesis", "Resumed run cancelled — skipping the final synthesis");
+          try { await this._sessionManager.postProgress("🛑 Loom cancelled by user — no synthesis was run."); } catch {}
+        }
         return null;
       }
       return await this._synthesize();
@@ -126,6 +147,16 @@ export async function _runWeavingLoop() {
         break;
       }
       if (this._cancelled) {
+        // A usage-limit halt writes `rate_limited` first and is sticky with
+        // cancel: stop the loop, but do NOT overwrite the rate-limited status
+        // (the dashboard banner and resume CTA read it).
+        const rateLimitError = this._checkRateLimitError?.();
+        if (rateLimitError || this._rateLimitError) {
+          this._logger.info("usage_limit_stop", "Meeting stopped for hard usage limit — no further rounds");
+          try { await this._sessionManager?.postProgress?.("⏸️ Meeting paused for usage limit — resume after reset or Subscribe."); } catch {}
+          continueWeaving = false;
+          break;
+        }
         const terminal = this._stallWatchdog.stallCancelled ? "timeout" : "cancelled";
         // Only transition when the status is still live: a user cancel during
         // the unwind may already have written "cancelled", and the status

@@ -91,7 +91,7 @@ async function handleExtendMeetingInternal(req) {
     model: extensionOrchestrator ? `${extensionOrchestrator.providerID}/${extensionOrchestrator.modelID}` : extensionOrchestratorConfig.model,
   };
   const sessionID = runtime.ownerSessionId || `dashboard-${meetingId.slice(0, 8)}`;
-  const context = body?.context ? sanitizeForPrompt(String(body.context), 8000) : "No additional context provided.";
+  const context = body?.context ? sanitizeForPrompt(String(body.context), 8000) : "";
 
   let additionalRounds;
   if (body?.additional_rounds !== undefined && body?.additional_rounds !== null) {

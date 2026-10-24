@@ -86,10 +86,12 @@ test("the resume status policy: a stopped meeting resumes, a finished one does n
   assert.equal(canResumeStatus("initializing"), true);
   assert.equal(canResumeStatus("cancelled"), true, "the user stopped it — Resume continues it");
   assert.equal(canResumeStatus("timeout"), true, "the stall stopped it — Resume continues it");
+  assert.equal(canResumeStatus("rate_limited"), true, "hard usage limit — Resume retries after reset or Subscribe");
   assert.equal(canResumeStatus("converged"), false, "a finished meeting is extended, not resumed");
   assert.equal(canResumeStatus("max_rounds_reached"), false);
   assert.equal(canResumeStatus("aborted"), false);
   assert.equal(RESUMABLE_STATUSES.has("cancelled"), true);
+  assert.equal(RESUMABLE_STATUSES.has("rate_limited"), true);
 });
 
 test("a restored round carries a token path (the resume used to throw a TypeError)", () => {

@@ -30,21 +30,8 @@ function summonOffered(agentTools) {
   return !!getEffectiveAgentTools(agentTools)?.loom?.loom_summon && isSummonAvailable();
 }
 
-export function truncateAtSentence(text, limit) {
-  if (!text || typeof text !== "string") return "";
-  if (text.length <= limit) return text;
-  const sliced = text.slice(0, limit);
-  const markers = [". ", "? ", "! ", "。", ".\n", "?\n", "!\n"];
-  let last = -1;
-  for (const m of markers) {
-    const idx = sliced.lastIndexOf(m);
-    if (idx > last) last = idx;
-  }
-  if (last > 0) return sliced.slice(0, last + 1).trimEnd() + " …";
-  const wordBoundary = sliced.lastIndexOf(" ");
-  if (wordBoundary > limit * 0.5) return sliced.slice(0, wordBoundary) + " …";
-  return sliced + " …";
-}
+import { truncateAtSentence } from "../utils/text.js";
+export { truncateAtSentence };
 
 function fnv1a64(str) {
   // FNV-1a 64-bit: collision-resistant enough for a prompt cache key where a
@@ -513,9 +500,11 @@ ${delimitContext(sanitizeForDisplay(userContext), "USER_CONTEXT")}
       const name = sanitizeForDisplay(String(p.name ?? id), 60);
       const category = sanitizeForDisplay(String(p.category ?? p.tier ?? ""), 20);
       const status = sanitizeForDisplay(String(p.status ?? ""), 20);
-      const personaSnippet = p.persona ? sanitizeForDisplay(String(p.persona), 120).replace(/\n/g, " ").trim() : "";
+      const agenda = p.agenda ? sanitizeForDisplay(String(p.agenda), 200).replace(/\n/g, " ").trim() : "";
+      const personaSnippet = p.persona ? truncateAtSentence(String(p.persona).replace(/\n/g, " ").trim(), 160) : "";
+      const agendaPart = agenda ? ` — agenda: ${agenda}` : "";
       const personaPart = personaSnippet ? ` — ${personaSnippet}` : "";
-      return `- ${id} — ${name} (${category}, ${status})${personaPart}`;
+      return `- ${id} — ${name} (${category}, ${status})${agendaPart}${personaPart}`;
     });
     return `## Other Participants — valid loom_query targets (use target = id exactly, not display name)
 
@@ -537,7 +526,7 @@ _Use these ids verbatim for loom_query. Example: {target: "${exampleId}", questi
   // guidance existed only for peer sub-turns; primary turns got nothing.
   // Guidance category, not contract — the late-phase Position closer stays optional.
   const roundPhaseLine = (Number.isFinite(round) && Number.isFinite(options.maxRounds))
-    ? `- **Round phase** — ${buildRoundContext(round, options.maxRounds)}\n`
+    ? `- **Round phase** — ${buildRoundContext(round, options.maxRounds, { hasPriorContributions: Array.isArray(recentContributions) && recentContributions.length > 0 })}\n`
     : "";
   const hasLive = Array.isArray(recentContributions) && recentContributions.length > 0;
   // Steering hints render before the closer; the patch line is gone by design

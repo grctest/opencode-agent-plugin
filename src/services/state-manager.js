@@ -25,6 +25,8 @@ export class StateManager {
   // and the audit is per round; without this high-water mark the two look like
   // a contradiction whenever a round's audited total exceeds the cap.
   #maxToolCallsInATurn = 0;
+  // W1 (P3.3) — loom_set_turn_order provenance (consumed by the round row).
+  #turnOrderMeta = null;
 
   /**
    * @param {Object} initialState
@@ -48,6 +50,8 @@ export class StateManager {
    */
   constructor(initialState) {
     this.#state = initialState;
+    // W1 (P3.3): loom_set_turn_order provenance, consumed by the round row.
+    this.#turnOrderMeta = null;
     this.#logger = new Logger().forMeeting(initialState.id);
     // SKILL.state per-agent execution states (plan §5.7): id -> AgentState.
     // Owned exclusively by each agent's own loom_state_patch calls; never shared-write.
@@ -477,6 +481,22 @@ export class StateManager {
 
   setPlannedTurnOrder(order) {
     this.#state.planned_turn_order = order ?? [];
+  }
+
+  // W1 (P3.3) — provenance for loom_set_turn_order overrides. The tool writes
+  // this during the orchestrator's summary call; the round row consumes it via
+  // the summary write (orchestrator/round.js), so `rounds` carries who set the
+  // next round's order and why. Consumed-once semantics: the merge pops it.
+  getTurnOrderMeta() {
+    return this.#turnOrderMeta ?? null;
+  }
+
+  setTurnOrderMeta(meta) {
+    this.#turnOrderMeta = meta && typeof meta === "object" ? { ...meta } : null;
+  }
+
+  clearTurnOrderMeta() {
+    this.#turnOrderMeta = null;
   }
 
   /**

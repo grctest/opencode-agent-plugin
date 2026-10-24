@@ -5,10 +5,17 @@ import { parseSplitConfidence, rollupConfidence } from "../utils/confidence.js";
 const dbLogger = new Logger();
 
 export function saveArtifact(db, meetingId, artifact) {
-  db
-    .prepare(
-      `INSERT INTO artifacts (meeting_id, content, decisions, action_items, open_questions, confidence, confidence_name, confidence_number, refusals, orchestrator_config, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  const baseCols = `meeting_id, content, decisions, action_items, open_questions, confidence, confidence_name, confidence_number, refusals, orchestrator_config, created_at`;
+  let hasEngagement = false;
+  let hasDetector = false;
+  try {
+    const cols = db.prepare("PRAGMA table_info(artifacts)").all().map((r) => r.name);
+    hasEngagement = cols.includes("engagement_json");
+    hasDetector = cols.includes("detector_report_json");
+  } catch {}
+  const extraCols = (hasEngagement ? ", engagement_json" : "") + (hasDetector ? ", detector_report_json" : "");
+  const sql = `INSERT INTO artifacts (meeting_id, content, decisions, action_items, open_questions, confidence, confidence_name, confidence_number, refusals, orchestrator_config${extraCols ? "," + extraCols.trim().replace(/^,/, "") : ""}, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?${hasEngagement ? ", ?" : ""}${hasDetector ? ", ?" : ""}, ?)
          ON CONFLICT(meeting_id) DO UPDATE SET
            content = excluded.content,
            decisions = excluded.decisions,
@@ -18,22 +25,24 @@ export function saveArtifact(db, meetingId, artifact) {
            confidence_name = excluded.confidence_name,
            confidence_number = excluded.confidence_number,
            refusals = excluded.refusals,
-           orchestrator_config = excluded.orchestrator_config,
-           created_at = excluded.created_at`,
-    )
-    .run(
-      meetingId,
-      artifact.content,
-      artifact.decisions ? JSON.stringify(artifact.decisions) : null,
-      artifact.action_items ? JSON.stringify(artifact.action_items) : null,
-      artifact.open_questions ? JSON.stringify(artifact.open_questions) : null,
-      artifact.confidence ?? null,
-      artifact.confidence_name ?? null,
-      artifact.confidence_number ?? null,
-      artifact.refusals ? JSON.stringify(artifact.refusals) : null,
-      artifact.orchestrator_config ? JSON.stringify(artifact.orchestrator_config) : null,
-      isoNow(),
-    );
+           orchestrator_config = excluded.orchestrator_config${hasEngagement ? ",\n           engagement_json = excluded.engagement_json" : ""}${hasDetector ? ",\n           detector_report_json = excluded.detector_report_json" : ""},
+           created_at = excluded.created_at`;
+  const params = [
+    meetingId,
+    artifact.content,
+    artifact.decisions ? JSON.stringify(artifact.decisions) : null,
+    artifact.action_items ? JSON.stringify(artifact.action_items) : null,
+    artifact.open_questions ? JSON.stringify(artifact.open_questions) : null,
+    artifact.confidence ?? null,
+    artifact.confidence_name ?? null,
+    artifact.confidence_number ?? null,
+    artifact.refusals ? JSON.stringify(artifact.refusals) : null,
+    artifact.orchestrator_config ? JSON.stringify(artifact.orchestrator_config) : null,
+  ];
+  if (hasEngagement) params.push(artifact.engagement ? JSON.stringify(artifact.engagement) : null);
+  if (hasDetector) params.push(artifact.detector_report ? JSON.stringify(artifact.detector_report) : null);
+  params.push(isoNow());
+  db.prepare(sql).run(...params);
 }
 
 export function getArtifact(db, meetingId) {

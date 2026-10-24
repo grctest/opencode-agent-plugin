@@ -299,7 +299,24 @@ export function truncate(text, max) {
   return arr.slice(0, max - 3).join("") + "...";
 }
 
-/** Safe JSON.stringify — never throws; handles BigInt in nested objects. */
+/** Truncates text at a sentence boundary (falling back to a word boundary),
+ *  adding an ellipsis. Used wherever a mid-sentence character slice would
+ *  silently discard the operative half of a sentence. */
+export function truncateAtSentence(text, limit) {
+  if (!text || typeof text !== "string") return "";
+  if (text.length <= limit) return text;
+  const sliced = text.slice(0, limit);
+  const markers = [". ", "? ", "! ", "。", ".\n", "?\n", "!\n"];
+  let last = -1;
+  for (const m of markers) {
+    const idx = sliced.lastIndexOf(m);
+    if (idx > last) last = idx;
+  }
+  if (last > 0) return sliced.slice(0, last + 1).trimEnd() + " …";
+  const wordBoundary = sliced.lastIndexOf(" ");
+  if (wordBoundary > limit * 0.5) return sliced.slice(0, wordBoundary) + " …";
+  return sliced + " …";
+}
 function safeStringify(value) {
   if (value == null) return null;
   try {

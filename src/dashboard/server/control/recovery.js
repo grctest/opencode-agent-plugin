@@ -246,7 +246,9 @@ async function handleResumeWithContext(req, _mode) {
   const resumeQuestion = typeof existingMeeting.question === "string" && existingMeeting.question.trim().length >= 3
     ? existingMeeting.question
     : "Resumed deliberation";
-  const resumeContext = typeof existingMeeting.context === "string" ? existingMeeting.context : "No additional context provided.";
+  const resumeContext = (typeof existingMeeting.context === "string" && existingMeeting.context.trim() && existingMeeting.context !== "No additional context provided.")
+    ? existingMeeting.context
+    : "";
 
   const resumeEngine = new MeetingOrchestrator({
     client: runtime.client,
@@ -370,7 +372,9 @@ async function handleFinishMeetingInternal(req) {
   const finishQuestion = typeof existingMeeting.question === "string" && existingMeeting.question.trim().length >= 3
     ? existingMeeting.question
     : "Finished deliberation";
-  const finishContext = typeof existingMeeting.context === "string" ? existingMeeting.context : "No additional context provided.";
+  const finishContext = (typeof existingMeeting.context === "string" && existingMeeting.context.trim() && existingMeeting.context !== "No additional context provided.")
+    ? existingMeeting.context
+    : "";
   const finishEngine = new MeetingOrchestrator({
     client: runtime.client,
     directory: getDirectory(),

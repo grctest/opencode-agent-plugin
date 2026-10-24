@@ -131,6 +131,15 @@ export function classifyRateLimitError(err) {
 }
 
 export function isHardRateLimitError(err) {
+  // Prefer a classification already attached (session-contract / usage-limit
+  // monitor). The body-based classifier needs FreeUsageLimitError/429 in the
+  // raw payload; a synthetic UsageLimitError from the monitor only carries the
+  // classification object — reclassifying would miss it and fall through to
+  // "not a rate limit".
+  const existing = err?.rateLimitClassification;
+  if (existing && (existing.type === "free_tier_limit" || existing.type === "account_rate_limit")) {
+    return true;
+  }
   const classification = classifyRateLimitError(err);
   return classification !== null && (classification.type === "free_tier_limit" || classification.type === "account_rate_limit");
 }

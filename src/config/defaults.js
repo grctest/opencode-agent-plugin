@@ -80,9 +80,13 @@ export const DEFAULT_CONFIG = {
   // precision runs dry (counts only, nothing written to the artifact) until a
   // hand-audited sample clears `precisionFloor` over `minDryRunMeetings`.
   detectors: {
-    needsVerification: false,
+    // Needs Verification is a deterministic citation-support check (a Decision /
+    // Action-Item line citing no valid [#id]) with near-zero false-positive
+    // cost — ship it by default. Citation Warnings (conflict detector) stays
+    // opt-in + dry-run: its precision floor is real and unverified.
+    needsVerification: true,
     citationWarnings: false,
-    dryRun: true,
+    dryRun: false,
     dryRunMeetings: 2,
     precisionFloor: 0.9,
     // A 57-character ballot cannot be checked for topical support.

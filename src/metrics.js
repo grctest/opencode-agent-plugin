@@ -12,6 +12,12 @@ const counters = {
   retry_events: {},
   breaker_events: {},
   degradation_events: {},
+  // W1 (P3.3) — turn_order_overrides: how often the orchestrator actually set
+  // the next round's speaking order via loom_set_turn_order. Zero in a meeting
+  // where the default order was always fine; non-zero in one where the
+  // composition order needed evidence-driven repair. Measured, never gated on:
+  // read-only telemetry alongside its rounds-row provenance.
+  turn_order_overrides: {},
   // N6 — meeting_degraded_reasons: a named, countable reason a meeting ran
   // degraded. Liveness and health were conflated: a run where a third of state
   // writes were rejected reported `agent_errors: 0` and 100% of tool_audit
@@ -187,6 +193,8 @@ export function getMetricsSnapshot() {
       retry_events: { ...counters.retry_events },
       breaker_events: { ...counters.breaker_events },
       degradation_events: { ...counters.degradation_events },
+      // W1 (P3.3) — persisted so the override count is attributable per meeting
+      turn_order_overrides: { ...counters.turn_order_overrides },
       meeting_degraded_reasons: { ...counters.meeting_degraded_reasons },
     },
     latencies: Object.fromEntries(

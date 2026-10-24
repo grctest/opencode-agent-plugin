@@ -64,7 +64,7 @@ async function handleStartMeetingInternal(req) {
   let maxRounds = body?.max_rounds ?? getConfig().defaultMaxRounds;
   if (!Number.isFinite(maxRounds) || maxRounds < 1) maxRounds = getConfig().defaultMaxRounds;
   maxRounds = Math.min(10, Math.max(1, Math.floor(maxRounds)));
-  const context = body?.context ? sanitizeForPrompt(String(body.context), 8000) : "No additional context provided.";
+  const context = body?.context ? sanitizeForPrompt(String(body.context), 8000) : "";
 
   let available;
   let disabledSet = null;
@@ -102,6 +102,23 @@ async function handleStartMeetingInternal(req) {
     return Response.json({ error: `unknown variant "${orchestratorVariant}" for model ${orchestratorKey}` }, { status: 400 });
   }
   const resolvedOrchestratorConfig = { ...orchestratorConfig, model: orchestratorKey };
+  // W2 (P0.5/P1.14) — reconstruction snapshot: the meeting row carries the
+  // effective toggle state in force at run time (agentTools.sameTurnSynthesis,
+  // taskMode/buildMode from the feature radio, and the artifact-detector
+  // config), so a record reader can know how the meeting ran without asking
+  // the process that ran it. Read-only additive keys in the persisted
+  // orchestrator_config JSON; the exported setup JSON picks them up via
+  // the same column. `tuning.roundFloorMs` from the old spec does not exist
+  // in the codebase and was dropped from the item.
+  const meetingAgentTools = buildMeetingAgentTools(features);
+  const liveRunConfig = getConfig?.() ?? {};
+  resolvedOrchestratorConfig.sameTurnSynthesis = meetingAgentTools?.sameTurnSynthesis ?? null;
+  resolvedOrchestratorConfig.taskModeEffect = meetingAgentTools?.taskMode ?? null;
+  resolvedOrchestratorConfig.detectors = {
+    needsVerification: liveRunConfig?.detectors?.needsVerification ?? null,
+    citationWarnings: liveRunConfig?.detectors?.citationWarnings ?? null,
+    dryRun: liveRunConfig?.detectors?.dryRun ?? null,
+  };
 
   const seenIds = new Set();
   let dedup = 0;
@@ -223,7 +240,7 @@ async function handleStartMeetingInternal(req) {
     tags: [],
     orchestratorModel: resolvedOrchestrator,
     orchestratorConfig: resolvedOrchestratorConfig,
-    agentTools: buildMeetingAgentTools(features),
+    agentTools: meetingAgentTools,
     availableModels: available,
     ...dashboardCallbacks(),
   });

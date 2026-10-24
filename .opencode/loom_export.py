@@ -77,7 +77,8 @@ def load_meeting(con: sqlite3.Connection, meeting_id: str | None,
                  participant: str | None = None,
                  truncate: int = 0,
                  include_tools: bool = True,
-                 tools_full: bool = False) -> dict:
+                 tools_full: bool = False,
+                 prompt_context: bool = False) -> dict:
     meetings = fetch_all(con, "SELECT * FROM meetings ORDER BY created_at")
     if meeting_id:
         meetings = [m for m in meetings if m["id"] == meeting_id]
@@ -93,8 +94,12 @@ def load_meeting(con: sqlite3.Connection, meeting_id: str | None,
         q += f" AND round IN ({','.join('?' * len(rounds))})"
         qargs += list(rounds)
     rounds_rows = fetch_all(con, q + " ORDER BY round", tuple(qargs))
-    cq, cargs = ("SELECT id, participant_id, round, type, content, target_which, batch_id,"
-                 " tool_calls, created_at FROM contributions WHERE meeting_id=?"), [mid]
+    if prompt_context:
+        cq, cargs = ("SELECT id, participant_id, round, type, content, target_which, batch_id,"
+                     " tool_calls, created_at, prompt_context FROM contributions WHERE meeting_id=?"), [mid]
+    else:
+        cq, cargs = ("SELECT id, participant_id, round, type, content, target_which, batch_id,"
+                     " tool_calls, created_at FROM contributions WHERE meeting_id=?"), [mid]
     if rounds:
         cq += f" AND round IN ({','.join('?' * len(rounds))})"
         cargs += list(rounds)
@@ -289,6 +294,10 @@ def main() -> None:
     ap.add_argument("--no-tools", action="store_true", help="skip tool_audit section")
     ap.add_argument("--tools-full", action="store_true",
                     help="include FULL tool input/output (large: ~1.5MB here)")
+    ap.add_argument("--prompt-context", action="store_true",
+                    help="include full prompt_context (system+user prompt) per contribution")
+    ap.add_argument("--verify", action="store_true",
+                    help="run golden invariants (report↔artifact parity, footer numbers, coverage) and exit 0/1")
     ap.add_argument("--section", action="append", default=None,
                     help="export only this aspect (repeatable or comma-separated); "
                     f"choices: {', '.join(SECTIONS)}")
@@ -308,11 +317,69 @@ def main() -> None:
     else:
         sections = None
 
+    if args.verify:
+        with connect_ro(Path(args.db)) as con:
+            mid_row = con.execute("SELECT id FROM meetings LIMIT 1").fetchone()
+            mid = mid_row["id"] if mid_row else None
+            art = con.execute("SELECT content FROM artifacts WHERE meeting_id=?", (mid,)).fetchone() if mid else None
+            art_content = (art["content"] if art else "").strip()
+            report_path = Path(args.db).with_suffix(".md")
+            ok = True
+            msgs = []
+            # 1. report ↔ artifact parity
+            if report_path.exists():
+                report_txt = report_path.read_text(encoding="utf-8", errors="replace")
+                marker = "\n---\n"
+                idx = report_txt.find(marker)
+                if idx >= 0 and art_content:
+                    tail = report_txt[idx + len(marker):].strip()
+                    m1 = (tail == art_content)
+                    msgs.append(f"  [{'PASS' if m1 else 'FAIL'}] report↔artifact tails match")
+                    ok = ok and m1
+                else:
+                    msgs.append("  [SKIP] no marker or empty artifact")
+            else:
+                msgs.append("  [SKIP] no report file")
+            # 2. footer numbers == DB counts
+            if art_content:
+                import re as _re
+                m = _re.search(r"Deliberation: (\d+) round · (\d+) contributions · (\d+) participants · (\d+) ballots held", art_content)
+                if m:
+                    r_rounds, r_contribs, r_parts, r_ballots = (int(x) for x in m.groups())
+                    db_rounds = con.execute("SELECT COUNT(*) c FROM rounds WHERE meeting_id=?", (mid,)).fetchone()["c"]
+                    db_contribs = con.execute("SELECT COUNT(*) c FROM contributions WHERE meeting_id=?", (mid,)).fetchone()["c"]
+                    db_parts = con.execute("SELECT COUNT(*) c FROM participants WHERE meeting_id=?", (mid,)).fetchone()["c"]
+                    db_ballots = con.execute("SELECT COUNT(*) c FROM contributions WHERE meeting_id=? AND type='vote_response'", (mid,)).fetchone()["c"]
+                    checks = [
+                        ("rounds", r_rounds, db_rounds),
+                        ("contributions", r_contribs, db_contribs),
+                        ("participants", r_parts, db_parts),
+                        ("ballots", r_ballots, db_ballots),
+                    ]
+                    for name, got, exp in checks:
+                        m_ok = (got == exp)
+                        msgs.append(f"  [{'PASS' if m_ok else 'FAIL'}] footer {name}: {got} == db {exp}")
+                        ok = ok and m_ok
+            # 3. coverage: every [#N] in artifact resolves
+            if art_content:
+                import re as _re2
+                ids = set(int(x) for x in _re2.findall(r"\[#(\d+)\]", art_content))
+                db_ids = set(r[0] for r in con.execute("SELECT id FROM contributions WHERE meeting_id=?", (mid,)).fetchall())
+                bad = ids - db_ids
+                m_ok = (len(bad) == 0)
+                msgs.append(f"  [{'PASS' if m_ok else 'FAIL'}] all {len(ids)} cited ids resolve (bad={sorted(bad)})")
+                ok = ok and m_ok
+            print("verify:", "ALL GREEN" if ok else "FAILURES")
+            for m in msgs:
+                print(m)
+            sys.exit(0 if ok else 1)
+        # unreachable
     with connect_ro(Path(args.db)) as con:
         data = load_meeting(con, args.meeting_id, rounds=args.round,
                             participant=args.participant, truncate=args.truncate,
                             include_tools=not args.no_tools,
-                            tools_full=args.tools_full)
+                            tools_full=args.tools_full,
+                            prompt_context=args.prompt_context)
     data["_params"] = {"chunked": bool(args.round or args.participant),
                        "sections": sections}
 

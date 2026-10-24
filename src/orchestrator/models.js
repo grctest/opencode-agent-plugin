@@ -49,6 +49,9 @@ export function validateOrchestratorConfig(raw = {}) {
   check("summaryStyle", SUMMARY_STYLES);
   check("decisionPosture", DECISION_POSTURES);
   check("synthesisStyle", SYNTHESIS_STYLES);
+  if (value.summaryStyle === "concise" && value.synthesisStyle === "decision_oriented") {
+    try { console.warn("[loom] orchestrator config: summaryStyle=concise with synthesisStyle=decision_oriented — the concise summary may under-feed the decision-oriented synthesis"); } catch {}
+  }
   return { config: normalizeOrchestratorConfig(raw), rejected };
 }
 
@@ -271,7 +274,7 @@ export function orchestratorContextPolicy(config = {}, task) {
   return {};
 }
 
-export function getSummaryGuidance(config = {}) {
+export function getSummaryGuidance(config = {}, maxRounds = null) {
   const value = normalizeOrchestratorConfig(config);
   const styles = {
     concise: "Be concise: emphasize decisions, major evidence, and open questions without repeating the transcript.",
@@ -281,7 +284,10 @@ export function getSummaryGuidance(config = {}) {
   // Contract-enforcement tail — always on, independent of customInstructions:
   // restatement/gate consolidation are referee duties, not style preferences
   // (the clerk is the only participant that sees the whole round).
-  const refereeTail = " Enforce the room's own contract in what you read: note any contribution that re-states State of Play or its own prior position without a delta — name the largest by [#id]. When two or more contributions carry mutually overlapping thresholds or projections, name the single live version (or the tiered ladder they compose) and mark older ones superseded — never record parallel duplicates as if equally live. In late rounds (3+), state whether a decision rule (trigger + date + owner) exists for the final artifact.";
+  const lateRoundNote = (maxRounds === null || maxRounds >= 4)
+    ? " In late rounds (3+), state whether a decision rule (trigger + date + owner) exists for the final artifact."
+    : "";
+  const refereeTail = " Enforce the room's own contract in what you read: note any contribution that re-states State of Play or its own prior position without a delta — name the largest by [#id]. When two or more contributions carry mutually overlapping thresholds or projections, name the single live version (or the tiered ladder they compose) and mark older ones superseded — never record parallel duplicates as if equally live." + lateRoundNote;
   return styles[value.summaryStyle] + refereeTail;
 }
 

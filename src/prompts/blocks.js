@@ -269,11 +269,20 @@ export function buildCategoryLens(guidance) {
   return `Persona lens (subordinate to contract):\n${safe}`;
 }
 
-export function buildRoundContext(currentRound, maxRounds) {
+export function buildRoundContext(currentRound, maxRounds, context = {}) {
+  const hasPriorContributions = !!context?.hasPriorContributions;
+  const settledCount = Number.isFinite(context?.settledCount) ? context.settledCount : null;
   if (!currentRound || !maxRounds) {
     return "Round context unknown — focus on substance and whether the trigger introduces new evidence. Thoroughness over brevity; use the context window.";
   }
-  const progress = currentRound / maxRounds;
+  // Born-terminal meetings (round 1 of 1, nothing before it) are openings, not
+  // closings: there is nothing to consolidate and no settled registry to cite.
+  // Treat them as DIVERGE so the first turn is generative rather than terminal.
+  const bornTerminal = (currentRound === 1 && maxRounds === 1 && !hasPriorContributions);
+  const progress = bornTerminal ? 0 : (currentRound / maxRounds);
+  const settledBullet = (settledCount === null || settledCount > 0)
+    ? "- SETTLED points in State of Play are signed: reference them by [#id] in one clause, then move on. Do NOT restate their content — restatement is a contract violation, not thoroughness.\n"
+    : "- Nothing is settled yet (the settled registry is empty): do not cite a signed point that does not exist. Treat this turn as establishing, not consolidating.\n";
   if (progress <= 0.33) {
     return `Early deliberation (round ${currentRound}/${maxRounds}) — DIVERGE. Surface assumptions, name hidden constraints, introduce distinct options. Don't converge yet; explore the full spectrum. Thoroughness welcome.
 - Stake your own position first, in your own terms — do not build on the first speaker's frame or vocabulary. If you disagree with the emerging frame, say so and name the frame you'd use instead.
@@ -285,8 +294,7 @@ export function buildRoundContext(currentRound, maxRounds) {
 - When you build on a settled point, cite its [#id] once and add a delta — don’t restate it.`;
   } else {
     return `Late deliberation (round ${currentRound}/${maxRounds}) — CONSOLIDATE or LEAVE OPEN.
-- SETTLED points in State of Play are signed: reference them by [#id] in one clause, then move on. Do NOT restate their content — restatement is a contract violation, not thoroughness.
-- Your contribution must add one of: new evidence (Source/tool output), a new objection to a settled point, a refinement with numbers, or a decision-relevant synthesis of contested views.
+${settledBullet}- Your contribution must add one of: new evidence (Source/tool output), a new objection to a settled point, a refinement with numbers, or a decision-relevant synthesis of contested views.
 - It’s fine to leave dissent unresolved — map the remaining disagreement with evidence for/against each view.
 - End with Position: [held|revised|expanded] because …`;
   }

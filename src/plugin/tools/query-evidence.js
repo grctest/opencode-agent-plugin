@@ -3,6 +3,7 @@ import { MeetingDatabase } from "../../database.js";
 import { buildQueryPrompt, buildEvidencePrompt } from "../../prompts/interaction-prompts.js";
 import { truncateAtSentence } from "../../prompts/agent.js";
 import { QUERY_MODES, QUERY_MODE_NAMES, researchTools, subAgentTools } from "../../prompts/query-modes.js";
+import { incrementKeyedCounter, recordMeetingLatency } from "../../metrics.js";
 import { extractAgentResponse, mapToolResults } from "../../shared.js";
 import { degrade } from "../../utils/degrade.js";
 import { Logger } from "../../logger.js";
@@ -216,21 +217,51 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
                const perspectiveGuidance = mode === "perspective" && typeof target?.config?.reflection_guidance === "string"
                  ? target.config.reflection_guidance.trim().slice(0, 400) : "";
                 const systemPrompt = meta.systemPrompt(target, perspectiveGuidance);
-                 const res = await sessionManager.runEphemeralPrompt(target, {
-                  system: systemPrompt,
-                  model,
-                  parts: [{ type: "text", text: prompt }],
-                  // Sub-agent scope: research tools only (patching is
-                  // primary-tail-only). No nested loom_query/loom_vote/
-                  // loom_summon — enforced by omission.
-                  tools: subAgentTools(),
-                  timeoutMs: meta.timeoutMs,
-                  signal: context.abort,
-                  abort: context.abort,
-                }, meetingInfo.meetingId);
                 try { engine.getRoundExecutor?.()?.recordSubAgentCall?.(1); } catch {}
-                if (!res || !res.ok) return { target, mode, kind: "error", error: res?.error?.message ?? "prompt failed" };
-               const { text, toolResults } = extractAgentResponse(res.data);
+                const isTimeoutError = (r, e) => {
+                  const msg = (r?.error?.message ?? e?.message ?? "").toString();
+                  return /timed?\s*out/i.test(msg);
+                };
+                let res = null;
+                let caughtErr = null;
+                const peerStart = Date.now();
+                const maxAttempts = 2;
+                let attempts = 0;
+                while (attempts < maxAttempts) {
+                  attempts += 1;
+                  caughtErr = null;
+                  try {
+                    res = await sessionManager.runEphemeralPrompt(target, {
+                      system: systemPrompt,
+                      model,
+                      parts: [{ type: "text", text: prompt }],
+                      tools: subAgentTools(),
+                      timeoutMs: attempts === 1 ? meta.timeoutMs : Math.round(meta.timeoutMs * 1.5),
+                      signal: context.abort,
+                      abort: context.abort,
+                    }, meetingInfo.meetingId);
+                  } catch (e) {
+                    caughtErr = e;
+                    res = null;
+                  }
+                  const failed = !res || !res.ok || !!caughtErr;
+                  if (!failed) break;
+                  const timeout = isTimeoutError(res, caughtErr);
+                  if (!timeout || attempts >= maxAttempts) break;
+                }
+                if (caughtErr) {
+                  try { incrementKeyedCounter("retry_events", "inline_peer_timeout"); } catch {}
+                  return { target, mode, kind: "error", error: caughtErr.message };
+                }
+                if (!res || !res.ok) {
+                  const errMsg = res?.error?.message ?? "prompt failed";
+                  if (/timed?\s*out/i.test(errMsg)) {
+                    try { incrementKeyedCounter("retry_events", "inline_peer_timeout_final"); } catch {}
+                  }
+                  return { target, mode, kind: "error", error: errMsg };
+                }
+                const { text, toolResults } = extractAgentResponse(res.data);
+                try { recordMeetingLatency(meetingInfo.meetingId, "llm_peer_prompt_ms", Date.now() - peerStart); } catch {}
                // Sentence-boundary truncation with ellipsis, not a mid-word UTF-16
                // slice that can cut mid-sentence or mid-surrogate-pair (audit B7).
                const content = truncateAtSentence(text ?? "", 2000);
@@ -340,8 +371,15 @@ export function createQueryEvidenceTools({ config, resolveMeeting, activeLooms }
           const inlinePayload = { inline: true, queries, responses: results, note: "Inline query — peer answers returned for synthesis and stored as indented rows." };
           const outputStr = JSON.stringify(inlinePayload);
           // Durable audit for Tool use tab — captures loom_query even if ToolPart extraction fails
-          auditLoomTool({ db, stateManager, caller, meetingId: meetingInfo.meetingId, tool: "loom_query", input: args, output: outputStr, status: "completed", title: `loom_query:${results.length - skipped.length} responses` });
-          return { output: outputStr, metadata: { inline: true, responseCount: results.length - skipped.length }, title: `loom_query:${results.length - skipped.length} responses` };
+          const _ok = results.filter((r) => !r.error).length;
+          const _timeout = results.filter((r) => r.error && /timed out/i.test(r.error)).length;
+          const _other = results.length - _ok - _timeout;
+          const _titleParts = [`${_ok} ok`];
+          if (_timeout) _titleParts.push(`${_timeout} timeout`);
+          if (_other) _titleParts.push(`${_other} error`);
+          const _title = `loom_query: ${results.length} target${results.length === 1 ? "" : "s"} → ${_titleParts.join(", ")}`;
+          auditLoomTool({ db, stateManager, caller, meetingId: meetingInfo.meetingId, tool: "loom_query", input: args, output: outputStr, status: "completed", title: _title });
+          return { output: outputStr, metadata: { inline: true, responseCount: results.length - skipped.length }, title: _title };
         } catch (e) {
           const p = { error: `loom_query inline failed: ${e.message}`, queued: true, queries };
           const errStr = JSON.stringify(p);

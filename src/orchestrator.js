@@ -33,6 +33,7 @@ import * as roundHelpers from "./orchestrator/round.js";
 import * as synthesisHelpers from "./orchestrator/synthesis.js";
 import * as modelsHelpers from "./orchestrator/models.js";
 import * as initHelpers from "./orchestrator/init.js";
+import { clear as clearUsageLimit, reportFromError as reportUsageLimitFromError } from "./services/usage-limit-monitor.js";
 
 export { SUMMARY_TRUNCATE_LEN, MAX_ORCHESTRATOR_MESSAGES } from "./constants.js";
 
@@ -337,6 +338,59 @@ export class MeetingOrchestrator {
     try { this._haltController = new AbortController(); } catch {}
     try { this._roundExecutor?.setHaltSignal?.(this._haltController?.signal ?? null); } catch {}
     try { this._synthesisCoordinator?.setHaltSignal?.(this._haltController?.signal ?? null); } catch {}
+    // Resume/extend re-opens the meeting: drop any account-wide usage-limit
+    // block so a user who just subscribed (or waited out the daily reset) can
+    // retry immediately. If the server is still limited, the next
+    // session.status event re-arms the monitor within one attempt.
+    try { clearUsageLimit("resume"); } catch {}
+  }
+
+  /**
+   * Stop the run because opencode reported a hard account usage limit
+   * (free_tier_limit / account_rate_limit). Same abort semantics as cancel()
+   * — sticky halt, in-flight prompts aborted — but the terminal status is
+   * `rate_limited` so the dashboard shows the RateLimitBanner CTA and the
+   * meeting stays resumable after the limit resets (or after Subscribe).
+   *
+   * @param {{ type?: string, message?: string, retryAfterMs?: number|null, action?: object }} [classification]
+   */
+  haltForUsageLimit(classification = null) {
+    if (this._closed) return;
+    this._halted = true;
+    this._cancelled = true;
+    try { this._haltController?.abort(); } catch {}
+    try { this._roundExecutor?._abortInflight?.(); } catch {}
+
+    const rateLimitClassification = classification?.type
+      ? {
+          type: classification.type,
+          message: classification.message ?? "Usage limit reached",
+          retryAfterMs: classification.retryAfterMs ?? null,
+          action: classification.action ?? null,
+        }
+      : (this._rateLimitError?.rateLimitClassification ?? null);
+    if (!rateLimitClassification) return;
+
+    // Synthetic error carries the classification so _setRateLimitError and
+    // isHardRateLimitError agree on shape.
+    const err = new Error(rateLimitClassification.message || "Usage limit reached");
+    err.name = "UsageLimitError";
+    err.status = 429;
+    err.rateLimitClassification = rateLimitClassification;
+    this._setRateLimitError(err);
+
+    const actionLink = rateLimitClassification.action?.link;
+    try {
+      this._sessionManager?.postProgress(
+        `⏸️ ${rateLimitClassification.message}${actionLink ? ` — ${actionLink}` : ""}`,
+        "warn",
+      );
+    } catch {}
+    this._logger.warn(
+      "usage_limit_halted",
+      `Meeting halted for hard usage limit (${rateLimitClassification.type}) — in-flight prompts aborted, resume stays available after reset or Subscribe`,
+      { type: rateLimitClassification.type, message: rateLimitClassification.message },
+    );
   }
 
   /**
@@ -402,6 +456,9 @@ export class MeetingOrchestrator {
   _setRateLimitError(error) {
     const classification = error.rateLimitClassification;
     if (!classification) return;
+    // Arm the account-wide monitor so other meetings / later prompts fail fast
+    // even if this error was first seen by only one session.
+    try { reportUsageLimitFromError(error); } catch {}
     this._rateLimitError = error;
     this._rateLimitRetryAt = classification.retryAfterMs
       ? Date.now() + classification.retryAfterMs
@@ -436,6 +493,9 @@ export class MeetingOrchestrator {
     try {
       const state = this._stateManager.getState();
       state.rate_limit_state = null;
+      // Persist the clear too — otherwise the dashboard's meeting row keeps
+      // rate_limit_state after the auto-expiry timer fires (or after Resume).
+      try { this._database?.setRateLimitState?.(null); } catch {}
       if (this._stateManager.getStatus() === "rate_limited") {
         this._stateManager.transitionTo("weaving");
       }

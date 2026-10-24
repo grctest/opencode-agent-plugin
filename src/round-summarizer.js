@@ -1,5 +1,5 @@
 import { getConfig } from "./config.js";
-import { truncate } from "./shared.js";
+import { truncate, truncateAtSentence } from "./shared.js";
 import { Logger, extractErrorInfo } from "./logger.js";
 import { SUBSTANTIVE_TYPES } from "./utils/contribution-types.js";
 import { renderMyStateMarkdown, STATE_PATCH_CAPS } from "./state-patch.js";
@@ -100,18 +100,33 @@ export function buildAgentStatesContext(participantStates) {
   if (!Array.isArray(participantStates) || participantStates.length === 0) {
     return "\n## Current Agent States\n_(No current state snapshots available.)_";
   }
-  const body = participantStates.map(formatAgentStateSnapshot).join("\n\n");
-  // Same 4 kB bound as the synthesis path's Agent States block (audit C1/4.1) —
-  // the two blocks share a name and content but previously had different bounds.
-  const capped = body.length > 4000 ? `${body.slice(0, 4000)}\n…[further agent states omitted — see DB]` : body;
-  return `\n## Current Agent States\n\n_These are bounded, per-agent projections, not a shared transcript. Attribute every state claim to its named holder._\n${delimitContext(capped, "AGENT_STATES")}`;
+  // Per-agent truncation: never cut a snapshot in half. Include whole agent
+  // blocks until the 4 kB budget is exhausted, then note the omitted agents.
+  const blocks = participantStates.map(formatAgentStateSnapshot);
+  let body = "";
+  const included = [];
+  for (const b of blocks) {
+    const candidate = body ? `${body}\n\n${b}` : b;
+    if (candidate.length <= 4000) {
+      body = candidate;
+      included.push(true);
+    } else {
+      included.push(false);
+    }
+  }
+  const omitted = blocks.length - included.filter(Boolean).length;
+  if (omitted > 0) {
+    body = `${body}\n\n…[${omitted} further agent state(s) omitted — see DB]`;
+  }
+  if (!body) body = blocks[0]?.slice(0, 4000) ?? "";
+  return `\n## Current Agent States\n\n_These are bounded, per-agent projections, not a shared transcript. Attribute every state claim to its named holder._\n${delimitContext(body, "AGENT_STATES")}`;
 }
 
-export function buildRoundSummarySystem(orchestratorConfig = {}) {
+export function buildRoundSummarySystem(orchestratorConfig = {}, maxRounds = null) {
   const band = getSummaryBand(orchestratorConfig);
   return `You are a thorough deliberation clerk. ${band.words} words. Sentence style, human-readable, concise but thorough. Preserve numbers verbatim — do not round or invent. Never emit vec: traces.
 
-${getSummaryGuidance(orchestratorConfig)}`;
+${getSummaryGuidance(orchestratorConfig, maxRounds)}`;
 }
 
 export function filterRoundSummaryContributions(contributions = []) {
@@ -212,7 +227,7 @@ export function buildRoundSummaryUser(round, state, participantStates = [], orch
     const strength = s.includes("strength: strong") ? 3
       : ((c.tool_calls && c.tool_calls.length > 0) || s.includes("strength: weak")) ? 2
       : s.includes("inconclusive") ? 1 : 0;
-    return { c, line: truncate(formatContribution(c, reflectionMap, nameMap), 1200), strength };
+    return { c, line: truncateAtSentence(formatContribution(c, reflectionMap, nameMap), 1200), strength };
   });
   const picked = new Set();
   let used = 0;
@@ -254,7 +269,7 @@ export function buildRoundSummaryUser(round, state, participantStates = [], orch
   // clerk adapts emphasis exactly as agents do (audit O9/Step 5).
   const maxRounds = Number.isFinite(opts.maxRounds) && opts.maxRounds > 0 ? opts.maxRounds : null;
   const roundContextLine = maxRounds
-    ? `\nRound: ${buildRoundContext(round.number ?? 1, maxRounds)}\n`
+    ? `\nRound: ${buildRoundContext(round.number ?? 1, maxRounds, { hasPriorContributions: true, settledCount: opts.settledCount })}\n`
     : "";
   // Participant roster: id + activity only, never category — categories play no
   // part in orchestrator decisions.
@@ -360,6 +375,9 @@ Provide a ${band.words} word summary — 2-3 bullets, one line each — noting t
 export async function summarizeRound(round, state, promptOrchestrator, getDefaultModel, getFallbackModel, participantStates = [], orchestratorConfig = {}, summaryOpts = {}) {
   const contribCount = round.contributions.length;
   if (contribCount === 0) return "No contributions this round.";
+  const maxRounds = Number.isFinite(summaryOpts?.maxRounds) && summaryOpts.maxRounds > 0
+    ? summaryOpts.maxRounds
+    : (Number.isFinite(state?.max_rounds) && state.max_rounds > 0 ? state.max_rounds : null);
 
   // Try primary model, then fallback
   const model = getDefaultModel() ?? (getFallbackModel ? getFallbackModel() : null);
@@ -368,7 +386,7 @@ export async function summarizeRound(round, state, promptOrchestrator, getDefaul
   const summaryContributions = filterRoundSummaryContributions(round.contributions);
   const prompt = buildRoundSummaryUser(round, state, participantStates, orchestratorConfig, summaryOpts);
   const summaryStart = Date.now();
-  const semanticSummary = await promptOrchestrator(buildRoundSummarySystem(orchestratorConfig), model, prompt, "summary");
+  const semanticSummary = await promptOrchestrator(buildRoundSummarySystem(orchestratorConfig, maxRounds), model, prompt, "summary");
   const summaryMs = Date.now() - summaryStart;
   incrementKeyedCounter("llm_calls_by_type", "summary");
   recordLatency("summary_ms", summaryMs);

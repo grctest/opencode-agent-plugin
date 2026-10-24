@@ -1,5 +1,5 @@
 import { tool } from "@opencode-ai/plugin";
-import { recordMeetingCall, recordMeetingLatency } from "../../metrics.js";
+import { incrementKeyedCounter, recordMeetingCall, recordMeetingLatency } from "../../metrics.js";
 
 /**
  * Orchestrator-only turn-order override.
@@ -56,6 +56,22 @@ export function createTurnOrderTool({ resolveMeeting, activeLooms }) {
           }
           stateManager.setPlannedTurnOrder(ordered);
           stateManager.setNextSpeakerId(ordered[0]);
+          // W1 (P3.3) — counter + provenance. The counter lands in
+          // meeting_metrics.counters at artifact save; the meta is consumed by
+          // the round row's orchestrator_config_json at the summary write
+          // (orchestrator/round.js), so `rounds` carries who set the order and
+          // why rather than the override being invisible in the record.
+          try { incrementKeyedCounter("turn_order_overrides", "override"); } catch {}
+          try {
+            stateManager.setTurnOrderMeta?.({
+              order: ordered,
+              dropped,
+              appended,
+              reason: args.reason ?? null,
+              set_by: "orchestrator_summary",
+              round: stateManager.getCurrentRound?.() ?? null,
+            });
+          } catch {}
           try {
             if (meetingId) {
               recordMeetingCall(meetingId, "turn_order");

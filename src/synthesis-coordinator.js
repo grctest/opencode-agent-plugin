@@ -167,13 +167,17 @@ export class SynthesisCoordinator {
     try {
       const weave = (transcriptData?.rounds ?? []).flatMap((r) => r.contributions ?? []);
       const substantive = weave.filter((c) => c.type !== "pass");
-      const ballots = weave.filter((c) => c.type === "vote_response").length;
+      const ballotRows = weave.filter((c) => c.type === "vote_response");
+      const ballots = ballotRows.length;
+      const votes = new Set(ballotRows.map((c) => c.batch_id ?? c.id)).size;
       const coverage = result?.artifact?.engagement?.coverage;
       const bits = [
         `${(transcriptData?.rounds ?? []).length} round${(transcriptData?.rounds ?? []).length === 1 ? "" : "s"}`,
         `${substantive.length} contribution${substantive.length === 1 ? "" : "s"}`,
         `${(participants ?? []).length} participant${(participants ?? []).length === 1 ? "" : "s"}`,
-        ballots > 0 ? `${ballots} ballot${ballots === 1 ? "" : "s"} held` : "no ballot held",
+        ballots > 0
+          ? `${votes} vote${votes === 1 ? "" : "s"} held (${ballots} ballot${ballots === 1 ? "" : "s"})`
+          : "no ballot held",
       ];
       if (Number.isFinite(coverage)) {
         bits.push(`${Math.round(coverage * 100)}% of contributions cited in this artifact`);
@@ -203,7 +207,7 @@ export class SynthesisCoordinator {
       // than only in the round clerk's summary.
       const engagement = computeEngagementLedger(transcriptData);
       const userPrompt =
-        buildSynthesisPrompt(transcriptData.question, transcript, allParticipants, transcriptData.tags ?? [], stateOfPlay, userContext, { buildMode: transcriptData.buildMode, taskMode: transcriptData.taskMode, decisionPosture: effectiveConfig?.decisionPosture, engagement, contextWindow: this.#contextWindow }) +
+        buildSynthesisPrompt(transcriptData.question, transcript, allParticipants, transcriptData.tags ?? [], stateOfPlay, userContext, { buildMode: transcriptData.buildMode, taskMode: transcriptData.taskMode, decisionPosture: effectiveConfig?.decisionPosture, engagement, ratchetBallot: transcriptData.ratchetBallot, contextWindow: this.#contextWindow }) +
         additionalFeedback;
 
       const llmStart = Date.now();

@@ -3,6 +3,12 @@ import { extractErrorInfo } from "./logger.js";
 import { withRetry, isRetryableError, isHardRateLimitError, classifyRateLimitError, classifyInputRejectionError } from "./utils/retry.js";
 import { trimPayloadToBudget } from "./utils/context-budget.js";
 import { getConfig } from "./config.js";
+import {
+  isBlocked as isUsageLimitBlocked,
+  getAbortReason as getUsageLimitAbortReason,
+  waitForHit as waitForUsageLimitHit,
+  reportFromError as reportUsageLimitFromError,
+} from "./services/usage-limit-monitor.js";
 
 /**
  * A single contract for raw opencode session lifecycle: create / prompt / delete.
@@ -107,6 +113,21 @@ export class SessionContract {
         const err = new DOMException("Aborted", "AbortError");
         err.cause = "AbortSignal already aborted before prompt";
         throw err;
+      }
+      // Account-wide hard usage limit: opencode holds the prompt open and only
+      // signals via session.status — never surfacing the 429 on this HTTP call.
+      // Fail fast when the monitor is already armed so we do not burn the full
+      // timeout budget against a wall every retry.
+      const preBlocked = getUsageLimitAbortReason();
+      if (preBlocked) {
+        try {
+          this.#logger?.warn(
+            "prompt_blocked_usage_limit",
+            `Session prompt skipped — hard usage limit in effect (${preBlocked.rateLimitClassification?.type ?? "unknown"})`,
+            { sessionId, type: preBlocked.rateLimitClassification?.type ?? null },
+          );
+        } catch {}
+        throw preBlocked;
       }
       // Per-model input ceiling. Every LLM call funnels through here, so this
       // is the one place that guarantees no prompt exceeds the window of the
@@ -226,6 +247,11 @@ export class SessionContract {
         try { rejectTimeout?.(error); } catch {}
       };
       const guards = [];
+      // Hard usage limit racing this prompt: the same session.status signal
+      // the web UI uses. Rejection carries UsageLimitError so the catch path
+      // classifies a hard rate limit instead of a timeout.
+      const limitHit = waitForUsageLimitHit();
+      guards.push(limitHit.promise);
       if (signal) {
         guards.push(new Promise((_, reject) => {
           abortHandler = () => {
@@ -261,6 +287,7 @@ export class SessionContract {
         settled = true;
         if (timer) clearTimeout(timer);
         if (heartbeatTimer) clearInterval(heartbeatTimer);
+        limitHit.dispose();
         if (signal && abortHandler) {
           try { signal.removeEventListener("abort", abortHandler); } catch {}
         }
@@ -286,6 +313,10 @@ export class SessionContract {
         err.inputRejectionClassification = classifyInputRejectionError(err);
         // Preserve partial response (may contain already-executed ToolParts)
         err.partialData = result.data ?? null;
+        // Arm the account-wide monitor when the body carries a hard limit.
+        if (err.rateLimitClassification) {
+          try { reportUsageLimitFromError(err, sessionId); } catch {}
+        }
         throw err;
       }
 
@@ -302,6 +333,11 @@ export class SessionContract {
       }
       if (error && !error.inputRejectionClassification) {
         error.inputRejectionClassification = classifyInputRejectionError(error);
+      }
+      // A hard usage-limit rejection must not leave the server-side prompt
+      // hanging (opencode holds the connection open while scheduling retries).
+      if (error && (isHardRateLimitError(error) || isUsageLimitBlocked())) {
+        try { void this.#client.session.abort?.({ path: { id: sessionId }, query: { directory: this.#directory } }); } catch {}
       }
       // An input rejection is the guard's last line of defence, so it is
       // reported at the point it happens rather than only as a failed turn.

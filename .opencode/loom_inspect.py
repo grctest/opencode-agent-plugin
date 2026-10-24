@@ -282,6 +282,188 @@ def dump_table(con: sqlite3.Connection, table: str, limit: int) -> None:
         print(json.dumps(d, ensure_ascii=False, default=str))
 
 
+
+
+def show_deep(con: sqlite3.Connection, db_path: str) -> None:
+    """In-depth audit: prompt_context completeness, inline errors, clocks, counters."""
+    tables = list_tables(con)
+    mid = None
+    try:
+        mid = con.execute("SELECT id FROM meetings LIMIT 1").fetchone()["id"]
+    except sqlite3.Error:
+        pass
+    if not mid:
+        print("no meeting row"); return
+
+    # ---- three clocks ----
+    print("\n=== THREE CLOCKS ===")
+    try:
+        m = con.execute("SELECT created_at, updated_at FROM meetings WHERE id=?", (mid,)).fetchone()
+        print(f"  meeting created_at : {m['created_at']}")
+        print(f"  meeting updated_at : {m['updated_at']}")
+    except sqlite3.Error:
+        pass
+    try:
+        mm = con.execute("SELECT duration_ms, counters FROM meeting_metrics WHERE meeting_id=?", (mid,)).fetchone()
+        if mm:
+            print(f"  metrics.duration_ms: {mm['duration_ms']}  (canonical wall-clock)")
+            try:
+                c = json.loads(mm["counters"] or "{}")
+                q = c.get("quality", {}) if isinstance(c, dict) else {}
+                rb = q.get("round_budget", {}) if isinstance(q, dict) else {}
+                print(f"  round_budget.final_span_ms: {rb.get('final_span_ms')}  ratio={rb.get('ratio')} below_floor={rb.get('below_floor')}")
+                mmix = q.get("mechanism_mix") if isinstance(q, dict) else None
+                if mmix:
+                    print(f"  mechanism_mix: arg={mmix.get('argument_shaped')} dec={mmix.get('decision_shaped')} other={mmix.get('other')} decision_share={mmix.get('decision_share')}")
+            except (ValueError, TypeError):
+                pass
+    except sqlite3.Error:
+        pass
+    try:
+        contribs = con.execute("SELECT id, created_at FROM contributions WHERE meeting_id=? ORDER BY id", (mid,)).fetchall()
+        if contribs:
+            ts = [r["created_at"] for r in contribs]
+            print(f"  contribution span   : {ts[0]} .. {ts[-1]}")
+    except sqlite3.Error:
+        pass
+
+    # ---- prompt_context completeness ----
+    print("\n=== PROMPT CONTEXT COMPLETENESS ===")
+    try:
+        rows = con.execute("SELECT id, type, prompt_context, state_patch_outcome" if False else "SELECT id, type, prompt_context FROM contributions WHERE meeting_id=? ORDER BY id", (mid,)).fetchall()
+        cols = [c["name"] for c in con.execute("PRAGMA table_info(contributions)")]
+        has_outcome_col = "state_patch_outcome" in cols  # not a real col; check prompt_context
+        for r in rows:
+            pc = None
+            try:
+                pc = json.loads(r["prompt_context"] or "")
+            except (ValueError, TypeError):
+                pc = None
+            keys = sorted(pc.keys()) if isinstance(pc, dict) else []
+            sp = pc.get("system_prompt") if isinstance(pc, dict) else None
+            up = pc.get("user_prompt") if isinstance(pc, dict) else None
+            outcome = (pc.get("state_patch_outcome") if isinstance(pc, dict) else None) or "?"
+            print(f"  #{r['id']:>2} {r['type']:22s} ctx_keys={len(keys)} sys={len(sp or '')} user={len(up or '')} patch_outcome={outcome}")
+    except sqlite3.Error as e:
+        print(f"  err: {e}")
+
+    # ---- patch outcomes distribution ----
+    print("\n=== PATCH OUTCOMES ===")
+    try:
+        from collections import Counter
+        c = Counter()
+        for r in con.execute("SELECT prompt_context FROM contributions WHERE meeting_id=?", (mid,)):
+            try:
+                pc = json.loads(r["prompt_context"] or "")
+                c[pc.get("state_patch_outcome", "?")] += 1
+            except (ValueError, TypeError):
+                c["?"] += 1
+        for k, v in c.items():
+            print(f"  {k}: {v}")
+    except sqlite3.Error as e:
+        print(f"  err: {e}")
+
+    # ---- inline peer errors (scan all tool_audit payloads) ----
+    print("\n=== INLINE PEER ERRORS (scan of all tool_audit payloads) ===")
+    found = 0
+    for r in con.execute("SELECT id, tool, participant_id, output FROM tool_audit WHERE meeting_id=?", (mid,)):
+        out = r["output"]
+        if not isinstance(out, str) or not out.strip():
+            continue
+        try:
+            j = json.loads(out)
+        except (ValueError, TypeError):
+            continue
+        def walk(o, path=""):
+            nonlocal found
+            if isinstance(o, dict):
+                for k, v in o.items():
+                    if k in ("error", "errors") and v:
+                        found += 1
+                        print(f"  audit #{r['id']} {r['tool']} {r['participant_id']}: {str(v)[:200]}")
+                    walk(v, f"{path}.{k}")
+            elif isinstance(o, list):
+                for i, v in enumerate(o):
+                    walk(v, f"{path}[{i}]")
+        walk(j)
+    if found == 0:
+        print("  none — whole-run scan clean")
+
+    # ---- sub-agent conformity (loom_query responses) ----
+    print("\n=== SUB-AGENT CONFORMITY ===")
+    modes = {}
+    total_resp = 0
+    ev_struct = 0
+    ballot_tok = 0
+    pos_line = 0
+    for r in con.execute("SELECT output FROM tool_audit WHERE meeting_id=? AND tool='loom_query'", (mid,)):
+        try:
+            j = json.loads(r["output"] or "")
+        except (ValueError, TypeError):
+            continue
+        for q in (j.get("queries") if isinstance(j, dict) else []) or []:
+            if isinstance(q, dict):
+                mname = q.get("mode") or "unknown"
+                modes[mname] = modes.get(mname, 0) + 1
+        for resp in (j.get("responses") if isinstance(j, dict) else []) or []:
+            if not isinstance(resp, dict):
+                continue
+            total_resp += 1
+            content = resp.get("content") or ""
+            mode = resp.get("mode") or ""
+            if mode == "evidence" and all(t in content for t in ("Finding", "Source", "Strength")):
+                ev_struct += 1
+            if "[Vote:" in content:
+                ballot_tok += 1
+            if "Position:" in content:
+                pos_line += 1
+    print(f"  modes: {modes}")
+    print(f"  total_responses={total_resp} evidence_structure={ev_struct} ballot_token={ballot_tok} position_line={pos_line}")
+
+    # ---- persona proposals ----
+    print("\n=== PERSONA PROPOSALS ===")
+    try:
+        pp = Path(db_path).parent.parent / "persona-proposals" / f"{mid}.md"
+        if pp.exists():
+            txt = pp.read_text(encoding="utf-8", errors="replace")
+            print(f"  file: {pp}")
+            print(f"  anti_patterns={txt.lower().count('anti_pattern')} known_biases={txt.lower().count('known_bias')} proposals={txt.count('## ')}")
+        else:
+            print(f"  (no proposals file at {pp})")
+    except Exception as e:
+        print(f"  err: {e}")
+
+    # ---- report ↔ artifact parity ----
+    print("\n=== REPORT ↔ ARTIFACT PARITY ===")
+    try:
+        report_path = Path(db_path).with_suffix(".md")
+        if report_path.exists():
+            report_txt = report_path.read_text(encoding="utf-8", errors="replace")
+            art = con.execute("SELECT content FROM artifacts WHERE meeting_id=?", (mid,)).fetchone()
+            art_content = (art["content"] if art else "").strip()
+            marker = "\n---\n"
+            idx = report_txt.find(marker)
+            if idx >= 0 and art_content:
+                tail = report_txt[idx + len(marker):].strip()
+                print(f"  report_len={len(report_txt)} artifact_len={len(art_content)} tails_match={tail == art_content}")
+            else:
+                print(f"  report_len={len(report_txt)} artifact_len={len(art_content)} (no marker or empty artifact)")
+        else:
+            print(f"  (no report file at {report_path})")
+    except Exception as e:
+        print(f"  err: {e}")
+
+    # ---- counters.quality ----
+    print("\n=== COUNTERS.QUALITY ===")
+    try:
+        mm = con.execute("SELECT counters FROM meeting_metrics WHERE meeting_id=?", (mid,)).fetchone()
+        c = json.loads(mm["counters"] or "{}")
+        q = c.get("quality", {}) if isinstance(c, dict) else {}
+        print(json.dumps(q, indent=2, ensure_ascii=False)[:3000])
+    except Exception as e:
+        print(f"  err: {e}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("db", nargs="?", default=None,
@@ -294,6 +476,8 @@ def main() -> None:
     ap.add_argument("--json", action="store_true",
                     help="machine-readable structural overview (tables, counts, "
                     "columns, bytes, JSON-blob keys) instead of text")
+    ap.add_argument("--deep", action="store_true",
+                    help="in-depth audit: prompt_context, inline errors, clocks, counters, parity")
     ap.add_argument("--out", default=None, help="write output (with --json) to file")
     args = ap.parse_args()
 
@@ -341,6 +525,8 @@ def main() -> None:
             show_schema(con)
         elif args.table:
             dump_table(con, args.table, args.limit)
+        elif args.deep:
+            show_deep(con, str(args.db))
         else:
             show_overview(con)
 

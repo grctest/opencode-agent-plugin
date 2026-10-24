@@ -122,11 +122,11 @@ test("citation check exempts synthesized-from attributions", () => {
   assert.equal(checkCitationSupport(text, w).length, 0);
 });
 
-test("both detectors are off and dry by default", () => {
+test("Needs Verification ships by default; Citation Warnings stays off and dry", () => {
   const policy = resolveDetectorPolicy();
-  assert.equal(policy.needsVerification, false);
+  assert.equal(policy.needsVerification, true);
   assert.equal(policy.citationWarnings, false);
-  assert.equal(policy.dryRun, true);
+  assert.equal(policy.dryRun, false);
   assert.equal(policy.precisionFloor, 0.9);
 });
 

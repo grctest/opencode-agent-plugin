@@ -124,7 +124,19 @@ export async function _synthesize() {
       const txt = String(c.content ?? "").trim();
       return txt !== "";
     });
-    const stateOfPlay = this._stateManager.getStateOfPlay();
+    let stateOfPlay = this._stateManager.getStateOfPlay();
+    // SoP-less closing rounds (P2.8): when every primary turn ran with an
+    // empty SoP (born-terminal or all-pass rounds), backfill the round
+    // summary's settled bullets before synthesis reads it — each attributed
+    // to its holder via the settled registry. Never claims canonical truth;
+    // the "(backfilled)" marker keeps that honest.
+    if (!String(stateOfPlay ?? "").trim()) {
+      const settled = this._stateManager.getSettledItems();
+      if (Array.isArray(settled) && settled.length > 0) {
+        const lines = settled.map((it) => `- ${it.text}${Array.isArray(it.holders) && it.holders.length ? ` (holders: ${it.holders.join(", ")}, round ${it.round})` : ` (round ${it.round})`}`).join("\n");
+        stateOfPlay = `## Settled (backfilled from round summary — attributed to holders)\n${lines}`;
+      }
+    }
     if (substantiveForSynthesis.length === 0 && !String(stateOfPlay ?? "").trim()) {
       const reason = failed > 0
         ? `All ${participants.length} participants encountered errors during the deliberation.`
@@ -152,6 +164,14 @@ export async function _synthesize() {
     // derive build mode from the effective tools the meeting actually ran with
     // rather than from tags (audit D5).
     transcriptData.tags = this._stateManager.getTags() ?? [];
+    // Ratchet detection (P2.7 / D4P5): a ballot held this round with later
+    // superseding evidence and no confirmation re-poll.
+    try {
+      const weave = this._stateManager.getWeave();
+      const ballots = weave.filter((c) => c.type === "vote_response");
+      const lastBallotTs = ballots.map((c) => c.created_at).sort().pop();
+      transcriptData.ratchetBallot = !!lastBallotTs && weave.some((c) => c.type !== "vote_response" && c.created_at && c.created_at > lastBallotTs);
+    } catch { transcriptData.ratchetBallot = false; }
     try {
       const at = this._roundExecutor?.getEffectiveAgentTools?.() ?? getConfig()?.agentTools;
       transcriptData.buildMode = !!(at?.enabled && (at?.buildMode === true || at?.builtIn?.write === true || at?.builtIn?.edit === true));
@@ -386,6 +406,8 @@ export function _saveMeetingMetrics() {
           degradation_events: snapshot.counters.degradation_events ?? {},
           retry_events: snapshot.counters.retry_events ?? {},
           breaker_events: snapshot.counters.breaker_events ?? {},
+          // W1 (P3.3) — turn-order override visibility in the durable record.
+          turn_order_overrides: snapshot.counters.turn_order_overrides ?? {},
           // N6 — refusal reasons, counted where the refusal happened.
           meeting_degraded_reasons: snapshot.counters.meeting_degraded_reasons ?? {},
         };
