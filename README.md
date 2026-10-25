@@ -6,10 +6,10 @@ The Deliberation Dashboard is an opencode plugin designed to enable you to orche
 
 ## How it works
 
-1. Setup phase
-  
 ![](./images/setup.png)
 
+1. Setup phase
+  
     * Provide a topic for discussion, any additional context, the max rounds and whether its a discussion task, a programming task and if the agents have read or write ability.
     * Select from the multiple available models which should be available for agents in subsequent steps (min 1).
     * Provide multiple personas - you can either generate bespoke personas or select from the many existing personas (as well as auto detect from the topic which to pick).
@@ -17,17 +17,17 @@ The Deliberation Dashboard is an opencode plugin designed to enable you to orche
     * Configure the rules for the persona agents - what are they allowed to do in their turn, what are their limitations and whether you want advanced features which may require additional LLM turns.
     * Configure the orchestrator - select the model & quality variant, change its behaviour and rules.
 
-2. Deliberation phase
-
 ![](./images/timeline.png)
+
+2. Deliberation phase
 
     * Watch as each persona agent takes their turn within each round.
     * Each row can be clicked on to view the context, the tool usage and response.
     * The orchestrator also contributes at the end of each round, producing an end of round summary.
 
-3. Overview page
-
 ![](./images/overview.png)
+
+3. Overview page
 
     * Similar to the timeline the overview provides a valuable insight into the ongoing deliberation.
     * From here you can see how many LLM calls have taken place, whose turn it currently is, and a breakdown of what actions have been carried out.
