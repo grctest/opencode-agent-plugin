@@ -10,6 +10,7 @@ import { CATEGORY_META, AVATAR_EXPRESSION, AVATAR_COLORS } from "../tierMeta.jsx
 export function PersonasCard({
   seats, embedderReady, personaIndexReady, personaIndexBusy, personaIndex,
   openAutoSelect, canAutoSelect, filterOk, busy, openAdd, isFrozen, readOnly,
+  openGenerate, questionOk,
   enabledModels, variantsForKey, setSeats, setSwapIdx, removeSeat, sectionRef,
 }) {
   return (
@@ -48,6 +49,15 @@ export function PersonasCard({
                 Auto-select unavailable — couldn't prepare the persona index. Add personas manually.
               </span>
             )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={openGenerate}
+              disabled={!filterOk || isFrozen || readOnly || !questionOk}
+              title={isFrozen ? "Locked while a deliberation is running" : readOnly ? "Locked — this deliberation's configuration is read-only" : !questionOk ? "Describe your question in step 1 first" : !filterOk ? "Enable at least one model in step 2 first" : `Generate ${seats.length === 0 ? "bespoke personas" : "personas"} tailored to your question`}
+            >
+              {seats.length === 0 ? "Generate bespoke personas" : "Generate personas"}
+            </Button>
             <Button
               variant="outline"
               size="sm"

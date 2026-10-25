@@ -26,14 +26,25 @@ function personasBasePath() {
   return candidates[0];
 }
 
-function userPersonasPath() {
+/**
+ * User-writable persona root (`<config>/loom/personas`), whether or not it
+ * exists yet — writers (dashboard save endpoint) mkdir it, readers get null.
+ */
+export function userPersonasDir() {
   const configDir = process.env.LOOM_CONFIG_DIR || join(resolveOpencodeConfigDir(), "loom");
-  const personasDir = join(configDir, "personas");
+  return join(configDir, "personas");
+}
+
+function userPersonasPath() {
+  const personasDir = userPersonasDir();
   if (existsSync(personasDir)) {
     return personasDir;
   }
   return null;
 }
+
+/** Folder under the user dir where dashboard-generated personas are saved. */
+export const CUSTOM_PERSONA_SUBDIR = "custom";
 
 let domainVocabCache = null;
 let domainVocabMtime = 0;
@@ -73,7 +84,7 @@ export function isValidCategory(value) {
   return typeof value === "string" && CATEGORY_RE.test(value);
 }
 const KNOWN_CATEGORIES = new Set(["junior", "mid", "senior", "principal", "civilian", "nonhuman"]);
-function validatePersona(persona) {
+export function validatePersona(persona) {
   const errors = [];
   if (!persona.name || typeof persona.name !== "string") errors.push("name required");
   else if (persona.name.length > 80) errors.push("name must be ≤80 chars");
@@ -193,7 +204,7 @@ export function lintPersonaStyle(persona) {
   return warnings;
 }
 
-function normalizePersona(persona) {
+export function normalizePersona(persona) {
   const out = { ...persona };
   // Legacy aliases: tier_guidance → category_guidance, tier → category.
   if (out.tier_guidance !== undefined && out.category_guidance === undefined) {
@@ -315,25 +326,39 @@ let personaCachePath = null;
 let personaCacheTimestamp = 0;
 const PERSONA_CACHE_TTL_MS = 60000;
 let personaWatchSetup = false;
+let personaUserWatchSetup = false;
+
+function watchUserPersonas(userPath) {
+  if (personaUserWatchSetup || !userPath) return;
+  try {
+    const uw = watch(userPath, { recursive: true }, () => { personaCache = null; });
+    if (uw && uw.unref) uw.unref();
+    personaUserWatchSetup = true;
+  } catch {}
+}
+
 function setupPersonaWatch() {
   if (personaWatchSetup) return;
   personaWatchSetup = true;
-  const watchers = [];
   try {
     const base = personasBasePath();
     const w = watch(base, { recursive: true }, () => { personaCache = null; });
     if (w && w.unref) w.unref();
-    watchers.push(w);
-    const userPath = userPersonasPath();
-    if (userPath) {
-      try {
-        const uw = watch(userPath, { recursive: true }, () => { personaCache = null; });
-        if (uw && uw.unref) uw.unref();
-        watchers.push(uw);
-      } catch {}
-    }
+    watchUserPersonas(userPersonasPath());
   } catch {}
   // Watchers are unref'd so they don't keep process alive; leak bounded to 2 handles
+}
+
+/**
+ * Drop the in-memory catalog so the next getPersonas() re-reads disk. Call
+ * after writing/removing persona files — the user-dir watcher only exists
+ * once the directory itself exists, so writers must invalidate explicitly.
+ */
+export function invalidatePersonaCache() {
+  personaCache = null;
+  personaCacheTimestamp = 0;
+  // The user dir may have just been created (first save) — attach its watcher now.
+  watchUserPersonas(userPersonasPath());
 }
 
 function loadPersonas() {
@@ -356,7 +381,9 @@ function loadPersonas() {
         const existingNames = new Set(result[category].map((p) => p.name));
         for (const p of personas) {
           if (!existingNames.has(p.name)) {
-            result[category].push(p);
+            // Everything under the user dir is a custom (non-bundled) persona —
+            // surfaced as the Custom filter in the manual-add dialog.
+            result[category].push({ ...p, custom: true });
           }
         }
       }

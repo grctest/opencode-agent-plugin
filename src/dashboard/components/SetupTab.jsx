@@ -6,6 +6,7 @@
 import { Button } from "./ui/button.tsx";
 import { PersonaPickerDialog } from "./PersonaPickerDialog.jsx";
 import { RoomSelectionDialog } from "./RoomSelectionDialog.jsx";
+import { GeneratePersonasDialog } from "./GeneratePersonasDialog.jsx";
 import { OrchestratorPreviewDialog } from "./OrchestratorPreviewDialog.jsx";
 import { StepHeader } from "./setup/StepHeader.jsx";
 import { QuestionCard } from "./setup/QuestionCard.jsx";
@@ -63,6 +64,7 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
         personaIndexReady={s.personaIndexReady} personaIndexBusy={s.personaIndexBusy} personaIndex={s.personaIndex}
         openAutoSelect={s.openAutoSelect} canAutoSelect={s.canAutoSelect} filterOk={s.filterOk}
         busy={s.busy} openAdd={s.openAdd} isFrozen={s.isFrozen} readOnly={s.readOnly}
+        openGenerate={s.openGenerate} questionOk={s.questionOk}
         enabledModels={s.enabledModels} variantsForKey={s.variantsForKey}
         setSeats={s.setSeats} setSwapIdx={s.setSwapIdx} removeSeat={s.removeSeat}
         sectionRef={registerSection("personas")}
@@ -102,6 +104,7 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
           seatNumber={s.swapIdx + 1}
           seatCategory={s.seats[s.swapIdx].category ?? s.seats[s.swapIdx].tier}
           currentName={s.seats[s.swapIdx].name}
+          currentSeat={s.seats[s.swapIdx]}
           seatedNames={s.seats.filter((_, j) => j !== s.swapIdx).map((x) => x.name)}
           catalog={s.catalog}
           onSelect={(persona, category) => s.selectSwap(s.swapIdx, persona, category)}
@@ -126,6 +129,23 @@ export function SetupTab({ selectedMeeting, onStarted, meetingState, meetingPart
           catalog={s.catalog}
           onSelect={(persona, category) => s.addSeat(persona, category)}
           onOpenChange={(v) => { if (!v) s.setAddOpen(false); }}
+        />
+      )}
+      {s.generateOpen && (
+        <GeneratePersonasDialog
+          open={s.generateOpen}
+          question={s.question}
+          context={s.context}
+          enabledModels={s.enabledModels}
+          genDefaultModel={s.genDefaultModel}
+          busy={s.genBusy}
+          error={s.genError}
+          results={s.generated}
+          rejected={s.generatedRejected}
+          onGenerate={s.runGeneration}
+          onReset={s.resetGeneration}
+          onApply={s.addSeats}
+          onOpenChange={(v) => { if (!v) s.setGenerateOpen(false); }}
         />
       )}
       <RoomSelectionDialog

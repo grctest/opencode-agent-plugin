@@ -295,15 +295,43 @@ export function createVoteSummonTools({ config, resolveMeeting, activeLooms }) {
              const p = { queued: true, persona_name: args.persona_name, issue: args.issue, note: "Summon queued — engine not ready." };
              return { output: JSON.stringify(p), metadata: { queued: true }, title: "loom_summon queued" };
            }
-           const cfg = engine.getRoundExecutor?.()?.getEffectiveAgentTools?.() ?? globalCfg;
-           if (!cfg?.enabled || !cfg?.loom?.loom_summon) return { output: JSON.stringify({ error: "loom_summon not enabled" }), metadata: { error: true }, title: "loom_summon error" };
-                     const allPersonas = getPersonas();
-          let found = null;
-          for (const category of Object.keys(allPersonas)) {
-            const m = allPersonas[category].find(p => p.name.toLowerCase() === args.persona_name.toLowerCase());
-            if (m) { found = { ...m, category }; break; }
-          }
-          if (!found) return { output: JSON.stringify({ error: `Persona "${args.persona_name}" not found` }), metadata: { error: true }, title: "loom_summon error" };
+            const cfg = engine.getRoundExecutor?.()?.getEffectiveAgentTools?.() ?? globalCfg;
+            if (!cfg?.enabled || !cfg?.loom?.loom_summon) return { output: JSON.stringify({ error: "loom_summon not enabled" }), metadata: { error: true }, title: "loom_summon error" };
+            // Seated participants first: a meeting snapshots persona text into
+            // the participants table at start, and persona JSON files are never
+            // consulted again for stored meetings — so the catalog may no longer
+            // (or may never) contain a seat's current persona. The live seated
+            // config is the authoritative voice for this deliberation, and it
+            // survives the source file being deleted or edited mid-run.
+            const seatKey = String(args.persona_name ?? "").trim().toLowerCase();
+            const seatedNow = engine.getStateManager?.()?.getParticipants?.() ?? [];
+            const seatedMatch = seatedNow.find((p) => String(p?.config?.name ?? "").trim().toLowerCase() === seatKey);
+            let found = null;
+            if (seatedMatch?.config) {
+              const c = seatedMatch.config;
+              found = {
+                name: c.name,
+                category: c.category ?? c.tier ?? "mid",
+                persona: c.persona ?? "",
+                agenda: c.agenda ?? "",
+                tags: c.tags ?? [],
+                expertise: c.expertise ?? [],
+                known_biases: c.known_biases ?? [],
+                communication_style: c.communication_style ?? "",
+                preferred_contribution_types: c.preferred_contribution_types ?? [],
+                anti_patterns: c.anti_patterns ?? [],
+                category_guidance: c.category_guidance ?? c.tier_guidance ?? "",
+                reflection_guidance: c.reflection_guidance ?? "",
+              };
+            }
+            if (!found) {
+              const allPersonas = getPersonas();
+              for (const category of Object.keys(allPersonas)) {
+                const m = allPersonas[category].find(p => p.name.toLowerCase() === seatKey);
+                if (m) { found = { ...m, category }; break; }
+              }
+            }
+            if (!found) return { output: JSON.stringify({ error: `Persona "${args.persona_name}" not found — it is not in the catalog and not seated in this deliberation.` }), metadata: { error: true }, title: "loom_summon error" };
           // No summon caps — agents may summon as many guests as they want.
           // Idempotent summon guard (retry-safe): reuse existing summoned_response for same batch+persona+issue
           try {

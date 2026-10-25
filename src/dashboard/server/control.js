@@ -25,9 +25,14 @@ export {
 export { DISCOVERY_TTL_MS, discoverRaw, discoverFiltered } from "./control/discovery.js";
 export {
   EMBEDDER_UNAVAILABLE,
+  GENERATION_TIMEOUT_MS,
+  MAX_SAVE_BATCH,
+  isGenerationInFlight,
   handleListPersonas,
   handleRoomPreview,
   handleOrchestratorPreview,
+  handleGeneratePersonas,
+  handleSavePersonas,
 } from "./control/personas.js";
 export { handleListLlmModels, handleModelFilter } from "./control/models.js";
 export {

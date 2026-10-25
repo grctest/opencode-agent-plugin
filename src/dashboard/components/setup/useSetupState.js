@@ -7,6 +7,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useStore } from "@nanostores/react";
 import { $setupForm, resetSetupForm } from "../../stores/setupForm.js";
 import { postJSON } from "./setupFormat.js";
+import { toast } from "../ui/toast.tsx";
 
 export function useSetupState({ selectedMeeting, onStarted, meetingState, meetingParticipants, embeddingStatus }) {
   const form = useStore($setupForm);
@@ -40,6 +41,11 @@ export function useSetupState({ selectedMeeting, onStarted, meetingState, meetin
   const [guidance, setGuidance] = useState(null);
   const [swapIdx, setSwapIdx] = useState(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [generateOpen, setGenerateOpen] = useState(false);
+  const [genBusy, setGenBusy] = useState(false);
+  const [genError, setGenError] = useState(null);
+  const [generated, setGenerated] = useState([]);
+  const [generatedRejected, setGeneratedRejected] = useState([]);
   const [rankOpen, setRankOpen] = useState(false);
   const [ranked, setRanked] = useState([]);
   const [rankAutoSelect, setRankAutoSelect] = useState(3);
@@ -283,12 +289,23 @@ export function useSetupState({ selectedMeeting, onStarted, meetingState, meetin
   const personaIndexBusy = personaIndex.state === "indexing";
   const canAutoSelect = question.trim().length >= 3 && enabledKeys.size > 0 && !locked;
 
-  const ensureCatalog = async () => {
-    if (catalog) return;
+  // Always re-reads the catalog from the server (persona files may have been
+  // added on disk since the last fetch — e.g. a save to Custom).
+  const refreshCatalog = useCallback(async () => {
     try {
       const res = await fetch("/api/personas");
       if (res.ok) setCatalog(await res.json());
     } catch {}
+  }, []);
+
+  const ensureCatalog = async () => {
+    if (catalog) {
+      // Have data — revalidate in the background so the dialog never shows a
+      // stale catalog after a file-level change, without blocking on open.
+      refreshCatalog();
+      return;
+    }
+    await refreshCatalog();
   };
 
   const openAutoSelect = async () => {
@@ -339,6 +356,76 @@ export function useSetupState({ selectedMeeting, onStarted, meetingState, meetin
     setSeats((prev) => [...prev, { ...persona, category, approved: true, model: defaultModelForSeat(), variant: null }]);
     setAddOpen(false);
     setGuidance(null);
+  };
+
+  const openGenerate = () => {
+    setError(null);
+    setGenError(null);
+    setGenerateOpen(true);
+  };
+
+  const resetGeneration = () => {
+    setGenerated([]);
+    setGeneratedRejected([]);
+    setGenError(null);
+  };
+
+  const runGeneration = async ({ count, model }) => {
+    setGenBusy(true);
+    setGenError(null);
+    setGenerated([]);
+    setGeneratedRejected([]);
+    try {
+      const data = await postJSON("/api/personas/generate", { question, context, count, model });
+      const list = Array.isArray(data.personas) ? data.personas : [];
+      setGenerated(list);
+      setGeneratedRejected(Array.isArray(data.rejected) ? data.rejected : []);
+      if (list.length === 0) setGenError("The model returned no usable personas — try again or pick a different model.");
+    } catch (err) {
+      setGenError(err.message);
+    } finally {
+      setGenBusy(false);
+    }
+  };
+
+  // Seat first, persist second: a save failure must never undo seating.
+  const addSeats = async (personas) => {
+    const list = (Array.isArray(personas) ? personas : []).filter(Boolean);
+    if (list.length === 0) return;
+    const existing = new Set(seats.map((s) => s.name));
+    const toSeat = list.filter((p) => p?.name && !existing.has(p.name));
+    setSeats((prev) => {
+      const prevNames = new Set(prev.map((s) => s.name));
+      return [
+        ...prev,
+        ...toSeat
+          .filter((p) => !prevNames.has(p.name))
+          .map((p) => ({ ...p, category: p.category ?? "mid", approved: true, model: defaultModelForSeat(), variant: null })),
+      ];
+    });
+    setGenerateOpen(false);
+    setGuidance(null);
+    try {
+      const data = await postJSON("/api/personas/save", { personas: list });
+      const savedCount = (data?.saved ?? []).length;
+      const skipped = Array.isArray(data?.skipped) ? data.skipped : [];
+      if (skipped.length > 0) {
+        toast.add({
+          title: `Saved ${savedCount} to Custom`,
+          description: `Skipped: ${skipped.map((s) => `${s.name} (${s.reason})`).join(", ")}`,
+          type: savedCount > 0 ? "info" : "warning",
+        });
+      } else {
+        toast.add({ title: `Saved ${savedCount} persona${savedCount === 1 ? "" : "s"} to Custom`, type: "success" });
+      }
+      refreshCatalog();
+    } catch (err) {
+      toast.add({
+        title: `Seated ${toSeat.length}, but saving to Custom failed`,
+        description: err.message,
+        type: "error",
+      });
+    }
   };
 
   const removeSeat = (idx) => {
@@ -404,6 +491,12 @@ export function useSetupState({ selectedMeeting, onStarted, meetingState, meetin
   const variantsForKey = useCallback((key) => variantsByKey.get(key) ?? [], [variantsByKey]);
   const enabledCount = enabledModels.length;
   const totalCount = (llm?.models ?? []).length;
+  // Smart default for the generation model: the orchestrator choice if it is
+  // still enabled, else the first enabled model.
+  const genDefaultModel = useMemo(() => {
+    if (orchestrator.model && enabledKeys.has(orchestrator.model)) return orchestrator.model;
+    return enabledModels[0]?.key ?? null;
+  }, [orchestrator.model, enabledKeys, enabledModels]);
 
   const questionOk = question.trim().length >= 3;
   const roomOk = seats.length >= 1;
@@ -560,13 +653,15 @@ export function useSetupState({ selectedMeeting, onStarted, meetingState, meetin
     setQuestion, setContext, setMaxRounds, setStartedId, setOrchestratorField, setFeature, setSeats, patchForm,
     clearForm, catalog, llm, suggestedModels, busy, error, guidance, swapIdx, setSwapIdx,
     addOpen, setAddOpen, rankOpen, setRankOpen, ranked, rankAutoSelect, rankSuggestedModels,
+    generateOpen, setGenerateOpen, genBusy, genError, generated, generatedRejected, genDefaultModel,
+    openGenerate, resetGeneration, runGeneration, addSeats,
     job, cancelling, extendInput, setExtendInput, resumeStatus, resumeParts, resumedId, resumeWarnings, resumeMeta,
     finishInfo, finishedId, finishWarnings, finishMeta, previewOpen, setPreviewOpen, previewBusy, previewError, previewData,
     extendRounds, setExtendRounds, sectionRefs,
     storedRunParticipants, readOnly, locked, meetingActive,
     scrollToSection, fillSeatModels, fillOrchestratorModel, refreshLlm,
     enabledKeys, defaultModelForSeat, embedderReady, personaIndex, personaIndexReady, personaIndexBusy, canAutoSelect,
-    ensureCatalog, openAutoSelect, applyAutoSelect, openAdd, addSeat, removeSeat, selectSwap,
+    ensureCatalog, refreshCatalog, openAutoSelect, applyAutoSelect, openAdd, addSeat, removeSeat, selectSwap,
     toggleModel, openOrchestratorPreview, modelRowKey,
     enabledModels, variantsByKey, variantsForKey, enabledCount, totalCount,
     questionOk, roomOk, personasOk, filterOk, seatsMapped, variantsOk, modelsOk, orchestratorOk, idleOk, isFrozen,

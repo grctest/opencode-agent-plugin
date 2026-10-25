@@ -71,6 +71,10 @@ Open the printed URL. In **Setup**:
 
 Bring your own: drop persona JSON files in `<opencode-config>/loom/personas/<category>/` and they'll show up in the catalog.
 
+Describe a question in Setup and **Generate bespoke personas** asks the model for 1–8 original personas matched to it. Adding them to the room also saves them to `<opencode-config>/loom/personas/custom/`, where they reappear under a **Custom** tab in the manual-add dialog.
+
+Personas are snapshotted into a meeting when it starts: seated text lives in the meeting's own records, so editing or deleting a persona file never changes a running or stored deliberation.
+
 ## Dashboard
 
 Four tabs: **Setup** (question, models, seats, start), **Overview** (stats and participation), **Timeline** (every contribution, click for detail), **Output** (the final report — export as Markdown or JSON).

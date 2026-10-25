@@ -32,6 +32,8 @@ import {
   handleListPersonas,
   handleRoomPreview,
   handleOrchestratorPreview,
+  handleGeneratePersonas,
+  handleSavePersonas,
   handleListLlmModels,
   handleModelFilter,
   handleStartMeeting,
@@ -108,6 +110,8 @@ const ROUTE_MAP = new Map([
   ["/api/models", ["GET"]],
   ["/api/models/select", ["POST"]],
   ["/api/personas", ["GET"]],
+  ["/api/personas/generate", ["POST"]],
+  ["/api/personas/save", ["POST"]],
   ["/api/room/preview", ["POST"]],
   ["/api/orchestrator/preview", ["POST"]],
   ["/api/llm-models", ["GET"]],
@@ -486,6 +490,14 @@ export function startDashboard(directory, port, runtimeOpts = null) {
 
         if (url.pathname === "/api/personas") {
           return handleListPersonas();
+        }
+
+        if (url.pathname === "/api/personas/generate") {
+          return handleGeneratePersonas(req);
+        }
+
+        if (url.pathname === "/api/personas/save") {
+          return handleSavePersonas(req);
         }
 
         if (url.pathname === "/api/room/preview") {

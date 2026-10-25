@@ -28,6 +28,7 @@ function PersonaRow({ index, style, ariaAttributes, items, currentName, seatedNa
         <div className="flex items-center gap-2">
           <strong className="truncate text-sm">{p.name}</strong>
           <Badge variant="outline" className={"shrink-0 " + meta.badge} title={meta.blurb}>{meta.label}</Badge>
+          {p.custom === true && <Badge variant="secondary" className="shrink-0 text-[11px]">Custom</Badge>}
           {isCurrent && <Badge variant="secondary" className="shrink-0 text-[11px]">Current seat</Badge>}
           {isSeated && <Badge variant="secondary" className="shrink-0 text-[11px]">Already in room</Badge>}
         </div>
@@ -86,7 +87,7 @@ function PersonaRow({ index, style, ariaAttributes, items, currentName, seatedNa
  * picks are allowed (the seat takes the persona's category; per-seat model
  * pickers follow).
  */
-export function PersonaPickerDialog({ open, seatNumber, seatCategory, currentName, seatedNames, catalog, onSelect, onOpenChange, mode = "swap" }) {
+export function PersonaPickerDialog({ open, seatNumber, seatCategory, currentName, currentSeat, seatedNames, catalog, onSelect, onOpenChange, mode = "swap" }) {
   const isAdd = mode === "add";
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState(isAdd ? "all" : "seat");
@@ -114,28 +115,60 @@ export function PersonaPickerDialog({ open, seatNumber, seatCategory, currentNam
     }
   }, [open, seatNumber, isAdd]);
 
+  // Every group present in the catalog, bundled categories first. User-saved
+  // folders (e.g. `custom/`) are appended so their personas are browsable —
+  // without this, the fixed CATEGORY_ORDER loop would silently hide them.
+  const groupKeys = useMemo(() => {
+    const categories = catalog?.categories ?? catalog?.tiers ?? {}; // legacy alias: accept legacy tiers key
+    const extras = Object.keys(categories).filter((k) => !CATEGORY_ORDER.includes(k)).sort();
+    return [...CATEGORY_ORDER, ...extras];
+  }, [catalog]);
+
   const counts = useMemo(() => {
     const categories = catalog?.categories ?? catalog?.tiers ?? {}; // legacy alias: accept legacy tiers key
     const per = {};
     let total = 0;
-    for (const t of CATEGORY_ORDER) {
-      const n = (categories[t] ?? []).length;
-      per[t] = n;
-      total += n;
+    let custom = 0;
+    for (const t of groupKeys) {
+      const arr = categories[t] ?? [];
+      per[t] = arr.length;
+      total += arr.length;
+      for (const p of arr) if (p?.custom === true) custom += 1;
     }
-    return { per, total };
-  }, [catalog]);
+    return { per, total, custom };
+  }, [catalog, groupKeys]);
 
-  // In-scope pool for the active category filter (catalog order preserved).
+  // In-scope pool for the active filter (catalog order preserved). The
+  // "custom" filter is origin-based: it spans every folder and keeps only
+  // personas flagged custom by the loader.
   const scopeItems = useMemo(() => {
     const categories = catalog?.categories ?? catalog?.tiers ?? {}; // legacy alias: accept legacy tiers key
-    const wanted = categoryFilter === "all" ? CATEGORY_ORDER : categoryFilter === "seat" && !isAdd ? [seatCategory] : [categoryFilter];
+    const wanted = categoryFilter === "all" || categoryFilter === "custom"
+      ? groupKeys
+      : categoryFilter === "seat" && !isAdd
+        ? [seatCategory]
+        : [categoryFilter];
     const out = [];
     for (const t of wanted) {
-      for (const p of categories[t] ?? []) out.push({ persona: p, category: p.category ?? p.tier ?? t }); // legacy alias: normalize legacy tier field
+      for (const p of categories[t] ?? []) {
+        if (categoryFilter === "custom" && p?.custom !== true) continue;
+        out.push({ persona: p, category: p.category ?? p.tier ?? t }); // legacy alias: normalize legacy tier field
+      }
     }
     return out;
-  }, [catalog, categoryFilter, seatCategory, isAdd]);
+  }, [catalog, categoryFilter, seatCategory, isAdd, groupKeys]);
+
+  // Swap keeps a seated persona selectable even when its file is gone from
+  // disk (deleted, moved, failed to load): a meeting never reads personas
+  // back from files once seated, so removing the source must not strand or
+  // auto-reset the seat. Rendered as a stub row above the list.
+  const currentMissing = useMemo(() => {
+    if (isAdd || !catalog || !currentSeat || !currentName) return false;
+    const categories = catalog.categories ?? catalog.tiers ?? {};
+    return Object.values(categories).every(
+      (arr) => !(arr ?? []).some((p) => p?.name === currentName),
+    );
+  }, [catalog, isAdd, currentSeat, currentName]);
 
   // Fuzzy index over persona content: name matches rank highest, then tags,
   // expertise, then agenda. ignoreLocation so matches deep in long agendas
@@ -214,6 +247,16 @@ export function PersonaPickerDialog({ open, seatNumber, seatCategory, currentNam
             >
               All ({counts.total})
             </Button>
+            {counts.custom > 0 && (
+              <Button
+                size="sm"
+                variant={categoryFilter === "custom" ? "default" : "outline"}
+                onClick={() => setCategoryFilter("custom")}
+                title="Personas you saved from a generation (or dropped into the loom personas folder)"
+              >
+                Custom ({counts.custom})
+              </Button>
+            )}
             {CATEGORY_ORDER.filter((t) => t !== seatCategory).map((t) => (
               <Button
                 key={t}
@@ -230,6 +273,29 @@ export function PersonaPickerDialog({ open, seatNumber, seatCategory, currentNam
             {results.length} of {counts.total} personas
             {query.trim() && <> matching “{query.trim()}”</>}
           </p>
+
+          {currentMissing && currentSeat && (
+            <div className="flex shrink-0 items-start gap-3 rounded-md border border-dashed bg-muted/40 p-3" data-testid="current-seat-stub">
+              <div className="shrink-0 self-center" aria-hidden="true">
+                <Avatar name={currentSeat.name} extra="Picker" size={36} title={currentSeat.name} expression={AVATAR_EXPRESSION} colors={AVATAR_COLORS} />
+              </div>
+              <div className="flex min-w-0 flex-1 flex-col gap-1">
+                <div className="flex items-center gap-2">
+                  <strong className="truncate text-sm">{currentSeat.name}</strong>
+                  <Badge variant="outline" className={"shrink-0 " + (CATEGORY_META[currentSeat.category] ?? CATEGORY_META.mid).badge}>
+                    {(CATEGORY_META[currentSeat.category] ?? CATEGORY_META.mid).label}
+                  </Badge>
+                  <Badge variant="secondary" className="shrink-0 text-[11px]">Not in catalog anymore</Badge>
+                </div>
+                <p className="line-clamp-2 text-xs text-muted-foreground">
+                  {currentSeat.agenda || currentSeat.persona}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Kept as the current seat — the meeting reads seated personas from its own records, not from files. Pick a row below to replace it.
+                </p>
+              </div>
+            </div>
+          )}
 
           <div ref={listWrapRef} className="min-h-[220px] flex-1">
             {!catalog && <p className="p-3 text-sm text-muted-foreground">Loading personas…</p>}

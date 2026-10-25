@@ -164,8 +164,10 @@ export function RoomSelectionDialog({
   const items = useMemo(() => {
     const categories = catalog?.categories ?? catalog?.tiers ?? {}; // legacy alias: accept legacy tiers key
     const byName = new Map();
-    for (const t of CATEGORY_ORDER) {
-      for (const p of categories[t] ?? []) byName.set(p.name, { ...p, category: p.category ?? p.tier ?? t }); // legacy alias: normalize legacy tier field
+    // Join over EVERY group, not just the bundled six — user-saved folders
+    // (custom/) must resolve their full persona bodies too.
+    for (const [t, arr] of Object.entries(categories)) {
+      for (const p of arr ?? []) byName.set(p.name, { ...p, category: p.category ?? p.tier ?? t }); // legacy alias: normalize legacy tier field
     }
     const out = [];
     (ranked ?? []).forEach((row, i) => {

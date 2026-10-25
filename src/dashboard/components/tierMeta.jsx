@@ -37,6 +37,14 @@ export const CATEGORY_META = {
     dot: "bg-fuchsia-500",
     blurb: "Non-human view — reads the room through a different set of evidence",
   },
+  // Not in CATEGORY_ORDER (it is an origin, not a lens) — used when a saved
+  // persona file carries no explicit category and falls back to its folder.
+  custom: {
+    label: "Custom",
+    badge: "bg-teal-500/15 text-teal-700 border-teal-500/30 dark:text-teal-300",
+    dot: "bg-teal-500",
+    blurb: "Saved by you — generated or imported into your personal catalog",
+  },
 };
 
 // Uniform persona avatar look: every persona gets the same eyes + mouth —
