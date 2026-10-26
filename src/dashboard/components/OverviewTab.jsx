@@ -66,16 +66,16 @@ export const OverviewTab = memo(({
           <ContributionTimeline contributions={contributions} />
         </div>
 
-        {/* Right column: knit message query in textarea */}
+        {/* Right column: message query in textarea */}
         <div className="flex flex-col gap-2 min-h-0">
           <Label htmlFor="knit-query" className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-            Knit Message
+            Message
           </Label>
           <Textarea
             id="knit-query"
             readOnly
             value={state.question ?? ""}
-            placeholder="No knit message"
+            placeholder="No message"
             className="flex-1 min-h-[280px] lg:min-h-[320px] h-full resize-none bg-transparent font-mono text-sm field-sizing-fixed overflow-auto"
           />
         </div>
