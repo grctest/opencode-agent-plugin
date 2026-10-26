@@ -105,6 +105,48 @@ test("agent-state summary context attributes every holder and bounds state conte
   assert.doesNotMatch(context, /<<<LOOM_EVIL>>>/);
 });
 
+test("a small roster shows every agent state instead of dropping whole participants", () => {
+  const states = ["ada", "grace", "linus"].map((id) => ({
+    id,
+    name: id.toUpperCase(),
+    category: "mid",
+    status: "listening",
+    state: populatedState({ stance: "S".repeat(1000) }),
+  }));
+  const context = buildAgentStatesContext(states);
+  for (const id of ["ada", "grace", "linus"]) {
+    assert.match(context, new RegExp(id.toUpperCase()));
+  }
+  assert.doesNotMatch(context, /further agent state\(s\) omitted/);
+});
+
+test("clerk prompt carries the phase label without the participant round contract", () => {
+  const round = {
+    number: 1,
+    contributions: [{ id: 1, participant_id: "agent", type: "contribution", content: "A substantive position with numbers 12% and 4ms." }],
+  };
+  const prompt = buildRoundSummaryUser(round, { question: "Q", tags: [] }, [], {}, { maxRounds: 1 });
+  assert.match(prompt, /Single-round deliberation \(round 1\/1\)/);
+  assert.doesNotMatch(prompt, /Your contribution must add/);
+  assert.doesNotMatch(prompt, /End with Position/);
+  assert.doesNotMatch(prompt, /Stake your own position first/);
+  const system = buildRoundSummarySystem({}, 1);
+  assert.match(system, /you do not contribute to it/);
+  assert.match(system, /never end with "Position:"/);
+});
+
+test("the final round does not ask for a next-round speaker order", () => {
+  const round = {
+    number: 4,
+    contributions: [{ id: 1, participant_id: "agent", type: "contribution", content: "A substantive position with numbers 12% and 4ms." }],
+  };
+  const roster = [{ id: "agent", contributions_count: 1 }, { id: "peer", contributions_count: 0 }];
+  const finalPrompt = buildRoundSummaryUser(round, { question: "Q", tags: [] }, [], {}, { maxRounds: 4, roster });
+  assert.doesNotMatch(finalPrompt, /Next-round turn order/);
+  const openPrompt = buildRoundSummaryUser({ ...round, number: 2 }, { question: "Q", tags: [] }, [], {}, { maxRounds: 4, roster });
+  assert.match(openPrompt, /Next-round turn order/);
+});
+
 test("round summary prompt receives current attributed states and evidence rules", async () => {
   let prompt = "";
   const round = {

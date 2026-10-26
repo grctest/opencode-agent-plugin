@@ -270,16 +270,21 @@ export function buildCategoryLens(guidance) {
 }
 
 export function buildRoundContext(currentRound, maxRounds, context = {}) {
-  const hasPriorContributions = !!context?.hasPriorContributions;
   const settledCount = Number.isFinite(context?.settledCount) ? context.settledCount : null;
   if (!currentRound || !maxRounds) {
     return "Round context unknown — focus on substance and whether the trigger introduces new evidence. Thoroughness over brevity; use the context window.";
   }
-  // Born-terminal meetings (round 1 of 1, nothing before it) are openings, not
-  // closings: there is nothing to consolidate and no settled registry to cite.
-  // Treat them as DIVERGE so the first turn is generative rather than terminal.
-  const bornTerminal = (currentRound === 1 && maxRounds === 1 && !hasPriorContributions);
-  const progress = bornTerminal ? 0 : (currentRound / maxRounds);
+  // A one-round meeting is not a late round. The old born-terminal check keyed
+  // off the speaker's own history, so the first speaker got the DIVERGE brief
+  // and every later speaker got the CONSOLIDATE brief in the same round. The
+  // phase must be a property of the meeting, not of the seat.
+  if (currentRound === 1 && maxRounds === 1) {
+    return `Single-round deliberation (round 1/1) — DIVERGE then CONVERGE in one turn. This is the whole deliberation, not a late consolidation: surface assumptions and distinct options, stake your own position in your own terms, then leave the strongest dissent visible rather than forcing agreement. Thoroughness welcome.
+- If you are the first speaker, state in 1-3 lines how you read the question's load-bearing terms (what counts, how scored, scope). If a definition is already on the table, adopt it or amend yours in one clause.
+- Test the leading rival claim once: use loom_query mode 'critique' or a prose critique naming the most damaging objection. Do not spend the turn restating.
+- End with Position: [held|revised|expanded] because …`;
+  }
+  const progress = currentRound / maxRounds;
   const settledBullet = (settledCount === null || settledCount > 0)
     ? "- SETTLED points in State of Play are signed: reference them by [#id] in one clause, then move on. Do NOT restate their content — restatement is a contract violation, not thoroughness.\n"
     : "- Nothing is settled yet (the settled registry is empty): do not cite a signed point that does not exist. Treat this turn as establishing, not consolidating.\n";
@@ -287,6 +292,7 @@ export function buildRoundContext(currentRound, maxRounds, context = {}) {
     return `Early deliberation (round ${currentRound}/${maxRounds}) — DIVERGE. Surface assumptions, name hidden constraints, introduce distinct options. Don't converge yet; explore the full spectrum. Thoroughness welcome.
 - Stake your own position first, in your own terms — do not build on the first speaker's frame or vocabulary. If you disagree with the emerging frame, say so and name the frame you'd use instead.
 - Before critiquing a front-runner, spend one passage on the strongest case for a *different* option than the current leader.
+- If a peer's load-bearing number or mechanism conflicts with yours, test their claim once (loom_query mode 'critique' or a prose critique) — do not let two incompatible numbers stand unchallenged.
 - Frozen terms: nothing is frozen yet. If you are the first speaker, state in 1-3 lines how you read the question's load-bearing terms (what counts, how scored, scope). If a definition is already on the table (State of Play / Live), adopt it or amend yours in one clause — divergence is flagged once, definition disputes are not debated.`;
   } else if (progress <= 0.66) {
     return `Mid deliberation (round ${currentRound}/${maxRounds}) — MAP & REFINE. Identify what’s settled vs contested, bundle related proposals, steelman opposing views, surface tradeoffs with numbers where possible. Name what would unlock next steps but don’t force consensus.
@@ -296,6 +302,7 @@ export function buildRoundContext(currentRound, maxRounds, context = {}) {
     return `Late deliberation (round ${currentRound}/${maxRounds}) — CONSOLIDATE or LEAVE OPEN.
 ${settledBullet}- Your contribution must add one of: new evidence (Source/tool output), a new objection to a settled point, a refinement with numbers, or a decision-relevant synthesis of contested views.
 - It’s fine to leave dissent unresolved — map the remaining disagreement with evidence for/against each view.
+- When two live positions disagree on a number or mechanism, test the leading claim once (loom_query mode 'critique' or a prose critique) before closing.
 - End with Position: [held|revised|expanded] because …`;
   }
 }

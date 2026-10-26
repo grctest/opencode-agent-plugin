@@ -72,6 +72,23 @@ const COUNT_UNITS = new Set([
   "hypothesis", "assumption", "idea", "fix", "regression", "migration", "retry", "timeout",
 ]);
 
+// Modifiers are not metrics. "Mercedes expected 0.5 wins" and "Mercedes 9 wins"
+// share the words "mercedes" and "expected", but they answer different
+// questions. A label made only of modifiers cannot identify a quantity, so it
+// must not license a conflict.
+const QUANTITY_MODIFIER_WORDS = new Set(
+  "expected estimated projected implied total average avg mean median approx approximately roughly about around recent current latest prior previous next final initial new old reported stated official unofficial annual monthly weekly daily".split(" ")
+);
+
+// A calendar year is a date qualifier, not a count of anything. "expected 2027
+// wins" contains the number 2027, but the quantity is wins — treating 2027 as a
+// competing win count produced the worst false conflicts in the F1 meeting
+// (band [0.5, 2027]). Years are skipped in conflict detection; the number stays
+// in the transcript and the artifact untouched.
+function isYearLikeValue(value) {
+  return Number.isInteger(value) && value >= 1900 && value <= 2100;
+}
+
 // Groups: 1 = quantity label, 2 = currency prefix, 3 = number, 4 = unit.
 // Longer unit words come first so "mb" is not read as "m" and "matches" is not
 // read as "matche".
@@ -169,7 +186,10 @@ function labelWordsOf(claim) {
 export function isRealQuantityLabel(key) {
   const words = String(key ?? "").split(/\s+/).filter(Boolean);
   if (words.length === 0) return false;
-  return words.some((w) => w.length > 2 && !COUNT_UNITS.has(w) && !QUANTITY_CONNECTOR_WORDS.has(w));
+  return words.some((w) => w.length > 2
+    && !COUNT_UNITS.has(w)
+    && !QUANTITY_CONNECTOR_WORDS.has(w)
+    && !QUANTITY_MODIFIER_WORDS.has(w));
 }
 
 export function findNumericalConflicts(weave) {
@@ -216,6 +236,11 @@ export function findNumericalConflicts(weave) {
   };
   const byPhrase = new Map();
   for (const cl of claims) {
+    // A bare number is not a comparable quantity. Grouping every "Mercedes 9"
+    // into one bucket turned unrelated sentences (a count, a year, a model
+    // name) into a single conflict. Conflicts need a unit or a recognized
+    // metric unit to be falsifiable.
+    if (!cl.unit || isYearLikeValue(cl.value)) continue;
     const key = cl.quantity || cl.unit || "%";
     if (!byPhrase.has(key)) byPhrase.set(key, []);
     byPhrase.get(key).push(cl);
@@ -231,7 +256,7 @@ export function findNumericalConflicts(weave) {
   }
   const byUnit = new Map();
   for (const cl of claims) {
-    if (!cl.unit || !COUNT_UNITS.has(cl.unit)) continue;
+    if (!cl.unit || !COUNT_UNITS.has(cl.unit) || isYearLikeValue(cl.value)) continue;
     if (!byUnit.has(cl.unit)) byUnit.set(cl.unit, []);
     byUnit.get(cl.unit).push(cl);
   }
@@ -294,6 +319,21 @@ function runBandFalsifier(conflict) {
   return { ran: true, reconciled: false, method: "band", detail: `values form a band [${lo}, ${hi}] — version instead of stacking` };
 }
 
+// A band is only meaningful when the endpoints plausibly measure the same
+// quantity on the same scale. Values that differ by more than 20x are almost
+// always different quantities (a count vs. a calendar year, a model name vs. a
+// rate) or a parsing error. Publishing [0.5, 2027] as a "band" destroys trust,
+// so dismiss the candidate instead.
+function isComparableScale(values) {
+  const magnitudes = (values ?? []).filter((v) => Number.isFinite(v)).map((v) => Math.abs(v));
+  if (magnitudes.length < 2) return false;
+  const lo = Math.min(...magnitudes);
+  const hi = Math.max(...magnitudes);
+  if (hi === 0) return true;
+  if (lo === 0) return hi <= 10;
+  return hi / lo <= 20;
+}
+
 function collectDenominatorCandidates(weave) {
   const out = new Set();
   for (const c of weave) {
@@ -337,6 +377,21 @@ function resolveConflict(conflict, { denominators, percentClaims }) {
       falsifier: arithmetic,
     };
   }
+  if (!isComparableScale(conflict.values)) {
+    return {
+      ...conflict,
+      status: "dismissed",
+      resolution: null,
+      versions: null,
+      reconciliationRule: null,
+      falsifier: {
+        ran: true,
+        reconciled: false,
+        method: "scale",
+        detail: `values ${JSON.stringify(conflict.values)} span more than 20x — likely different quantities; no band published`,
+      },
+    };
+  }
   const band = runBandFalsifier(conflict);
   const sorted = [...conflict.claims].sort((a, b) => (a.round ?? 0) - (b.round ?? 0) || a.order - b.order);
   const first = sorted[0];
@@ -362,6 +417,7 @@ export function reconcileNumericalConflicts(weave) {
     conflicts: [],
     resolvedCount: 0,
     versionedCount: 0,
+    dismissedCount: 0,
     unresolvedCount: 0,
     reserveRoundRecommended: false,
     reserveRoundReason: null,
@@ -370,6 +426,7 @@ export function reconcileNumericalConflicts(weave) {
     const result = resolveConflict(conflict, { denominators, percentClaims });
     report.conflicts.push(result);
     if (result.status === "resolved") report.resolvedCount++;
+    else if (result.status === "dismissed") report.dismissedCount++;
     else report.versionedCount++;
   }
   report.reserveRoundRecommended = shouldReserveReconciliationRound(weave, report);

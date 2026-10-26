@@ -273,6 +273,21 @@ test("synthesis prompt and section contract agree", () => {
   assert.deepEqual(validateSynthesisSections("nothing here").sort(), ["Action Items", "Confidence", "Decision", "Dissenting Views", "Open Questions", "References", "Reasoning"].sort());
 });
 
+// 10a — The reader-facing sections must be legible to a non-specialist. The
+// contract names the exact failure modes the F1 artifact shipped (undefined
+// ADUO/ICE/PU, "modal", "falsifiable") and keeps precision in Reasoning.
+test("synthesis reader contract expands acronyms and bans analyst jargon", () => {
+  for (const opts of [{}, { taskMode: "code-analysis" }]) {
+    const prompt = buildSynthesisPrompt("Q", "transcript [#1]", [], [], "", "", opts);
+    assert.match(prompt, /1c\. \*\*Reader contract:\*\*/);
+    assert.match(prompt, /stand alone for an intelligent, busy reader/);
+    assert.match(prompt, /Expand every acronym or code name at first use/);
+    assert.match(prompt, /"modal"/);
+    assert.match(prompt, /"falsifiable"/);
+    assert.doesNotMatch(prompt, /undefined acronyms are fine/);
+  }
+});
+
 // 12. B1 — one length rule (contract consumes LENGTH_LIMITS), no stale rule.
 test("system prompt length rule matches LENGTH_LIMITS with no stale restatement", () => {
   const sys = buildAgentSystemPrompt(participant(), { activeCount: 7, agentTools });
@@ -422,6 +437,32 @@ test("output contract carries newness, test-craft, and source-novelty rules", ()
   assert.match(contract, /a threshold that can never trigger is not falsifiable/);
   assert.match(contract, /Source novelty: a Source: URL supports a claim once/);
   assert.match(contract, /Research it \(websearch\) before or while posing it/);
+});
+
+// 22a — Reader contract: every contribution defines its acronyms at first use,
+// and handoffs name a seated participant instead of inventing an @role.
+test("output contract requires first-use acronyms and seated handoff names", () => {
+  const sys = buildAgentSystemPrompt(participant(), { activeCount: 3, agentTools });
+  const contract = sys.split("## OUTPUT CONTRACT")[1] ?? "";
+  assert.match(contract, /14\. Reader language/);
+  assert.match(contract, /Define every domain acronym or code name at its first use/);
+  assert.match(contract, /gloss domain jargon in plain words/);
+  assert.match(sys, /Handoff: <seated participant name>/);
+  assert.doesNotMatch(sys, /Handoff: @role/);
+});
+
+// 22b — A one-round meeting is one meeting-level phase, not a per-seat race.
+// The same brief must reach every seat, and it must ask for divergence and
+// convergence rather than late-round consolidation.
+test("one-round meetings use a single DIVERGE-then-CONVERGE brief for every seat", () => {
+  const first = buildRoundContext(1, 1, { hasPriorContributions: false });
+  const later = buildRoundContext(1, 1, { hasPriorContributions: true });
+  assert.equal(first, later);
+  assert.match(first, /Single-round deliberation/);
+  assert.match(first, /DIVERGE then CONVERGE/);
+  assert.match(first, /critique/);
+  assert.doesNotMatch(first, /Late deliberation/);
+  assert.doesNotMatch(first, /CONSOLIDATE/);
 });
 
 // 27 — Room-layer resolvability: the room is asked to cite ids across layers

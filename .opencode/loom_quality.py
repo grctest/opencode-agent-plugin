@@ -717,6 +717,7 @@ def evaluate(con: sqlite3.Connection, db_path: str | None = None) -> dict:
         "convergence": convergence,
         "robustness": robustness,
         "quality_counters": quality,
+        "counters": counters,
         "subagents": subagents,
         "summary_quality": summary_quality,
         "engagement": engagement_ledger,
@@ -884,7 +885,8 @@ def to_markdown(rep: dict) -> str:
     w(f"- retry events: {sa.get('retry_events')}\n")
     # W1 (P3.3) — turn-order override visibility: N overrides in the run, from
     # the durable meeting_metrics.counters.turn_order_overrides key.
-    _too = counters.get("turn_order_overrides") if isinstance(counters, dict) else None
+    _counters_md = rep.get("counters", {})
+    _too = _counters_md.get("turn_order_overrides") if isinstance(_counters_md, dict) else None
     if _too is not None:
         _too_n = sum(v for v in _too.values() if isinstance(v, (int, float))) if isinstance(_too, dict) else 0
         w(f"- turn-order overrides (loom_set_turn_order): {_too_n}\n")

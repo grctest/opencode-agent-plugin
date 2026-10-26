@@ -75,7 +75,7 @@ const EXPECTED_SYS = {
   // 2026-10-23 (forum removal): the ladder line no longer names the deleted
   // loom_forum tools or the [#T{id}] thread-cite form; "prior [#id]" stops
   // pointing agents at the forum.
-  "Research Tools — Tool Ladder": "eeddec5eec8a",
+  "Research Tools — Tool Ladder": "df0d6364eaa9",
   // 2026-10-21 (audit Q3): the pass criterion now names the section that
   // actually exists — the shared State of Play has ONE consensus section,
   // "Agreements & Proposals", not a "Decisions & Proposals" / "Agreements" pair.
@@ -96,7 +96,7 @@ const EXPECTED_SYS = {
   // also states the pairing costs nothing against the citation budget (same
   // id, not a new one), because pairing must not push the room to drop cites
   // to stay under it. Hash moves because the bytes moved.
-  "OUTPUT CONTRACT — read last, it governs; in conflict it wins": "58e213d15c4d",
+  "OUTPUT CONTRACT — read last, it governs; in conflict it wins": "f71d952682d9",
 };
 
 const EXPECTED_USER = {

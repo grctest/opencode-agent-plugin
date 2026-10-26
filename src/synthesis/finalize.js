@@ -278,7 +278,7 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, op
       const label = c.label ? `${c.quantity} (${c.label})` : c.quantity;
       return `- ${label}: v1 = ${v1.value}${unit} [#${v1.contributionId}] vs v2 = ${v2.value}${unit} [#${v2.contributionId}] — ${c.reconciliationRule} (falsifier: ${c.falsifier.method} — ${c.falsifier.detail})`;
     });
-    needsVerificationBodies.push(`## Needs Verification\n${reconciliation.versionedCount} numerical conflict(s) are stated with competing values — versioned here with reconciliation rules; cite the latest version:\n${lines.join("\n")}\n`);
+    needsVerificationBodies.push(`## Needs Verification\n${reconciliation.versionedCount} same-quantity numerical conflict(s) are stated with competing values — versioned here with reconciliation rules; cite the latest version:\n${lines.join("\n")}\n`);
   }
 
   const straddlingBands = findStraddlingBands(finalOutput);
@@ -340,6 +340,7 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, op
     reconciliation: {
       resolvedCount: reconciliation.resolvedCount,
       versionedCount: reconciliation.versionedCount,
+      dismissedCount: reconciliation.dismissedCount,
       reserveRoundRecommended: reconciliation.reserveRoundRecommended,
       reserveRoundReason: reconciliation.reserveRoundReason,
       conflicts: reconciliation.conflicts.map((c) => ({

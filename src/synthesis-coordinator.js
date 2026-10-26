@@ -333,6 +333,7 @@ Audit checklist (be strict but human-first):
 5. Human-first: does Executive Summary exist and read cleanly without citation spam? Are Decision table cells concise (Evidence 30-35w + one cite, Tradeoff 30-35w), not paragraphs? Is Reasoning deduplicated vs Decision (not copy-paste)?
 5a. Dissent: does the draft carry the round clerk's Contested bullet in "## Dissenting Views" with the holders and their [#id]s? If the room did not settle something, a reader must be able to see it — and the clause must not be softened.
 5b. Owners: are the action items owned by SEATED participants (never an invented @handle or role), and distributed — or is everything landing on one agent?
+5c. Reader language: can the Executive Summary and Decision be understood without the Reasoning? Is every acronym or code name expanded at first use ("additional development and upgrade opportunities (ADUO)")? Does analyst jargon ("modal", "estimand", "multinomial") or an undefined internal shorthand appear in the reader-facing sections? If so, rewrite those phrases in plain language; keep the technical precision in Reasoning and the Decision Rule.
 6. Citation hygiene: no vec: / vec round / [Round X vec] leaked; one grouped cite per block, not spam.
 
 Transcript excerpt for grounding check (thorough slice — top 4 contested + top 4 file mentions + last 2 rounds fuller).
@@ -348,7 +349,7 @@ If corrections are needed, output the FULL revised synthesis with ALL required s
 ${text.toLowerCase().includes("proposed fix") || resolveTaskMode(transcriptData?.question, transcriptData?.tags ?? [], { taskMode: transcriptData?.taskMode }) === "code-analysis" ? "## Proposed Fix\n## Action Items\n" : "## Action Items\n"}## Open Questions
 ## Confidence
 
-If the draft is accurate, grounded, human-readable, and complete, respond with exactly: [NO_CHANGES]
+If the draft is accurate, grounded, plain-language readable, and complete, respond with exactly: [NO_CHANGES]
 
 Draft synthesis${draftChunks.length>1?` (${draftChunks.length} chunks)`: ""}:
 ${draftForPrompt}`;

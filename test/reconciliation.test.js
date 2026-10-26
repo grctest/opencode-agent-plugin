@@ -97,6 +97,20 @@ test("findNumericalConflicts ignores consistent values and single-contribution q
   assert.equal(findNumericalConflicts(w).length, 0);
 });
 
+test("entity names, odds tokens, and calendar years never become versions of one quantity", () => {
+  // Regression for the F1 meeting: unitless phrase buckets produced
+  // "Mercedes 1.28 vs 9", "one 2 vs 2027", "Aug 10 vs 2026" and a Needs
+  // Verification band of [0.5, 2027]. None of these are same-quantity claims.
+  const w = weave(
+    [1, "a", 1, "Desk shell: Mercedes 1.28 (implied ~72%), Ferrari 9/1 (~10%), McLaren 10/1 (~9%), Red Bull 8/1 (~11%); the 2027 book is open."],
+    [2, "b", 2, "The 26 August 2026 ADUO bulletin: one extra homologation for the 2–4% band, two for >=4%."],
+  );
+  const report = reconcileNumericalConflicts(w);
+  assert.equal(report.versionedCount, 0);
+  assert.equal(report.reserveRoundRecommended, false);
+  assert.equal(report.conflicts.some((c) => c.unit == null), false);
+});
+
 test("reconcileNumericalConflicts no longer infers a retraction from phrasing", () => {
   // The retraction detector was 11 English-phrase regexes deciding that a
   // contribution withdrew a claim, and the retraction-lookup falsifier then

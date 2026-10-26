@@ -7,7 +7,6 @@ import { sanitizeForPrompt } from "./utils/sanitize.js";
 import { delimitContext, escapeDelimiters } from "./prompts/delimiters.js";
 import { getSummaryGuidance, orchestratorContextPolicy, getSummaryBand, getTurnOrderGuidance, ORCHESTRATOR_SUMMARY_ALWAYS, ORCHESTRATOR_SUMMARY_CODE_BULLET } from "./orchestrator/models.js";
 import { incrementKeyedCounter, recordLatency, recordMeetingCall, recordMeetingLatency } from "./metrics.js";
-import { buildRoundContext } from "./prompts/blocks.js";
 import { readSoPSectionItems, SOP_SECTIONS } from "./state-of-play.js";
 import { sanitizeForDisplay } from "./utils/sanitize.js";
 
@@ -79,7 +78,10 @@ function formatAgentStateSnapshot(entry) {
   const status = safeStateText(entry?.status, 40) || "unknown";
   const source = entry?.state ?? {};
   const state = {
-    stance: safeStateText(source.stance, STATE_PATCH_CAPS.stanceMax),
+    // The clerk needs the current stance, not the full historical essay. The
+    // stored stance may be 1,200 chars; 400 keeps every small-roster state in
+    // view without letting one holder crowd out the rest.
+    stance: safeStateText(source.stance, Math.min(STATE_PATCH_CAPS.stanceMax, 400)),
     established: Array.isArray(source.established) ? source.established.slice(0, STATE_PATCH_CAPS.buckets).map((item) => safeStateText(item, STATE_PATCH_CAPS.bulletMax)) : [],
     contested: Array.isArray(source.contested) ? source.contested.slice(0, STATE_PATCH_CAPS.buckets).map((item) => safeStateText(item, STATE_PATCH_CAPS.bulletMax)) : [],
     open: Array.isArray(source.open) ? source.open.slice(0, STATE_PATCH_CAPS.buckets).map((item) => safeStateText(item, STATE_PATCH_CAPS.bulletMax)) : [],
@@ -100,14 +102,17 @@ export function buildAgentStatesContext(participantStates) {
   if (!Array.isArray(participantStates) || participantStates.length === 0) {
     return "\n## Current Agent States\n_(No current state snapshots available.)_";
   }
-  // Per-agent truncation: never cut a snapshot in half. Include whole agent
-  // blocks until the 4 kB budget is exhausted, then note the omitted agents.
+  // Per-agent truncation: never cut a snapshot in half. A small roster is shown
+  // in full — the old 4 kB budget silently dropped whole participants from the
+  // clerk's view (audit: only one of three states survived). Larger rosters
+  // keep the budget and state plainly that some states were omitted.
   const blocks = participantStates.map(formatAgentStateSnapshot);
+  const showAll = participantStates.length <= 4;
   let body = "";
   const included = [];
   for (const b of blocks) {
     const candidate = body ? `${body}\n\n${b}` : b;
-    if (candidate.length <= 4000) {
+    if (showAll || candidate.length <= 4000) {
       body = candidate;
       included.push(true);
     } else {
@@ -122,9 +127,23 @@ export function buildAgentStatesContext(participantStates) {
   return `\n## Current Agent States\n\n_These are bounded, per-agent projections, not a shared transcript. Attribute every state claim to its named holder._\n${delimitContext(body, "AGENT_STATES")}`;
 }
 
+function clerkRoundPosition(currentRound, maxRounds) {
+  if (maxRounds === 1) {
+    return "Single-round deliberation (round 1/1) — summarize the one round; the room had to diverge and converge in a single turn.";
+  }
+  const progress = currentRound / maxRounds;
+  if (progress > 0.66) {
+    return `Late deliberation (round ${currentRound}/${maxRounds}) — the round is closing; record what converged and what remains open.`;
+  }
+  if (progress > 0.33) {
+    return `Mid deliberation (round ${currentRound}/${maxRounds}) — map what is settled and what is contested.`;
+  }
+  return `Early deliberation (round ${currentRound}/${maxRounds}) — surface distinct options and assumptions.`;
+}
+
 export function buildRoundSummarySystem(orchestratorConfig = {}, maxRounds = null) {
   const band = getSummaryBand(orchestratorConfig);
-  return `You are a thorough deliberation clerk. ${band.words} words. Sentence style, human-readable, concise but thorough. Preserve numbers verbatim — do not round or invent. Never emit vec: traces.
+  return `You are a thorough deliberation clerk — you summarize the round, you do not contribute to it. Never take a position, never end with "Position:", never issue peer queries. ${band.words} words. Sentence style, human-readable, concise but thorough. Preserve numbers verbatim — do not round or invent. Never emit vec: traces.
 
 ${getSummaryGuidance(orchestratorConfig, maxRounds)}`;
 }
@@ -265,11 +284,13 @@ export function buildRoundSummaryUser(round, state, participantStates = [], orch
 
   const stateHint = buildAgentStatesContext(participantStates);
 
-  // Round-position awareness, reused verbatim from the agent-side helper so the
-  // clerk adapts emphasis exactly as agents do (audit O9/Step 5).
+  // Round-position awareness: the clerk gets a phase label and its own
+  // summarizing instruction, never the participant round doctrine. Reusing
+  // buildRoundContext here injected "Your contribution must add…" and "End
+  // with Position:" into a prompt whose reader cannot act on them (audit).
   const maxRounds = Number.isFinite(opts.maxRounds) && opts.maxRounds > 0 ? opts.maxRounds : null;
   const roundContextLine = maxRounds
-    ? `\nRound: ${buildRoundContext(round.number ?? 1, maxRounds, { hasPriorContributions: true, settledCount: opts.settledCount })}\n`
+    ? `\nRound: ${clerkRoundPosition(Number(round.number ?? 1), maxRounds)}\n`
     : "";
   // Participant roster: id + activity only, never category — categories play no
   // part in orchestrator decisions.
@@ -289,7 +310,10 @@ export function buildRoundSummaryUser(round, state, participantStates = [], orch
   // order is the orchestrator's to set; the block now says so, tells it WHEN to
   // set one, and shows it the speaking order so the pattern is visible
   // (audit D).
-  const turnOrderBlock = roster.length > 0
+  // There is no next round after the final one; asking for an order there is
+  // dead output that the orchestrator has to ignore.
+  const isFinalRound = maxRounds !== null && Number(round.number ?? 1) >= maxRounds;
+  const turnOrderBlock = roster.length > 0 && !isFinalRound
     ? `\n## Next-round turn order (orchestrator's call)\nYou decide who speaks next. The order you set last round stands until this round's evidence warrants a change — call loom_set_turn_order ONCE with the full ordered participant ids (from ## Participants below; unknown ids are dropped, missing seats appended). Set one whenever the roster shows a voice that has spoken least, a claim that needs a defender next, or a position that must be tested before the room converges. Order preference: ${getTurnOrderGuidance(orchestratorConfig)}\n`
     : "";
   const rosterBlock = roster.length > 0
