@@ -50,4 +50,5 @@ export {
   handleCancelMeeting,
   handleResumeMeeting,
   handleFinishMeeting,
+  handleResynthesizeMeeting,
 } from "./control/recovery.js";

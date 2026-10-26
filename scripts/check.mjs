@@ -6,11 +6,12 @@
  */
 
 import { readdir, readFile, access } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { transform } from "esbuild";
 
-const ROOT = new URL("..", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const TARGET_DIRS = ["src", "scripts"];
 
 async function exists(p) {

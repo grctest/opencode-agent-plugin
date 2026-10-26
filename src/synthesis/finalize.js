@@ -247,19 +247,19 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, op
   if (!overallGrounded && decisions.length > 0) {
     const ungrounded = ungroundedLines(decisions);
     if (ungrounded.length === decisions.length) {
-      needsVerificationBodies.push(`## Needs Verification\nThe Decision section lacks a valid [#id] citation to the transcript and should be verified before acting. Consider checking State of Play or transcript.\n${ungrounded.slice(0, 5).map((l) => `- ${l.slice(0, 200)}`).join("\n")}`);
+      needsVerificationBodies.push(`The Decision section lacks a valid [#id] citation to the transcript and should be verified before acting. Consider checking State of Play or transcript.\n${ungrounded.slice(0, 5).map((l) => `- ${l.slice(0, 200)}`).join("\n")}`);
     }
   }
   const actionItems = extractSection(finalOutput, "Action Items");
   if (overallGrounded && actionItems.length > 0 && !sectionHasValidCite(actionItems)) {
     const ungroundedActions = ungroundedLines(actionItems);
     if (ungroundedActions.length === actionItems.length) {
-      needsVerificationBodies.push(`## Needs Verification\nThe Action Items below cite no valid [#id] from the transcript — they assign work, so verify ownership and basis before acting.\n${ungroundedActions.slice(0, 5).map((l) => `- ${l.slice(0, 200)}`).join("\n")}`);
+      needsVerificationBodies.push(`The Action Items below cite no valid [#id] from the transcript — they assign work, so verify ownership and basis before acting.\n${ungroundedActions.slice(0, 5).map((l) => `- ${l.slice(0, 200)}`).join("\n")}`);
     }
   }
   const reasoningUngrounded = ungroundedLines(reasoning);
   if (reasoning.length > 0 && reasoningUngrounded.length === reasoning.length && !reasoningHasValidCite) {
-    needsVerificationBodies.push(`## Needs Verification\nThe Reasoning section carries no valid [#id] citation to the transcript (and no “synthesized from” marker) — verify each claim against the transcript before acting.\n${reasoningUngrounded.slice(0, 5).map((l) => `- ${l.slice(0, 200)}`).join("\n")}`);
+    needsVerificationBodies.push(`The Reasoning section carries no valid [#id] citation to the transcript (and no “synthesized from” marker) — verify each claim against the transcript before acting.\n${reasoningUngrounded.slice(0, 5).map((l) => `- ${l.slice(0, 200)}`).join("\n")}`);
   }
   const unsupportedCitations = checkCitationSupport(stripReferenceIndex(finalOutput), weave, { minTargetChars: policy.minCitationTargetChars });
   detectorReport.citationWarnings.candidates = unsupportedCitations.length;
@@ -278,18 +278,18 @@ export function finalizeSynthesis(artifactText, transcriptData, participants, op
       const label = c.label ? `${c.quantity} (${c.label})` : c.quantity;
       return `- ${label}: v1 = ${v1.value}${unit} [#${v1.contributionId}] vs v2 = ${v2.value}${unit} [#${v2.contributionId}] — ${c.reconciliationRule} (falsifier: ${c.falsifier.method} — ${c.falsifier.detail})`;
     });
-    needsVerificationBodies.push(`## Needs Verification\n${reconciliation.versionedCount} same-quantity numerical conflict(s) are stated with competing values — versioned here with reconciliation rules; cite the latest version:\n${lines.join("\n")}\n`);
+    needsVerificationBodies.push(`${reconciliation.versionedCount} same-quantity numerical conflict(s) are stated with competing values — versioned here with reconciliation rules; cite the latest version:\n${lines.join("\n")}\n`);
   }
 
   const straddlingBands = findStraddlingBands(finalOutput);
   if (straddlingBands.length > 0) {
     const bandList = straddlingBands.map((s) => `${s.band[0]}–${s.band[1]} vs threshold ${s.threshold}`).join(", ");
-    needsVerificationBodies.push(`## Needs Verification\nThe numeric band(s) ${bandList} straddle the decision threshold — degrade to threshold analysis (state the band and what evidence would move it) instead of a point estimate.\n`);
+    needsVerificationBodies.push(`The numeric band(s) ${bandList} straddle the decision threshold — degrade to threshold analysis (state the band and what evidence would move it) instead of a point estimate.\n`);
   }
   detectorReport.needsVerification.candidates = needsVerificationBodies.length;
   if (needsVerificationBodies.length > 0 && shipNeedsVerification) {
     detectorReport.needsVerification.shipped = true;
-    for (const body of needsVerificationBodies) finalOutput += `\n\n${body}`;
+    finalOutput += `\n\n## Needs Verification\n${needsVerificationBodies.join("\n\n")}`;
   }
   if (policy.dryRun) {
     try {

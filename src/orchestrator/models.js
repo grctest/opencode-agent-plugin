@@ -322,6 +322,7 @@ export function _getOrchestratorModel() {
     const configured = this._options?.orchestratorModel;
     if (configured?.providerID && configured?.modelID) {
       const model = withVariant({ providerID: configured.providerID, modelID: configured.modelID }, configured.variant);
+      if (this._options?.forceOrchestratorModel) return model;
       if (this._roundExecutor?.isModelHealthy?.(model)) return model;
       return this._getAllowedFallbackModel(model.variant) ?? this._getDefaultModel();
     }
@@ -413,4 +414,3 @@ export async function _promptOrchestrator(system, model, message, type = "orches
     }
     return safeResponse;
   }
-

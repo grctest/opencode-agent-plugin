@@ -301,19 +301,15 @@ ${modeSection}
         - Make as many tool calls as you need — there is no per-turn tool-call limit; prefer focused calls but never skip needed research to save calls.
         - CRITICAL: tool invocations are transmitted through the model's function-calling channel, never through response text. Your prose must NEVER contain function-name() or JSON argument blobs. Bracket tags like [QUERY: @id] are legacy — ignored everywhere except loom_vote ballots, which still require [Vote: A].
         Reference contributions by [#id] from Recent Contributions — name the holder at first use (Ada [#12]); bare repeats are fine.
-  5. Identity — persona and agenda shape framing, not facts. Precedence: OUTPUT CONTRACT > persona/category guidance > State of Play > Live. Persona voice never overrides budgets or the tool channel.
-  6. Voice — thorough and human-readable; dissent is welcome and not penalized.
-  7. Collaboration — ${showCodeGuide ? "(open-ended & programming): for debates, map spectrum and steelman counter-views before concluding; for code, read then propose diff (or write in BUILD), then handoff: **Handoff: <seated participant name> — verify file=X covers case Y**." : "for debates, map the spectrum and steelman counter-views before concluding."}
-  7a. Test craft — when you propose a test, threshold, or numeric bar: (a) Calibrate it — name the base rate, historical precedent, or data that justifies the number; if you don’t know, say so and propose the cheap test that would measure it. (b) Check internal consistency — a minimum-game floor, a percentage share, and an absolute-minute estimate must be mutually possible; if your floor makes your share unreachable (or trivial), fix one of the three. (c) Prefer a test whose every branch can actually fire — a threshold that can never trigger is not falsifiable, it’s decoration.
-  7b. Ladder atomicity — when you propose or vote on a decision ladder, the trigger, order, owner, full date (year included), and re-pricing conditions form ONE atomic object: the vote assigns all five or adopts nothing. Never propose a partial ladder (a trigger with no owner, or an owner with no date).
-  7c. Versioned base tables — when you state a recurring number set (a table, tally, or enumerated list the room keeps re-quoting), publish it as a versioned base table: “<name> vN” with the full scope (what the numbers count, the counting/scoring rule, the window or population they cover, sources, as-of round). In later rounds, cite the existing version or publish v(N+1) with a diff line showing what changed. Never restate numbers without either citing the current version or superseding it.
-  8. State carry-forward — a follow-up step saves your stance and bullets automatically from this turn; do not call any state tool now and never write about patching in prose: no "Patched", "state", "stance", "bullets", or version numbers — write the deliberation itself.
-  9. Newness — every contribution must add at least one of: (a) new evidence with Source: or tool output, (b) a new argument or objection, (c) a refinement that changes a number, threshold, or scope, (d) a synthesis that resolves or narrows a contested point. Re-stating settled points or your own prior position without a delta is a violation — cite [#id] and move on. In rounds 3+ this rule is strict; in rounds 1–2 thoroughness takes precedence.
-  10. Frozen terms — the question's load-bearing terms (whatever fixes the MEANING of its numbers and scope — the underlying set, the scoring or evaluation rule, the window or population, the as-of date, and other key definitions) must be settled in round 1, not silently assumed: unless the room received an explicit glossary, the first contribution of round 1 states how it reads each load-bearing term in 1-3 lines. Other participants adopt or amend each definition in one clause when they first rely on it; the clerk signs converged definitions into Settled at the end of round 1. After that they are cited by [#id], never re-argued — flagging a divergence from a definition nobody wrote helps nobody: either accept a stated definition, propose yours in its place, or say the term is undefined and needs settling. Definition-adjacent disputes are clerk-flagged, not debated — don't spend rounds re-litigating what a term means.
-  11. Citation engagement — each contribution must engage with at least one other contribution via [#id] (a peer's claim, a State-of-Play item, or a prior contribution). Isolated contributions that cite nothing are flagged by the clerk. If you genuinely have no peer contribution to engage (round 1, first speaker), say so explicitly and open the strongest thread from your lens.
-  12. No naked numbers — every percentage or rate you state must ship with (n, window, source): the sample size, the time/scope window it covers, and where it came from ([#id], State-of-Play, or Source:). A rate with n<10 may illustrate a point but never license a conclusion — label it "n=X, illustrative only" and don't build a decision on it. Projections inherit this: multiplying a rate by a denominator ("X of 24") additionally requires naming the reference class the rate comes from, with its n; a reference class with n<3 (a single precedent, a single era) yields an illustrative band only — label it "illustrative, reference-class n=X" and never book it as a working interval. If you cannot source a number, strike it or qualify it ("in my experience…"); the clerk strikes what you leave naked.
-  13. Calibration sheet at authorship — when you propose a gate ladder (a decision rule with triggers), each trigger threshold ships with its calibration: the base rate, historical precedent, or data that justifies the number — or the cheap test that would measure it, named explicitly. A trigger you cannot calibrate at authorship is proposed as uncalibrated ("Gate 1 uncalibrated — needs base rate from X"), never presented as a working gate. Calibration added two rounds later is not calibration.
-  14. Reader language — write for a busy, intelligent non-specialist. Define every domain acronym or code name at its first use ("additional development and upgrade opportunities (ADUO)"), gloss domain jargon in plain words, and never rely on an undefined internal shorthand. Keep the precise term and attach the plain meaning; readability never licenses dropping a number, caveat, or citation.
+  5. Identity and voice — persona and agenda shape framing, not facts. Precedence: OUTPUT CONTRACT > persona/category guidance > State of Play > Live. Persona voice never overrides budgets or the tool channel. Be thorough and human-readable; dissent is welcome and not penalized.
+  6. Collaboration and state carry-forward — ${showCodeGuide ? "for debates, map the spectrum and steelman counter-views; for code, read then propose a diff (or write in BUILD when that mode and its tools are enabled), then hand off: **Handoff: <seated participant name> — verify file=X covers case Y**." : "map the debate's spectrum and steelman counter-views before concluding."} A follow-up step saves your stance and bullets automatically; do not call any state tool now or write about patching in prose: no "Patched", "state", "stance", "bullets", or version numbers — write the deliberation itself.
+  7. Newness — every contribution must add at least one of: (a) new evidence with Source: or tool output, (b) a new argument or objection, (c) a refinement that changes a number, threshold, or scope, (d) a synthesis that resolves or narrows a contested point. Re-stating settled points or your own prior position without a delta is a violation — cite [#id] and move on. In rounds 3+ this rule is strict; in rounds 1–2 thoroughness takes precedence.
+  8. Frozen terms — the question's load-bearing terms (whatever fixes the MEANING of its numbers and scope — the underlying set, the scoring or evaluation rule, the window or population, the as-of date, and other key definitions) must be settled in round 1, not silently assumed: unless the room received an explicit glossary, the first contribution of round 1 states how it reads each load-bearing term in 1-3 lines. Other participants adopt or amend each definition in one clause when they first rely on it; the clerk signs converged definitions into Settled at the end of round 1. After that they are cited by [#id], never re-argued — flagging a divergence from a definition nobody wrote helps nobody: either accept a stated definition, propose yours in its place, or say the term is undefined and needs settling. Definition-adjacent disputes are clerk-flagged, not debated — don't spend rounds re-litigating what a term means.
+  9. Citation engagement — each contribution must engage with at least one other contribution via [#id] (a peer's claim, a State-of-Play item, or a prior contribution). Isolated contributions that cite nothing are flagged by the clerk. If you genuinely have no peer contribution to engage (round 1, first speaker), say so explicitly and open the strongest thread from your lens.
+  10. Numerical discipline, calibration, and test craft — every percentage or rate must ship with (n, window, source): sample size, time/scope window, and source ([#id], State-of-Play, or Source:). A rate with n<10 may illustrate but never license a conclusion — label it "n=X, illustrative only". Projections inherit this: multiplying a rate by a denominator ("X of 24") also names the reference class and its n; a reference class with n<3 yields an illustrative band only, never a working interval. If a number cannot be sourced, strike it or qualify it ("in my experience…"). When proposing a test, threshold, or numeric bar, name the base rate, historical precedent, or data that justifies it; if unknown, name the cheap test that would measure it. Check internal consistency between floors, shares, and absolute estimates; ensure every test branch can fire — an unreachable threshold is not falsifiable. Each gate threshold ships calibrated at authorship, or explicitly marked uncalibrated with the test needed; calibration added two rounds later is not calibration.
+  11. Reader language — write for a busy, intelligent non-specialist. Define every domain acronym or code name at its first use ("additional development and upgrade opportunities (ADUO)"), gloss domain jargon in plain words, and never rely on an undefined internal shorthand. Keep the precise term and attach the plain meaning; readability never licenses dropping a number, caveat, or citation.
+  12. Ladder atomicity — when you propose or vote on a decision ladder, the trigger, order, owner, full date (year included), and re-pricing conditions form ONE atomic object: the vote assigns all five or adopts nothing. Never propose a partial ladder (a trigger with no owner, or an owner with no date).
+  13. Versioned base tables — when you state a recurring number set (a table, tally, or enumerated list the room keeps re-quoting), publish it as a versioned base table: “<name> vN” with the full scope (what the numbers count, the counting/scoring rule, the window or population they cover, sources, as-of round). In later rounds, cite the existing version or publish v(N+1) with a diff line showing what changed. Never restate numbers without either citing the current version or superseding it.
   `;
 
   const cap = getSystemPromptCacheMax();
@@ -517,19 +513,25 @@ _Use these ids verbatim for loom_query. Example: {target: "${exampleId}", questi
   // Your State still renders in the primary turn (it is the agent's carried
   // context), but the patch tool lives only in the tail pass — the primary
   // must not name it or invite its use.
-  const stateGuidance = showState
-    ? `- **Your State is carried forward automatically** — a follow-up step saves what survives from this turn. Only you see this block next turn; the room and the end user only ever read your contribution prose.
-- **Live is current round only** — anything older you still need must already be in Your State; if it isn't, re-establish it from the digest (don't quote full old prose).
-`
-    : "";
-
   // Round-phase doctrine (audit N10): the DIVERGE → MAP & REFINE → CONSOLIDATE
   // guidance existed only for peer sub-turns; primary turns got nothing.
   // Guidance category, not contract — the late-phase Position closer stays optional.
   const roundPhaseLine = (Number.isFinite(round) && Number.isFinite(options.maxRounds))
-    ? `- **Round phase** — ${buildRoundContext(round, options.maxRounds, { hasPriorContributions: Array.isArray(recentContributions) && recentContributions.length > 0 })}\n`
+    ? buildRoundContext(round, options.maxRounds, { hasPriorContributions: Array.isArray(recentContributions) && recentContributions.length > 0 })
     : "";
   const hasLive = Array.isArray(recentContributions) && recentContributions.length > 0;
+  const turnFocus = hasLive
+    ? "Engage the strongest live thread; make a new move rather than paraphrasing it."
+    : "As first speaker, open the strongest thread from your lens; the contract covers how to frame load-bearing terms.";
+  const carryForwardAndMode = [
+    showState ? "Your State is private carry-forward; Live contains this round only. Re-establish anything older that still matters." : "",
+    showCodeGuide ? "**Files Involved** (if SoP has them) — use those paths when relevant; in BUILD mode you may read then write/edit only with enabled tools. Follow the system Mode and the tools actually offered." : "",
+  ].filter(Boolean).join(" ");
+  const finalRoundNote = Number.isFinite(round) && Number.isFinite(options.maxRounds) && round === options.maxRounds
+    ? " This round decides whether the artifact converges or freezes as a tree of conditions; deliver a full contribution unless you genuinely have nothing new, because short query-responses starve the closing gate."
+    : Number.isFinite(round) && Number.isFinite(options.maxRounds) && round / options.maxRounds > 0.66
+      ? " In late rounds, density beats volume — 350–500 words unless you are introducing new evidence or decision-relevant synthesis."
+      : "";
   // Steering hints render before the closer; the patch line is gone by design
   // (tail pass owns it), so recency belongs to deliberation.
   const steeringBlock = options.steeringHint
@@ -546,18 +548,15 @@ _Use these ids verbatim for loom_query. Example: {target: "${exampleId}", questi
 ${contextHeader}${sopHeader}${settledHeader}${lastSummaryHeader}${evidenceCacheHeader}${myStateHeader}${participantsHeader ? `\n${participantsHeader}\n\n` : ""}${priorIndexBlock ? `${priorIndexBlock}\n` : "\n\n"}## Live — Recent Contributions
 
 ${transcriptDelimited}
-
+${steeringBlock}
 ## Your Turn — Weighted Guidance
 
-- **State of Play is provisional in rounds 1–2, canonical after** — challenge it only with new evidence or a falsifiable scenario.
-${roundPhaseLine}${stateGuidance}${hasLive
-    ? "- **Live contributions are the prompt** — engage at least one [#id] per evidence block or explain why you’re opening a new thread. Group citations; don’t spam per sentence.\n"
-    : "- **You are first** — no live contributions yet; open the strongest thread from your lens, and include 1-3 lines stating how you read the question's load-bearing terms (what counts, how scored, scope) — established definitions get signed into Settled at the end of round 1, so state yours plainly rather than assuming a glossary exists.\n"}${showCodeGuide ? "- **Files Involved** (if SoP has them) is file list for code collaboration — build on those paths with file=src/... citations; in BUILD mode you may read then write/edit.\n" : ""}
-- **Thoroughness welcome** — ${windowNote}; use headings, evidence blocks, tradeoff tables. Dissent is valuable; don’t force consensus.${Number.isFinite(round) && Number.isFinite(options.maxRounds) && round / options.maxRounds > 0.66 ? (round === options.maxRounds ? " In the final round, this round decides whether the artifact converges or freezes as a tree of conditions — deliver a full contribution unless you genuinely have nothing new; short query-responses starve the closing gate." : " In late rounds, density beats volume — 350–500 words unless you are introducing new evidence or decision-relevant synthesis.") : ""}
+${roundPhaseLine ? `### Round phase\n${roundPhaseLine}\n\n` : ""}
 
-To challenge SoP: cite [#id] contradicting it + Source/tool output + falsifiable scenario. Otherwise build on SoP.
+- **State of Play** — provisional in rounds 1–2, canonical after. Challenge it only with [#id] + Source/tool output and a falsifiable scenario; otherwise build on it.
+- **This turn's focus** — ${turnFocus}
+- **Carry-forward and mode** — ${carryForwardAndMode || "Use the context above and follow the system Mode."} The OUTPUT CONTRACT governs if instructions conflict.
+- **Reader bar** — thorough and human-readable (${windowNote}); use structure when it helps, preserve dissent, and do not force consensus.${finalRoundNote}
 
-Rules: contract §1 (length) · §2 (citations) · §3 (boundaries) govern.${showCodeGuide ? " Keep code diffs in \\`\\`\\` file=src/... \\`\\`\\` blocks (not counted);" : ""} preserve numbers verbatim.
-${steeringBlock}
-Make your contribution or pass — thorough, grounded prose with [#id] citations is what the room and the end user read.}`;
+Make your contribution or pass — grounded prose with [#id] citations is what the room and the end user read.}`;
 }

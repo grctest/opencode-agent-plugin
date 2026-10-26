@@ -11,14 +11,14 @@ import { resolveLoomBaseDir } from "../../../paths.js";
 import { invalidateMeetingsCache } from "../../api/free.js";
 import { getConfig } from "../../../config.js";
 import { extractErrorInfo } from "../../../logger.js";
-import { sanitizeForDisplay } from "../../../utils/sanitize.js";
+import { sanitizeForDisplay, sanitizeForPrompt } from "../../../utils/sanitize.js";
 import { writeReportFile as writeReportFileHelper } from "../../../handlers/knit/file-ops.js";
 import { repairDatabase } from "../../../database/connection.js";
 import { TERMINAL_STATUSES, canResumeStatus } from "../../../constants.js";
 import { resetPollCursorsForMeeting } from "../poll-cursors.js";
 import { registerMeetingEngine } from "../../../utils/engine-registry.js";
 import { isControlReady, logger, runtime, jobs, serverState, getDirectory, readJsonBody, jobPhaseForStatus } from "./runtime.js";
-import { discoverFiltered } from "./discovery.js";
+import { discoverFiltered, discoverRaw } from "./discovery.js";
 import { storedVariantFor, normalizeFeatures, buildMeetingAgentTools, dashboardCallbacks } from "./forms.js";
 
 export function handleJobStatus(url) {
@@ -317,7 +317,19 @@ export async function handleFinishMeeting(req) {
   }
 }
 
-async function handleFinishMeetingInternal(req) {
+export async function handleResynthesizeMeeting(req) {
+  if (serverState.runningMeetingId || serverState.startInFlight) {
+    return Response.json({ error: "a deliberation is already running", meeting_id: serverState.runningMeetingId }, { status: 409 });
+  }
+  serverState.startInFlight = true;
+  try {
+    return await handleFinishMeetingInternal(req, { resynthesize: true });
+  } finally {
+    serverState.startInFlight = false;
+  }
+}
+
+async function handleFinishMeetingInternal(req, { resynthesize = false } = {}) {
   if (!isControlReady()) {
     return Response.json({ error: "dashboard control plane not ready" }, { status: 503 });
   }
@@ -346,7 +358,7 @@ async function handleFinishMeetingInternal(req) {
   } catch (err) {
     return Response.json({ error: `could not read artifact: ${extractErrorInfo(err).message}`, code: "db_read_failed", meeting_id: meetingId }, { status: 500 });
   }
-  if (artifact?.content) {
+  if (!resynthesize && artifact?.content) {
     let regenerated = false;
     try {
       if (!existsSync(reportPathFor(getDirectory(), meetingId))) {
@@ -357,11 +369,51 @@ async function handleFinishMeetingInternal(req) {
     } catch {}
     return Response.json({ ok: true, meeting_id: meetingId, finished: true, artifact_present: true, report_regenerated: regenerated, recovered: ctx.recovered, degraded: ctx.degraded });
   }
+  if (resynthesize && !artifact?.content) {
+    return Response.json({ error: "meeting has no summary to regenerate", code: "artifact_missing", meeting_id: meetingId }, { status: 400 });
+  }
   if (existingParts.length === 0) {
     return Response.json({ error: "meeting has no participants — synthesis cannot run", code: "no_participants", meeting_id: meetingId }, { status: 400 });
   }
-  if (ctx.participants.length > 0 && ctx.participants.every((p) => !p.model) && ctx.available.length === 0) {
+  if (!resynthesize && ctx.participants.length > 0 && ctx.participants.every((p) => !p.model) && ctx.available.length === 0) {
     return Response.json({ error: "no models available — enable at least one provider model first, then finish", code: "no_models", meeting_id: meetingId }, { status: 400 });
+  }
+  let synthesisModel = ctx.orchestrator;
+  let synthesisConfig = ctx.orchestratorConfig;
+  let availableModels = ctx.available;
+  let additionalInstructions = "";
+  if (resynthesize) {
+    let allAvailable;
+    try {
+      ({ available: allAvailable } = await discoverRaw(true));
+    } catch (err) {
+      return Response.json({ error: `model discovery failed: ${extractErrorInfo(err).message}` }, { status: 500 });
+    }
+    const providerID = body?.provider_id;
+    const modelID = body?.model_id;
+    if (typeof providerID !== "string" || !providerID || typeof modelID !== "string" || !modelID) {
+      return Response.json({ error: "provider_id and model_id are required" }, { status: 400 });
+    }
+    const selected = allAvailable.find((model) => model.providerID === providerID && model.modelID === modelID);
+    if (!selected) {
+      return Response.json({ error: "selected model is not available from the provider", code: "model_unavailable" }, { status: 400 });
+    }
+    const variant = body?.variant ?? null;
+    if (variant !== null && (typeof variant !== "string" || !variant || !(selected.variants ?? []).includes(variant))) {
+      return Response.json({ error: "selected variant is not available for this model", code: "variant_unavailable" }, { status: 400 });
+    }
+    const rawInstructions = body?.instructions ?? "";
+    if (typeof rawInstructions !== "string" || Array.from(rawInstructions).length > 4000) {
+      return Response.json({ error: "instructions must be text of at most 4000 characters" }, { status: 400 });
+    }
+    additionalInstructions = sanitizeForPrompt(rawInstructions, 4000);
+    synthesisModel = { providerID, modelID, ...(variant ? { variant } : {}) };
+    synthesisConfig = {
+      ...ctx.orchestratorConfig,
+      model: `${providerID}/${modelID}`,
+      additionalSynthesisInstructions: additionalInstructions,
+    };
+    availableModels = allAvailable;
   }
   const finishParentSessionId = typeof existingMeeting.parent_session_id === "string" && existingMeeting.parent_session_id
     ? existingMeeting.parent_session_id
@@ -387,10 +439,11 @@ async function handleFinishMeetingInternal(req) {
     opencodeSessionId: finishOpencodeSessionId,
     participants: ctx.participants,
     maxRounds: Math.min(10, Math.max(1, Math.floor(Number(existingMeeting.max_rounds) || Number(getConfig().defaultMaxRounds) || 4))),
-    orchestratorModel: ctx.orchestrator,
-    orchestratorConfig: ctx.orchestratorConfig,
+    orchestratorModel: synthesisModel,
+    orchestratorConfig: synthesisConfig,
+    forceOrchestratorModel: resynthesize,
     agentTools: buildMeetingAgentTools(ctx.features),
-    availableModels: ctx.available,
+    availableModels,
     ...dashboardCallbacks(),
   });
 
@@ -399,7 +452,11 @@ async function handleFinishMeetingInternal(req) {
     return Response.json({ error: "server busy — too many live deliberations, retry after the current one finishes" }, { status: 503 });
   }
   serverState.runningMeetingId = meetingId;
-  jobs.set(meetingId, { phase: "running", startedAt: new Date().toISOString(), finishing: true });
+  jobs.set(meetingId, {
+    phase: "running",
+    startedAt: new Date().toISOString(),
+    ...(resynthesize ? { resynthesizing: true } : { finishing: true }),
+  });
   try { invalidateMeetingsCache(getDirectory()); } catch {}
 
   const finishWarnings = ctx.warnings;
@@ -408,19 +465,29 @@ async function handleFinishMeetingInternal(req) {
     try {
       await resetStuckSpeaking(ctx.dbPath, meetingId);
       await finishEngine.initialize();
-      const output = await finishEngine.finishSynthesis(originalStatus);
+      const output = await finishEngine.finishSynthesis(originalStatus, { additionalInstructions });
       const finishState = finishEngine.getState();
       // A finish whose synthesis was cancelled mid-flight (the user pressed
       // Cancel run while the output was being written) returns no output —
       // there is nothing to write a report from, and the meeting stays
       // finishable (the Finish button re-runs synthesis-only on demand).
       if (output) {
-        writeRecoveryReport(meetingId, finishQuestion, existingParts, finishState.current_round, output, "Finished");
+        writeRecoveryReport(meetingId, finishQuestion, existingParts, finishState.current_round, output, resynthesize ? "Resynthesized" : "Finished");
       }
-      jobs.set(meetingId, { phase: jobPhaseForStatus(finishState?.status), startedAt: jobs.get(meetingId)?.startedAt ?? null, finishedAt: new Date().toISOString(), finishing: true });
+      jobs.set(meetingId, {
+        phase: jobPhaseForStatus(finishState?.status),
+        startedAt: jobs.get(meetingId)?.startedAt ?? null,
+        finishedAt: new Date().toISOString(),
+        ...(resynthesize ? { resynthesizing: true } : { finishing: true }),
+      });
     } catch (err) {
       logger.error("dashboard_finish_failed", "Dashboard finish failed", extractErrorInfo(err));
-      jobs.set(meetingId, { phase: "error", error: extractErrorInfo(err).message, startedAt: jobs.get(meetingId)?.startedAt ?? null, finishing: true });
+      jobs.set(meetingId, {
+        phase: "error",
+        error: extractErrorInfo(err).message,
+        startedAt: jobs.get(meetingId)?.startedAt ?? null,
+        ...(resynthesize ? { resynthesizing: true } : { finishing: true }),
+      });
     } finally {
       runtime.activeLooms.delete(meetingId);
       try { await finishEngine.close(); } catch {}
@@ -428,5 +495,12 @@ async function handleFinishMeetingInternal(req) {
     }
   })();
 
-  return Response.json({ ok: true, meeting_id: meetingId, finishing: true, warnings: finishWarnings, recovered: ctx.recovered, degraded: ctx.degraded }, { status: 202 });
+  return Response.json({
+    ok: true,
+    meeting_id: meetingId,
+    ...(resynthesize ? { resynthesizing: true } : { finishing: true }),
+    warnings: finishWarnings,
+    recovered: ctx.recovered,
+    degraded: ctx.degraded,
+  }, { status: 202 });
 }

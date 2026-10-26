@@ -2,7 +2,7 @@ import { sanitizeForDisplay } from "../utils/sanitize.js";
 import { truncateAtSentence } from "../utils/text.js";
 import { LENGTH_LIMITS } from "./constants.js";
 import { QUERY_MODES } from "./query-modes.js";
-import { getRecentContributionsBlock, buildSubAgentStateLine, buildSubAgentToolGuidance, buildRoundLabel, buildPeerSettledDigest } from "./blocks.js";
+import { getRecentContributionsBlock, buildSubAgentStateLine, buildSubAgentToolGuidance, buildSubAgentScopeBlock, buildRoundLabel, buildPeerSettledDigest } from "./blocks.js";
 import { delimitContext } from "./delimiters.js";
 import { SOP_SECTIONS, readSoPSectionItems } from "../state-of-play.js";
 
@@ -81,6 +81,7 @@ export function buildQueryPrompt(sourceAgent, targetAgent, sourceContribution, q
   const stateLine = buildSubAgentStateLine(targetAgent, targetState);
   const settledDigest = buildPeerSettledDigest(opts.settledItems);
   const settledBlock = settledDigest ? `${settledDigest}\n` : "";
+  const roundContext = buildRoundLabel(currentRound, maxRounds);
   // reflection_guidance is consumed here (audit N2/P2-G): perspective-mode
   // targets answer through their persona's reflection lens. Other modes ignore it.
   const reflectionGuidance = mode === "perspective" && typeof targetAgent?.config?.reflection_guidance === "string" && targetAgent.config.reflection_guidance.trim()
@@ -91,6 +92,8 @@ export function buildQueryPrompt(sourceAgent, targetAgent, sourceContribution, q
   const header = `## ${mode === "clarify" ? "Direct Query" : `${mode.charAt(0).toUpperCase() + mode.slice(1)} Request`} — to ${sanitizeForDisplay(targetAgent.config.name)} (${targetAgent.config.category ?? targetAgent.config.tier}) from ${safeSourceName} (${sourceAgent.config.category ?? sourceAgent.config.tier})
 
 ${sourceNote}${delimitContext(safeContribution, "PEER_CONTRIBUTION")}
+
+${roundContext}
 
 ${delimitContext(safeQuestion, "PEER_QUESTION")}
 
@@ -120,22 +123,20 @@ export function buildEvidencePrompt(sourceAgent, targetAgent, sourceContribution
   const settledDigest = buildPeerSettledDigest(opts.settledItems);
   const settledBlock = settledDigest ? `${settledDigest}\n` : "";
   const sourceNote = renderSourceNote(opts.sourceNote);
+  const roundContext = buildRoundLabel(currentRound, maxRounds);
 
   return `## Evidence Request — to ${sanitizeForDisplay(targetAgent.config.name)} (${targetAgent.config.category ?? targetAgent.config.tier}) from ${safeSourceName} (${sourceAgent.config.category ?? sourceAgent.config.tier})
 
-${sourceNote}${delimitContext(safeContribution, "PEER_CONTRIBUTION")}
+${sourceNote}${roundContext}
+
+${delimitContext(safeContribution, "PEER_CONTRIBUTION")}
 
 ${delimitContext(safeQuestion, "EVIDENCE_QUESTION")}
 
 ${roomBlock ? roomBlock + "\n\n" : ""}${stateLine}
 ${settledBlock}
 ## Task
-Provide grounded evidence (${LENGTH_LIMITS.evidenceWords} words). No contribution tags.
-Required structure:
-- Finding: {one sentence answer}
-- Source: {URL or [#id] or “searched X, 0 hits”}
-- Strength: strong | weak | inconclusive — and why (sample size, recency, conflict)
-If inconclusive, name what would resolve it. Stay in character — translate evidence through your lens.
+${QUERY_MODES.evidence.taskBlock()}
 ${toolSection}`;
 }
 
@@ -173,6 +174,8 @@ ${delimitContext(sourceSnippet.slice(0, 400), "SOURCE_PROPOSAL")}
 ${delimitContext(safeQuestion, "VOTE_QUESTION")}
 
 ${sopSnippet}${roomBlock ? roomBlock + "\n" : ""}${stateLine ? stateLine + "\n" : ""}${roundContext}
+
+${buildSubAgentScopeBlock()}
 
 ## Task — Cast Your Vote
 
@@ -265,6 +268,8 @@ ${questionBlock}${sopSnippet}### Recent Relevant Contributions (relevance-scored
 ${recentBlock}
 
 ${roundContext}
+
+${buildSubAgentScopeBlock()}
 
 ## Guest Norms
 - Additive, not adversarial. Build on what’s settled; don’t re-litigate State-of-Play without new evidence.

@@ -5,10 +5,11 @@ import { SUBSTANTIVE_TYPES } from "./utils/contribution-types.js";
 import { renderMyStateMarkdown, STATE_PATCH_CAPS } from "./state-patch.js";
 import { sanitizeForPrompt } from "./utils/sanitize.js";
 import { delimitContext, escapeDelimiters } from "./prompts/delimiters.js";
-import { getSummaryGuidance, orchestratorContextPolicy, getSummaryBand, getTurnOrderGuidance, ORCHESTRATOR_SUMMARY_ALWAYS, ORCHESTRATOR_SUMMARY_CODE_BULLET } from "./orchestrator/models.js";
+import { getSummaryGuidance, orchestratorContextPolicy, getSummaryBand, getTurnOrderGuidance, ORCHESTRATOR_SUMMARY_BANDS, ORCHESTRATOR_SUMMARY_ALWAYS, ORCHESTRATOR_SUMMARY_CODE_BULLET } from "./orchestrator/models.js";
 import { incrementKeyedCounter, recordLatency, recordMeetingCall, recordMeetingLatency } from "./metrics.js";
 import { readSoPSectionItems, SOP_SECTIONS } from "./state-of-play.js";
 import { sanitizeForDisplay } from "./utils/sanitize.js";
+import { normalizeVecTraces } from "./synthesis/sections.js";
 
 const summarizerLogger = new Logger();
 const SUMMARY_TYPES = SUBSTANTIVE_TYPES;
@@ -98,6 +99,12 @@ function formatAgentStateSnapshot(entry) {
   return `${header}\n${body}`;
 }
 
+function stateHolderLabel(entry) {
+  const id = safeStateText(entry?.id, 120) || "unknown";
+  const name = safeStateText(entry?.name ?? id, 200) || id;
+  return name === id ? id : `${name} (${id})`;
+}
+
 export function buildAgentStatesContext(participantStates) {
   if (!Array.isArray(participantStates) || participantStates.length === 0) {
     return "\n## Current Agent States\n_(No current state snapshots available.)_";
@@ -109,19 +116,14 @@ export function buildAgentStatesContext(participantStates) {
   const blocks = participantStates.map(formatAgentStateSnapshot);
   const showAll = participantStates.length <= 4;
   let body = "";
-  const included = [];
-  for (const b of blocks) {
+  const omittedNames = [];
+  for (const [index, b] of blocks.entries()) {
     const candidate = body ? `${body}\n\n${b}` : b;
-    if (showAll || candidate.length <= 4000) {
-      body = candidate;
-      included.push(true);
-    } else {
-      included.push(false);
-    }
+    if (showAll || candidate.length <= 4000) body = candidate;
+    else omittedNames.push(stateHolderLabel(participantStates[index]));
   }
-  const omitted = blocks.length - included.filter(Boolean).length;
-  if (omitted > 0) {
-    body = `${body}\n\n…[${omitted} further agent state(s) omitted — see DB]`;
+  if (omittedNames.length > 0) {
+    body = `${body}\n\n…[agent state omitted: ${omittedNames.join(", ")} — block exceeded the render budget; see DB]`;
   }
   if (!body) body = blocks[0]?.slice(0, 4000) ?? "";
   return `\n## Current Agent States\n\n_These are bounded, per-agent projections, not a shared transcript. Attribute every state claim to its named holder._\n${delimitContext(body, "AGENT_STATES")}`;
@@ -376,7 +378,12 @@ ${isCodeRound && !band.bullets.some((b) => b.includes("Code/Files")) ? ORCHESTRA
 
 ${ORCHESTRATOR_SUMMARY_ALWAYS}
 
-Rules: Agent States are remembered positions and standing context, not independent evidence. Attribute them to the named holder. Use uncited state only as context; place it under Evidence only when an explicit Source: or [#id] resolves to a listed contribution or tool signal. Distinguish newly established support from claims already carried in state, and do not add a separate Agent States bullet. Pair every [#id] with the holder's NAME at its first mention in the bullet (Ada [#9] — the contribution lines above carry both); grouped bare repeats are fine. Keep Contested holders explicit. Evidence must distinguish “None” from “weak/inconclusive”. Never emit vec: / vec round traces — use [#id] or State-of-Play. Preserve numbers verbatim — do not round, estimate, or invent figures not in contributions. When this round carries two or more mutually overlapping thresholds, projections, or repeated numeric tables, consolidate under Established/Contested: name the single live version (or the tiered ladder they compose) and mark older ones superseded by [#id] — do not list four gates as if parallel. Concise but thorough.`
+## Rules
+1. **Fidelity:** preserve numbers verbatim; never round, estimate, invent figures, or add claims not in the supplied contributions and evidence.
+2. **Attribution:** pair each [#id] with the holder's NAME at first mention (Ada [#9]); grouped bare repeats are fine. Agent States are remembered positions and standing context, not independent evidence — attribute them to their holder.
+3. **Evidence:** distinguish “None” from “weak/inconclusive.” Use state as context only; place a state claim under Evidence only when an explicit Source: or [#id] resolves to a listed contribution or tool signal. Keep Contested holders explicit.
+4. **Slots:** distinguish newly established support from claims already carried in state; do not add a separate Agent States bullet. Use only the output slots required by this summary band and do not add sections.
+`
     : `Summarize this deliberation round. The round contained ${contribCount} contribution(s) but no substantive positions were staked.
 
 ## Question
@@ -388,6 +395,37 @@ ${evidenceHint}${stateHint}
 
 ## Instructions
 Provide a ${band.words} word summary — 2-3 bullets, one line each — noting that no substantive deliberation happened and listing the contribution types. Agent States are remembered positions and standing context, not independent evidence; attribute them to their named holder and do not add a separate Agent States bullet. Use uncited state only as context, and place it under Evidence only when an explicit Source: or [#id] resolves to a listed contribution or tool signal. Sentence style, human-readable. Preserve numbers verbatim.`;
+}
+
+const SUMMARY_REQUIRED_SLOTS = Object.freeze({
+ concise: Object.freeze(["Settled", "Contested", "Next"]),
+ balanced: Object.freeze(["Established", "Settled", "Contested", "Evidence", "Open", "Next"]),
+ exhaustive: Object.freeze(["Established", "Settled", "Contested", "Evidence", "Open", "Next", "Code/Files"]),
+});
+
+export function getRequiredSummarySlots(config = {}, prompt = "") {
+ const band = getSummaryBand(config);
+ const style = band === ORCHESTRATOR_SUMMARY_BANDS.concise ? "concise"
+   : band === ORCHESTRATOR_SUMMARY_BANDS.exhaustive ? "exhaustive"
+     : "balanced";
+ const slots = [...SUMMARY_REQUIRED_SLOTS[style]];
+ const promptText = String(prompt);
+ const outputStart = promptText.lastIndexOf("## Output —");
+ const rulesStart = outputStart >= 0 ? promptText.indexOf("\n## Rules", outputStart) : -1;
+ const outputContract = outputStart >= 0
+   ? promptText.slice(outputStart, rulesStart >= 0 ? rulesStart : undefined)
+   : "";
+ const hasCodeSlot = slots.includes("Code/Files") || /^\s*-\s*\*\*Code\/Files:\*\*/m.test(outputContract);
+ if (hasCodeSlot && !slots.includes("Code/Files")) slots.push("Code/Files");
+ return slots;
+}
+
+export function findMissingSummarySlots(text, requiredSlots) {
+ const output = String(text ?? "");
+ return requiredSlots.filter((slot) => {
+   const escaped = slot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+   return !new RegExp(`^\\s*(?:[-*]|\\d+\\.)?\\s*\\*\\*${escaped}:\\*\\*`, "im").test(output);
+ });
 }
 
 /**
@@ -409,18 +447,58 @@ export async function summarizeRound(round, state, promptOrchestrator, getDefaul
 
   const summaryContributions = filterRoundSummaryContributions(round.contributions);
   const prompt = buildRoundSummaryUser(round, state, participantStates, orchestratorConfig, summaryOpts);
-  const summaryStart = Date.now();
-  const semanticSummary = await promptOrchestrator(buildRoundSummarySystem(orchestratorConfig, maxRounds), model, prompt, "summary");
-  const summaryMs = Date.now() - summaryStart;
-  incrementKeyedCounter("llm_calls_by_type", "summary");
-  recordLatency("summary_ms", summaryMs);
-  try {
-    const mid = state?.id ?? null;
-    if (mid) { recordMeetingCall(mid, "summary"); recordMeetingLatency(mid, "summary_ms", summaryMs); }
-  } catch {}
+  const systemPrompt = buildRoundSummarySystem(orchestratorConfig, maxRounds);
+  const callSummary = async (userPrompt) => {
+    const startedAt = Date.now();
+    const result = await promptOrchestrator(systemPrompt, model, userPrompt, "summary");
+    const elapsed = Date.now() - startedAt;
+    incrementKeyedCounter("llm_calls_by_type", "summary");
+    recordLatency("summary_ms", elapsed);
+    try {
+      const meetingId = state?.id ?? null;
+      if (meetingId) {
+        recordMeetingCall(meetingId, "summary");
+        recordMeetingLatency(meetingId, "summary_ms", elapsed);
+      }
+    } catch {}
+    if (typeof result !== "string") throw new TypeError("Semantic summary must be a string");
+    return normalizeVecTraces(result).trim();
+  };
 
-  if (semanticSummary && semanticSummary.trim().length > 0) {
-    return semanticSummary.trim();
+  let bestSummary = await callSummary(prompt);
+  const requiredSlots = prompt.includes("## Output —")
+    ? getRequiredSummarySlots(orchestratorConfig, prompt)
+    : [];
+  let missingSlots = findMissingSummarySlots(bestSummary, requiredSlots);
+  if (bestSummary && missingSlots.length > 0) {
+    const retryPrompt = `${prompt}\n\n## Missing required summary slots\nYour previous summary omitted: ${missingSlots.join(", ")}. Return the complete summary, preserving valid content and adding only the missing required slots.`;
+    try {
+      const retrySummary = await callSummary(retryPrompt);
+      const retryMissing = findMissingSummarySlots(retrySummary, requiredSlots);
+      if (retrySummary && retryMissing.length < missingSlots.length) {
+        bestSummary = retrySummary;
+        missingSlots = retryMissing;
+      }
+    } catch (err) {
+      if (err?.name === "AbortError") throw err;
+      const info = extractErrorInfo(err);
+      summarizerLogger.warn(
+        "summary_slot_retry_failed",
+        `Round ${round.number || "?"} required-slot repair failed; retaining the best nonempty summary`,
+        { round: round.number, missingSlots, error: info.message },
+      );
+    }
+    if (missingSlots.length > 0) {
+      summarizerLogger.warn(
+        "summary_slots_missing",
+        `Round ${round.number || "?"} summary still omits required slots`,
+        { round: round.number, missingSlots },
+      );
+    }
+  }
+
+  if (bestSummary) {
+    return bestSummary;
   }
 
   // Degrade gracefully: keep the round auditable with a deterministic digest
@@ -438,5 +516,5 @@ export async function summarizeRound(round, state, promptOrchestrator, getDefaul
     { round: round.number, contribCount },
   );
 
-  return ["(Degraded summary — LLM returned empty response)", ...digestBullets].join("\n");
+  return normalizeVecTraces(["(Degraded summary — LLM returned empty response)", ...digestBullets].join("\n"));
 }

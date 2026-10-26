@@ -4,6 +4,8 @@ import { escapeDelimiters, delimitContext } from "./delimiters.js";
 import { renderMyStateMarkdown } from "../state-patch.js";
 import { TOOL_LADDER_LINE, TOOL_FAILURE_LINE, CITATION_LINE } from "./constants.js";
 
+const POSITION_CLOSER = "- End with Position: [held|revised|expanded] because …";
+
 /**
  * Recent-contributions block — the target's own echo and the room's.
  *
@@ -105,6 +107,12 @@ export function buildSubAgentStateLine(targetAgent, targetState) {
   return `Your prior stance (context only): "${sanitizeForDisplay(stance.slice(0, 240))}"`;
 }
 
+export function buildSubAgentScopeBlock() {
+  return `## Out of scope
+You are answering this directed request only, not taking the primary turn. Do not start a separate round contribution, invoke nested Loom peer interactions, or patch round state. Your response remains the contribution for this request.
+`;
+}
+
 /**
  * Accurate tool guidance for ephemeral sub-agents. Mirrors the actual tool map
  * offered in query-evidence.js (websearch/webfetch/read only — patching is
@@ -119,12 +127,12 @@ Report: Finding (1 sentence) + Source (URL or [#id]) + Strength: strong | weak |
 If inconclusive: state why — "0 hits" vs "contradictory sources" — and what would resolve it.`
     : `You may use websearch, webfetch, or read to verify before answering. Prefer citing prior [#id] if the answer is "what was said", websearch if it's a current fact. Cite Source: [#id] or URL if you use one.
 If a tool returns error or 0 hits, write "evidence unavailable — searched X" and answer with an experience-qualified claim.`;
-  return `
+  return `${buildSubAgentScopeBlock()}
 ## Tools Available To You (sub-agent scope)
 
 ${base}
 
-- You do NOT have loom_query, loom_vote, loom_summon, loom_pass, or any state tool. Do not attempt them and do not mention them.
+- Use only the research tools listed here; no nested Loom peer or state tools are available.
 - Your prose IS the contribution. Never write about patching or state in place of the answer.
 - ${CITATION_LINE}`;
 }
@@ -282,12 +290,12 @@ export function buildRoundContext(currentRound, maxRounds, context = {}) {
     return `Single-round deliberation (round 1/1) — DIVERGE then CONVERGE in one turn. This is the whole deliberation, not a late consolidation: surface assumptions and distinct options, stake your own position in your own terms, then leave the strongest dissent visible rather than forcing agreement. Thoroughness welcome.
 - If you are the first speaker, state in 1-3 lines how you read the question's load-bearing terms (what counts, how scored, scope). If a definition is already on the table, adopt it or amend yours in one clause.
 - Test the leading rival claim once: use loom_query mode 'critique' or a prose critique naming the most damaging objection. Do not spend the turn restating.
-- End with Position: [held|revised|expanded] because …`;
+${POSITION_CLOSER}`;
   }
   const progress = currentRound / maxRounds;
-  const settledBullet = (settledCount === null || settledCount > 0)
-    ? "- SETTLED points in State of Play are signed: reference them by [#id] in one clause, then move on. Do NOT restate their content — restatement is a contract violation, not thoroughness.\n"
-    : "- Nothing is settled yet (the settled registry is empty): do not cite a signed point that does not exist. Treat this turn as establishing, not consolidating.\n";
+  const unsettledNote = settledCount === 0
+    ? "- Nothing is settled yet (the settled registry is empty): do not cite a signed point that does not exist. Treat this turn as establishing, not consolidating.\n"
+    : "";
   if (progress <= 0.33) {
     return `Early deliberation (round ${currentRound}/${maxRounds}) — DIVERGE. Surface assumptions, name hidden constraints, introduce distinct options. Don't converge yet; explore the full spectrum. Thoroughness welcome.
 - Stake your own position first, in your own terms — do not build on the first speaker's frame or vocabulary. If you disagree with the emerging frame, say so and name the frame you'd use instead.
@@ -297,13 +305,13 @@ export function buildRoundContext(currentRound, maxRounds, context = {}) {
   } else if (progress <= 0.66) {
     return `Mid deliberation (round ${currentRound}/${maxRounds}) — MAP & REFINE. Identify what’s settled vs contested, bundle related proposals, steelman opposing views, surface tradeoffs with numbers where possible. Name what would unlock next steps but don’t force consensus.
 - File at least one critique of a peer's load-bearing claim this round (in prose or loom_query mode 'critique') — a round spent only restating your view is a round spent restating.
-- When you build on a settled point, cite its [#id] once and add a delta — don’t restate it.`;
+`;
   } else {
     return `Late deliberation (round ${currentRound}/${maxRounds}) — CONSOLIDATE or LEAVE OPEN.
-${settledBullet}- Your contribution must add one of: new evidence (Source/tool output), a new objection to a settled point, a refinement with numbers, or a decision-relevant synthesis of contested views.
+${unsettledNote}- Your contribution must make the room's remaining decision, dissent, or next evidence need clear.
 - It’s fine to leave dissent unresolved — map the remaining disagreement with evidence for/against each view.
 - When two live positions disagree on a number or mechanism, test the leading claim once (loom_query mode 'critique' or a prose critique) before closing.
-- End with Position: [held|revised|expanded] because …`;
+${POSITION_CLOSER}`;
   }
 }
 
@@ -350,5 +358,3 @@ export function buildSettledBlock(items, late = false) {
   }
   return `## Settled — signed, do not re-argue\n\nReference these by [#id] in one clause, then move on. Do NOT restate their content — restatement is a contract violation, not thoroughness. Challenge only with new evidence.\n\n${delimitContext(lines.join("\n"), "SETTLED_ITEMS")}\n`;
 }
-
-

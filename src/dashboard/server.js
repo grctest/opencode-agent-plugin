@@ -41,6 +41,7 @@ import {
   handleExtendMeeting,
   handleResumeMeeting,
   handleFinishMeeting,
+  handleResynthesizeMeeting,
   handleJobStatus,
 } from "./server/control.js";
 import { getMeetingDbPath, isValidMeetingId } from "./api/free.js";
@@ -121,6 +122,7 @@ const ROUTE_MAP = new Map([
   ["/api/meetings/extend", ["POST"]],
   ["/api/meetings/resume", ["POST"]],
   ["/api/meetings/finish", ["POST"]],
+  ["/api/meetings/resynthesize", ["POST"]],
   ["/api/jobs", ["GET"]],
   ["/api/metrics", ["GET"]],
   ["/api/logs", ["GET"]],
@@ -534,6 +536,10 @@ export function startDashboard(directory, port, runtimeOpts = null) {
 
         if (url.pathname === "/api/meetings/finish") {
           return handleFinishMeeting(req);
+        }
+
+        if (url.pathname === "/api/meetings/resynthesize") {
+          return handleResynthesizeMeeting(req);
         }
 
         if (url.pathname === "/api/jobs") {

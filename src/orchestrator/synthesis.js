@@ -91,7 +91,7 @@ export async function runFinalRoundPatchGrace() {
   return { attempted, patched, failed };
 }
 
-export async function _synthesize() {
+export async function _synthesize({ additionalInstructions = "" } = {}) {
     const participants = this._stateManager.getParticipants();
     const currentRound = this._stateManager.getCurrentRound();
     const maxRounds = this._stateManager.getMaxRounds();
@@ -218,6 +218,7 @@ export async function _synthesize() {
         },
         stateOfPlay,
         userContext: this._stateManager.getContext?.() ?? "",
+        additionalInstructions,
         onActivity: () => { try { this._stallWatchdog.touch(); } catch {} },
       });
     } catch (err) {
@@ -294,8 +295,8 @@ export async function _synthesize() {
  * (restore forces in-memory status to weaving, and _synthesize persists that
  * via _persistState — without this step finish would regress terminal state).
  */
-  export async function finishSynthesis(originalStatus) {
-  const output = await this._synthesize();
+  export async function finishSynthesis(originalStatus, options = {}) {
+    const output = await this._synthesize(options);
   try {
     const valid = ["converged", "cancelled", "timeout", "max_rounds_reached", "aborted"];
     if (valid.includes(originalStatus) && this._stateManager.getStatus() !== originalStatus) {
@@ -428,4 +429,3 @@ export function _saveMeetingMetrics() {
       });
     } catch { /* non-critical */ }
   }
-

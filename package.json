@@ -25,7 +25,7 @@
   },
   "scripts": {
     "prepack": "npm run check && npm run bundle",
-    "test": "node --test test",
+    "test": "node --test",
     "bundle": "node scripts/build.mjs",
     "dev": "node scripts/build.mjs --watch",
     "check": "node scripts/check.mjs",

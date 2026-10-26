@@ -459,7 +459,7 @@ export function App() {
               </TabsContent>
               <TabsContent value="output" className="pt-4">
                 <ErrorBoundary fallbackMessage="Failed to render the output tab">
-                     <OutputTab artifact={artifact} status={state?.status} participants={participants} />
+                     <OutputTab artifact={artifact} status={state?.status} meetingId={selectedMeeting} />
                 </ErrorBoundary>
               </TabsContent>
             </Tabs>

@@ -297,13 +297,14 @@ Persona lens (subordinate to contract):
           channel, never through response prose. Any function-call notation in text executes
           nothing. Bracket tags like [QUERY: @id], [EVIDENCE: @id], [CALL_VOTE] are obsolete.
         Reference others by participant_id from Recent Contributions, e.g. [#12].
-  5. Stay in character — persona and agenda shape framing, not facts.
+  5. Identity and voice — persona/category guidance shapes framing, not facts.
+     Precedence: OUTPUT CONTRACT > persona/category guidance > State of Play > Live.
 
 ## Research Tools — Tool Ladder (use at most one research tool per turn unless an
    evidence request demands more)
 
 Available: websearch, webfetch, read, glob, grep, bash, loom_query, loom_vote,
-           loom_summon, loom_pass, loom_state_patch
+           loom_summon, loom_pass
            (only enabled ones are listed)
 
 Ladder: read/glob/grep (verify local files) → websearch (verify a current fact) →
@@ -317,9 +318,11 @@ Quality:
 - Cite as Source: https://… or file=src/... when it strengthens your point.
 ```
 
+The production OUTPUT CONTRACT now has 13 top-level clauses: length; grounding/citations; boundaries; interaction tools; identity and voice; collaboration and state carry-forward; newness; frozen terms; citation engagement; combined numerical discipline/calibration/test craft; reader language; ladder atomicity; and versioned base tables. The combined numerical clause retains the former no-naked-numbers, calibration-sheet, and test-craft duties. `loom_state_patch` is not in the primary tool map; the separate patch-only tail owns it. Task mode (`discussion`/`programming`) and deliberation mode (`PLAN`/`BUILD`) are independent: programming+PLAN remains read-only, while BUILD is only enabled by the user's Build selection and the runtime tool map.
+
 Notes:
 
-- The tool list is assembled from `agentTools` config: built-ins plus the loom tools (`loom_query`, `loom_vote`, `loom_summon`, `loom_pass`, `loom_state_patch`). There is no auto-injected prior-transcript RAG block; recall is supplied by the bounded state-of-play and live current-round contributions. When agent tools are disabled, the entire tool section is omitted. System prompt cache `systemPromptCache` is `TUNING.SYSTEM_PROMPT_CACHE_MAX` 50 LRU via `getSystemPromptCacheMax()` and keyed by `hashConfig` which includes `agentTools` digest (`enabled|loom|builtIn|maxCalls|sameTurn`) — changing `agentTools` busts cache.
+- The primary-turn tool list is assembled from `agentTools` config: built-ins plus `loom_query`, `loom_vote`, `loom_summon`, and `loom_pass`. `loom_state_patch` is hidden from the primary turn and offered only in the patch-only tail. There is no auto-injected prior-transcript RAG block; recall is supplied by the bounded state-of-play and live current-round contributions. When agent tools are disabled, the entire tool section is omitted. System prompt cache `systemPromptCache` is `TUNING.SYSTEM_PROMPT_CACHE_MAX` 50 LRU via `getSystemPromptCacheMax()` and keyed by `hashConfig` which includes `agentTools` digest (`enabled|loom|builtIn|maxCalls|sameTurn`) — changing `agentTools` busts cache.
 - `known_biases`: the bias line names at most **three** tendencies (the same cap the anti-patterns use), and when a persona has more, they are deterministically rotated based on the participant name hash, so different agents surface different biases first. The SET is stable per persona; only the order moves.
 - There is no type-tag rule anywhere in the contract — agents write prose; calling `loom_pass` means pass.
 - Transcript `Live` block budgets ~800 chars prose / ~1200 chars code per contribution (≤12 contributions) via `truncateAtSentence` (sentence-boundary, not mid-word `slice`).
@@ -379,21 +382,24 @@ Open:
 - [#5] [mid_security_engineer]: Server-side refresh tokens are just session tokens with extra steps...
 <<<LOOM_CONTRIBUTIONS>>>_END_
 
+<<<LOOM_STEERING_HINT>>>_BEGIN_
+Consolidate the unresolved evidence thread.
+<<<LOOM_STEERING_HINT>>>_END_
+
 ## Your Turn — Weighted Guidance
 
-- **State of Play is truth** unless you explicitly challenge it with new evidence or a falsifiable scenario.
-- **Your State is carried forward automatically** — a follow-up step (the patch-only tail) saves what survives from this turn; the primary turn never calls a state tool and never writes about patching. This is the only memory you carry: anything you do not patch is discarded before your next turn, so a turn that reasons well but patches nothing has wasted the work. Stale bullets you don't remove stay. Evidence (with Source/[#id]) is protected from FIFO eviction longer than other bullets, but only your newest evidence is protected — re-assert anything still load-bearing each turn, and check the `evicted` echo to see what fell off.
-- **Live is current round only** — anything older you still need must already be in Your State; if it isn't, re-establish it from the digest (don't quote full old prose).
-- **Live contributions are the prompt** — engage at least one [#id] or explain why you're opening a new thread.
-- To challenge SoP: cite [#id] contradicting it + Source/tool output + falsifiable scenario.
+### Round phase
+Late deliberation (round 3/3) — CONSOLIDATE or LEAVE OPEN.
+- If the settled registry is empty, do not cite a signed point that does not exist.
+- It is fine to leave dissent unresolved — map the remaining disagreement.
+- End with Position: [held|revised|expanded] because …
 
-Rules:
-- 350-700 words for prose welcome (code diffs excepted); never emit <<< >>> delimiters
-- Cite [#id] when referencing prior work; introduce facts with Source/file= or qualify as experience
-- Preserve code and numbers verbatim — do not round or invent
+- **State of Play** — provisional in rounds 1–2, canonical after. Challenge it only with [#id] + Source/tool output and a falsifiable scenario; otherwise build on it.
+- **This turn's focus** — engage the strongest live thread and make a new move rather than paraphrasing it.
+- **Carry-forward and mode** — Your State is private carry-forward; Live contains this round only. Follow the system Mode and the tools actually offered. The OUTPUT CONTRACT governs if instructions conflict.
+- **Reader bar** — thorough and human-readable; preserve dissent and do not force consensus.
 
-Make your contribution or pass.
-Then call loom_state_patch once — project your stance and 1-3 bullets so they survive into your next turn. Nothing you write in prose carries forward on its own.
+Make your contribution or pass — grounded prose with [#id] citations is what the room and the end user read.
 ```
 
 Note the structure:
@@ -404,17 +410,17 @@ Note the structure:
 - **Live contributions**: current-round contributions only (round == r, `vote_response` excluded, ≤12), each budgeted ~800 chars prose / ~1200 chars code, with stable IDs like `[#4]` rendered together with the holder's display NAME (`- [#12] Dr. Sarah [dr_sarah_3]: …` — the id stays verbatim for `loom_query` targeting). Prior rounds arrive via Σⁱ + SoP digest, never raw replay — per-turn prompt footprint is flat in T.
 - **Prior-round citable index** (`buildPriorRoundContributionIndex`): prior rounds arriving only as digests means a merged-away SoP bullet takes its `[#id]` with it — the room would be citing ids it can no longer see raw. The `## Contribution Index — earlier rounds` block resolves them: one line per earlier contribution (`- [#23] Ada (round 2): first ~120 chars…`), budget-capped at 2400 chars (oldest first — a newer id is likelier to be restated in the digests; the oldest lines are the only place those ids exist), truncated honestly (`…[index truncated…- those ids resolve only as restated in the State of Play bullets]`), fenced (`LOOM_PRIOR_INDEX`) like every other agent-authored block, deduped **by id** against the live block (never by round boundary — the live window can cut mid-round). The block carries its own dispute guard: the gist is a short cut of the original, so an older claim is disputed only as restated in SoP/settled bullets — never reopened on an index line alone. Gate: providers without the option render nothing (byte-identical legacy). When the fit ladder trims the live block under budget pressure, those ids are covered by neither layer — SoP carries them, by design (the ladder degrades the exchange, not the record).
 - **No reflection section**: the participant's stored reflection is *not* injected into primary turns. Σⁱ.stance is the single source of truth for position; legacy reflection is the fallback only when stance is empty. Peer-facing prompts (query/vote/summon targets) see one line: `Your position (from your state vN): "…"` plus top bullets — never both stance and reflection side by side.
-- **Steering hint**: if the orchestrator queued a steering note (contribution-mix nudge), it is appended after the prompt body — consumed exactly once, by the round's first speaker only.
+- **Steering hint**: if the orchestrator queued a steering note (contribution-mix nudge), it is fenced with the other context blocks before the turn card — consumed exactly once, by the round's first speaker only.
 - **Delimiters**: every untrusted block is wrapped in `<<<LOOM_LABEL>>>_BEGIN_` / `<<<LOOM_LABEL>>>_END_` to prevent prompt injection and boundary confusion. An empty section is omitted.
 - **Interaction-prompt deviation (deliberate):** the strict `O_t = current round only` rule above governs *primary* agent turns. Peer-facing sub-prompts built by `loom_query` / `loom_vote` / `loom_summon` (`src/plugin/tools/query-evidence.js`, `src/plugin/tools/vote-summon.js`) use a two-round window (`round >= currentRound - 1`, ≤12): up to **3 recent room contributions** (ballots and reflection rows excluded), so a peer answering an inline question sees the conversation, not just a mirror. Those are sub-turns with their own budget, not the primary reasoning context, and the retention is still bounded — the O(1) claim is unaffected.
   - **No self-echo:** the target's own previous contributions are deliberately *not* replayed into its sub-prompt. A self-echo made perspective answers restate the target's previous turn, so the target's position travels in one line instead — `Your prior stance (context only): "…"` — with consensus arriving separately through the settled digest (≥2-holder items only). A zero own-echo count means the block is omitted, never rendered as empty rows.
 - **Peer questions are self-contained:** the caller invokes `loom_query` mid-turn before writing prose, so there is no draft to show — the `question` field must carry the specific claim being asked about, and the rendered prompt says so explicitly rather than duplicating the question into the contribution block. That "no draft" note is rendered *outside* the fenced blocks: the fence contract says its content is data and imperatives inside it are to be ignored, so meta-guidance does not travel inside a DATA fence.
 - **Salience: prompt emphasis is the only enforcement (SKILL.state is off/on, not optional/mandatory).** The paper makes it structurally impossible to omit (App. A.4 requires `state_patch` inside every response's JSON block), so our tool-channel split must recover that weight in prompt form. There is deliberately no follow-up LLM call on a miss — a miss is logged (`mandatory_capability_missed`, per-turn outcome `never_attempted`) and the turn stands, so deliberations stay fast:
-  1. **OUTPUT CONTRACT item 8**, gated on `agentTools.loom.loom_state_patch` — states that a follow-up step saves the agent's stance and bullets automatically from this turn, that the agent must **not** call any state tool during the turn, and that prose about patching ("Patched", "state", "stance", "bullets", version numbers) is explicitly forbidden. The state is a hidden tail pass (`buildPatchTailPrompt`): a second, patch-only LLM call that runs after the prose, over the turn's final prose plus its tool outputs, and whose whole job is to call `loom_state_patch` once. The tool is therefore *not* in the primary turn's tool map, and the tail never substitutes for prose — the room and the end user read the contribution, not the patch.
+  1. **OUTPUT CONTRACT item 6**, gated on `agentTools.loom.loom_state_patch` — states that a follow-up step saves the agent's stance and bullets automatically from this turn, that the agent must **not** call any state tool during the turn, and that prose about patching ("Patched", "state", "stance", "bullets", version numbers) is explicitly forbidden. The state is a hidden tail pass (`buildPatchTailPrompt`): a separate patch-only LLM call that runs after the prose and same-turn synthesis, over the turn's final prose plus its tool outputs, and whose whole job is to call `loom_state_patch` once. The tool is therefore *not* in the primary turn's tool map, and the tail never substitutes for prose — the room and the end user read the contribution, not the patch.
   2. **Final line of the user prompt** (gated on `showState` — the state block actually rendered): the patch note precedes the closer, and the closer ends on the contribution itself. Recency is the strongest available position, so it belongs to deliberation, not bookkeeping.
   3. **Guidance bullet**: the patch maintains private notes for the agent's own next turn; the room still read the contribution even when the patch is skipped.
   4. **Pass exemption in WHEN TO PASS**: passing needs no patch, which preserves `exempt_pass` semantics and avoids burning a call when the agent has nothing new.
-  The tool is offered inline in the primary turn's map as the agent's absolutely-last tool use — there is no dedicated per-turn patch call and no enforcement retry. Measure the effect with the per-turn outcome enum (§12).
+  The patch-only tool is offered only in the final-action tail; there is one dedicated per-turn tail call, not an inline primary-turn tool use and not an enforcement retry. Measure the effect with the per-turn outcome enum (§12).
 
 ### What Agents Produce
 
@@ -822,10 +828,18 @@ After each round, a summary is generated via LLM — every round, unconditionall
 
 `summarizeRound` picks the default model (first seat carrying a model, else first available — or fallback model), filters to substantive contributions (`contribution` + `query_response`/`evidence_response` etc., legacy `propose`/`challenge` included; `evidence_response` only when tool-backed; `[PASS]` excluded) via `SUBSTANTIVE_TYPES` (`src/utils/contribution-types.js`, `vote_tally` removed — outcome via invoker prose) and prompts:
 
-```
-You are a concise deliberation clerk. Summarize round 3 in 60-90 words —
-no preamble, phrase-style bullets. Preserve numbers verbatim.
+System prompt:
 
+```
+You are a thorough deliberation clerk — you summarize the round, you do not contribute to it.
+Never take a position, never end with "Position:", never issue peer queries.
+Preserve numbers verbatim. Never emit vec: traces.
+[Summary-style guidance and referee duties: flag restatements and consolidate overlapping thresholds.]
+```
+
+User prompt:
+
+```
 ## Question
 Should we migrate our authentication service to JWT tokens?
 
@@ -835,19 +849,23 @@ Should we migrate our authentication service to JWT tokens?
 ## Evidence / Tool Signals (do not invent — use only if cited)
 - [#7] Data Scientist (data_scientist) [evidence_response]: ... [tools: websearch]
 
-## Output — exactly 4 bullets, each one line:
-- **Established:** {decisions/proposals that gained support, with holder NAME + [#id] (Ada [#4])}
-- **Contested:** {what remains disputed and who holds each side — name holders with their ids (Ada [#9] — X)}
-- **Evidence:** {tool/vec-grounded evidence introduced, with Source or [#id]; or "None"}
-- **Open:** {unresolved questions or next decision needed}
+## Output — {band.shape}
+{band.bullets}
 
-Rules: cite [#id] when attributing. Keep Contested holders explicit.
-Preserve numbers verbatim — do not round, estimate, or invent.
+Settled and Next are never omitted — write "None this round" instead of leaving the slot out.
+
+## Rules
+1. Fidelity — preserve numbers verbatim; do not invent.
+2. Attribution — pair [#id] with holder NAME; state is position, not independent evidence.
+3. Evidence — distinguish "None" from weak/inconclusive; use only cited sources.
+4. Slots — preserve the band-required slots and do not add sections.
 ```
 
-The **Evidence/Tool Signals** hint collects up to 4 evidence/query/tool-backed contributions sorted by strength ("Strength: strong" > tool-backed > plain, synthetic `write` excluded), so grounded claims are visible to the summarizer even when filtered out of the main list. When patches exist, a `## Agent States (carried)` line (`state: senior@v3, mid@v2`) is appended — no new LLM call.
+The **Evidence/Tool Signals** hint collects up to 6 evidence/query/tool-backed contributions sorted by strength ("Strength: strong" > tool-backed > plain, synthetic `write` excluded), so grounded claims are visible to the summarizer even when filtered out of the main list. When patches exist, a `## Agent States (carried)` block is appended — no new LLM call. State snapshots that do not fit the 4 kB budget are named by holder rather than represented by an unattributed omission count.
 
 Runs via the fast-path-routable `#promptOrchestrator` type `"summary"` (Section 21). Contributions are budgeted at 12k chars total (selected by evidence strength, emitted chronologically, each line capped at 1200 chars) with a `…[N further contribution(s) omitted]` marker when exceeded; the Agent States block is capped at 4k chars like the synthesis path's.
+
+Before storage, `summarizeRound` normalizes internal `vec:` traces and checks the band-required bullet labels (including `Code/Files` only when the rendered band/task includes it). A missing required slot causes one targeted retry; the best nonempty summary by required-slot completeness is retained, and any remaining omissions are logged with slot names. Concise summaries may omit conditional Established/Open bullets without retry; the deterministic empty-response digest remains the fallback only when no semantic summary is available.
 
 **Holder names ride the contribution lines, and the pairing rule travels with them.** The clerk is asked to pair every `[#id]` with the holder's NAME in its bullets — but a name it must look up two hops away (contribution → `participant_id` → roster → name) under transcript pressure comes out as a raw id or an invented name (the B2 lesson: structure binds where prose rules don't). So the name is rendered at the source: the roster threads `p.config.name` (`round-service.js`), and `formatContribution` (`round-summarizer.js`) renders `- [#4] Senior Architect (senior_architect) [CONTRIBUTION]: …`, with the raw id kept since the Agent States block keys on ids. A lost name falls back to the raw id, never to a blank. The same doctrine ships the final artifact's `## References` index — every `[#N]` in a deliverable resolves for a human, not only for the pipeline.
 
@@ -963,6 +981,7 @@ You are not a participant. You are an auditor. Every claim you make must be trac
 (grounding / attribution / no-invention / resolved≠dissent / actionability rules;
 the `### Agent States (final)` block is positions-only — every contested claim still
 needs a weave [#id], and state bullets without a [#id] trail are unattributed positions)
+5a. Different quantities (unit, population, window, or counting-rule mismatch) are not versions or conflicts: do not blend/band them; say what each measures, which answers the question, and that comparison needs a named conversion. Same-table revisions still follow rule 5.
 
 ## Length — per-section budget
 Decision 80-120w · Reasoning 150-250w · Action Items 80-120w ·
@@ -1011,6 +1030,8 @@ Review the draft below against the deliberation transcript for:
 2. Invented points not present in the deliberation
 3. Significant dissent that the draft did not record
 4. Decisions or action items not supported by any contribution
+5c. Reader language: assess acronyms and jargon in Executive Summary / Decision; quote the exact offending line before revising.
+5d. Different quantities: quote any false comparison and explain what each number set measures; do not invent a conversion.
 
 If corrections are needed, output the FULL revised synthesis with ALL required
 sections (Executive Summary / Decision / Decision Rule / Reasoning /
@@ -1023,6 +1044,7 @@ If the draft is accurate, grounded, and complete, respond with exactly: [NO_CHAN
 - A complete revision replaces the draft.
 - A revision that dropped sections is re-sent with feedback; the best revision seen is kept, and retries stop early when an attempt makes no progress (no more burning full-prompt calls on a non-converging model).
 - On any error the best revision so far is kept (starting from the original draft).
+- A closed-list reader-bar scan supplies candidate jargon lines to the critique prompt as fenced data. It is a hint, not a finding: the auditor judges context, may reject false positives, and changes text only when it independently finds a reader-contract violation.
 
 ### Finalization
 
@@ -1030,8 +1052,8 @@ If the draft is accurate, grounded, and complete, respond with exactly: [NO_CHAN
 - Appends **## Unresolved Objections** and **## Resolved Concerns** (from `objection_collector`).
 - Appends **## Refusals** (agents who refused to engage, as `Name: content`).
 - Adds a note for any required section the model omitted (`> **Note:** The synthesizer did not generate…`).
-- **Grounded-synthesis check:** every `## Decision` line citing no valid `[#id]` from the weave is collected for **## Needs Verification** — and, with the detectors off by default (N3), counted rather than written.
-- **Detector precision gate (N3):** `## Needs Verification` and `## Citation Warnings` are both computed and both **counted** in `artifact.detector_report`; neither is written to the deliverable unless its flag is on *and* `detectors.dryRun` is false. Conflicts require a shared unit, a shared label and a time order, so a year is never banded against a percentage; citation targets under `minCitationTargetChars` and "synthesized from" attributions are exempt.
+- **Grounded-synthesis check:** every `## Decision` line citing no valid `[#id]` from the weave is collected for the existing **## Needs Verification** section; multiple findings share one heading, while the detector report still counts each finding.
+- **Detector precision gate (N3):** `## Needs Verification` and `## Citation Warnings` are both computed and counted in `artifact.detector_report`; shipping follows each detector's flag and `detectors.dryRun` policy. Conflicts require a shared unit, a shared label and a time order, so a year is never banded against a percentage; citation targets under `minCitationTargetChars` and "synthesized from" attributions are exempt.
 - Parses the Confidence section if present; otherwise derives it heuristically (`deriveConfidence`):
   ```javascript
   if (dissentCount === 0 && challengeRatio < 0.3 && participationRate >= 0.5) return "high";
@@ -1321,18 +1343,20 @@ The eager warm is a latency optimisation, never a new dependency. If it fails, `
 
 ## 20. Agent Tooling — Built-ins + Plugin-Registered Loom Tools
 
-Agent tooling is split between **built-in OpenCode tools** (webfetch, websearch, read, glob, grep, and optional bash) and **plugin-registered loom tools** (loom_query, loom_vote, loom_summon, loom_pass, loom_state_patch). Both sets flow into agent prompts through the same mechanism: `agentTools` config → `tools` body map → OpenCode server maps to provider tool definitions.
+Agent tooling is split between **built-in OpenCode tools** (webfetch, websearch, read, glob, grep, optional bash, and conditional write/edit) and **plugin-registered Loom tools** (loom_query, loom_vote, loom_summon, loom_pass, loom_state_patch). Both sets flow into agent prompts through the same mechanism: `agentTools` config → `tools` body map → OpenCode server maps to provider tool definitions.
 
 ### Tool Sets by Phase
 
 | Phase | Built-in | Loom Plugin | tool_choice |
 |-------|----------|-------------|-------------|
-| Primary agent turn | `webfetch`, `websearch`, `read`, `glob`, `grep` (bash only when explicitly enabled and allowlisted) | `loom_query`, `loom_vote`, `loom_summon`, `loom_pass`, `loom_state_patch` | `auto` |
+| Primary agent turn (PLAN) | `webfetch`, `websearch`, `read`, `glob`, `grep` (bash only when explicitly enabled and allowlisted) | `loom_query`, `loom_vote`, `loom_summon`, `loom_pass` | `auto` |
+| Primary agent turn (BUILD) | PLAN tools plus `write`, `edit` when agent tools are enabled | `loom_query`, `loom_vote`, `loom_summon`, `loom_pass` | `auto` |
+| Patch-only tail (when enabled) | *(none)* | `loom_state_patch` only | `auto` |
 | Query/Evidence response (peer) | `webfetch`, `websearch`, `read` | *(none)* | `auto` / `required` (evidence) |
 | Vote response (peer) | *(none)* | *(none)* | `none` — bare `[Vote: X]` ballot |
 | Summoned expert | `webfetch`, `websearch`, `read` | *(none)* | `auto` |
 
-**Not granted to agents**: `write`, `edit`, `tui`, `todo`, `lsp`, `comment`, `snapshot`, `permissions`.
+**Not granted to agent turns**: `tui`, `todo`, `lsp`, `comment`, `snapshot`, `permissions`. `write`/`edit` are granted only when the user selected BUILD; `loom_state_patch` is offered only in the final-action tail, never in the primary turn.
 
 ### Plugin-Registered Tools
 
@@ -1342,7 +1366,7 @@ Agent tooling is split between **built-in OpenCode tools** (webfetch, websearch,
 | `loom_vote` | `plugin/tools/vote-summon.js` | Call a poll — lettered options (A) B) …), or an open question the room votes on by State of Play number; fan-out to all other active participants, inline tally |
 | `loom_summon` | `plugin/tools/vote-summon.js` | Summon a guest expert persona for one additive contribution |
 | `loom_pass` | `plugin/tools/pass.js` | Pass on current turn; deliberation ends when all participants pass |
-| `loom_state_patch` | `plugin/tools/state-patch.js` | Maintain private notes for next round (when toggle on: offered inline, once as the absolutely-last tool use per non-pass turn; a miss is logged and the turn stands — no follow-up call) |
+| `loom_state_patch` | `plugin/tools/state-patch.js` | Maintain private notes for next round (when enabled, offered only in the separate final-action tail after prose and same-turn synthesis; one call, no retry) |
 | `loom_set_turn_order` | `plugin/tools/turn-order.js` | **Orchestrator-only** — override next round's order from the summary call (Section 9). Registered for host resolution but never in any agent-facing tool map. |
 
 All loom tools resolve the current meeting from `context.sessionID` via the session-index, then delegate to the in-memory `activeLooms` engine for state/session/database access. Shared helpers `src/plugin/tools/shared.js:1` centralize `resolveCaller` (session→speaking→weave→any), `resolveModel` (borrow any healthy participant model), `buildBatchId` (`inline-${meetingId}-${round}-${callerId}`), and `TERMINAL_STATUSES` (re-exported from `src/constants.js:3`).
@@ -1483,6 +1507,7 @@ One call can query multiple peers (1 per item). Each item specifies a `target` (
 **Execution flow:**
 1. Resolve each target (must exist, not failed/passed/muted).
 2. For each resolved target: build prompt via `buildQueryPrompt` (clarify/other modes) or `buildEvidencePrompt` (evidence mode) — the self-contained question (no draft exists mid-turn; the prompt states this explicitly), target's recent contributions plus recent room context, one-line position (`Your position (from your state vN)` + top bullets; the full Σⁱ block is the fallback only when no position exists), a settled-items digest (`buildPeerSettledDigest`: consensus text only, capped at 4, so the peer cannot unknowingly re-litigate signed points — absent when nothing is settled, in which case the prompt is byte-identical), plus round context.
+   Every query/evidence/vote/summon prompt renders a plain `Round: N of M` label and an explicit directed-responder scope: answer this call, do not take the primary turn, invoke nested Loom peer tools, or patch round state. The query-mode `taskBlock` is the shared source rendered in both system and user prompts. Mode-specific formats remain distinct: `evidence` keeps Finding/Source/Strength, and `perspective` keeps its `Position: [held|revised|expanded]` marker (not the primary-round ending directive).
 3. Run `runEphemeralPrompt` for each target — **parallel by default** (`agentTools.parallelQueries`, Setup-tab toggle; off = serial loop). Parallel runs use batched fan-out (`src/utils/fanout.js`: default 5/batch, ~100/min budget from `TUNING.FANOUT`, order-preserving, all-settled — one slow/failed peer never blocks the others). Prompts run concurrently; persistence stays serial in request order (two-phase) so contribution IDs are monotonic.
 4. Persist each response as a typed contribution (`query_response` or `evidence_response`) under the invoker's `batch_id`.
 5. **Perspective mode side-effect:** the response replaces the target's stored `reflection` (pushed onto bounded `reflectionHistory`, max 5) and persists via `setParticipantReflection` — this is the primary write path for reflections (Section 12).
@@ -1753,9 +1778,9 @@ DB fresh `meetings`/`participants` enforce `CHECK` + `UNIQUE` + `FK` at `initSch
 | `agentTools.sameTurnSynthesis` | `true` | Peer responses returned inline for same-turn synthesis (Section 22) |
 | `agentTools.*` | (see Section 20) | Tool enablement — built-in tools + loom plugin tools (query/vote/summon/pass/state_patch) |
 | `agentTools.builtIn.bash.enabled` | `false` | Bash is disabled unless explicitly enabled with a safe allowlist |
-| `detectors.needsVerification` | `false` | Ship the `## Needs Verification` section in the artifact. Off by default (N3): a detector that cannot state its precision is advisory, and this one was ~40% precise |
+| `detectors.needsVerification` | `true` | Ship findings under the single `## Needs Verification` heading in the artifact; every finding is counted separately in `artifact.detector_report` |
 | `detectors.citationWarnings` | `false` | Ship the `## Citation Warnings` section. Same gate |
-| `detectors.dryRun` | `true` | Count candidates without writing them. Candidate counts always travel in `artifact.detector_report`, so a hand audit can measure precision before either flag is enabled |
+| `detectors.dryRun` | `false` | Count candidates without writing them when enabled; candidate counts always travel in `artifact.detector_report` |
 | `detectors.dryRunMeetings` | `2` | Meetings to dry-run before enabling a flag |
 | `detectors.precisionFloor` | `0.9` | Measured precision a detector must clear on a hand-audited sample before it graduates from advisory to authoritative |
 | `detectors.minCitationTargetChars` | `400` | Citation targets shorter than this are exempt — keyword overlap cannot check a 57-character ballot |
